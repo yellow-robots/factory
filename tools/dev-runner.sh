@@ -27,11 +27,12 @@ MODEL="${MODEL:-claude-sonnet-4-6}"; HARD_MODEL="${HARD_MODEL:-claude-opus-4-8}"
 DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_REPO="${BASE_REPO:-$(cd "$SELF_DIR/.." && pwd)}"
-BASE_REF="${BASE_REF:-origin/main}"; BASE_BRANCH="${BASE_REF#origin/}"
-# the repo's check command — run in the worktree (a clean checkout, no local venv), gate = exit 0.
-# default points at the base repo's venv; a per-repo manifest can override this later.
-CHECK_CMD="${CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest tests/ -q}"
+# The factory builds sibling repos under one workspace root, discovered relative to this script
+# (factory/tools/dev-runner.sh -> workspace = SELF_DIR/../..) so no absolute path is baked in. Override
+# with YR_WORKSPACE. BASE_REPO / BASE_REF / CHECK_CMD are resolved once the target repo is known (see
+# "resolve the target repo" below) from that repo's .yr/factory.toml — the factory carries no per-repo
+# knowledge of its own.
+YR_WORKSPACE="${YR_WORKSPACE:-$(cd "$SELF_DIR/../.." && pwd)}"
 
 # --- Projects field config (status/reason live on the project item; RFC 0003) ---
 PROJECT_NUMBER="${PROJECT_NUMBER:-1}"
@@ -68,6 +69,28 @@ if [ -z "$REPO" ]; then
     || die "could not resolve repo; pass --repo <owner/name>"
 fi
 OWNER="${REPO%/*}"
+
+# ---- resolve the target repo's checkout + its build manifest (all relative to the workspace) ----
+NAME="${REPO#*/}"
+BASE_REPO="${BASE_REPO:-$YR_WORKSPACE/$NAME}"   # checkout convention: $YR_WORKSPACE/<name> (override: BASE_REPO)
+# Per-repo build config lives in the repo, not the factory: .yr/factory.toml (check_cmd / model / base_ref).
+MANIFEST="$BASE_REPO/.yr/factory.toml"
+MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""
+if [ -f "$MANIFEST" ]; then
+  _mf_out="$(python3 - "$MANIFEST" <<'PY' 2>/dev/null
+import sys, tomllib
+with open(sys.argv[1], "rb") as f: d = tomllib.load(f)
+for k in ("check_cmd", "model", "base_ref"):
+    v = d.get(k) or ""
+    print(str(v).replace("\n", " "))
+PY
+)" || log "warn: could not parse $MANIFEST"
+  mapfile -t _mf <<<"$_mf_out"
+  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"
+fi
+# precedence everywhere: explicit env  >  repo manifest  >  built-in default
+BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
+CHECK_CMD="${CHECK_CMD:-${MF_CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest tests/ -q}}"
 
 # ---- fetch issue (state/title/body) ----
 ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state 2>/dev/null)" \
@@ -118,8 +141,13 @@ SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
 [ -n "$SLUG" ] || SLUG="task"
 BRANCH="task/${ISSUE}-${SLUG}"
 
-# ---- model resolution (DECLARED): body `model:` override, allowlisted to the two tiers ----
+# ---- model resolution: repo manifest sets the default tier; body `model:` override wins. Allowlisted. ----
 RESOLVED_MODEL="$MODEL"
+case "$MF_MODEL" in
+  opus)      RESOLVED_MODEL="$HARD_MODEL";;
+  sonnet|"") ;;                                   # sonnet or unset = the global default ($MODEL)
+  *)         log "warn: ignoring unknown model '$MF_MODEL' in $MANIFEST (allowed: opus, sonnet)";;
+esac
 OVERRIDE="$(printf '%s\n' "$BODY" | sed -n -E 's/^model:[[:space:]]*([^[:space:]]+).*/\1/Ip' | head -n1 | tr '[:upper:]' '[:lower:]')"
 if [ -n "$OVERRIDE" ]; then
   case "$OVERRIDE" in
@@ -137,9 +165,9 @@ if [ -n "$NEEDS_INFO" ]; then
   gate "needs-info: $NEEDS_INFO"
 fi
 
-if [ "$DRY_RUN" -eq 1 ]; then        # read-only: report the plan, write nothing
-  python3 -c 'import json,sys; print(json.dumps({"repo":sys.argv[1],"issue":int(sys.argv[2]),"branch":sys.argv[3],"model":sys.argv[4],"ready":True}))' \
-    "$REPO" "$ISSUE" "$BRANCH" "$RESOLVED_MODEL"
+if [ "$DRY_RUN" -eq 1 ]; then        # read-only: report the resolved plan, write nothing
+  python3 -c 'import json,sys; print(json.dumps({"repo":sys.argv[1],"issue":int(sys.argv[2]),"branch":sys.argv[3],"model":sys.argv[4],"workspace":sys.argv[5],"base_repo":sys.argv[6],"base_ref":sys.argv[7],"check_cmd":sys.argv[8],"ready":True}))' \
+    "$REPO" "$ISSUE" "$BRANCH" "$RESOLVED_MODEL" "$YR_WORKSPACE" "$BASE_REPO" "$BASE_REF" "$CHECK_CMD"
   exit 0
 fi
 

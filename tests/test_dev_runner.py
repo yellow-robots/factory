@@ -410,3 +410,84 @@ def test_tester_boundary_guard_checkpoint_is_after_implementer(tmp_path):
     comments = " ".join(_comments(_timeline(tmp_path)))
     assert "tester_prod.txt" in comments     # tester's new file IS flagged
     assert "feature.txt" not in comments     # implementer's file is NOT flagged (already in checkpoint)
+
+
+# ============ Step B: repo-agnostic routing (workspace anchor + per-repo manifest) ============
+# These exercise resolution/precedence via --dry-run, which reports the resolved config and exits
+# before any git op — so no real repo is ever touched.
+
+def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, name="repo"):
+    """A minimal repo dir carrying a .yr/factory.toml (no git needed — dry-run never touches git)."""
+    repo = tmp / name
+    (repo / ".yr").mkdir(parents=True)
+    lines = []
+    if check_cmd is not None: lines.append(f'check_cmd = "{check_cmd}"')
+    if model is not None:     lines.append(f'model = "{model}"')
+    if base_ref is not None:  lines.append(f'base_ref = "{base_ref}"')
+    (repo / ".yr" / "factory.toml").write_text("\n".join(lines) + "\n")
+    return repo
+
+
+def test_dryrun_reports_workspace_default(tmp_path):
+    """With no YR_WORKSPACE, the workspace is discovered relative to the script (factory/../..)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["workspace"] == str(ROOT.parent)
+
+
+def test_dryrun_resolves_base_repo_from_workspace(tmp_path):
+    """The target repo's checkout is resolved as $YR_WORKSPACE/<name> when BASE_REPO is unset."""
+    ws = tmp_path / "ws"; ws.mkdir()
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["YR_WORKSPACE"] = str(ws)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["base_repo"] == str(ws / "repo")
+
+
+def test_dryrun_check_cmd_from_manifest(tmp_path):
+    """A repo's .yr/factory.toml check_cmd is used when CHECK_CMD is not set in the env."""
+    repo = _manifest_repo(tmp_path, check_cmd="make test")
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo); del env["CHECK_CMD"]
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["check_cmd"] == "make test"
+
+
+def test_dryrun_env_check_cmd_overrides_manifest(tmp_path):
+    """Explicit CHECK_CMD in the env wins over the manifest (env > manifest > default)."""
+    repo = _manifest_repo(tmp_path, check_cmd="make test")
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo); env["CHECK_CMD"] = "pytest -q"
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert json.loads(r.stdout)["check_cmd"] == "pytest -q"
+
+
+def test_dryrun_model_from_manifest(tmp_path):
+    """A repo's manifest model sets the default tier (opus -> claude-opus-4-8)."""
+    repo = _manifest_repo(tmp_path, model="opus")
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert json.loads(r.stdout)["model"] == "claude-opus-4-8"
+
+
+def test_dryrun_body_model_overrides_manifest(tmp_path):
+    """The issue body `model:` override still wins over the manifest default."""
+    repo = _manifest_repo(tmp_path, model="opus")
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: sonnet\n")
+    env["BASE_REPO"] = str(repo)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert json.loads(r.stdout)["model"] == "claude-sonnet-4-6"
+
+
+def test_dryrun_base_ref_from_manifest(tmp_path):
+    """A repo's manifest base_ref is used when BASE_REF is not set in the env."""
+    repo = _manifest_repo(tmp_path, base_ref="origin/develop")
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert json.loads(r.stdout)["base_ref"] == "origin/develop"

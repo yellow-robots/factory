@@ -136,9 +136,11 @@ runner. Polling (not webhooks) is deliberate — self-healing, no missed events.
 ## Conventions
 
 - **Branches:** `task/<issue#>-<slug>`.
-- **Per-repo build config:** each product repo carries `.yr/factory.toml` declaring its `check_cmd` (e.g.
-  platform → `pytest`, website → `npm test`), default `model`, and `base_ref`. The factory reads it; the
-  repo owns it. *(Introduced in the routing refactor — see README Status.)*
+- **Workspace & per-repo config:** the factory finds its workspace relative to itself (`YR_WORKSPACE`,
+  default `factory/../..`) and resolves each target repo's checkout as `$YR_WORKSPACE/<name>`. Build
+  specifics live in the repo, not the factory — a `.yr/factory.toml` manifest declaring `check_cmd`
+  (platform → `pytest`, website → `npm test`), default `model` (`opus`/`sonnet`), and `base_ref`.
+  Precedence: explicit env > manifest > built-in default.
 - **The factory's own check command:** `.venv/bin/python -m pytest tests/ -q` (the venv is authoritative;
   no system pytest).
 - **Commits** end with: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.

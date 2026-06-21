@@ -41,7 +41,8 @@ The factory is a sibling of the repos it builds, under one workspace root:
 
 ## Status
 
-Bootstrapped by a faithful extraction from `platform` — 56 tests green. **Next (routing refactor):** make
-the runner repo-agnostic — discover the workspace relative to itself and read a per-repo `.yr/factory.toml`
-manifest (`check_cmd`, model, base ref) — so it builds *any* sibling, not just the repo it is run from.
-Until then the runner still assumes it is run from within the target repo's checkout.
+Extracted from `platform` and made **repo-agnostic**: the runner discovers its workspace relative to
+itself (`YR_WORKSPACE`, default `factory/../..`), resolves each target repo as `$YR_WORKSPACE/<name>`, and
+reads that repo's build config from a per-repo `.yr/factory.toml` (`check_cmd` / `model` / `base_ref`;
+explicit env overrides it). 63 tests green. **Remaining:** retire `platform`'s now-duplicated copy of the
+tooling, and repoint the live dispatch service at the workspace-anchored factory.
