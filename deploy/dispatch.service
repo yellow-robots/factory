@@ -1,0 +1,23 @@
+[Unit]
+# YR dev-factory dispatch endpoint (RFC 0004). Receives POST /build from n8n and fires the dev-runner.
+# Install as a USER service: ~/.config/systemd/user/dispatch.service
+Description=YR dev-factory dispatch endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/platform
+# secret + config live here, NOT in the repo (see dispatch.env.example); chmod 600.
+EnvironmentFile=%h/.config/dev-runner/dispatch.env
+ExecStart=%h/platform/.venv/bin/python %h/platform/tools/dispatch.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+# KillMode=process: on `stop`, signal only the listener — let any in-flight build (a detached child)
+# run to completion. The build needs the user's tools (claude/gh/git) + their $HOME auth, so the
+# sandbox is otherwise light; PATH comes from the EnvironmentFile.
+KillMode=process
+
+[Install]
+WantedBy=default.target

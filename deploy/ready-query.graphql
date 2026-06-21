@@ -1,0 +1,19 @@
+# The poll query n8n runs each tick: returns the issue numbers of OPEN issues at Status=Ready
+# in project #1. Filter client-side for nodes where status.name == "Ready" && content.state == "OPEN".
+# Verified live 2026-06-18.
+# TODO: paginate (items first:100) once the project exceeds 100 items — else Ready tasks past page 1
+# are silently dropped.
+query {
+  organization(login: "yellow-robots") {
+    projectV2(number: 1) {
+      items(first: 100) {
+        nodes {
+          content { ... on Issue { number state } }
+          status: fieldValueByName(name: "Status") {
+            ... on ProjectV2ItemFieldSingleSelectValue { name }
+          }
+        }
+      }
+    }
+  }
+}

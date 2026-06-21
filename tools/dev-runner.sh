@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+# dev-runner — take a Ready task through one headless implement pass to an open PR, tracking lifecycle
+# state on the NATIVE GitHub Projects Status/Reason fields (RFC 0003 rev 2: status belongs to the task,
+# via native fields — not labels). Type is the native Issue Type (set by the Issue Form); hierarchy is
+# native sub-issues.
+#
+# Pipeline (each stage a separate cold `claude -p` — builder!=verifier): gate (Status==Ready) ->
+#   claim (Status=In Progress) -> fresh worktree -> implement -> independent test (boundary-guarded:
+#   tester writing outside tests/ -> Blocked) -> deterministic check gate (CHECK_CMD, one repair) ->
+#   independent review (VERDICT gate, one repair) -> commit/push -> open PR -> Status=In Review.
+#   empty acceptance criteria / unknown model override -> Status=Backlog + Reason=Needs-info (no LLM).
+#   any stage failure                                  -> Reason=Blocked + comment (failure visible, F3).
+#   merge closes the issue; Projects' close->Done sets Status=Done natively.
+# Dispatch: n8n polls Ready -> tools/dispatch.py -> this runner (RFC 0004). Operating model: AGENTS.md.
+#
+# Confinement is system-level (fresh worktree, scoped creds) so implement runs --permission-mode
+# bypassPermissions: the walls are the environment, not an interactive prompt.
+#
+# Requires: bash, git, gh (>=2.94, authed, with `project` scope), python3, claude.
+# Overridable for unit tests (no live LLM / no network): CLAUDE_BIN, GH_BIN, GIT_BIN.
+# Project config (defaults = yellow-robots project #1; ids in reference_yr_platform_repo):
+#   PROJECT_NUMBER, PROJECT_ID, STATUS_FIELD_ID, REASON_FIELD_ID, OPT_* option ids.
+set -euo pipefail
+
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"; GH_BIN="${GH_BIN:-gh}"; GIT_BIN="${GIT_BIN:-git}"
+MODEL="${MODEL:-claude-sonnet-4-6}"; HARD_MODEL="${HARD_MODEL:-claude-opus-4-8}"; EFFORT="${EFFORT:-high}"
+DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_REPO="${BASE_REPO:-$(cd "$SELF_DIR/.." && pwd)}"
+BASE_REF="${BASE_REF:-origin/main}"; BASE_BRANCH="${BASE_REF#origin/}"
+# the repo's check command — run in the worktree (a clean checkout, no local venv), gate = exit 0.
+# default points at the base repo's venv; a per-repo manifest can override this later.
+CHECK_CMD="${CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest tests/ -q}"
+
+# --- Projects field config (status/reason live on the project item; RFC 0003) ---
+PROJECT_NUMBER="${PROJECT_NUMBER:-1}"
+PROJECT_ID="${PROJECT_ID:-PVT_kwDOEEAo0M4Ba6Ls}"
+STATUS_FIELD_ID="${STATUS_FIELD_ID:-PVTSSF_lADOEEAo0M4Ba6LszhVuZlw}"
+REASON_FIELD_ID="${REASON_FIELD_ID:-PVTSSF_lADOEEAo0M4Ba6LszhVzoxI}"
+declare -A STATUS_OPT=( [Backlog]="${OPT_BACKLOG:-b863a902}" [Ready]="${OPT_READY:-c85eb5c1}"
+                        ["In Progress"]="${OPT_INPROGRESS:-14e415a3}" ["In Review"]="${OPT_INREVIEW:-da2e6a49}"
+                        [Done]="${OPT_DONE:-e614f531}" )
+declare -A REASON_OPT=( [Needs-info]="${OPT_NEEDSINFO:-803a86fb}" [Blocked]="${OPT_BLOCKED:-fe4d566c}" )
+
+die()  { echo "dev-runner: ERROR: $*" >&2; exit 1; }
+gate() { echo "dev-runner: NOT READY: $*" >&2; exit 3; }   # DoR refusal — distinct exit code
+log()  { echo "dev-runner: $*" >&2; }
+usage(){ echo "usage: dev-runner.sh <issue#> [--repo <owner/name>] [--dry-run]" >&2; exit 2; }
+
+# ---- parse args ----
+ISSUE=""; REPO=""; DRY_RUN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)    REPO="${2:-}"; shift 2;;
+    --dry-run) DRY_RUN=1; shift;;
+    -h|--help) usage;;
+    -*)        die "unknown flag: $1";;
+    *)         if [ -z "$ISSUE" ]; then ISSUE="$1"; shift; else die "unexpected arg: $1"; fi;;
+  esac
+done
+[ -n "$ISSUE" ] || usage
+case "$ISSUE" in *[!0-9]*|"") die "issue must be a number, got: '$ISSUE'";; esac
+
+# ---- resolve repo / owner ----
+if [ -z "$REPO" ]; then
+  REPO="$("$GH_BIN" repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" \
+    || die "could not resolve repo; pass --repo <owner/name>"
+fi
+OWNER="${REPO%/*}"
+
+# ---- fetch issue (state/title/body) ----
+ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state 2>/dev/null)" \
+  || die "could not fetch issue #$ISSUE from $REPO"
+TITLE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("title","") or "")')"
+BODY="$(printf '%s' "$ISSUE_JSON"  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("body","") or "")')"
+STATE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state","") or "")')"
+
+# ---- find the project item id + current Status (status is project-item-resident, RFC 0003) ----
+ITEMS_JSON="$("$GH_BIN" project item-list "$PROJECT_NUMBER" --owner "$OWNER" --limit 500 --format json 2>/dev/null)" \
+  || die "could not query project #$PROJECT_NUMBER on $OWNER (is the gh 'project' scope granted?)"
+ITEM_LINE="$(printf '%s' "$ITEMS_JSON" | python3 -c 'import sys,json
+n=int(sys.argv[1])
+for it in json.load(sys.stdin).get("items",[]):
+    if ((it.get("content") or {}).get("number")) == n:
+        print((it.get("id","") or "") + "\t" + (it.get("status","") or "")); break' "$ISSUE")"
+ITEM_ID="${ITEM_LINE%%$'\t'*}"; ITEM_STATUS="${ITEM_LINE#*$'\t'}"
+[ "$ITEM_ID" = "$ITEM_LINE" ] && ITEM_STATUS=""   # no tab => no match
+
+# field setters (best-effort: a failed state write warns, never aborts the actual work)
+_set_field(){ "$GH_BIN" project item-edit --id "$ITEM_ID" --project-id "$PROJECT_ID" \
+              --field-id "$1" --single-select-option-id "$2" >/dev/null 2>&1 || log "warn: could not set $3 on #$ISSUE"; }
+set_status(){ local o="${STATUS_OPT[$1]:-}"; [ -n "$o" ] || { log "warn: no option id for Status=$1"; return 0; }
+              _set_field "$STATUS_FIELD_ID" "$o" "Status=$1"; }
+set_reason(){ local o="${REASON_OPT[$1]:-}"; [ -n "$o" ] || { log "warn: no option id for Reason=$1"; return 0; }
+              _set_field "$REASON_FIELD_ID" "$o" "Reason=$1"; }
+comment(){ "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$1" >/dev/null 2>&1 || true; }
+
+# ---- DoR gate (refuse before any work; never invokes the LLM on refusal; no writes) ----
+[ "$STATE" = "OPEN" ] || gate "issue #$ISSUE is not open (state: ${STATE:-unknown})"
+[ -n "$ITEM_ID" ]     || gate "issue #$ISSUE is not in project #$PROJECT_NUMBER"
+[ "$ITEM_STATUS" = "Ready" ] || gate "issue #$ISSUE is not Ready (Status: ${ITEM_STATUS:-none})"
+
+# acceptance-criteria block: from its heading to the next heading of equal-or-higher level (#, ##, ###).
+AC="$(printf '%s\n' "$BODY" | awk '
+  { low=tolower($0) }
+  low ~ /^#+[[:space:]]*acceptance criteria/ { grab=1; next }
+  grab && /^#(#(#)?)?[[:space:]]/ { grab=0 }
+  grab { print }
+')"
+# real criteria need actual content (the Issue Form default "- [ ]" has no alphanumerics).
+NEEDS_INFO=""
+[ -n "$(printf '%s' "$AC" | tr -dc '[:alnum:]')" ] || NEEDS_INFO="the acceptance-criteria section is empty"
+
+# ---- slug + branch ----
+SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
+        | sed -e 's/[^a-z0-9]\+/-/g' -e 's/^-\+//' -e 's/-\+$//' | cut -c1-50 | sed 's/-\+$//')"
+[ -n "$SLUG" ] || SLUG="task"
+BRANCH="task/${ISSUE}-${SLUG}"
+
+# ---- model resolution (DECLARED): body `model:` override, allowlisted to the two tiers ----
+RESOLVED_MODEL="$MODEL"
+OVERRIDE="$(printf '%s\n' "$BODY" | sed -n -E 's/^model:[[:space:]]*([^[:space:]]+).*/\1/Ip' | head -n1 | tr '[:upper:]' '[:lower:]')"
+if [ -n "$OVERRIDE" ]; then
+  case "$OVERRIDE" in
+    opus)   RESOLVED_MODEL="$HARD_MODEL";;
+    sonnet) RESOLVED_MODEL="$MODEL";;
+    *)      NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }unknown model override '$OVERRIDE' (allowed: opus, sonnet)";;
+  esac
+fi
+
+# ---- DoR content gate -> Needs-info bounce (Status=Backlog + Reason=Needs-info). Dry-run stays read-only ----
+if [ -n "$NEEDS_INFO" ]; then
+  [ "$DRY_RUN" = 1 ] && gate "$NEEDS_INFO"
+  set_status Backlog; set_reason Needs-info
+  comment "dev-runner: bounced to **Needs-info** — $NEEDS_INFO. Fix it, then set Status back to Ready."
+  gate "needs-info: $NEEDS_INFO"
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then        # read-only: report the plan, write nothing
+  python3 -c 'import json,sys; print(json.dumps({"repo":sys.argv[1],"issue":int(sys.argv[2]),"branch":sys.argv[3],"model":sys.argv[4],"ready":True}))' \
+    "$REPO" "$ISSUE" "$BRANCH" "$RESOLVED_MODEL"
+  exit 0
+fi
+
+# ---- claim (Status: Ready -> In Progress) as early as possible ----
+set_status "In Progress"
+log "claimed #$ISSUE -> In Progress, branch $BRANCH, model $RESOLVED_MODEL"
+
+# from here, any failure flags Reason=Blocked (and comments) before exiting — failures are visible
+fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cleanup_wt; die "$1"; }
+
+# ---- fresh worktree (idempotent: clear any prior worktree AND branch so a retry isn't wedged) ----
+RUN_DIR="$DEV_RUNNER_HOME/runs/${ISSUE}-$$"; mkdir -p "$RUN_DIR"
+WT="$DEV_RUNNER_HOME/wt/${BRANCH//\//-}"
+cleanup_wt(){ "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/null || true
+              "$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true; }
+"$GIT_BIN" -C "$BASE_REPO" fetch -q origin || fail_blocked "git fetch failed"
+[ -e "$WT" ] && { "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"; }
+"$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true
+"$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE_REF" || fail_blocked "worktree add failed"
+
+# ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
+run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set)
+  local args=( -p "$2" --model "$RESOLVED_MODEL" --effort "$EFFORT"
+               --permission-mode bypassPermissions --append-system-prompt "$1"
+               --allowedTools ${4:-Read Edit Write Bash} )
+  [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ] && args+=( --output-format "$CLAUDE_OUTPUT_FORMAT" --verbose )
+  ( cd "$WT" && "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1
+}
+SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
+
+# implementer — production code only
+IMPL_SYS="You are the IMPLEMENTER stage of an automated dev pipeline. Implement the task so it satisfies every acceptance criterion. Write PRODUCTION CODE ONLY — do not author the committed test suite (an independent tester stage does that). Do NOT run git or open PRs — the runner handles git. Work only inside this repository."
+log "implement: $(basename "$CLAUDE_BIN") [$RESOLVED_MODEL] in $WT"
+run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" \
+  || fail_blocked "implement stage failed (log: $RUN_DIR/implement.log)"
+
+# checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
+# detect violations structurally (confinement principle — not advisory / prompt-only).
+"$GIT_BIN" -C "$WT" add -A
+IMPL_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
+
+# tester — independent cold process: tests derived from the CRITERIA, not the implementation (builder≠verifier).
+# Writes to tests/** only — enforced below by diffing against IMPL_TREE (block-and-raise, no silent revert).
+TEST_SYS="You are the TESTER stage, independent of the implementer. Write automated tests that verify the ACCEPTANCE CRITERIA below, against the code now in this repository. Derive the tests from the CRITERIA (the spec), NOT from the implementation's internals. Do NOT modify production code — only add or extend tests. Do NOT run git. Work only inside this repository."
+log "test: independent tester stage"
+run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" \
+  || fail_blocked "tester stage failed (log: $RUN_DIR/test.log)"
+
+# tester boundary guard: block if tester modified anything outside tests/**
+# Block-and-raise (no auto-revert) so the violation is visible for diagnosis.
+"$GIT_BIN" -C "$WT" add -A
+TESTER_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
+TESTER_DIFF="$("$GIT_BIN" -C "$WT" diff-tree --no-commit-id -r --name-only "$IMPL_TREE" "$TESTER_TREE")"
+TESTER_OFFENDERS="$(printf '%s' "$TESTER_DIFF" | grep -v '^tests/' || true)"
+if [ -n "$TESTER_OFFENDERS" ]; then
+  OFFENDER_LIST="$(printf '%s\n' "$TESTER_OFFENDERS" | tr '\n' ' ' | sed 's/ *$//')"
+  # preserve WHAT the tester changed (not just which files) before fail_blocked cleans the
+  # worktree — so a blocked run stays diagnosable ("understand the why").
+  "$GIT_BIN" -C "$WT" diff "$IMPL_TREE" "$TESTER_TREE" > "$RUN_DIR/boundary-violation.diff" 2>/dev/null || true
+  fail_blocked "tester modified files outside tests/: $OFFENDER_LIST (diff: $RUN_DIR/boundary-violation.diff)"
+fi
+
+# deterministic check gate — the RUNNER runs the checks, not the LLM. One repair attempt.
+run_checks(){ ( cd "$WT" && bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
+if ! run_checks; then
+  log "checks failed — one repair attempt"
+  run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" || true
+  run_checks || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
+fi
+
+# ---- review stage (independent cold process: quality verdict on the diff; gate = no blockers) ----
+# Review is a judgment, so the gate is the reviewer's own verdict — but a separate cold process with
+# no stake, and fail-closed (anything but a clear APPROVE blocks). The verdict is attached to the PR.
+REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Tag each finding 'blocker' or 'nit'. Do NOT modify any files and do NOT run git commit or push. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
+review_stage(){ "$GIT_BIN" -C "$WT" add -A
+                run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/review.md" "Read Bash"
+                # fail-closed: the LAST verdict line must be exactly "VERDICT: APPROVE" (only trailing whitespace
+                # trimmed) — a hedge ("APPROVE" then "REQUEST_CHANGES"), trailing junk, or a mangled token does NOT pass.
+                [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]; }
+log "review: independent reviewer stage"
+if ! review_stage; then
+  log "review requested changes — one repair attempt"
+  run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" || true
+  run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)"
+  review_stage || fail_blocked "reviewer still requests changes after one repair"
+fi
+
+# ---- commit / push / open PR ----
+"$GIT_BIN" -C "$WT" add -A
+if "$GIT_BIN" -C "$WT" diff --cached --quiet; then fail_blocked "no changes produced"; fi
+"$GIT_BIN" -C "$WT" commit -q -m "$(printf '%s\n\nImplements #%s (dev-runner, %s). Tests by the independent tester stage.' "$TITLE" "$ISSUE" "$RESOLVED_MODEL")"
+"$GIT_BIN" -C "$WT" push -q -u origin "$BRANCH" || fail_blocked "push failed"
+PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (model: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$RESOLVED_MODEL")"
+PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")" \
+  || fail_blocked "pr create failed"
+"$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict (F3)
+
+# ---- PR open -> Status: In Review ----
+set_status "In Review"
+log "PR opened: $PR_URL  (#$ISSUE -> In Review)"
+cleanup_wt
+echo "$PR_URL"

@@ -1,0 +1,67 @@
+{
+  "name": "YR dispatch — poll Ready, build",
+  "_comment": "STARTING SKELETON — import into n8n, then wire per deploy/DISPATCH.md: (a) a GitHub token on the GraphQL node, (b) the dispatch URL + bearer token on the POST node. node typeVersions may need bumping to your n8n. Keep INACTIVE until the watched switch-on.",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Every 5 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [260, 300],
+      "parameters": { "rule": { "interval": [ { "field": "minutes", "minutesInterval": 5 } ] } }
+    },
+    {
+      "id": "ghquery",
+      "name": "GitHub: Ready items",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/graphql",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Authorization", "value": "Bearer REPLACE_WITH_GITHUB_TOKEN_OR_USE_A_CREDENTIAL" }
+        ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"query\": \"query { organization(login: \\\"yellow-robots\\\") { projectV2(number: 1) { items(first: 100) { nodes { content { ... on Issue { number state } } status: fieldValueByName(name: \\\"Status\\\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }\" }"
+      }
+    },
+    {
+      "id": "filter",
+      "name": "Extract Ready issue numbers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300],
+      "parameters": {
+        "jsCode": "const nodes = $json.data.organization.projectV2.items.nodes || [];\nreturn nodes\n  .filter(n => n.status && n.status.name === 'Ready' && n.content && n.content.state === 'OPEN')\n  .map(n => ({ json: { issue: n.content.number } }));"
+      }
+    },
+    {
+      "id": "dispatch",
+      "name": "POST /build",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://REPLACE_BIND_IP:8770/build",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Authorization", "value": "Bearer REPLACE_WITH_DISPATCH_TOKEN" }
+        ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"issue\": {{ $json.issue }} }"
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 min": { "main": [ [ { "node": "GitHub: Ready items", "type": "main", "index": 0 } ] ] },
+    "GitHub: Ready items": { "main": [ [ { "node": "Extract Ready issue numbers", "type": "main", "index": 0 } ] ] },
+    "Extract Ready issue numbers": { "main": [ [ { "node": "POST /build", "type": "main", "index": 0 } ] ] }
+  }
+}
