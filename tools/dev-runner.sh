@@ -231,7 +231,10 @@ if [ -n "$TESTER_OFFENDERS" ]; then
 fi
 
 # deterministic check gate — the RUNNER runs the checks, not the LLM. One repair attempt.
-run_checks(){ ( cd "$WT" && bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
+# The worktree is ephemeral (no .venv / node_modules — both gitignored, they live in the base checkout),
+# so put the base repo's toolchain dirs on PATH: a manifest names tools plainly (`pytest`, `vitest`) and
+# the runner supplies them, instead of hardcoding a venv path the worktree doesn't have.
+run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
 if ! run_checks; then
   log "checks failed — one repair attempt"
   run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" || true

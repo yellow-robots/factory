@@ -1,5 +1,5 @@
 # How the factory builds THIS repo (read by tools/dev-runner.sh). See AGENTS.md > Conventions.
 # Precedence when the runner resolves these: explicit env var > this manifest > built-in default.
-check_cmd = ".venv/bin/python -m pytest tests/ -q"
+check_cmd = "pytest tests/ -q"
 model = "sonnet"
 base_ref = "origin/main"

@@ -491,3 +491,21 @@ def test_dryrun_base_ref_from_manifest(tmp_path):
     env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert json.loads(r.stdout)["base_ref"] == "origin/develop"
+
+
+def test_check_runs_with_base_repo_venv_on_path(tmp_path):
+    """The check runs with the base repo's .venv/bin on PATH, so a manifest can name bare tools
+    (`pytest`) instead of a relative .venv path the ephemeral worktree doesn't contain."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    # a fake `pytest` that lives ONLY in the base repo's venv; it records that it ran, then passes.
+    venvbin = work / ".venv" / "bin"; venvbin.mkdir(parents=True)
+    marker = tmp_path / "base_pytest_ran"
+    _exec(venvbin / "pytest", f'#!/usr/bin/env bash\n: > "{marker}"\nexit 0\n')
+    (work / ".yr").mkdir(); (work / ".yr" / "factory.toml").write_text('check_cmd = "pytest tests/ -q"\n')
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Base venv on PATH"), work)
+    del env["CHECK_CMD"]                 # fall back to the manifest's bare `pytest`
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert marker.exists()              # the base repo's venv pytest was found on PATH and ran
