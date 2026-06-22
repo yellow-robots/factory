@@ -4,7 +4,7 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.textutil import slugify, truncate
+from tools.textutil import slugify, truncate, split_frontmatter
 
 
 def test_hello_world():
@@ -114,3 +114,81 @@ def test_truncate_single_char_suffix_boundary():
     result = truncate("abcd", 3)
     assert result == "ab…"
     assert len(result) == 3
+
+
+# split_frontmatter() tests — parses our controlled YAML-ish frontmatter (stdlib only)
+
+def test_split_no_frontmatter_returns_empty_meta_and_full_body():
+    text = "# Just a heading\n\nNo frontmatter here.\n"
+    meta, body = split_frontmatter(text)
+    assert meta == {}
+    assert body == text
+
+
+def test_split_simple_key_value():
+    text = "---\ntype: task\n---\n# Body\n"
+    meta, body = split_frontmatter(text)
+    assert meta["type"] == "task"
+
+
+def test_split_body_preserved_exactly_after_closing_fence():
+    text = "---\ntype: task\n---\n# Body line\n\nsecond para\n"
+    meta, body = split_frontmatter(text)
+    assert body == "# Body line\n\nsecond para\n"
+
+
+def test_split_strips_double_quotes_from_value():
+    text = '---\ntitle: "Hello world"\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["title"] == "Hello world"
+
+
+def test_split_strips_trailing_inline_comment_on_unquoted_value():
+    text = "---\nstatus: draft              # draft | in-review | approved\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["status"] == "draft"
+
+
+def test_split_quoted_value_preserves_hash():
+    # a GitHub issue ref lives quoted; the '#' must survive (it is not a comment)
+    text = '---\nsource_brief: "#42"\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["source_brief"] == "#42"
+
+
+def test_split_preserves_wikilink_value():
+    text = '---\nsource_rfc: "[[my feature rfc]]"\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["source_rfc"] == "[[my feature rfc]]"
+
+
+def test_split_inline_list_value():
+    text = "---\ndecision_makers: [jose, claude]\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["decision_makers"] == ["jose", "claude"]
+
+
+def test_split_empty_value_is_empty_string():
+    text = "---\nnotes:\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["notes"] == ""
+
+
+def test_split_value_stays_string_for_numbers():
+    text = "---\nstage: 4\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["stage"] == "4"
+
+
+def test_split_multiple_keys():
+    text = '---\ntype: task\ntarget_repo: platform\nsize: "S — one PR"\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta == {"type": "task", "target_repo": "platform", "size": "S — one PR"}
+
+
+def test_split_unclosed_frontmatter_treated_as_no_frontmatter():
+    # a stray leading '---' with no closing fence is not frontmatter
+    text = "---\nnot really frontmatter\nstill body\n"
+    meta, body = split_frontmatter(text)
+    assert meta == {}
+    assert body == text
