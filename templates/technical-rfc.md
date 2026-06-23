@@ -26,9 +26,11 @@ created: "<YYYY-MM-DD>"
 
 <!-- ═══════════════ ISSUE BODY · file from here ↓ ═══════════════ -->
 
-**Source:** feature-RFC `04 projects/yellow-robots/features/<slug>/feature-rfc` (Obsidian product brain) · written against `origin/main`.
-<!-- The ONE citation line — the GitHub-readable echo of the frontmatter's source_feature_rfc + base_ref.
-     Write it as a path, not an Obsidian wikilink (GitHub can't resolve those). Cite up to the feature-RFC only — no sibling links. -->
+**Source:** feature-RFC [[04 projects/yellow-robots/features/<slug>/feature-rfc]] (Obsidian product brain) · written against `origin/main`.
+<!-- The ONE crossing-link — echoes the frontmatter's source_feature_rfc + base_ref. Link format follows the
+     TARGET's home: the feature-RFC lives in Obsidian → a [[wikilink]] (our tooling resolves it; GitHub renders
+     it as literal text, which is fine for provenance). A GitHub target would be a URL/#issue instead. Cite up
+     to the feature-RFC only — no sibling links. -->
 
 ## Touched modules / files
 <!-- Exact paths in the CURRENT repo this feature will create or modify, one line each. -->

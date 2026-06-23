@@ -42,7 +42,8 @@ one lightweight "review the plan" gate above them.
   clean prose** — never raw YAML (GitHub doesn't render frontmatter; it shows as noise). The **task** files
   through the Issue **form** (`.github/ISSUE_TEMPLATE/task.yml`), which strips frontmatter structurally; the
   **technical RFC** files *free-form* on the epic Issue, so its template marks the fileable body explicitly
-  and carries provenance as a one-line **Source** citation (a readable path, up to the feature-RFC only). The
+  and carries provenance as a one-line **Source** crossing-link — a `[[wikilink]]` to the feature-RFC
+  (Obsidian target → wikilink, per the rule above; up to the feature-RFC only, no sibling links). The
   draft is the linter's input; the Issue is the deliverable.
 - **Gates review the plan, not the output** — approve the outline before a stage commits; cheap control.
 - **Self-contained = inlinable** — templates are written so a stage's content can later be inlined into a
