@@ -48,7 +48,7 @@ stateDiagram-v2
 
 ## Runner & dispatch
 
-- The runner reads/writes **Status via the Projects GraphQL API** (resolve the issue's project-item id, then `updateProjectV2ItemFieldValue` with the field/option ids stored in reference_yr_platform_repo); it sets **Type via `gh issue edit --type`**.
+- The runner reads/writes **Status via the Projects GraphQL API** (resolve the issue's project-item id, then `updateProjectV2ItemFieldValue` with the field/option ids stored in `tools/dev-runner.sh`); it sets **Type via `gh issue edit --type`**.
 - **Dispatch:** poll-sweep the **Ready** column (primary; clean and simple) ± `projects_v2_item` field-change events. (The `issues.labeled` webhook from rev 1 no longer applies.)
 
 ## Compromises
@@ -67,6 +67,6 @@ stateDiagram-v2
 
 ## Decided (was open)
 
-- **Status** stays the clean lifecycle (Backlog → Ready → In Progress → In Review → Done); off-track states live in a separate single-select **`Reason`** field (`Needs-info` · `Blocked`). Normalised, and cleaner for downstream systems than overloading Status. (Created on project #1; ids in reference_yr_platform_repo.)
+- **Status** stays the clean lifecycle (Backlog → Ready → In Progress → In Review → Done); off-track states live in a separate single-select **`Reason`** field (`Needs-info` · `Blocked`). Normalised, and cleaner for downstream systems than overloading Status. (Created on project #1; ids in `tools/dev-runner.sh`.)
 - **Type** is set declaratively by the Issue Form (`type: Task` — forms support a top-level `type:` key); no API step on create.
 - **Cancelled** = native close (not planned); not a Status value.

@@ -3,7 +3,7 @@
 The **build machinery** for Yellow Robots: it takes a *Ready* ticket to a *reviewed PR*, autonomously,
 across any YR repo. The robot (a probabilistic LLM) proposes; deterministic gates dispose.
 
-This is **infrastructure**, deliberately separate from the product repos it builds (`yellow-robots`, `mcp`,
+This is **infrastructure**, deliberately separate from the product repos it builds (`yellow-robots`,
 `website`). Each product repo is self-contained and declares *how* to build itself; the factory supplies
 *the pipeline*.
 
@@ -35,7 +35,6 @@ The factory is a sibling of the repos it builds, under one workspace root:
 /opt/yellow-robots/
   factory/    ← this repo (the machinery)
   yellow-robots/ ← robot artifacts: schemas, robots, validate, promote
-  mcp/        ← (to come)
   website/    ← (to come)
 ```
 

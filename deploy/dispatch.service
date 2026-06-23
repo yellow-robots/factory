@@ -7,10 +7,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/platform
+WorkingDirectory=/opt/yellow-robots/factory
 # secret + config live here, NOT in the repo (see dispatch.env.example); chmod 600.
 EnvironmentFile=%h/.config/dev-runner/dispatch.env
-ExecStart=%h/platform/.venv/bin/python %h/platform/tools/dispatch.py
+ExecStart=/opt/yellow-robots/factory/.venv/bin/python /opt/yellow-robots/factory/tools/dispatch.py
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

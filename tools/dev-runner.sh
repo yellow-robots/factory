@@ -18,7 +18,7 @@
 #
 # Requires: bash, git, gh (>=2.94, authed, with `project` scope), python3, claude.
 # Overridable for unit tests (no live LLM / no network): CLAUDE_BIN, GH_BIN, GIT_BIN.
-# Project config (defaults = yellow-robots project #1; ids in reference_yr_platform_repo):
+# Project config (defaults = yellow-robots project #1; ids hardcoded below):
 #   PROJECT_NUMBER, PROJECT_ID, STATUS_FIELD_ID, REASON_FIELD_ID, OPT_* option ids.
 set -euo pipefail
 
