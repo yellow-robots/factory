@@ -12,7 +12,7 @@ created: "<YYYY-MM-DD>"
 # Product spec — <feature name>
 
 > Spec discipline: **WHAT and WHY only — no tech stack, no file names, no "how".** Naming a module
-> belongs in the RFC/brief, not here. Every acceptance criterion must be expressible as a test.
+> belongs in the technical RFC, not here. Every acceptance criterion must be expressible as a test.
 
 ## Why
 <!-- The product reason this exists. One short paragraph: who is helped and how. -->
