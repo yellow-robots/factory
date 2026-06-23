@@ -2,7 +2,7 @@
 """check_links — fail loud when a pipeline artifact's `source_*` crossing-links don't resolve.
 
 The upper pipeline keeps product docs (intent / spec / feature-RFC) in the Obsidian vault and the
-build surface (brief / task / PR) on GitHub. That split is only safe if a crossing-link that does NOT
+build surface (technical RFC / task / PR) on GitHub. That split is only safe if a crossing-link that does NOT
 resolve stops the workflow *visibly and loudly* (Jose's principle). This checks exactly the `source_*`
 frontmatter fields of one artifact — NOT the whole vault (the vault has many intentional dangling
 wikilinks; scope is the pipeline's crossing-links only).

@@ -12,9 +12,10 @@ created: "<YYYY-MM-DD>"
 
 # Feature RFC — <feature name>
 
-> This is a **feature RFC** (a product-feature design that spawns task-Issues), distinct from the
-> factory's own *technical RFCs* (`yellow-robots/factory/docs/rfcs/`). Gate: review the **outline** of this
-> RFC before it's fully written — the cheap checkpoint.
+> This is a **feature RFC** — the product-side design (stage 2) that spawns the stage-3 **technical RFC**
+> and then task-Issues. Distinct from the factory's own *foundational* technical RFCs (0001–0005 in
+> `yellow-robots/factory/docs/rfcs/`), which design the factory itself. Gate: review the **outline** of this
+> feature RFC before it's fully written — the cheap checkpoint.
 
 ## Outline (for the pre-gate)
 <!-- 3-5 bullets: the approach in brief. The human approves THIS before you write the full RFC. -->
@@ -26,8 +27,8 @@ created: "<YYYY-MM-DD>"
 <!-- The chosen approach, stated plainly. One paragraph. -->
 
 ## Details
-<!-- How the approach works — enough for the architecture brief to map it onto the codebase.
-     Design-level, not file-level (file names are the brief's job). -->
+<!-- How the approach works — enough for the technical RFC to map it onto the codebase.
+     Design-level, not file-level (file names are the technical RFC's job). -->
 
 ## Scope / non-goals
 <!-- What's in this RFC; what's deliberately out (becomes future RFCs). -->
@@ -36,11 +37,11 @@ created: "<YYYY-MM-DD>"
 <!-- Options weighed + why rejected. Keep honest. -->
 
 ## Open questions
-<!-- Anything unresolved the brief or decomposition must settle. -->
+<!-- Anything unresolved the technical RFC or decomposition must settle. -->
 
 ## Consequences
 <!-- What changes downstream; any new constraint this introduces. -->
 
 ---
-*Next stage:* an **architecture brief** (`architecture-brief.md`) maps this onto the existing repo.
+*Next stage:* a **technical RFC** (`technical-rfc.md`) maps this onto the existing repo.
 Gate before then: **approve RFC** (human).

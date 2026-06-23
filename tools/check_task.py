@@ -9,7 +9,7 @@ the v2 eval harness).
 
 Three checks over the build-critical body sections (Goal, Acceptance criteria, Context & links, Test
 expectations) — frontmatter is provenance and is ignored:
-  1. slice present     — "Context & links" carries real content (the architecture-brief slice), not an
+  1. slice present     — "Context & links" carries real content (the technical-RFC slice), not an
                          empty placeholder.
   2. no Obsidian pointer — no `[[wikilink]]` or `obsidian://` URL in a build-critical section (the dev
                          can't follow it).
@@ -83,7 +83,7 @@ def check_task(text, *, repo_root, base_ref=None, path_exists=None):
 
     ctx = _strip_comments(sections.get("context & links", "")).strip()
     if not ctx:
-        errors.append("Context & links is empty — paste the architecture-brief slice "
+        errors.append("Context & links is empty — paste the technical-RFC slice "
                       "(the task must be self-contained)")
 
     for name in BUILD_CRITICAL:
