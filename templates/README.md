@@ -45,5 +45,5 @@ one lightweight "review the plan" gate above them.
 ## A note on names
 
 A **feature RFC** (these templates) is a product-feature design that spawns task-Issues — distinct from
-the factory's **process RFCs** in `docs/rfcs/`. And "factory" here means the **dev factory** (this repo),
+the factory's own **technical RFCs** (0001–0005) in `docs/rfcs/`. And "factory" here means the **dev factory** (this repo),
 not the robot-manufacturing "factory" of the product vision.

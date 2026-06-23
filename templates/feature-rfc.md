@@ -13,7 +13,7 @@ created: "<YYYY-MM-DD>"
 # Feature RFC — <feature name>
 
 > This is a **feature RFC** (a product-feature design that spawns task-Issues), distinct from the
-> factory's *process RFCs* (`yellow-robots/factory/docs/rfcs/`). Gate: review the **outline** of this
+> factory's own *technical RFCs* (`yellow-robots/factory/docs/rfcs/`). Gate: review the **outline** of this
 > RFC before it's fully written — the cheap checkpoint.
 
 ## Outline (for the pre-gate)
