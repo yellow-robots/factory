@@ -3,7 +3,7 @@
 The **build machinery** for Yellow Robots: it takes a *Ready* ticket to a *reviewed PR*, autonomously,
 across any YR repo. The robot (a probabilistic LLM) proposes; deterministic gates dispose.
 
-This is **infrastructure**, deliberately separate from the product repos it builds (`platform`, `mcp`,
+This is **infrastructure**, deliberately separate from the product repos it builds (`yellow-robots`, `mcp`,
 `website`). Each product repo is self-contained and declares *how* to build itself; the factory supplies
 *the pipeline*.
 
@@ -41,8 +41,8 @@ The factory is a sibling of the repos it builds, under one workspace root:
 
 ## Status
 
-Extracted from `platform` and made **repo-agnostic**: the runner discovers its workspace relative to
+Extracted from `yellow-robots` and made **repo-agnostic**: the runner discovers its workspace relative to
 itself (`YR_WORKSPACE`, default `factory/../..`), resolves each target repo as `$YR_WORKSPACE/<name>`, and
 reads that repo's build config from a per-repo `.yr/factory.toml` (`check_cmd` / `model` / `base_ref`;
-explicit env overrides it). 63 tests green. **Remaining:** retire `platform`'s now-duplicated copy of the
+explicit env overrides it). 63 tests green. **Remaining:** retire `yellow-robots`'s now-duplicated copy of the
 tooling, and repoint the live dispatch service at the workspace-anchored factory.

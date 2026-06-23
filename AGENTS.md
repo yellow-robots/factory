@@ -16,7 +16,7 @@ system** — you only see one issue and one worktree, but the rules below govern
 (`tools/dev-runner.sh`) that build YR repos like software — branch → PR → CI gate → merge.
 
 It is **infrastructure, separate from the product repos it builds.** The products are their own repos
-(`platform` = robot artifacts; `mcp`; `website`), each self-contained: clone one and you have everything
+(`yellow-robots` = robot artifacts; `mcp`; `website`), each self-contained: clone one and you have everything
 to develop it by hand. A product repo declares *how* to build itself (a `.yr/factory.toml` manifest — see
 Conventions); the factory provides *the machinery*. No product repo depends on another, and none contains
 the factory.
