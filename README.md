@@ -34,7 +34,7 @@ The factory is a sibling of the repos it builds, under one workspace root:
 ```
 /opt/yellow-robots/
   factory/    ← this repo (the machinery)
-  platform/   ← robot artifacts: schemas, robots, validate, promote
+  yellow-robots/ ← robot artifacts: schemas, robots, validate, promote
   mcp/        ← (to come)
   website/    ← (to come)
 ```
