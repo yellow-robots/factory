@@ -37,6 +37,13 @@ one lightweight "review the plan" gate above them.
   target's home**: a `[[wikilink]]` when the target is in Obsidian, a URL/`#issue` when it's on GitHub.
   `check_links.py` resolves both via our tooling (not the platform's renderer), so a wikilink is correct
   even inside a GitHub-homed artifact.
+- **Draft frontmatter ≠ the filed Issue** — a GitHub-homed artifact is *authored* as a draft carrying
+  `source_*` frontmatter so `check_links` can verify the crossing-link **before** filing, then **filed as
+  clean prose** — never raw YAML (GitHub doesn't render frontmatter; it shows as noise). The **task** files
+  through the Issue **form** (`.github/ISSUE_TEMPLATE/task.yml`), which strips frontmatter structurally; the
+  **technical RFC** files *free-form* on the epic Issue, so its template marks the fileable body explicitly
+  and carries provenance as a one-line **Source** citation (a readable path, up to the feature-RFC only). The
+  draft is the linter's input; the Issue is the deliverable.
 - **Gates review the plan, not the output** — approve the outline before a stage commits; cheap control.
 - **Self-contained = inlinable** — templates are written so a stage's content can later be inlined into a
   spawned agent's payload (a spawned agent gets a deliberately minimal, constructed context), so automating a
