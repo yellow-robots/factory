@@ -58,8 +58,11 @@ esac
 exit 0
 '''
 # check gate stub (runs with cwd = worktree): pass, unless STUB_CHECK_FAIL and no 'repaired' marker yet.
+# STUB_CHECK_ENVFAIL=<code> makes it exit with that code (use 126/127) to simulate a harness that cannot
+# EXECUTE — an environment failure, not a test failure — which no 'repaired' marker can clear.
 CHECK_STUB = '''#!/usr/bin/env bash
 echo CHECK >> "$STUB_TIMELINE"
+[ -n "${STUB_CHECK_ENVFAIL:-}" ] && exit "${STUB_CHECK_ENVFAIL}"
 if [ -n "${STUB_CHECK_FAIL:-}" ] && [ ! -f repaired ]; then exit 1; fi
 exit 0
 '''
@@ -84,9 +87,13 @@ def _stubs(binp):
     _exec(binp / "check.sh", CHECK_STUB)
 
 
-def _issue(tmp, *, number=7, title="Do a thing", body="### Acceptance criteria\n- [ ] it works\n", state="OPEN"):
+def _issue(tmp, *, number=7, title="Do a thing", body="### Acceptance criteria\n- [ ] it works\n",
+           state="OPEN", issue_type="Task"):
     p = tmp / "issue.json"
-    p.write_text(json.dumps({"number": number, "title": title, "state": state, "body": body}))
+    # issueType mirrors `gh issue view --json issueType`: an object with a .name, or null when untyped.
+    d = {"number": number, "title": title, "state": state, "body": body,
+         "issueType": ({"name": issue_type} if issue_type else None)}
+    p.write_text(json.dumps(d))
     return p
 
 
@@ -184,6 +191,33 @@ def test_project_query_failure_is_clear(tmp_path):
     assert not _ran(_timeline(tmp_path))
 
 
+def test_gate_rejects_non_task_type(tmp_path):
+    """A non-Task issue (e.g. a Feature/epic accidentally set Ready) is refused at the gate — the
+    runner builds Tasks only; epics are tracked as native sub-issue parents, never built (footgun F3)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, issue_type="Feature"))
+    assert r.returncode == 3 and "task" in r.stderr.lower()
+    tl = _timeline(tmp_path); assert not _ran(tl) and not _edits(tl)   # no stages, no state writes
+
+
+def test_gate_rejects_untyped_issue(tmp_path):
+    """An issue with no Issue Type at all is also refused (fail closed: build only explicit Tasks)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, issue_type=None))
+    assert r.returncode == 3 and "task" in r.stderr.lower()
+    assert not _ran(_timeline(tmp_path)) and not _edits(_timeline(tmp_path))
+
+
+def test_gate_type_check_can_be_disabled(tmp_path):
+    """REQUIRE_ISSUE_TYPE='' disables the Type gate for repos that don't use Issue Types (repo-agnostic
+    escape hatch). A Feature then clears the gate — shown read-only via --dry-run."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, issue_type="Feature"); env["REQUIRE_ISSUE_TYPE"] = ""
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["ready"] is True
+
+
 # ============ needs-info / dry-run ============
 
 def test_needs_info_on_empty_criteria(tmp_path):
@@ -265,6 +299,64 @@ def test_check_fail_unrepaired_blocks(tmp_path):
     assert "REPAIR" in tl                        # it tried once
     assert "REASONFIELD" in " ".join(_edits(tl)) and "Blocked" in " ".join(_edits(tl))
     assert "https://stub/pr/1" not in r.stdout   # no PR
+
+
+def test_check_env_failure_blocks_without_repair(tmp_path):
+    """A check that cannot EXECUTE (exit 126 — e.g. a venv console-script whose shebang points at a
+    moved/rebuilt interpreter) is an ENVIRONMENT failure, not a code failure. It must fail closed
+    immediately — NO LLM repair attempt (which could paper it over, e.g. pip --break-system-packages)
+    — and be reported as an environment/toolchain problem (footgun F5)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Broken toolchain"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "REPAIR" not in tl                          # the LLM repair stage must NOT be invoked
+    assert tl.count("CHECK") == 1                      # checked once, failed closed (no second check)
+    edits = " ".join(_edits(tl))
+    assert "REASONFIELD" in edits and "Blocked" in edits                  # Reason=Blocked set
+    assert "environment" in r.stderr.lower() or "toolchain" in r.stderr.lower()
+    assert _comments(tl)                               # the env failure is reported on the issue
+    assert "https://stub/pr/1" not in r.stdout         # no PR
+
+
+def test_check_env_failure_127_also_blocks_without_repair(tmp_path):
+    """The other 'cannot execute' code, 127 (command not found), is treated the same way."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Missing tool"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "127"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "REPAIR" not in tl and tl.count("CHECK") == 1
+    assert "Blocked" in " ".join(_edits(tl)) and "https://stub/pr/1" not in r.stdout
+
+
+def test_check_env_failure_after_repair_blocks_as_env(tmp_path):
+    """A CODE failure (exit 1) earns the one repair attempt, but if the toolchain then breaks (exit 126
+    on the re-check) it is reported as an ENVIRONMENT failure — not the generic 'checks still failing'."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Repairs into a broken env"), work)
+    # check.sh: first call exits 1 (code failure) so a repair fires; the repair exports a marker the
+    # stub reads to switch to exit 126 on the re-check (toolchain now 'broken').
+    envfail_after = '''#!/usr/bin/env bash
+echo CHECK >> "$STUB_TIMELINE"
+if [ -f repaired ]; then exit 126; fi
+exit 1
+'''
+    _exec(binp / "check.sh", envfail_after)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "REPAIR" in tl and tl.count("CHECK") == 2   # code failure earned one repair, then re-checked
+    assert "environment" in r.stderr.lower() or "toolchain" in r.stderr.lower()
+    assert "still failing" not in r.stderr.lower()     # reported as env, not the generic code-failure message
+    assert "https://stub/pr/1" not in r.stdout
 
 
 def test_no_change_blocks(tmp_path):

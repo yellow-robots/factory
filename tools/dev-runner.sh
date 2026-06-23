@@ -4,12 +4,12 @@
 # via native fields — not labels). Type is the native Issue Type (set by the Issue Form); hierarchy is
 # native sub-issues.
 #
-# Pipeline (each stage a separate cold `claude -p` — builder!=verifier): gate (Status==Ready) ->
+# Pipeline (each stage a separate cold `claude -p` — builder!=verifier): gate (Status==Ready, Type==Task) ->
 #   claim (Status=In Progress) -> fresh worktree -> implement -> independent test (boundary-guarded:
 #   tester writing outside tests/ -> Blocked) -> deterministic check gate (CHECK_CMD, one repair) ->
 #   independent review (VERDICT gate, one repair) -> commit/push -> open PR -> Status=In Review.
 #   empty acceptance criteria / unknown model override -> Status=Backlog + Reason=Needs-info (no LLM).
-#   any stage failure                                  -> Reason=Blocked + comment (failure visible, F3).
+#   any stage failure                                  -> Reason=Blocked + comment (failure stays visible).
 #   merge closes the issue; Projects' close->Done sets Status=Done natively.
 # Dispatch: n8n polls Ready -> tools/dispatch.py -> this runner (RFC 0004). Operating model: AGENTS.md.
 #
@@ -25,6 +25,9 @@ set -euo pipefail
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"; GH_BIN="${GH_BIN:-gh}"; GIT_BIN="${GIT_BIN:-git}"
 MODEL="${MODEL:-claude-sonnet-4-6}"; HARD_MODEL="${HARD_MODEL:-claude-opus-4-8}"; EFFORT="${EFFORT:-high}"
 DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
+# DoR Type gate: build only this native Issue Type. Empty disables it (repos without Issue Types).
+# Use the no-colon form so an explicit REQUIRE_ISSUE_TYPE='' stays empty (a true opt-out), not defaulted.
+REQUIRE_ISSUE_TYPE="${REQUIRE_ISSUE_TYPE-Task}"
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The factory builds sibling repos under one workspace root, discovered relative to this script
@@ -93,11 +96,13 @@ BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#ori
 CHECK_CMD="${CHECK_CMD:-${MF_CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest tests/ -q}}"
 
 # ---- fetch issue (state/title/body) ----
-ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state 2>/dev/null)" \
+ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state,issueType 2>/dev/null)" \
   || die "could not fetch issue #$ISSUE from $REPO"
 TITLE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("title","") or "")')"
 BODY="$(printf '%s' "$ISSUE_JSON"  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("body","") or "")')"
 STATE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state","") or "")')"
+# native Issue Type name ("Task"/"Bug"/"Feature"), or "" when the issue is untyped (issueType: null).
+ITYPE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; t=json.load(sys.stdin).get("issueType") or {}; print((t.get("name","") if isinstance(t,dict) else "") or "")')"
 
 # ---- find the project item id + current Status (status is project-item-resident, RFC 0003) ----
 ITEMS_JSON="$("$GH_BIN" project item-list "$PROJECT_NUMBER" --owner "$OWNER" --limit 500 --format json 2>/dev/null)" \
@@ -123,6 +128,12 @@ comment(){ "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$1" >/dev/nul
 [ "$STATE" = "OPEN" ] || gate "issue #$ISSUE is not open (state: ${STATE:-unknown})"
 [ -n "$ITEM_ID" ]     || gate "issue #$ISSUE is not in project #$PROJECT_NUMBER"
 [ "$ITEM_STATUS" = "Ready" ] || gate "issue #$ISSUE is not Ready (Status: ${ITEM_STATUS:-none})"
+# Type gate: build Tasks only. A Feature/epic accidentally set Ready must NOT be built — epics are native
+# sub-issue parents, not build units. Case-insensitive; REQUIRE_ISSUE_TYPE='' opts out (repos w/o types).
+if [ -n "$REQUIRE_ISSUE_TYPE" ]; then
+  [ "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$REQUIRE_ISSUE_TYPE" | tr '[:upper:]' '[:lower:]')" ] \
+    || gate "issue #$ISSUE is not Type=$REQUIRE_ISSUE_TYPE (Type: ${ITYPE:-none}) — the runner builds Tasks only; track epics/Features as sub-issue parents, not build units."
+fi
 
 # acceptance-criteria block: from its heading to the next heading of equal-or-higher level (#, ##, ###).
 AC="$(printf '%s\n' "$BODY" | awk '
@@ -235,10 +246,21 @@ fi
 # so put the base repo's toolchain dirs on PATH: a manifest names tools plainly (`pytest`, `vitest`) and
 # the runner supplies them, instead of hardcoding a venv path the worktree doesn't have.
 run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
-if ! run_checks; then
-  log "checks failed — one repair attempt"
+# Distinguish a CODE failure (the harness ran and tests failed) from an ENVIRONMENT failure (the harness
+# could not execute at all: 127=command not found, 126=found-but-not-executable — e.g. a venv whose
+# console-script shebang points at a moved/rebuilt interpreter). An env failure is NOT the implementer's
+# to fix; handing it to the LLM repair invites host-mutating "fixes" (pip --break-system-packages) that
+# paper over it. Fail closed and report it as an environment problem, never an LLM repair.
+is_env_failure(){ [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; }
+env_blocked(){ fail_blocked "check command could not execute (exit $1)$2 — an ENVIRONMENT/toolchain failure, not a code failure. The check harness (e.g. $BASE_REPO/.venv) is missing or broken; rebuild it, then set Ready again — do not paper over it. (log: $RUN_DIR/checks.log)"; }
+CHECK_RC=0; run_checks || CHECK_RC=$?
+if is_env_failure "$CHECK_RC"; then env_blocked "$CHECK_RC" ""; fi
+if [ "$CHECK_RC" -ne 0 ]; then
+  log "checks failed (exit $CHECK_RC) — one repair attempt"
   run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" || true
-  run_checks || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
+  CHECK_RC=0; run_checks || CHECK_RC=$?
+  if is_env_failure "$CHECK_RC"; then env_blocked "$CHECK_RC" " after the repair attempt"; fi
+  [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
 fi
 
 # ---- review stage (independent cold process: quality verdict on the diff; gate = no blockers) ----
@@ -266,7 +288,7 @@ if "$GIT_BIN" -C "$WT" diff --cached --quiet; then fail_blocked "no changes prod
 PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (model: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$RESOLVED_MODEL")"
 PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")" \
   || fail_blocked "pr create failed"
-"$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict (F3)
+"$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
 
 # ---- PR open -> Status: In Review ----
 set_status "In Review"

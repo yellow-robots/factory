@@ -73,8 +73,10 @@ the runner builds against that repo. Lean backlog: we do **not** park no-foresee
 `tools/dev-runner.sh <issue#> --repo <owner/name>` runs one Ready ticket through, each stage a **separate
 cold `claude -p` process** — independence by construction (builder ≠ verifier):
 
-1. **DoR gate** — issue Open + on the board + Status=Ready + non-empty acceptance criteria. Refuses before
-   any LLM call otherwise. No writes on refusal.
+1. **DoR gate** — issue Open + on the board + Status=Ready + **Type=Task** + non-empty acceptance criteria.
+   Refuses before any LLM call otherwise. No writes on refusal. (Type=Task stops an epic/Feature accidentally
+   set Ready from being built — epics are sub-issue parents, not build units; `REQUIRE_ISSUE_TYPE=''` opts
+   out for repos that don't use Issue Types.)
 2. **Claim** — Status → In Progress (the single-flight lock: the task leaves the Ready poll).
 3. **Worktree** — a fresh `git worktree` off `origin/main` of the **target repo**. The implement stage runs
    `--permission-mode bypassPermissions` because the *worktree + scoped creds are the walls*, not a prompt
@@ -85,7 +87,9 @@ cold `claude -p` process** — independence by construction (builder ≠ verifie
    from the implementation. **Boundary guard:** if the tester changes anything outside the repo's test
    tree, the run is **Blocked and raised** (no auto-revert) and the offending diff saved.
 6. **Check gate** — the *runner* (not an LLM) runs the repo's check command (its `.yr/factory.toml`
-   `check_cmd`). One repair attempt on failure.
+   `check_cmd`). One repair attempt on a **code** failure; an **environment** failure (the check can't
+   execute — exit 126/127, e.g. a broken venv) is reported as Blocked *without* a repair, so a broken
+   toolchain is never papered over.
 7. **Review (independent)** — a cold process emits `VERDICT: APPROVE` or `REQUEST_CHANGES`. One repair
    attempt, then the verdict gates the PR (fail-closed: anything but a clean APPROVE blocks).
 8. **PR** — commit, push `task/<id>-<slug>`, open the PR, Status → In Review, post the review.
