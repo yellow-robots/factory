@@ -5,7 +5,7 @@ status: draft              # draft | in-review | approved | superseded
 stage: 3
 home: epic-issue           # canonical home = the epic GitHub Issue; this file is the draft/mirror; slices → task Issues
 source_feature_rfc: "[[<feature-rfc note>]]"   # the feature RFC lives in Obsidian → wikilink; resolved by our tooling/CLI, not GitHub's renderer
-target_repo: platform      # platform | website
+target_repo: yellow-robots      # yellow-robots | website
 base_ref: origin/main      # the tree this technical RFC was written against
 created: "<YYYY-MM-DD>"
 ---

@@ -6,7 +6,7 @@ stage: 2
 home: obsidian
 source_spec: "[[<product-spec note>]]"   # resolvable wikilink — crossing-link checked
 decision_makers: [jose, claude]
-target_repo: platform      # platform | website
+target_repo: yellow-robots      # yellow-robots | website
 created: "<YYYY-MM-DD>"
 ---
 

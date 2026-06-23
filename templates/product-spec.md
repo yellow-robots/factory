@@ -5,7 +5,7 @@ status: draft              # draft | in-review | ready | superseded
 stage: 1
 home: obsidian
 source_intent: "[[<one-line intent note>]]"   # resolvable wikilink — the crossing-link checker asserts it exists
-target_repo: platform      # platform | website
+target_repo: yellow-robots      # yellow-robots | website
 created: "<YYYY-MM-DD>"
 ---
 

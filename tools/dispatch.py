@@ -8,7 +8,7 @@ as a YR MCP tool later (one core, two faces).
 
 Config (env): DISPATCH_TOKEN (bearer, required to start the HTTP server), DISPATCH_BIND (default
 127.0.0.1), DISPATCH_PORT (default 8770), DEV_RUNNER (default dev-runner.sh next to this file),
-DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock), DEFAULT_REPO (default yellow-robots/platform).
+DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock), DEFAULT_REPO (default yellow-robots/yellow-robots).
 """
 import hmac
 import json
@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 SELF = pathlib.Path(__file__).resolve()
 DEV_RUNNER = os.environ.get("DEV_RUNNER", str(SELF.parent / "dev-runner.sh"))
 LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
-DEFAULT_REPO = os.environ.get("DEFAULT_REPO", "yellow-robots/platform")
+DEFAULT_REPO = os.environ.get("DEFAULT_REPO", "yellow-robots/yellow-robots")
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
 

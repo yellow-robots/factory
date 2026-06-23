@@ -7,7 +7,7 @@ source_feature_rfc: "[[<feature-rfc note>]]"   # feature RFC lives in Obsidian �
 source_technical_rfc: "<epic Issue # or URL>"  # technical RFC lives on GitHub → URL/#issue
 size: "S — one PR"         # exact form options: "S — one PR" | "M — one PR, careful" | "Too big — split into sub-issues"
 model: sonnet              # sonnet (default) | opus — for opus, also put `model: opus` in the Context body (the runner scans the body)
-target_repo: platform
+target_repo: yellow-robots
 ---
 
 # Task — <one-line title>
