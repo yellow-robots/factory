@@ -47,7 +47,7 @@ runs without a human. We hold those gates ourselves; we do not auto-promote or a
 ### Task lifecycle (state machine — RFC 0003)
 
 State lives on **native GitHub primitives**, never labels:
-- **Type** = Issue Type (`Task` / `Bug` / `Feature`), set by the Issue Form.
+- **Type** = Issue Type (`Task` / `Bug` / `Feature`; an `Epic` type exists but is reserved — the epic/technical-RFC node stays `Feature` until there's real value), set by the Issue Form.
 - **Hierarchy** = native sub-issues (`gh issue create --parent`).
 - **Status** = a Projects single-select field, and *is* the state machine:
   `Backlog → Ready → In Progress → In Review → Done`.
@@ -65,6 +65,18 @@ State lives on **native GitHub primitives**, never labels:
 One shared board — **"Yellow Robots — Dev"** — spans every product repo; each item carries its repo, and
 the runner builds against that repo. Lean backlog: we do **not** park no-foreseeable-start tasks. Drop them
 (close as *not planned*); important ones resurface.
+
+**Board intake — epics host their tasks ("Model E", validated 2026-06-23).** The filtered repo auto-add is
+**off**; intake is hierarchy-driven. Add the **epic** (the technical-RFC Issue) to the board once
+(`gh project item-add`, or the UI) and its **Task sub-issues auto-add at `Backlog`** — confirmed both
+orderings: boarding an epic pulls in its *existing* children, and a child created under an *already-boarded*
+epic flows in too (the *Auto-add sub-issues* → *item-added → Backlog* workflows). So the board holds **epics
+*and* their tasks**, but `Status` is meaningful only for tasks; an epic just rests at `Backlog` until it's
+closed → `Done`. This is safe because the runner builds **`Type=Task` only** (the DoR Type gate) — an epic
+fat-fingered to `Ready` is refused, never built. Read the board via a **group-by-parent** view (roadmap)
+and/or a `-type:Feature` filter (tasks only); epic progress (`n of m done`) is free from native sub-issues.
+Gotcha: `gh project item-list` is eventually-consistent (can lag creation by ~a minute) — the issue-side
+`projectItems` is the authoritative read.
 
 ---
 
