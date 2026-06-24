@@ -155,7 +155,7 @@ runner. Polling (not webhooks) is deliberate — self-healing, no missed events.
 - **Workspace & per-repo config:** the factory finds its workspace relative to itself (`YR_WORKSPACE`,
   default `factory/../..`) and resolves each target repo's checkout as `$YR_WORKSPACE/<name>`. Build
   specifics live in the repo, not the factory — a `.yr/factory.toml` manifest declaring `check_cmd`
-  (yellow-robots → `pytest tests/ -q`, website → `npm test`), default `model` (`opus`/`sonnet`), and
+  (yellow-robots → `pytest tests/ -q`, website → `python3 tools/check.py`), default `model` (`opus`/`sonnet`), and
   `base_ref`. The runner runs the check in the ephemeral worktree with the repo's `.venv/bin` and
   `node_modules/.bin` on PATH, so `check_cmd` names tools plainly (no venv path). Precedence: explicit env
   > manifest > built-in default.
