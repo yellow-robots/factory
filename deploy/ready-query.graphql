@@ -8,7 +8,7 @@ query {
     projectV2(number: 1) {
       items(first: 100) {
         nodes {
-          content { ... on Issue { number state } }
+          content { ... on Issue { number state repository { nameWithOwner } } }
           status: fieldValueByName(name: "Status") {
             ... on ProjectV2ItemFieldSingleSelectValue { name }
           }
