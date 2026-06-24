@@ -616,3 +616,24 @@ def test_check_runs_with_base_repo_venv_on_path(tmp_path):
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
     assert marker.exists()              # the base repo's venv pytest was found on PATH and ran
+
+
+def test_manifest_read_from_base_ref_not_stale_working_tree(tmp_path):
+    """The manifest comes from origin/main (the build's base ref), not the base checkout's working
+    tree — so a checkout that has drifted behind origin (e.g. a shared/live dev workspace that never
+    pulled the manifest merge) still builds with the right check_cmd, read from the ref."""
+    work, _ = _make_repo(tmp_path)
+    (work / ".yr").mkdir(); (work / ".yr" / "factory.toml").write_text('check_cmd = "echo MANIFEST_FROM_REF"\n')
+    _git(["add", "-A"], work); _git(["commit", "-q", "-m", "add manifest"], work)
+    _git(["push", "-q", "origin", "main"], work)
+    _git(["reset", "--hard", "HEAD~1"], work)            # working tree drifts behind origin/main
+    assert not (work / ".yr" / "factory.toml").exists()  # present only on the ref now
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Manifest from ref"), work)
+    del env["CHECK_CMD"]                                  # fall back to the manifest's check_cmd
+    env.update({"STUB_CLAUDE_CHANGE": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    checks_log = list((tmp_path / "drhome" / "runs").glob("5-*/checks.log"))[0].read_text()
+    assert "MANIFEST_FROM_REF" in checks_log             # ran the ref's check_cmd, not the .venv default
+    assert "https://stub/pr/1" in r.stdout               # proceeded to a PR

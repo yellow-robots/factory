@@ -78,16 +78,20 @@ NAME="${REPO#*/}"
 BASE_REPO="${BASE_REPO:-$YR_WORKSPACE/$NAME}"   # checkout convention: $YR_WORKSPACE/<name> (override: BASE_REPO)
 # Per-repo build config lives in the repo, not the factory: .yr/factory.toml (check_cmd / model / base_ref).
 MANIFEST="$BASE_REPO/.yr/factory.toml"
+# Read the manifest from the build's base ref (origin/main), NOT the base checkout's working tree:
+# the worktree is cut from that ref, so the manifest must come from there too — a drifted/dirty
+# checkout (e.g. one doubling as a live dev workspace) then can't feed a stale or missing manifest.
+# Fall back to the working-tree file when the ref read yields nothing (a repo not yet pushed; or the
+# dry-run's non-git manifest dir).
+MANIFEST_REF="${MANIFEST_REF:-origin/main}"
+MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_REF:.yr/factory.toml" 2>/dev/null || true)"
+[ -z "$MF_RAW" ] && [ -f "$MANIFEST" ] && MF_RAW="$(cat "$MANIFEST")"
 MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""
-if [ -f "$MANIFEST" ]; then
-  _mf_out="$(python3 - "$MANIFEST" <<'PY' 2>/dev/null
-import sys, tomllib
-with open(sys.argv[1], "rb") as f: d = tomllib.load(f)
-for k in ("check_cmd", "model", "base_ref"):
-    v = d.get(k) or ""
-    print(str(v).replace("\n", " "))
-PY
-)" || log "warn: could not parse $MANIFEST"
+if [ -n "$MF_RAW" ]; then
+  _mf_out="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
+d=tomllib.loads(sys.stdin.read())
+for k in ("check_cmd","model","base_ref"): print(str(d.get(k) or "").replace("\n"," "))' 2>/dev/null)" \
+    || log "warn: could not parse manifest from $MANIFEST_REF"
   mapfile -t _mf <<<"$_mf_out"
   MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"
 fi
