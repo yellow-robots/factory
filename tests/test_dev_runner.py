@@ -51,7 +51,8 @@ case "$args" in
   *"REQUESTED CHANGES"*) echo REVIEWFIX >> "$STUB_TIMELINE"; [ -n "${STUB_REVIEWFIX_CRASH:-}" ] && exit 7; [ -z "${STUB_REVIEW_NOFIX:-}" ] && : > review_repaired ;;
   *TESTER*)             echo TEST   >> "$STUB_TIMELINE"
                         [ -n "${STUB_TESTER_PROD_CHANGE:-}" ] && printf 'by tester\\n' > tester_prod.txt
-                        [ -n "${STUB_TESTER_TEST_CHANGE:-}" ] && { mkdir -p tests && printf 'pass\\n' > tests/test_stub_output.py; } ;;
+                        [ -n "${STUB_TESTER_TEST_CHANGE:-}" ] && { mkdir -p tests && printf 'pass\\n' > tests/test_stub_output.py; }
+                        [ -n "${STUB_TESTER_ARTIFACT_CHANGE:-}" ] && { mkdir -p tools/__pycache__ && printf 'bytecode\\n' > tools/__pycache__/check.cpython-314.pyc; } ;;
   *"tests FAIL"*)       echo REPAIR >> "$STUB_TIMELINE"; [ -z "${STUB_REPAIR_NOFIX:-}" ] && : > repaired ;;
   *)                    echo IMPL   >> "$STUB_TIMELINE"; [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\\n' > feature.txt ;;
 esac
@@ -485,6 +486,20 @@ def test_tester_boundary_guard_allows_test_files(tmp_path):
     assert r.returncode == 0, r.stderr
     tl = _timeline(tmp_path)
     assert "TEST" in tl and "CHECK" in tl and "REVIEW" in tl        # all stages proceeded
+    assert "https://stub/pr/1" in r.stdout                          # PR opened
+
+
+def test_tester_boundary_guard_ignores_build_artifacts(tmp_path):
+    """A build artifact the tester incidentally produces (e.g. __pycache__/*.pyc from running the
+    gate) is not an implementation change and must not trip the guard: the run proceeds to a PR."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Boundary guard artifact"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_TESTER_TEST_CHANGE": "1", "STUB_TESTER_ARTIFACT_CHANGE": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "TEST" in tl and "CHECK" in tl and "REVIEW" in tl        # all stages proceeded past the guard
     assert "https://stub/pr/1" in r.stdout                          # PR opened
 
 

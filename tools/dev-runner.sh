@@ -232,7 +232,11 @@ run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria
 "$GIT_BIN" -C "$WT" add -A
 TESTER_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
 TESTER_DIFF="$("$GIT_BIN" -C "$WT" diff-tree --no-commit-id -r --name-only "$IMPL_TREE" "$TESTER_TREE")"
-TESTER_OFFENDERS="$(printf '%s' "$TESTER_DIFF" | grep -v '^tests/' || true)"
+# Build artifacts (e.g. __pycache__/*.pyc from running the gate) are compiled FROM source the tester
+# cannot change, so they can't smuggle an implementation change past builder≠verifier — exclude them
+# from the offender set rather than false-block on them (a repo's .gitignore is the first line; this
+# is the backstop so a repo that forgets it still builds).
+TESTER_OFFENDERS="$(printf '%s' "$TESTER_DIFF" | grep -v '^tests/' | grep -vE '(^|/)__pycache__/|\.pyc$' || true)"
 if [ -n "$TESTER_OFFENDERS" ]; then
   OFFENDER_LIST="$(printf '%s\n' "$TESTER_OFFENDERS" | tr '\n' ' ' | sed 's/ *$//')"
   # preserve WHAT the tester changed (not just which files) before fail_blocked cleans the
