@@ -18,7 +18,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/dev-runner.sh` | the staged pipeline: gate → implement → independent test → check → independent review → PR (RFC 0002) — builder ≠ verifier, by construction |
 | `tools/textutil.py` | small shared text helpers |
 | `deploy/` | the dispatch systemd service, the n8n workflow, and switch-on notes (`DISPATCH.md`) |
-| `docs/rfcs/` | canonical RFCs — 0001 workflow, 0002 runner, 0003 task state, 0004 dispatch, 0005 upper-pipeline, 0006 multi-repo |
+| `docs/rfcs/` | canonical RFCs — 0001 workflow, 0002 runner, 0003 task state, 0004 dispatch, 0005 upper-pipeline, 0006 multi-repo, 0007 autonomous-merge |
 | `tests/` | pytest suite (stubbed: no live LLM, no network) |
 
 ## How it runs (one line)
