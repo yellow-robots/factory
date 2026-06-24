@@ -97,7 +97,9 @@ cold `claude -p` process** — independence by construction (builder ≠ verifie
    Opus when the issue body has `model: opus` (allowlisted: `opus`/`sonnet`).
 5. **Test (independent)** — a cold process derives tests from the **acceptance criteria (the spec)**, not
    from the implementation. **Boundary guard:** if the tester changes anything outside the repo's test
-   tree, the run is **Blocked and raised** (no auto-revert) and the offending diff saved.
+   tree, the run is **Blocked and raised** (no auto-revert) and the offending diff saved. Build artifacts
+   (`__pycache__/`, `*.pyc`) are excluded — compiled from source the tester can't change, they can't
+   smuggle an implementation change, so they never count as a violation.
 6. **Check gate** — the *runner* (not an LLM) runs the repo's check command (its `.yr/factory.toml`
    `check_cmd`). One repair attempt on a **code** failure; an **environment** failure (the check can't
    execute — exit 126/127, e.g. a broken venv) is reported as Blocked *without* a repair, so a broken
@@ -130,6 +132,9 @@ runner. Polling (not webhooks) is deliberate — self-healing, no missed events.
   command / the verdict gate) disposes. Nothing reaches `main` without passing a gate a human can trust.
 - **The factory is repo-agnostic.** It builds any registered product repo via that repo's manifest. The
   factory holds *no* product knowledge; a product holds *no* copy of the factory.
+- **The factory builds from git refs, never a mutable working tree.** The code *and* the `.yr/factory.toml`
+  manifest are read from the base ref (`origin/main`), so a base checkout that's stale, dirty, or doubling
+  as a live dev workspace can't affect a build. (Falls back to the working tree only for an un-pushed repo.)
 - **One task = one PR.** If it can't be, it's too big — split into sub-issues.
 - **Docs are consolidated, not accreted.** Update/merge/trim the canonical doc; don't pile a new one next
   to it. This file is that discipline applied to the repo.
