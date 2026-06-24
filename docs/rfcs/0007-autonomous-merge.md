@@ -12,6 +12,8 @@ Removing the gate must not drop *below* the human skim it removes — and should
 
 **Replace the human merge gate with: the deterministic gates pass, and one independent reviewer approves → auto-merge. Humans gate the input (promotion-to-Ready), not the output. Merge ≠ ship.**
 
+*These are the **build** pipeline (RFC 0002), run pre-PR in the worktree — **not** a second gate at merge. Autonomous merge means a green build **merges itself**: we remove the human gate, we don't add a machine one. The runner merges within its **single-flight lock**, so `main` can't move under an in-flight build — which is what keeps "green at build" = "safe at merge" with nothing re-run.*
+
 1. **Deterministic gates — fail-closed.** The repo's `check_cmd` (unit + visual + lint + invariants). An *environment* failure Blocks (RFC 0002 F5); it never papers over a broken toolchain.
 
 2. **She who builds is not she who reviews.** Builder ≠ verifier is already the runner's shape (RFC 0002): the reviewer is a separate **cold `claude -p`** (ACP-delegated), never the builder. Two changes from v1:
@@ -41,6 +43,7 @@ Captured so the aspiration isn't lost; explicitly **out of scope** for the first
 - **Risk-tiering.** More reviewers (or the human exception) for high-risk surfaces (auth, migrations, security); fewer for a copy tweak.
 - **Post-merge safety net.** Auto-revert a merge if a signal on `main` goes red after the fact (a smoke test, or CI that only runs on `main`) — undoing a bad merge that slipped the gate, since no human gated it.
 - **Acceptance criteria as executable tests**, rather than prose the reviewer reads.
+- **Merge-skew guard (concurrency).** Once autonomous builds run in *parallel*, a build that went green against an older `main` isn't guaranteed green after a sibling merges ahead of it. The fix is a merge-queue-style **re-verify only when `main` has moved**, not re-running the gate every time. Not needed while builds are single-flight and serial off `origin/main`.
 
 ## Consequences
 
