@@ -22,10 +22,12 @@ def test_build_task_rejects_non_numeric():
     assert not r["ok"] and calls == []          # rejected up front, nothing spawned
 
 
-def test_build_task_defaults_repo():
+def test_build_task_rejects_missing_repo():
     calls = []
-    r = dispatch.build_task("3", spawn=calls.append, runner="/r", lock="/l")
-    assert r["repo"] == dispatch.DEFAULT_REPO and "--repo" in calls[0]
+    r = dispatch.build_task("3", spawn=calls.append, runner="/r", lock="/l")   # no repo
+    assert not r["ok"] and calls == []                  # fail-closed: no default, nothing spawned
+    r2 = dispatch.build_task("3", "   ", spawn=calls.append)                    # whitespace-only repo
+    assert not r2["ok"] and calls == []
 
 
 def test_build_task_rejects_unicode_digit():
@@ -91,6 +93,12 @@ def test_http_happy_202_spawns_once():
         code, body = _post(url + "/build", {"issue": 5, "repo": "o/r"}, token="secret")
         assert code == 202 and body["dispatched"] and body["issue"] == 5
         assert len(calls) == 1 and calls[0][:2] == ["flock", "-n"] and "5" in calls[0]
+
+
+def test_http_missing_repo_400_no_spawn():
+    with _server() as (url, calls):
+        code, _ = _post(url + "/build", {"issue": 5}, token="secret")   # no repo → fail-closed
+        assert code == 400 and calls == []                              # endpoint refuses a repo-less dispatch
 
 
 def test_http_unicode_digit_400_no_spawn():

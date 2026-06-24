@@ -8,7 +8,8 @@ as a YR MCP tool later (one core, two faces).
 
 Config (env): DISPATCH_TOKEN (bearer, required to start the HTTP server), DISPATCH_BIND (default
 127.0.0.1), DISPATCH_PORT (default 8770), DEV_RUNNER (default dev-runner.sh next to this file),
-DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock), DEFAULT_REPO (default yellow-robots/yellow-robots).
+DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock). Dispatch is fail-closed: every request must
+carry an explicit repo (owner/name) — there is no default repo, so a missing/unroutable repo never builds.
 """
 import hmac
 import json
@@ -22,7 +23,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 SELF = pathlib.Path(__file__).resolve()
 DEV_RUNNER = os.environ.get("DEV_RUNNER", str(SELF.parent / "dev-runner.sh"))
 LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
-DEFAULT_REPO = os.environ.get("DEFAULT_REPO", "yellow-robots/yellow-robots")
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
 
@@ -41,7 +41,9 @@ def build_task(issue, repo=None, *, runner=None, lock=None, spawn=None):
     issue = str(issue).strip()
     if not (issue.isascii() and issue.isdigit()):          # ASCII decimal only — no unicode digits
         return {"ok": False, "error": f"issue must be a decimal number, got {issue!r}"}
-    repo = repo or DEFAULT_REPO
+    repo = (repo or "").strip()
+    if not repo:                                            # fail-closed: no default — every dispatch must route explicitly
+        return {"ok": False, "error": "repo is required (no default); dispatch is fail-closed"}
     if not _REPO_RE.match(repo):                            # owner/name only — no flags/whitespace/metachars
         return {"ok": False, "error": f"invalid repo {repo!r}"}
     # all validation precedes the spawn — a bad input never launches a build.

@@ -112,9 +112,11 @@ Then a **human reviews and merges**. Merge → native close → Done.
 
 ### Dispatch (RFC 0004)
 
-An n8n workflow polls the board every 5 min for `Status=Ready & OPEN` and POSTs each issue (with its repo)
-to a host endpoint (`tools/dispatch.py`, bearer-auth), which `flock`-guards a single run and invokes the
-runner. Polling (not webhooks) is deliberate — self-healing, no missed events. Deploy notes:
+An n8n workflow polls the board every 5 min for `Status=Ready & OPEN` and POSTs each issue **with its
+explicit repo** to a host endpoint (`tools/dispatch.py`, bearer-auth), which `flock`-guards a single run and
+invokes the runner. Dispatch is **fail-closed** (RFC 0006): there is no default repo — a request that can't
+name its `owner/name` repo is refused and logged, never guessed, so a ticket can't be mis-routed into the
+wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed events. Deploy notes:
 [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
 
 ---
@@ -185,3 +187,11 @@ Canonical in `docs/rfcs/`; the Obsidian vault holds the readable mirror.
 - **[0003 — Task state model](docs/rfcs/0003-task-state-model.md)** — native Status/Reason fields; the
   state machine above.
 - **[0004 — Dispatch](docs/rfcs/0004-dispatch.md)** — n8n poll → host endpoint → runner; `build_task` core.
+- **[0005 — The upper pipeline](docs/rfcs/0005-upper-pipeline.md)** — intent → spec → feature RFC →
+  technical RFC → tasks; the airlock between the Obsidian product brain and GitHub build work.
+- **[0006 — Multi-repo factory & website onboarding](docs/rfcs/0006-multi-repo-website-onboarding.md)** —
+  one factory builds many product repos via each repo's `.yr/factory.toml`; one shared board; **fail-closed
+  dispatch** (no default repo). Onboards `website` as a first-class repo.
+- **[0007 — Autonomous merge](docs/rfcs/0007-autonomous-merge.md)** — *accepted, not yet implemented.*
+  Deterministic gates + one stronger independent reviewer → green build self-merges under a merge mutex +
+  skew re-check. The current runner still opens a PR for human merge until this is built.
