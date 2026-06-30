@@ -178,7 +178,8 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
 
 ## RFC index (the why, in depth)
 
-Canonical in `docs/rfcs/`; the Obsidian vault holds the readable mirror.
+`docs/rfcs/` holds the **implemented** technical RFCs. Unimplemented designs live in the Obsidian brain
+(`04 projects/yellow-robots/factory/`) and cross into the repo only once built — no vault mirror of the RFCs.
 
 - **[0001 — Ticket-driven development workflow](docs/rfcs/0001-ticket-driven-dev-workflow.md)** — Obsidian
   vs GitHub split; builder ≠ verifier; the SDLC.
@@ -188,10 +189,8 @@ Canonical in `docs/rfcs/`; the Obsidian vault holds the readable mirror.
   state machine above.
 - **[0004 — Dispatch](docs/rfcs/0004-dispatch.md)** — n8n poll → host endpoint → runner; `build_task` core.
 - **[0005 — The upper pipeline](docs/rfcs/0005-upper-pipeline.md)** — intent → spec → feature RFC →
-  technical RFC → tasks; the airlock between the Obsidian product brain and GitHub build work.
-- **[0006 — Multi-repo factory & website onboarding](docs/rfcs/0006-multi-repo-website-onboarding.md)** —
-  one factory builds many product repos via each repo's `.yr/factory.toml`; one shared board; **fail-closed
-  dispatch** (no default repo). Onboards `website` as a first-class repo.
-- **[0007 — Autonomous merge](docs/rfcs/0007-autonomous-merge.md)** — *accepted, not yet implemented.*
-  Deterministic gates + one stronger independent reviewer → green build self-merges under a merge mutex +
-  skew re-check. The current runner still opens a PR for human merge until this is built.
+  technical RFC → tasks; the airlock. *Being reworked in the brain into the upper-pipeline implementation spec.*
+
+Moved to the brain as unimplemented designs (2026-06-30): **multi-repo / website onboarding** and
+**autonomous merge** (`04 projects/yellow-robots/factory/lower-pipeline/`); the **documentation conventions**
+live in the brain's `conventions.md`. Each crosses back into `docs/rfcs/` only once built.
