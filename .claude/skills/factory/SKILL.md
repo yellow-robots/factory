@@ -16,8 +16,8 @@ The factory builds a software product the way software should be built: in **ite
 A probabilistic LLM proposes; the machine-checked gate disposes.
 
 For workspace layout and the repos, use the **`yellow-robots`** skill first. This skill is the *how*: how to
-take one iteration through the two pipelines. The full documentation model is the brain's **`conventions.md`**
-(`04 projects/yellow-robots/factory/conventions/conventions.md`); the templates are in **`factory/templates/`**;
+take one iteration through the two pipelines. The full documentation model is the brain's **`01-conventions`**
+(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates are in **`factory/templates/`**;
 the deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.
 
 ## Two pipelines, one shape
