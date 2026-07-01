@@ -117,6 +117,44 @@ def test_command_span_with_slash_is_not_treated_as_path(tmp_path):
         repo_root=tmp_path) == []
 
 
+def test_git_ref_in_backticks_is_not_path_checked(tmp_path):
+    # `origin/main` looks like a 2-segment path but is a git ref (no file extension) → skipped
+    _repo_with(tmp_path, "tools/validate.py")
+    assert check_task(
+        _task(context="Edit `tools/validate.py`. Base ref `origin/main`."),
+        repo_root=tmp_path) == []
+
+
+def test_scoped_package_is_not_path_checked(tmp_path):
+    # `@scope/pkg` is an npm package, not a repo path → skipped
+    _repo_with(tmp_path, "tools/validate.py")
+    assert check_task(
+        _task(context="Edit `tools/validate.py`. Depends on `@scope/pkg`."),
+        repo_root=tmp_path) == []
+
+
+def test_host_fragment_is_not_path_checked(tmp_path):
+    # `example.com/a/b` — dot is not in the final segment → not a file path → skipped
+    _repo_with(tmp_path, "tools/validate.py")
+    assert check_task(
+        _task(context="Edit `tools/validate.py`. See `example.com/a/b`."),
+        repo_root=tmp_path) == []
+
+
+def test_url_in_backticks_is_not_path_checked(tmp_path):
+    # a full URL ends in `.html` but carries `://` → not a repo path → skipped
+    _repo_with(tmp_path, "tools/validate.py")
+    assert check_task(
+        _task(context="Edit `tools/validate.py`. Docs at `https://example.com/x.html`."),
+        repo_root=tmp_path) == []
+
+
+def test_dotfile_config_path_is_still_checked(tmp_path):
+    # `.yr/factory.toml` has a real extension on its final segment → still verified (and here, missing)
+    errors = check_task(_task(context="Read `.yr/factory.toml` for the check_cmd."), repo_root=tmp_path)
+    assert any("factory.toml" in e and "exist" in e.lower() for e in errors)
+
+
 def test_path_exists_injection(tmp_path):
     seen = {"tools/ok.py"}
     errors = check_task(

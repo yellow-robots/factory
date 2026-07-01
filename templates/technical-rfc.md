@@ -1,7 +1,7 @@
 ---
 type: technical-rfc
 title: "<feature name>"
-status: draft              # draft | in-review | approved | superseded
+status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
 stage: 3
 home: epic-issue           # canonical home = the epic GitHub Issue; this file is the DRAFT (authoring only)
 source_feature_rfc: "[[<feature-rfc note>]]"   # Obsidian wikilink — resolved by check_links/our CLI, NOT GitHub

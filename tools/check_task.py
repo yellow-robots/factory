@@ -13,9 +13,11 @@ expectations) — frontmatter is provenance and is ignored:
                          empty placeholder.
   2. no Obsidian pointer — no `[[wikilink]]` or `obsidian://` URL in a build-critical section (the dev
                          can't follow it).
-  3. cited paths exist — every backtick-quoted repo path (one containing '/') resolves in the target
-                         repo (at `--base-ref` if given, else the working tree). Bare filenames and
-                         command spans are skipped (ambiguous → no false failures).
+  3. cited paths exist — every backtick-quoted repo *file* path resolves in the target repo (at
+                         `--base-ref` if given, else the working tree). A path = has '/', no spaces,
+                         and a file extension on its last segment. Bare filenames, command spans, git
+                         refs (`origin/main`), scoped packages (`@scope/pkg`) and host/URL fragments
+                         are skipped (ambiguous or not-a-file → no false failures).
 
 Usage: check_task.py <task.md> [--repo-root DIR] [--base-ref REF]
 Exit 0 if self-contained; 1 (with `<file>: <message>` lines) otherwise.
@@ -33,6 +35,7 @@ BUILD_CRITICAL = ("goal", "acceptance criteria", "context & links", "test expect
 _WIKILINK_RE = re.compile(r"\[\[[^\]]+\]\]")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _LINE_SUFFIX_RE = re.compile(r":\d+(?:-\d+)?$")
+_EXT_RE = re.compile(r"/[^/]*\.[A-Za-z0-9]+$")   # last path segment carries a file extension
 
 
 def _strip_comments(s):
@@ -56,11 +59,22 @@ def _sections(body):
 
 
 def _pathify(token):
-    """A backtick span → a repo path to check, or None. Path = has '/', no spaces; line-suffix dropped."""
+    """A backtick span → a repo *file* path to check, or None.
+
+    A path has '/', no spaces, and a file extension on its final segment (`site/index.html`,
+    `tools/x.py`, `.yr/factory.toml`; any `:NN`/`:NN-MM` line suffix is dropped first). Every real
+    task citation points at a file, so requiring an extension skips the look-alikes that aren't repo
+    files to resolve — git refs (`origin/main`), scoped npm packages (`@scope/pkg`), and host/URL
+    fragments (`example.com/a/b`) — killing those false positives without losing a genuine citation.
+    """
     token = _LINE_SUFFIX_RE.sub("", token.strip())
-    if "/" in token and " " not in token:
-        return token
-    return None
+    if " " in token or "/" not in token:
+        return None
+    if token.startswith("@") or "://" in token:   # scoped npm package / URL — not a repo path
+        return None
+    if not _EXT_RE.search(token):                  # git ref, host fragment — no file extension
+        return None
+    return token
 
 
 def _path_exists(path, repo_root, base_ref):

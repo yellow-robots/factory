@@ -1,7 +1,7 @@
 ---
 type: product-spec
 title: "<feature name>"
-status: draft              # draft | in-review | ready | superseded
+status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
 stage: 1
 home: obsidian
 source_intent: "[[<one-line intent note>]]"   # resolvable wikilink — the crossing-link checker asserts it exists
@@ -21,9 +21,13 @@ created: "<YYYY-MM-DD>"
 <!-- The observable behaviour from the user's / product's point of view. No implementation. -->
 
 ## Acceptance criteria (EARS)
-<!-- Easy Approach to Requirements Syntax — each line testable, 1:1 with a future test. -->
+<!-- Easy Approach to Requirements Syntax — each line testable, 1:1 with a future test. Pick the
+     simplest form that fits:
+       Ubiquitous (static content/config — no trigger):  THE SYSTEM SHALL <always-true behaviour>.
+       Event-driven:                                      WHEN <trigger> THE SYSTEM SHALL <behaviour>.
+     (Also available: WHILE <state> …, WHERE <feature> …, IF <unwanted condition> THEN ….) -->
+- THE SYSTEM SHALL <observable behaviour>.
 - WHEN <condition / event> THE SYSTEM SHALL <observable behaviour>.
-- WHEN <…> THE SYSTEM SHALL <…>.
 
 ## Out of scope
 <!-- What this explicitly does NOT do — bounds the RFC. -->

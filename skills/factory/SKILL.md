@@ -15,10 +15,11 @@ The factory builds a software product the way software should be built: in **ite
 *intent* to *shipped code*, with **builder ≠ verifier** and **deterministic gates** that a human can trust.
 A probabilistic LLM proposes; the machine-checked gate disposes.
 
-For workspace layout and the repos, use the **`yellow-robots`** skill first. This skill is the *how*. The
-full documentation model is the brain's **`01-conventions`**
-(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates are in
-**`factory/templates/`**; the deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.
+For workspace layout and the repos, see the workspace **`AGENTS.md`** (org orientation). This skill is the
+*how*. The full documentation model is the brain's **`01-conventions`**
+(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates live in the
+**factory repo** at `templates/` (the installed plugin doesn't carry them — read them from the checkout,
+`factory/templates/` in the YR workspace); the deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.
 
 ## The documentation model (summary — full in `01-conventions`)
 
@@ -34,10 +35,13 @@ no `id` property and no hub notes; the `01` product-spec is the iteration's fron
 
 **Spine** (in order): `product-spec —1:N→ feature-rfc —1:1→ technical-rfc —1:N→ task`.
 **Floor = `product-spec → task(s)`** — the two rfc layers are *earned*, added only when a feature is worth
-arguing or codebase-fit isn't obvious. **Supporting** types (in an iteration, off the spine): `research`
+arguing or codebase-fit isn't obvious. The earned-test is the *default*, not a veto: if a human explicitly
+asks for a layer it would skip, produce it marked *on request — not earned*, or push back recommending the
+floor. **Supporting** types (in an iteration, off the spine): `research`
 (a frozen investigation), `note` (the wildcard — marketing / legal / distilled how-X), `runbook` (ops).
 Homes: `product-spec` + `feature-rfc` in **Obsidian**; `technical-rfc` (on the epic Issue) + `task` + PR on
-**GitHub**. The boundary is crossed **once** at feature-rfc→technical-rfc, and the downstream artifact
+**GitHub**. The boundary is crossed **once** — at feature-rfc→technical-rfc, or on the **floor** at
+product-spec→task (the task cites its parent spec via `source_spec`) — and the downstream artifact
 **cites, never copies**.
 
 ## Working with the vault (load these skills first)
@@ -70,8 +74,9 @@ fully automated once a human promotes a task to Ready.
 ## Run an iteration (the procedure)
 
 1. **product-spec** — in the brain, from `templates/product-spec.md`. WHAT/WHY only, no tech; acceptance
-   criteria in **EARS** (`WHEN <condition> THE SYSTEM SHALL <behavior>`). `type: product-spec`, `status: active`,
-   named `01-<slug>.md` in the iteration folder. Gate: *spec ready* (human).
+   criteria in **EARS** (`WHEN … THE SYSTEM SHALL …`, or ubiquitous `THE SYSTEM SHALL …` for static
+   content). `type: product-spec`, `status: draft` (→ `active` at the gate), named `01-<slug>.md` in the
+   iteration folder. Gate: *spec ready* (human).
 2. **feature-rfc** *(only if earned)* — the approach/decision/scope/non-goals; `source_spec:` the spec.
    Gate: *approve RFC* (human reviews the outline first).
 3. **Cross the airlock → technical-rfc** — author it on the **epic GitHub Issue** from

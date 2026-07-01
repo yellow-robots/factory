@@ -1,7 +1,7 @@
 ---
 type: feature-rfc
 title: "<feature name>"
-status: draft              # draft | in-review | approved | superseded
+status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
 stage: 2
 home: obsidian
 source_spec: "[[<product-spec note>]]"   # resolvable wikilink — crossing-link checked
