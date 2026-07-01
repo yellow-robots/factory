@@ -2,7 +2,7 @@
   "name": "factory",
   "displayName": "Yellow Robots Dev Factory",
   "description": "Operating manual for running a change through the YR dev factory — the iteration documentation model, the Obsidian→GitHub airlock, the deterministic gates (check_links / check_task / check_cmd / review), builder ≠ verifier, and the human gates.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "Yellow Robots" },
   "homepage": "https://github.com/yellow-robots/factory"
 }

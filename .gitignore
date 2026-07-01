@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+
+# local tooling / per-user config — not project source
+.mcp.json
+.mimocode/

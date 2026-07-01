@@ -17,9 +17,10 @@ A probabilistic LLM proposes; the machine-checked gate disposes.
 
 For workspace layout and the repos, see the workspace **`AGENTS.md`** (org orientation). This skill is the
 *how*. The full documentation model is the brain's **`01-conventions`**
-(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates live in the
-**factory repo** at `templates/` (the installed plugin doesn't carry them — read them from the checkout,
-`factory/templates/` in the YR workspace); the deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.
+(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates are in the
+**factory repo** at `templates/` — they **ship inside the installed plugin too** (a git-sourced plugin is
+the whole repo), so from the YR workspace *or* the plugin they're always at hand, no external checkout; the
+deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.
 
 ## The documentation model (summary — full in `01-conventions`)
 
@@ -62,10 +63,14 @@ file the app may hold open. Create new files freely; edit existing ones through 
 
 ```
 UPPER (the design side — author + cross)            LOWER (the build side — automated)
-  intent → product-spec → [feature-rfc →            Status=Ready → n8n poll → dispatch
+  product-spec → [feature-rfc →                     Status=Ready → n8n poll → dispatch
     technical-rfc] → task            ──airlock──►      → dev-runner: implement → test → check
   (Obsidian brain)            (GitHub Issues)           → review → PR   (cold claude -p per stage)
 ```
+
+**Intent/vision sits _outside_ the pipeline** — a human brain doc (the vault's vision & strategy), not a
+spine artifact. The **product-spec is the root**: it captures the intent as its own WHAT/WHY and carries no
+upstream `source_*`. Reference the vision in prose if useful, never as a gated crossing-link.
 
 Both are *author proposes, gate disposes*. **Upper** is **v1 human-driven-with-agent-assist**: you (or an
 agent a human drives) fill each artifact, run the gates, and a human approves at each step. **Lower** is

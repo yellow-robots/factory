@@ -4,7 +4,6 @@ title: "<feature name>"
 status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
 stage: 1
 home: obsidian
-source_intent: "[[<one-line intent note>]]"   # resolvable wikilink — the crossing-link checker asserts it exists
 target_repo: yellow-robots      # yellow-robots | website
 created: "<YYYY-MM-DD>"
 ---
