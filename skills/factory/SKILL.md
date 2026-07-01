@@ -32,7 +32,11 @@ an edit of the old one.
 The brain is organized as **iterations** — numbered folders in ship order inside a component's
 **`iterations/`** folder (`<component>/iterations/1-…/`, `2-…/`). *Everything inside `iterations/` is an
 iteration*, research included — absolute because it's scoped: **free-form brain** (business, legal,
-marketing, brand assets, an ideas-backlog, an optional overview) lives *alongside* `iterations/`, ungoverned.
+marketing, brand assets, an ideas-backlog, and an optional **AGENTS.md-style orientation note**) lives
+*alongside* `iterations/`, ungoverned. The orientation note is the design-brain's **working context**
+(purpose/north-star, conventions, what's deliberately not built, open threads) — **context only, never an
+index of iterations** (that's `ls` + each `01`, and it rots); hand-authored, optional, and it cites the
+repo's `AGENTS.md`, never duplicates it.
 Each doc is `NN-slug.md`: the **filename ordinal is its id** (product-spec = `01`), stable and order-visible
 — no `id` property, no hub notes; the `01` product-spec is the iteration's front door.
 
@@ -131,8 +135,12 @@ An older doc that predates the model (or a blob mixing many types) is *migrated*
    **pointer** to the code/live system (a mirror only drifts); **rationale not recoverable from code** (why
    this approach, trade-offs) → **kept verbatim**, rehomed to the feature-rfc; an audit → a frozen `research`;
    standing ops → a `runbook`.
-4. **Retire the original in place** — `status: superseded` + `superseded_by`/`crossed_to`; never `mv`. Delete
-   only a true link-island that adds no lineage.
+4. **Retire the original — by which kind.** *Migrated* (content re-homed, decision unchanged) → **delete** it:
+   its content now lives at the new path, the bytes survive in `.trash`/git; don't tombstone — nothing
+   superseded it (a `renameFile` already *is* this). *Superseded* (a newer design invalidates it) → retire
+   **in place**: `status: superseded` + `superseded_by`/`crossed_to`, the file stays for lineage; never `mv`.
+   Rule of thumb: did a *decision change* (supersede) or did *content just move* (migrate)? — `superseded`
+   needs a posterior invalidator.
 5. **Gate the drafts** — stage in scratchpad, run `check_links` (and `check_task` for any GitHub task) to
    green, *then* execute the app-mediated ops.
 
