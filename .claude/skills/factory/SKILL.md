@@ -4,9 +4,9 @@ description: >-
   How an AI actually runs a change through the Yellow Robots dev factory — the operating manual, not
   orientation. Use when authoring or shipping any change on a YR repo: writing a product-spec / feature-rfc
   / technical-rfc / task, crossing the Obsidian→GitHub airlock, running the dev-runner, or invoking the
-  gates (check_links, check_task, the repo check_cmd, the review verdict). Covers the iteration model,
-  builder ≠ verifier, the deterministic gates, and the two human gates (promote-to-Ready, merge). Reach for
-  it whenever the work is factory-driven development — even if the user doesn't say "factory".
+  gates (check_links, check_task, the repo check_cmd, the review verdict). Covers the iteration model, the
+  document types, builder ≠ verifier, the deterministic gates, and the human gates. Reach for it whenever
+  the work is factory-driven development — even if the user doesn't say "factory".
 ---
 
 # The Yellow Robots dev factory — operating manual
@@ -15,10 +15,44 @@ The factory builds a software product the way software should be built: in **ite
 *intent* to *shipped code*, with **builder ≠ verifier** and **deterministic gates** that a human can trust.
 A probabilistic LLM proposes; the machine-checked gate disposes.
 
-For workspace layout and the repos, use the **`yellow-robots`** skill first. This skill is the *how*: how to
-take one iteration through the two pipelines. The full documentation model is the brain's **`01-conventions`**
-(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates are in **`factory/templates/`**;
-the deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.
+For workspace layout and the repos, use the **`yellow-robots`** skill first. This skill is the *how*. The
+full documentation model is the brain's **`01-conventions`**
+(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates are in
+**`factory/templates/`**; the deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.
+
+## The documentation model (summary — full in `01-conventions`)
+
+Two principles: **docs exist to enable the next iteration** (they store the *why* — the decisions and the
+arguments), and **code is king** (when docs and code disagree, code is the present truth; docs are history).
+So **shipping freezes the why** — a shipped spec/rfc is immutable; a later change is a *new* iteration, never
+an edit of the old one.
+
+The brain is organized as **iterations** — numbered folders (`1-build-pipeline/`, `2-repo-agnostic/`,
+`3-upper-pipeline/`) in ship order. **Everything lives in an iteration**, research included. Each doc is
+`NN-slug.md`: the **filename ordinal is its id** (product-spec = `01`), stable and order-visible — there is
+no `id` property and no hub notes; the `01` product-spec is the iteration's front door.
+
+**Spine** (in order): `product-spec —1:N→ feature-rfc —1:1→ technical-rfc —1:N→ task`.
+**Floor = `product-spec → task(s)`** — the two rfc layers are *earned*, added only when a feature is worth
+arguing or codebase-fit isn't obvious. **Supporting** types (in an iteration, off the spine): `research`
+(a frozen investigation), `note` (the wildcard — marketing / legal / distilled how-X), `runbook` (ops).
+Homes: `product-spec` + `feature-rfc` in **Obsidian**; `technical-rfc` (on the epic Issue) + `task` + PR on
+**GitHub**. The boundary is crossed **once** at feature-rfc→technical-rfc, and the downstream artifact
+**cites, never copies**.
+
+## Working with the vault (load these skills first)
+
+The brain is an Obsidian vault — **load the obsidian skills before you touch it**:
+
+- **`obsidian:obsidian-cli`** — read / search / create notes, set properties, list backlinks, and do
+  **link-safe renames**. A rename must go through Obsidian so every backlink follows:
+  `obsidian eval code="app.fileManager.renameFile(app.vault.getAbstractFileByPath('old/path.md'),'new/path.md')"`.
+  **Never `mv` a vault file** — a filesystem rename silently breaks links across the whole vault (the archive included).
+- **`obsidian:obsidian-markdown`** — wikilinks, callouts, frontmatter, embeds.
+- **`obsidian:obsidian-bases`** — the `.base` views that filter/group the brain by `type`/`status`.
+
+Writes are app-mediated (the `obsidian` CLI, or the Local REST API) — never a blind filesystem overwrite of a
+file the app may hold open. Create new files freely; edit existing ones through the app.
 
 ## Two pipelines, one shape
 
@@ -30,22 +64,14 @@ UPPER (the design side — author + cross)            LOWER (the build side — 
 ```
 
 Both are *author proposes, gate disposes*. **Upper** is **v1 human-driven-with-agent-assist**: you (or an
-agent a human drives) fill each artifact, run the gates, and a human approves at each step — no stage is
-automated yet. **Lower** is fully automated once a human promotes a task to Ready.
-
-## The iteration spine (types)
-
-`product-spec —1:N→ feature-rfc —1:1→ technical-rfc —1:N→ task`. **Floor = `product-spec → task(s)`** —
-the two rfc layers are *earned*, added only when the change has a feature worth arguing or codebase-fit
-that isn't obvious. Small iterations skip them. (Plus `research` / `note` / `runbook` as supporting docs.)
-Homes: `product-spec` + `feature-rfc` live in **Obsidian**; `technical-rfc` (on the epic Issue) + `task` +
-PR live on **GitHub**. The boundary is crossed **once**, and the downstream artifact **cites, never copies**.
+agent a human drives) fill each artifact, run the gates, and a human approves at each step. **Lower** is
+fully automated once a human promotes a task to Ready.
 
 ## Run an iteration (the procedure)
 
 1. **product-spec** — in the brain, from `templates/product-spec.md`. WHAT/WHY only, no tech; acceptance
-   criteria in **EARS** (`WHEN <condition> THE SYSTEM SHALL <behavior>`). `type: product-spec`, a stable
-   `id`, `status: active`. Gate: *spec ready* (human).
+   criteria in **EARS** (`WHEN <condition> THE SYSTEM SHALL <behavior>`). `type: product-spec`, `status: active`,
+   named `01-<slug>.md` in the iteration folder. Gate: *spec ready* (human).
 2. **feature-rfc** *(only if earned)* — the approach/decision/scope/non-goals; `source_spec:` the spec.
    Gate: *approve RFC* (human reviews the outline first).
 3. **Cross the airlock → technical-rfc** — author it on the **epic GitHub Issue** from
@@ -58,14 +84,17 @@ PR live on **GitHub**. The boundary is crossed **once**, and the downstream arti
    (the EARS criteria as `- [ ]`), **Context & links** (paste the technical-RFC slice — self-contained),
    **Test expectations**, **Constraints**, **Size**. **Run `check_task`** (below). **One task = one PR**;
    bigger ⇒ split into sub-issues.
-5. **Promote to Ready** — *a human sets Status → Ready*. **Never an agent.** This is the first human gate
-   and the only dispatch signal.
+5. **Promote to Ready** — *a human sets Status → Ready*. **Never an agent.** This is the input gate and the
+   only dispatch signal.
 6. **The lower pipeline builds it** — n8n poll → `dispatch.py` (fail-closed: it must name `owner/repo`) →
    `dev-runner.sh`: DoR gate → claim → fresh worktree off the base ref → implement → **independent** test
    (from the acceptance criteria) → `check_cmd` → **independent** review (`VERDICT: APPROVE`) → PR. Each
    stage is a separate cold `claude -p` (builder ≠ verifier, structurally). To run it by hand:
    `tools/dev-runner.sh <issue#> --repo <owner/name>`.
-7. **Merge** — *a human reviews and merges* (the second human gate). Native close → Status = Done.
+7. **Merge** — in v1, *a human reviews and merges*; native close → Status = Done. **This output gate is
+   slated to retire next iteration** (see `1-build-pipeline/05-autonomous-merge`): green deterministic gates
+   **+** an independent reviewer stronger than the builder → the build merges itself. Merge ≠ ship — `main`
+   is not production; deploy stays separate and attended.
 
 ## The gates (deterministic — fail-closed)
 
@@ -86,10 +115,10 @@ Run them yourself before promoting; don't claim CI enforcement that isn't wired.
 - **Build from git refs, never a mutable tree.** Code *and* `.yr/factory.toml` are read from the base ref.
 - **Native primitives** (Issue Types, Projects fields, sub-issues, native close→Done) — not labels, not sidecars.
 - **Repo-agnostic.** The factory holds no product knowledge; a product holds no copy of the factory. Each repo declares how to build itself in `.yr/factory.toml`.
-- **Two human gates** — promote-to-Ready and merge. We hold them; no auto-promote, no auto-merge.
+- **The human owns the *input* gate.** Promote-to-Ready — deciding *what* gets built — is human, always; no auto-promote. The *output* gate (merge) is human in v1 but is being automated next iteration (autonomous-merge). The durable rule is *a human decides what to build*, not *a human merges every PR*.
 - **PRs only.** The pipeline produces PRs. Host/ops/deploy work is done directly and attended — never as a Ready ticket.
 - **Auth is human work.** Orgs/repos/tokens/scopes are the human's, never an agent's.
-- **Code is king; shipping freezes the why.** A shipped product-spec/rfc is an immutable record — a later change is a *new* iteration, not an edit of the old one.
+- **Code is king; shipping freezes the why.** A shipped product-spec/rfc is an immutable record — a later change is a *new* iteration, not an edit of the old.
 
 ## Onboard a new repo
 
