@@ -1,13 +1,9 @@
 ---
 type: feature-rfc
-title: "<feature name>"
 status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
-stage: 2
-home: obsidian
-source_spec: "[[<product-spec note>]]"   # resolvable wikilink — crossing-link checked
-decision_makers: [jose, claude]
-target_repo: yellow-robots      # yellow-robots | website
+source_spec: "[[<product-spec note>]]"   # the spec this cites — resolvable wikilink, checked by check_links
 created: "<YYYY-MM-DD>"
+updated: "<YYYY-MM-DD>"
 ---
 
 # Feature RFC — <feature name>

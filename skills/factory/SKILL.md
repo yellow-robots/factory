@@ -29,10 +29,17 @@ arguments), and **code is king** (when docs and code disagree, code is the prese
 So **shipping freezes the why** — a shipped spec/rfc is immutable; a later change is a *new* iteration, never
 an edit of the old one.
 
-The brain is organized as **iterations** — numbered folders (`1-build-pipeline/`, `2-repo-agnostic/`,
-`3-upper-pipeline/`) in ship order. **Everything lives in an iteration**, research included. Each doc is
-`NN-slug.md`: the **filename ordinal is its id** (product-spec = `01`), stable and order-visible — there is
-no `id` property and no hub notes; the `01` product-spec is the iteration's front door.
+The brain is organized as **iterations** — numbered folders in ship order inside a component's
+**`iterations/`** folder (`<component>/iterations/1-…/`, `2-…/`). *Everything inside `iterations/` is an
+iteration*, research included — absolute because it's scoped: **free-form brain** (business, legal,
+marketing, brand assets, an ideas-backlog, an optional overview) lives *alongside* `iterations/`, ungoverned.
+Each doc is `NN-slug.md`: the **filename ordinal is its id** (product-spec = `01`), stable and order-visible
+— no `id` property, no hub notes; the `01` product-spec is the iteration's front door.
+
+**Frontmatter is a closed vocabulary** — every doc carries only `type · status · created · updated`, plus
+`source_*` / `crossed_to` / `superseded_by` / `retired_reason` where they apply. **Never invent keys** (that's
+how an AI grows hundreds of junk properties); anything else goes in the body. `title` is the H1, `stage`/`home`
+are the `type`, the component/iteration are the folder — none are frontmatter.
 
 **Spine** (in order): `product-spec —1:N→ feature-rfc —1:1→ technical-rfc —1:N→ task`.
 **Floor = `product-spec → task(s)`** — the two rfc layers are *earned*, added only when a feature is worth
@@ -57,7 +64,11 @@ The brain is an Obsidian vault — **load the obsidian skills before you touch i
 - **`obsidian:obsidian-bases`** — the `.base` views that filter/group the brain by `type`/`status`.
 
 Writes are app-mediated (the `obsidian` CLI, or the Local REST API) — never a blind filesystem overwrite of a
-file the app may hold open. Create new files freely; edit existing ones through the app.
+file the app may hold open. Create new files freely. To **edit a doc's body** (e.g. trim a section), rewrite
+the whole file *through the app* — `obsidian create path=… content=… overwrite`, or a REST `PUT` — which is
+safe where a shell redirect is not; for a surgical change, GET-modify-PUT so untouched text stays
+byte-identical. **Folders don't auto-create:** `create path=…` / `renameFile` need the parent to exist first
+(`obsidian eval code="app.vault.createFolder('<component>/iterations/<n>-<slug>')"`).
 
 ## Two pipelines, one shape
 
@@ -80,8 +91,10 @@ fully automated once a human promotes a task to Ready.
 
 1. **product-spec** — in the brain, from `templates/product-spec.md`. WHAT/WHY only, no tech; acceptance
    criteria in **EARS** (`WHEN … THE SYSTEM SHALL …`, or ubiquitous `THE SYSTEM SHALL …` for static
-   content). `type: product-spec`, `status: draft` (→ `active` at the gate), named `01-<slug>.md` in the
-   iteration folder. Gate: *spec ready* (human).
+   content). `type: product-spec`, `status: draft` (→ `active` at the gate), named `01-<slug>.md` in
+   `<component>/iterations/<n>-<slug>/`. **Develop the design *in* this doc** — open the `01` draft early and
+   evolve WHAT/WHY there with the human, in Obsidian; don't brainstorm in the terminal and paste in a finished
+   spec (the doc is where the thinking lives). Gate: *spec ready* (human).
 2. **feature-rfc** *(only if earned)* — the approach/decision/scope/non-goals; `source_spec:` the spec.
    Gate: *approve RFC* (human reviews the outline first).
 3. **Cross the airlock → technical-rfc** — author it on the **epic GitHub Issue** from
@@ -102,9 +115,26 @@ fully automated once a human promotes a task to Ready.
    stage is a separate cold `claude -p` (builder ≠ verifier, structurally). To run it by hand:
    `tools/dev-runner.sh <issue#> --repo <owner/name>`.
 7. **Merge** — in v1, *a human reviews and merges*; native close → Status = Done. **This output gate is
-   slated to retire next iteration** (see `1-build-pipeline/05-autonomous-merge`): green deterministic gates
+   slated to retire next iteration** (see the **autonomous-merge** iteration in the brain): green deterministic gates
    **+** an independent reviewer stronger than the builder → the build merges itself. Merge ≠ ship — `main`
    is not production; deploy stays separate and attended.
+
+## Migrating a legacy doc onto the model
+
+An older doc that predates the model (or a blob mixing many types) is *migrated*, not rewritten:
+
+1. **Enumerate & trace first** — every file, its `type`, every inbound/outbound link (vault-wide grep + the
+   graph). Know what's a link-island before moving anything.
+2. **Find the iteration boundary** — one coherent shipped change = one iteration; later "open items" are a
+   *future* iteration (shipping freezes the why), never folded back.
+3. **Split by type by "code is king"** — **present-state facts** (endpoints, IDs, schema, as-built) → a
+   **pointer** to the code/live system (a mirror only drifts); **rationale not recoverable from code** (why
+   this approach, trade-offs) → **kept verbatim**, rehomed to the feature-rfc; an audit → a frozen `research`;
+   standing ops → a `runbook`.
+4. **Retire the original in place** — `status: superseded` + `superseded_by`/`crossed_to`; never `mv`. Delete
+   only a true link-island that adds no lineage.
+5. **Gate the drafts** — stage in scratchpad, run `check_links` (and `check_task` for any GitHub task) to
+   green, *then* execute the app-mediated ops.
 
 ## The gates (deterministic — fail-closed)
 

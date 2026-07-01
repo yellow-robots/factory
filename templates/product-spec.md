@@ -1,11 +1,8 @@
 ---
 type: product-spec
-title: "<feature name>"
 status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
-stage: 1
-home: obsidian
-target_repo: yellow-robots      # yellow-robots | website
 created: "<YYYY-MM-DD>"
+updated: "<YYYY-MM-DD>"
 ---
 
 # Product spec — <feature name>
