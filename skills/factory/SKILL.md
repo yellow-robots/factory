@@ -17,7 +17,7 @@ A probabilistic LLM proposes; the machine-checked gate disposes.
 
 For workspace layout and the repos, see the workspace **`AGENTS.md`** (org orientation). This skill is the
 *how*. The full documentation model is the brain's **`01-conventions`**
-(`04 projects/yellow-robots/factory/3-upper-pipeline/01-conventions.md`); the templates are in the
+(`04 projects/yellow-robots/factory/iterations/3-upper-pipeline/01-conventions.md`); the templates are in the
 **factory repo** at `templates/` — they **ship inside the installed plugin too** (a git-sourced plugin is
 the whole repo), so from the YR workspace *or* the plugin they're always at hand, no external checkout; the
 deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`.

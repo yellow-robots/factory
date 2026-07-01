@@ -191,7 +191,7 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
 - **[0005 — The upper pipeline](docs/rfcs/0005-upper-pipeline.md)** — intent → spec → feature RFC →
   technical RFC → tasks; the airlock. *Being reworked in the brain into the upper-pipeline implementation spec.*
 
-The brain organizes the *why* as **iterations** (`04 projects/yellow-robots/factory/`): `1-build-pipeline`,
+The brain organizes the *why* as **iterations** (`04 projects/yellow-robots/factory/iterations/`): `1-build-pipeline`,
 `2-repo-agnostic`, `3-upper-pipeline`. Unimplemented designs (e.g. **autonomous merge**) and the full design
 history live there; each crosses into `docs/rfcs/` only once built. The documentation model itself is
-`3-upper-pipeline/01-conventions.md`.
+`iterations/3-upper-pipeline/01-conventions.md`.
