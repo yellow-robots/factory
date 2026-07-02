@@ -31,3 +31,4 @@ updated: "<YYYY-MM-DD>"
 ---
 *Next stage:* a **feature RFC** (`feature-rfc.md`) cites this spec and chooses the approach.
 Gate before then: **spec ready** (human). A criterion that can't become a test isn't done.
+*Review output:* fold findings in — or, if heavyweight, a standalone `research`/`note` cited here; never a frozen appendix (see `01-conventions` → *Reviewing a doc*).
