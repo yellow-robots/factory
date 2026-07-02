@@ -1,6 +1,6 @@
 # The Yellow Robots documentation model
 
-> The living reference for how the Yellow Robots factory documents a product — one iteration at a time, so AIs and humans can build it together. **Relocated from the vault `01-conventions` (iteration `3-upper-pipeline`), which it supersedes**; this is now the single living copy, versioned with the skill. Read it before creating or editing any doc under a component's `iterations/`.
+> The living reference for how the Yellow Robots factory documents a product — one iteration at a time, so AIs and humans can build it together. **Relocated from the vault `01-conventions` (iteration `3-upper-pipeline`), which it supersedes**; this is now the single living copy, versioned with the skill. Read it before creating or editing any doc in a component's brain.
 
 ## Two principles
 
@@ -91,7 +91,7 @@ stateDiagram-v2
 - **Crossing to a repo does not change status** — a built doc stays `active`, recorded with `crossed_to`. A doc retires only when a newer one replaces it (`superseded`, with `superseded_by`).
 - Supersession is a **state, not a move**: set the status, don't relocate the file (`archive/` is for retiring a whole era, not a single doc).
 - **Supersession needs a posterior invalidator — a *move* is not a supersession.** A doc goes `superseded` only when a *later* doc changed the decision. A doc whose content merely **moved** — re-homed onto the model, the decision unchanged — was *migrated*: the original is **deleted** (its content now lives at the new path; the bytes survive in `.trash`/git), never tombstoned. Mislabelling a move as `superseded` lies about history and leaves a drift-prone duplicate.
-- **This model reference is *living*** — like code (king, always current), it is kept up to date and is the one artifact *exempt* from *shipping freezes the why*. It ships as a version of the factory skill; its history is the skill's version history. Every *other* shipped spec/rfc is frozen; a change to one is a new iteration, never a rewrite.
+- **This model reference is *living*** — like code (king, always current), it is kept up to date and is the one artifact *exempt* from *shipping freezes the why*. It ships as a version of the factory skill; its history is the skill's version history. Every *other* shipped spec/rfc is frozen; a change to one is a new iteration, never a rewrite — so their `updated:` only ever reflects a frontmatter normalization.
 
 ## Reviewing a doc
 
