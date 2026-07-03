@@ -23,7 +23,7 @@
 set -euo pipefail
 
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"; GH_BIN="${GH_BIN:-gh}"; GIT_BIN="${GIT_BIN:-git}"
-MODEL="${MODEL:-claude-sonnet-4-6}"; HARD_MODEL="${HARD_MODEL:-claude-opus-4-8}"; EFFORT="${EFFORT:-high}"
+MODEL="${MODEL:-claude-sonnet-5}"; HARD_MODEL="${HARD_MODEL:-claude-opus-4-8}"; EFFORT="${EFFORT:-high}"
 DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
 # DoR Type gate: build only this native Issue Type. Empty disables it (repos without Issue Types).
 # Use the no-colon form so an explicit REQUIRE_ISSUE_TYPE='' stays empty (a true opt-out), not defaulted.
