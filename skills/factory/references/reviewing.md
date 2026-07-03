@@ -2,8 +2,10 @@
 
 > **When to load this reference:** reviewing a product-spec or feature-rfc (adversarial steelman →
 > completeness → ranked findings → human gate). For the fold-in vs. standalone decision, see
-> [`documentation-model.md`](documentation-model.md) — *Reviewing a doc*. For technical-rfc and
-> lower-pipeline review, the dev-runner handles that natively (see [`pipeline.md`](pipeline.md)).
+> [`documentation-model.md`](documentation-model.md) — *Reviewing a doc*. A **technical-rfc** reviews
+> with this same discipline, natively on its epic Issue (comments feed the human
+> *review-the-technical-rfc* gate); **PR review** is the lower pipeline's independent verdict
+> (see [`pipeline.md`](pipeline.md)).
 
 ---
 

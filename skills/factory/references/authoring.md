@@ -56,7 +56,8 @@ see [`reviewing.md`](reviewing.md).
 
 Author on the **epic GitHub Issue** from `templates/technical-rfc.md`. This is the Obsidian→GitHub
 crossing: the artifact **cites, never copies** the feature-rfc — there is no mirror to drift. Carry
-`source_feature_rfc:` as a `[[wikilink]]` (or `source_spec:` on the floor).
+`source_feature_rfc:` as a `[[wikilink]]`. (On the **floor** there is no technical-rfc — the crossing
+is product-spec → task, and the task cites `source_spec:`; skip to step 4.)
 
 **Content required:**
 - Name the **exact files / patterns / integration points** against the *current* tree.

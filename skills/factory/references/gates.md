@@ -20,8 +20,8 @@
 `check_links` and `check_task` are **advisory → blocking** today: they *inform* the human
 promote-to-Ready gate. Run them yourself before promoting; don't claim CI enforcement that isn't wired.
 
-`check_cmd` and the review verdict are **blocking**: the runner halts and sets `Status=Blocked` on
-failure.
+`check_cmd` and the review verdict are **blocking**: the runner halts and flags `Reason=Blocked` (the
+failure stays visible on the board).
 
 ## Judgment points
 

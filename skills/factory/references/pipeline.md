@@ -19,7 +19,7 @@ that cannot name its `owner/repo` is refused and logged, never guessed. There is
 
 | Stage | What it does | On failure |
 |---|---|---|
-| **DoR gate** | Open + on board + `Status=Ready` + `Type=Task` + non-empty acceptance criteria. No LLM call before this passes. | Refusal, no writes, `Status=Needs-info`. |
+| **DoR gate** | Open + on board + `Status=Ready` + `Type=Task` + non-empty acceptance criteria. No LLM call before this passes. | Refusal, no writes, `Status=Backlog` + `Reason=Needs-info`. |
 | **Claim** | Sets `Status=In Progress` (single-flight lock — drops task from the Ready poll). | — |
 | **Worktree** | Fresh `git worktree` off `origin/main` of the target repo. Reads code *and* `.yr/factory.toml` from the base ref — never a mutable working tree. | — |
 | **Implement** | Writes the minimal change against the acceptance criteria. `--permission-mode bypassPermissions` (the worktree + scoped creds are the walls). | — |

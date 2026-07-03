@@ -43,6 +43,10 @@ When the PR merges, the iteration's Obsidian docs become immutable records:
   the wrong move — the drift is recorded by the *next* iteration, not by rewriting the frozen one.
 - The technical-rfc on the epic Issue stays as the permanent record; the PR carries the link to the
   resulting code.
+- Record where the design was built: `crossed_to: owner/repo/path` on the Obsidian doc that crossed —
+  see [`documentation-model.md`](documentation-model.md) — *Identity & navigation*.
+- If the shipped change replaces an older doc, retire it **by kind** — supersede in place vs.
+  migrate-delete (see [`migrating.md`](migrating.md), step 4).
 
 This is **shipping freezes the why** from the documentation model; see
 [`documentation-model.md`](documentation-model.md) — *Two principles*.
@@ -56,7 +60,8 @@ iteration ship/freeze steps above.
 
 ### When
 
-After the iteration's PR merges (or on a hotfix), before the skill is demoted from the active session.
+After the iteration's PR merges (or on a hotfix) — and always **before** any consumer is repointed to
+the new content or its previous home is demoted.
 
 ### Steps
 
@@ -70,10 +75,14 @@ After the iteration's PR merges (or on a hotfix), before the skill is demoted fr
    - No orphan reference: every file under `references/` has a corresponding router entry.
    - `SKILL.md` is < 500 lines.
    - The `description` in `SKILL.md` frontmatter and in `plugin.json` agree exactly.
+   - **The consumer scan is green:** nothing in the repo or org docs still cites a superseded content
+     home as the *living* copy (`tools/check_model_refs.py`, fail-closed; a manual grep until it ships).
 
-3. **Ship before demote** — commit and push with the version bump *before* ending the session or
-   reloading plugins. Bundled reference files require `/reload-plugins` or a fresh session to
-   hot-reload; ship as one coherent version so the router and its references are always consistent.
+3. **Ship before demote** — the release (merge to `main`) ships the new content **before** any
+   dependent consumer is repointed and before the superseded source is demoted: the living content must
+   never exist nowhere authoritative. (Session note: bundled reference files hot-reload only via
+   `/reload-plugins` or a fresh session — ship as one coherent version so router and references never
+   split.)
 
 ### Gate
 
