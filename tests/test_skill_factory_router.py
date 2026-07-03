@@ -143,7 +143,7 @@ def test_no_orphan_references():
 # ---------------------------------------------------------------------------
 
 def test_plugin_version_is_0_6_0():
-    assert _plugin_data()["version"] == "0.6.0"
+    assert _plugin_data()["version"] == "0.6.1"
 
 
 def test_skill_md_and_plugin_description_agree():
