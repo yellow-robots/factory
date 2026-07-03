@@ -27,7 +27,7 @@
         ] },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"query\": \"query { organization(login: \\\"yellow-robots\\\") { projectV2(number: 1) { items(first: 100) { nodes { content { ... on Issue { number state repository { nameWithOwner } } } status: fieldValueByName(name: \\\"Status\\\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }\" }"
+        "jsonBody": "={ \"query\": \"query { organization(login: \\\"yellow-robots\\\") { projectV2(number: 1) { items(first: 100) { nodes { content { ... on Issue { number state repository { nameWithOwner } issueType { name } } } status: fieldValueByName(name: \\\"Status\\\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }\" }"
       }
     },
     {
@@ -37,7 +37,7 @@
       "typeVersion": 2,
       "position": [700, 300],
       "parameters": {
-        "jsCode": "const nodes = $json.data.organization.projectV2.items.nodes || [];\nreturn nodes\n  .filter(n => n.status && n.status.name === 'Ready' && n.content && n.content.state === 'OPEN')\n  .map(n => ({ json: { issue: n.content.number, repo: n.content.repository.nameWithOwner } }));"
+        "jsCode": "const nodes = $json.data.organization.projectV2.items.nodes || [];\nconst EPIC_TYPES = ['Feature', 'Epic'];\nreturn nodes\n  .filter(n => n.status && n.status.name === 'Ready' && n.content && n.content.state === 'OPEN')\n  .filter(n => !(n.content.issueType && EPIC_TYPES.includes(n.content.issueType.name)))\n  .map(n => ({ json: { issue: n.content.number, repo: n.content.repository.nameWithOwner } }));"
       }
     },
     {
