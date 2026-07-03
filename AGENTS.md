@@ -194,4 +194,4 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
 The brain organizes the *why* as **iterations** (`04 projects/yellow-robots/factory/iterations/`): `1-build-pipeline`,
 `2-repo-agnostic`, `3-upper-pipeline`. Unimplemented designs (e.g. **autonomous merge**) and the full design
 history live there; each crosses into `docs/rfcs/` only once built. The documentation model itself is
-`iterations/3-upper-pipeline/01-conventions.md`.
+`skills/factory/references/documentation-model.md` (the factory skill).
