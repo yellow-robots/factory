@@ -41,4 +41,4 @@ updated: "<YYYY-MM-DD>"
 ---
 *Next stage:* a **technical RFC** (`technical-rfc.md`) maps this onto the existing repo.
 Gate before then: **approve RFC** (human).
-*Review output:* fold findings into this RFC + the technical-RFC / task acceptance; a heavyweight, standalone-worthy review lives as its own `research`/`note` doc, cited here — never a frozen appendix (see `01-conventions` → *Reviewing a doc*).
+*Review output:* fold findings into this RFC + the technical-RFC / task acceptance; a heavyweight, standalone-worthy review lives as its own `research`/`note` doc, cited here — never a frozen appendix (see `documentation-model.md` → *Reviewing a doc*).
