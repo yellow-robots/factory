@@ -1,8 +1,8 @@
 {
   "name": "factory",
   "displayName": "Yellow Robots Dev Factory",
-  "description": "Operating manual for running a change through the YR dev factory — the iteration documentation model, the Obsidian→GitHub airlock, the deterministic gates (check_links / check_task / check_cmd / review), builder ≠ verifier, and the human gates.",
-  "version": "0.4.1",
+  "description": "How an AI actually runs a change through the Yellow Robots dev factory — the operating manual, not orientation. Use when authoring (product-spec · feature-rfc · technical-rfc · task), reviewing a spec or RFC, running the lower pipeline or its gates (check_links / check_task / check_cmd / review verdict), closing an iteration (promote-to-Ready · merge → Done · doc freeze · skill release), migrating a legacy doc, or onboarding a new repo. Covers builder ≠ verifier, deterministic gates, and the human gates. Routes each operation to the right reference on demand. Reach for it whenever the work is factory-driven development — even if the user doesn't say \"factory\".",
+  "version": "0.5.0",
   "author": { "name": "Yellow Robots" },
   "homepage": "https://github.com/yellow-robots/factory"
 }
