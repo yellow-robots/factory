@@ -15,7 +15,7 @@ A consequence worth stating plainly: **shipping freezes the why.** When an itera
 - **Iterations are not uniform** — one may be a one-line fix, another a whole subsystem. We **encourage small**: the smaller the iteration, the cheaper its why-record and the clearer the history.
 - **Iterations are ordered** — you read them in the order they happened. Order lives in the numbered iteration folders (`1-…`, `2-…`) and the ordinal in each filename.
 - **An iteration is a container.** It groups the documents that explain *what* the change is and *why*, and links them to the code that resulted. Even the broad, sometimes far-fetched research you do at the start of a change belongs to the iteration that spawned it.
-- **Iterations live in an `iterations/` folder — and *everything inside it is an iteration*,** governed by this model, no exceptions. That claim is absolute precisely because it is *scoped*: **alongside `iterations/`, a component may hold free-form brain** — business, legal, marketing, brand assets, an ideas-backlog, and an optional **orientation note** (its contract is the next bullet) — that this model does not govern. Free-form docs still carry the base frontmatter (see *Frontmatter*) but sit outside the spine. A folder draws the line, so the strong rule and the freedom coexist.
+- **Iterations live in an `iterations/` folder — and *everything inside it is an iteration*,** governed by this model, no exceptions. That claim is absolute precisely because it is *scoped*: **alongside `iterations/`, a component may grow governed cross-cutting homes** — optional domain-noun folders, see *The cross-cutting layer* — **and free-form brain** — business, legal, marketing, brand assets, an ideas-backlog, and an optional **orientation note** (its contract is the next bullet) — that this model does not govern. Free-form docs still carry the base frontmatter (see *Frontmatter*) but sit outside the spine. A folder draws the line, so the strong rule and the freedom coexist.
 - **The orientation note — the one free-form doc with a contract.** A component's *working context*: purpose + north-star, conventions, what's deliberately not built, open threads. **Context only — never an index of iterations** (that is `ls` + each `01`, and it is the part that rots: an unscoped overview note decays into a dead stub). Hand-authored and optional, never auto-generated; `type: note`; it *cites* the repo's `AGENTS.md`, never duplicates it. This is the line between a durable orientation note and the hub note the model forbids — orientation = working context, hub = duplicated structure.
 
 ## The document types
@@ -91,7 +91,7 @@ stateDiagram-v2
 - **Crossing to a repo does not change status** — a built doc stays `active`, recorded with `crossed_to`. A doc retires only when a newer one replaces it (`superseded`, with `superseded_by`).
 - Supersession is a **state, not a move**: set the status, don't relocate the file (`archive/` is for retiring a whole era, not a single doc).
 - **Supersession needs a posterior invalidator — a *move* is not a supersession.** A doc goes `superseded` only when a *later* doc changed the decision. A doc whose content merely **moved** — re-homed onto the model, the decision unchanged — was *migrated*: the original is **deleted** (its content now lives at the new path; the bytes survive in `.trash`/git), never tombstoned. Mislabelling a move as `superseded` lies about history and leaves a drift-prone duplicate.
-- **This model reference is *living*** — like code (king, always current), it is kept up to date and is the one artifact *exempt* from *shipping freezes the why*. It ships as a version of the factory skill; its history is the skill's version history. Every *other* shipped spec/rfc is frozen; a change to one is a new iteration, never a rewrite — so their `updated:` only ever reflects a frontmatter normalization.
+- **This model reference is *living*** — like code (king, always current), it is kept up to date. *Shipping freezes the why* was always scoped to iteration **spine** docs (`product-spec`/`feature-rfc`/`technical-rfc`); supporting types (`research`/`note`/`runbook`) were always living, and this reference — like any component's living reference (*The cross-cutting layer*) — is one of them: not an exemption from the freeze, an **obligation** to stay current on top of it. It ships as a version of the factory skill; its history is the skill's version history. Every shipped spine doc (spec/rfc) is frozen; a change to one is a new iteration, never a rewrite — so their `updated:` only ever reflects a frontmatter normalization.
 
 ## Reviewing a doc
 
@@ -106,7 +106,7 @@ The test is not a finding-count: *does the review's reasoning belong in the froz
 
 ## Structure
 
-A component's governed space is its **`iterations/`** folder; free-form brain sits alongside it. Inside an iteration, the spine and its research sit flat, and the Base sorts them by `type`/`status`.
+A component's governed space is **`iterations/`**, plus any **cross-cutting homes** it has grown (*The cross-cutting layer*, next); free-form brain sits alongside both. Inside an iteration, the spine and its research sit flat, and the Base sorts them by `type`/`status`.
 
 ```
 04 projects/<program>/<component>/
@@ -115,11 +115,55 @@ A component's governed space is its **`iterations/`** folder; free-form brain si
       01-<product-spec>.md        the intent — the iteration's front door
       02-<feature-rfc>.md …       NN-<research>.md   (technical-rfc/task live on GitHub)
     2-<iteration>/ …
+  architecture/ · operations/ · strategy/ …   optional cross-cutting homes — domain-noun folders,
+                              fully governed, supporting types only (research/note/runbook)
   <free-form brain>           business · legal · marketing · brand assets · ideas-backlog · optional orientation note
-                              — base frontmatter only, outside every iteration
+                              — base frontmatter only, outside every governed space
 ```
 
-Materialize only what's earned — a lone iteration's docs sit flat in its folder; a component with no free-form material is just `iterations/`.
+Materialize only what's earned — a lone iteration's docs sit flat in its folder; a component with no cross-cutting homes and no free-form material is just `iterations/`.
+
+## The cross-cutting layer
+
+Iterations are frozen at ship — right for the *record* of a change, wrong for the *map of the present*. A component that grows complex enough accumulates durable knowledge that fits neither space the model otherwise offers: not an iteration (it isn't a change), not free-form (a cold agent can't trust it without rules). The cross-cutting layer is that third space, adopted on need.
+
+### Cross-cutting homes
+
+Alongside `iterations/`, a component may grow **domain-noun folders** — `architecture/`, `operations/`, `strategy/`, and so on. **The folder draws the line, exactly as with `iterations/`:** any domain-noun folder sitting alongside `iterations/` is a **governed home** — fully governed by this model: the same closed frontmatter vocabulary (*Frontmatter*), **supporting types only** (`research` · `note` · `runbook`) — **never spine types** (`product-spec`/`feature-rfc`/`technical-rfc`/`task` belong to an iteration, never a home). Loose files at the component root stay free-form, exactly as before. `operations/` holds **executed records**: runbooks and the scripts that run alongside them. Homes are adopted on need — a component with none of them stays on the unmodified model.
+
+### The living reference
+
+A component may declare **at most one living reference**: a `note` holding the cross-cutting big picture (what it must be · how it's built · deployed · maintained), **kept current**. At most one, because a component has one big picture — a second is the first step back toward the hub note this model bans; further detail belongs in the domain homes' own `research`/`runbook` docs, cited from the reference.
+
+**The mirror line** is what separates a living reference from a banned mirror: it may render cross-cutting facts as a **navigational summary**, *provided* every fact **cites its authoritative home** and **none is asserted on the reference's own authority.** It cites, never copies. When code ships, its "how" sections become **pointers into the repo**.
+
+*Shipping still freezes the why* — that doesn't change: iteration **spine** docs stay frozen at ship, exactly as *The document types* describes. Supporting types were always living; the living reference is one, and what this layer adds is an **obligation** to keep it current (the *write at ship* trigger below), not an exemption from the freeze.
+
+### The admission test
+
+A new cross-cutting doc must **name its update trigger** — one of the maintenance-contract entries below — to be created at all. An agent must **refuse** to create one that cannot.
+
+### Grounding: every iteration cites what it depends on
+
+Where a component has cross-cutting homes, every iteration's `01` must **cite, in prose `[[wikilink]]`s, the cross-cutting doc(s) it relies on or affects.** This is a prose *see-also* link like any other (*Identity & navigation*) — the frontmatter vocabulary stays closed, no new key.
+
+### The maintenance contract
+
+The closed set of update triggers. Each binds to a **named factory moment**; enforcement is **procedural** — a named step of the operation that owns the moment — **not automated** (no new tooling this iteration):
+
+| Trigger | Binds to |
+|---|---|
+| **Grounding** | authoring the `01` — cite the cross-cutting doc(s) it relies on or affects |
+| **Read at spec-ready** | the spec-ready gate — verify the grounding docs still hold true before the spec goes `active` |
+| **Write at ship** | the iteration close — walk the grounding list: the living reference updates in place; `research` is **superseded**, never edited |
+| **Executed records** | the operation's own execution — `operations/` appends when the operation runs, on its own clock |
+| **Framing events** | the framing conversation — a human framing/vision change lands in the living reference the same day, attributed and dated |
+
+**Advisory defaults for the free-form root** — convention, not governance: `strategy/` content is revisited before program-level decisions; the ideas backlog stays append-only, mined at spec time; the orientation note co-evolves on custody or model changes. These stay free-form, outside the governed homes — the defaults are conventions an operation reminds about, not gates.
+
+The hub/index-note ban **stands**: a computed view over maintained frontmatter — filtered/grouped, never hand-kept — is the only sanctioned dashboard form, because it holds no facts of its own and so cannot drift.
+
+**Named accepted gap.** Grounding citations are prose wikilinks; nothing machine-gates them (`check_links` verifies spine crossing-links only, not cross-cutting grounding). A missing or stale grounding citation is caught only procedurally, at the two bound moments above — or not at all. Accepted for now, under no-new-tooling; revisit if it bites.
 
 ## Editing safely
 
