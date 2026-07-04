@@ -149,6 +149,31 @@ def test_url_in_backticks_is_not_path_checked(tmp_path):
         repo_root=tmp_path) == []
 
 
+def test_home_path_is_not_path_checked(tmp_path):
+    # `~/.cache/dev-runner/dispatch.lock` names a host file, not a repo citation → skipped
+    _repo_with(tmp_path, "tools/validate.py")
+    assert check_task(
+        _task(context="Edit `tools/validate.py`. See `~/.cache/dev-runner/dispatch.lock`."),
+        repo_root=tmp_path) == []
+
+
+def test_absolute_path_is_not_path_checked(tmp_path):
+    # `/etc/systemd/user/dispatch.service` is an absolute host path, not repo-relative → skipped
+    _repo_with(tmp_path, "tools/validate.py")
+    assert check_task(
+        _task(context="Edit `tools/validate.py`. Unit at `/etc/systemd/user/dispatch.service`."),
+        repo_root=tmp_path) == []
+
+
+def test_repo_relative_path_still_fails_when_missing_alongside_host_paths(tmp_path):
+    # host paths are skipped, but a genuine repo-relative citation still resolves and fails loud
+    errors = check_task(
+        _task(context="Home `~/.cache/dev-runner/dispatch.lock`. Edit `tools/nope.py`."),
+        repo_root=tmp_path)
+    assert any("tools/nope.py" in e and "exist" in e.lower() for e in errors)
+    assert not any("dispatch.lock" in e for e in errors)
+
+
 def test_dotfile_config_path_is_still_checked(tmp_path):
     # `.yr/factory.toml` has a real extension on its final segment → still verified (and here, missing)
     errors = check_task(_task(context="Read `.yr/factory.toml` for the check_cmd."), repo_root=tmp_path)

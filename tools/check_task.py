@@ -16,8 +16,9 @@ expectations) — frontmatter is provenance and is ignored:
   3. cited paths exist — every backtick-quoted repo *file* path resolves in the target repo (at
                          `--base-ref` if given, else the working tree). A path = has '/', no spaces,
                          and a file extension on its last segment. Bare filenames, command spans, git
-                         refs (`origin/main`), scoped packages (`@scope/pkg`) and host/URL fragments
-                         are skipped (ambiguous or not-a-file → no false failures).
+                         refs (`origin/main`), scoped packages (`@scope/pkg`), host/URL fragments, and
+                         host paths (`~/…`, `/…`) are skipped (ambiguous or not-a-file → no false
+                         failures).
 
 Usage: check_task.py <task.md> [--repo-root DIR] [--base-ref REF]
 Exit 0 if self-contained; 1 (with `<file>: <message>` lines) otherwise.
@@ -63,14 +64,17 @@ def _pathify(token):
 
     A path has '/', no spaces, and a file extension on its final segment (`site/index.html`,
     `tools/x.py`, `.yr/factory.toml`; any `:NN`/`:NN-MM` line suffix is dropped first). Every real
-    task citation points at a file, so requiring an extension skips the look-alikes that aren't repo
-    files to resolve — git refs (`origin/main`), scoped npm packages (`@scope/pkg`), and host/URL
-    fragments (`example.com/a/b`) — killing those false positives without losing a genuine citation.
+    task citation is repo-relative, so requiring an extension skips the look-alikes that aren't repo
+    files to resolve — git refs (`origin/main`), scoped npm packages (`@scope/pkg`), host/URL
+    fragments (`example.com/a/b`), and host paths (`~/…`, `/…`) — killing those false positives
+    without losing a genuine citation.
     """
     token = _LINE_SUFFIX_RE.sub("", token.strip())
     if " " in token or "/" not in token:
         return None
     if token.startswith("@") or "://" in token:   # scoped npm package / URL — not a repo path
+        return None
+    if token.startswith("~/") or token.startswith("/"):   # home/absolute — a host path, not repo-relative
         return None
     if not _EXT_RE.search(token):                  # git ref, host fragment — no file extension
         return None
