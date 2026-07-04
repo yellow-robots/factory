@@ -1,16 +1,19 @@
 """
 Tests for Issue #19 — Reword the input-gate invariant at its true granularity
-in the factory docs and skill (patch release 0.6.2).
+in the factory docs and skill (patch release 0.6.2) — and Issue #28, which
+finishes that reword on the three surfaces #19 left out: the AGENTS.md
+pipeline-diagram annotation, closing.md Section 1, and the stale version-pin
+test names (patch release 0.6.3).
 
-Derived from the Issue #19 acceptance criteria (the spec), not from the
-implementation internals. These check that AGENTS.md and skills/factory/
-SKILL.md state the input-gate invariant at design-artifact granularity —
-authority lives at the design artifacts (`active`); flipping a governed
-epic Ready, promoting its next slice, and closing a finished epic are
-mechanical under a standing approval, fail-closed to the human on doubt;
-a standalone task with no governing design keeps per-task human
-promotion; the cord-pull (un-Readying an epic) remains the human veto;
-and the merge gate / other invariants are unchanged.
+Derived from the Issue #19 and #28 acceptance criteria (the spec), not from
+the implementation internals. These check that AGENTS.md, skills/factory/
+SKILL.md, and skills/factory/references/closing.md all state the input-gate
+invariant at design-artifact granularity — authority lives at the design
+artifacts (`active`); flipping a governed epic Ready, promoting its next
+slice, and closing a finished epic are mechanical under a standing approval,
+fail-closed to the human on doubt; a standalone task with no governing
+design keeps per-task human promotion; the cord-pull (un-Readying an epic)
+remains the human veto; and the merge gate / other invariants are unchanged.
 """
 
 import json
@@ -21,6 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "AGENTS.md"
 SKILL = ROOT / "skills" / "factory" / "SKILL.md"
 PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
+CLOSING = ROOT / "skills" / "factory" / "references" / "closing.md"
 
 
 def _agents_text():
@@ -29,6 +33,10 @@ def _agents_text():
 
 def _skill_text():
     return SKILL.read_text(encoding="utf-8")
+
+
+def _closing_text():
+    return CLOSING.read_text(encoding="utf-8")
 
 
 def _plugin_data():
@@ -91,6 +99,26 @@ def _ready_transition_row():
     match = re.search(r"^\|\s*→ Ready\s*\|.*$", text, re.MULTILINE)
     assert match, "AGENTS.md state-machine table is missing the '→ Ready' row"
     return match.group(0)
+
+
+def _diagram_ready_annotation():
+    """Pull the annotation on the pipeline diagram's 'human sets Status = Ready' line."""
+    text = _agents_text()
+    match = re.search(
+        r"^\s*→\s*human sets Status = Ready\s*(←.*)$", text, re.MULTILINE
+    )
+    assert match, "AGENTS.md pipeline diagram is missing the 'human sets Status = Ready' line"
+    return match.group(1)
+
+
+def _closing_promote_section():
+    """Pull closing.md's '## 1. Promote to Ready' section, up to the next '## ' heading."""
+    text = _closing_text()
+    match = re.search(
+        r"## 1\. Promote to Ready\n(.*?)\n## 2\.", text, re.DOTALL
+    )
+    assert match, "closing.md is missing the '## 1. Promote to Ready' section"
+    return match.group(1)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +201,137 @@ def test_ready_row_distinguishes_standalone_from_epic_child():
 
 
 # ---------------------------------------------------------------------------
+# AGENTS.md — pipeline-diagram annotation (Issue #28)
+# ---------------------------------------------------------------------------
+
+def test_diagram_annotation_no_longer_claims_the_only_human_gated_signal():
+    annotation = _diagram_ready_annotation()
+    assert "only" not in annotation.lower(), (
+        "AGENTS.md pipeline-diagram annotation on 'human sets Status = Ready' still claims "
+        "exclusivity ('only'), which is false for a Ready epic's child promoted by the epic-gate"
+    )
+
+
+def test_diagram_annotation_matches_design_active_granularity():
+    annotation = _diagram_ready_annotation()
+    assert re.search(r"design.?active", annotation, re.IGNORECASE), (
+        "AGENTS.md pipeline-diagram annotation does not tie human authority to design-`active`, "
+        "so it no longer matches the granularity of the input-gate paragraph below it"
+    )
+    assert re.search(r"epic", annotation, re.IGNORECASE), (
+        "AGENTS.md pipeline-diagram annotation does not mention epics"
+    )
+    assert re.search(r"auto.?promot\w*|mechanical|automat\w*", annotation, re.IGNORECASE), (
+        "AGENTS.md pipeline-diagram annotation does not describe the epic-child path as "
+        "auto-promoted/mechanical"
+    )
+
+
+# ---------------------------------------------------------------------------
+# skills/factory/references/closing.md — Section 1 "Promote to Ready" (Issue #28)
+# ---------------------------------------------------------------------------
+
+def test_closing_md_promote_section_ties_to_design_artifacts():
+    section = _closing_promote_section()
+    assert re.search(r"design artifact", section, re.IGNORECASE), \
+        "closing.md §1 does not mention design artifacts"
+    assert re.search(r"`active`", section), \
+        "closing.md §1 does not mention setting a design `active`"
+    assert re.search(r"product-spec|feature-rfc", section, re.IGNORECASE), \
+        "closing.md §1 does not name product-spec/feature-rfc as the design artifact"
+
+
+def test_closing_md_promote_section_still_forbids_agent_setting_active():
+    section = _closing_promote_section()
+    assert re.search(r"no agent ever sets `active`|no agent may set `active`", section, re.IGNORECASE), \
+        "closing.md §1 dropped the guarantee that no agent ever sets a design `active`"
+
+
+def test_closing_md_promote_section_describes_mechanical_epic_path():
+    section = _closing_promote_section()
+    assert re.search(r"mechanical", section, re.IGNORECASE), \
+        "closing.md §1 does not call epic-slice promotion/closing mechanical"
+    assert re.search(r"standing approval", section, re.IGNORECASE), \
+        "closing.md §1 does not tie the mechanical path to a standing approval"
+    assert re.search(r"fail.closed", section, re.IGNORECASE), \
+        "closing.md §1 does not state the mechanical path is fail-closed"
+    assert re.search(r"epic", section, re.IGNORECASE), \
+        "closing.md §1 does not mention epics"
+
+
+def test_closing_md_promote_section_keeps_standalone_task_carveout():
+    section = _closing_promote_section()
+    assert re.search(r"standalone task", section, re.IGNORECASE), \
+        "closing.md §1 does not carve out standalone tasks with no governing design"
+    assert re.search(r"human promotion|human touch|per-task human", section, re.IGNORECASE), \
+        "closing.md §1 does not say standalone tasks keep human promotion"
+
+
+def test_closing_md_promote_section_no_longer_says_status_ready_is_always_human():
+    section = _closing_promote_section()
+    assert "a human — always" not in section, (
+        "closing.md §1 still asserts promote-to-Ready is human, always — too coarse "
+        "post-epic-gate and inconsistent with the SKILL.md Invariants bullet"
+    )
+    assert "the only dispatch" not in section.lower(), (
+        "closing.md §1 still claims Status=Ready is the only dispatch signal"
+    )
+
+
+def test_closing_md_promote_section_matches_skill_md_granularity():
+    """closing.md §1 and the SKILL.md input-gate bullet must describe the same
+    granularity — same load-bearing terms, not necessarily identical prose."""
+    section = _closing_promote_section()
+    bullet = _input_gate_bullet()
+    shared_terms = [
+        r"design artifact",
+        r"`active`",
+        r"mechanical",
+        r"standing approval",
+        r"fail.closed",
+        r"standalone task",
+    ]
+    for pattern in shared_terms:
+        in_section = re.search(pattern, section, re.IGNORECASE)
+        in_bullet = re.search(pattern, bullet, re.IGNORECASE)
+        assert in_section and in_bullet, (
+            f"closing.md §1 and the SKILL.md input-gate bullet disagree on granularity term "
+            f"{pattern!r}: in closing.md={bool(in_section)}, in SKILL.md bullet={bool(in_bullet)}"
+        )
+
+
+def test_closing_md_checklist_before_promoting_unchanged():
+    """The promote checklist itself is out of scope for #28 — only the 'Who' prose changes."""
+    section = _closing_promote_section()
+    assert "`check_links` is green on the technical-rfc" in section
+    assert "`check_task` is green on the task" in section
+    assert "The task is self-contained" in section
+    assert "Size is declared" in section
+
+
+def test_closing_md_sections_2_through_4_unchanged():
+    """Issue #28 is wording-alignment only for §1 — §2-4 and the release checklist
+    must not have changed."""
+    text = _closing_text()
+    assert "**Who:** a human reviews and merges the PR (v1). Native close → `Status=Done`." in text, \
+        "closing.md §2 'Merge → Done' Who line changed unexpectedly"
+    assert "The **durable rule** is *a human decides what to build*" in text, \
+        "closing.md §2 durable-rule sentence changed unexpectedly"
+    assert "Set `status: active` on any doc still at `draft`" in text, \
+        "closing.md §3 'Doc-side freeze' content changed unexpectedly"
+    assert "This is **shipping freezes the why**" in text, \
+        "closing.md §3 closing sentence changed unexpectedly"
+    assert "1. **Version bump** — update `version` in `.claude-plugin/plugin.json`" in text, \
+        "closing.md skill-release block step 1 changed unexpectedly"
+    assert "2. **Release scan** — verify all of the following are true before shipping:" in text, \
+        "closing.md skill-release block step 2 changed unexpectedly"
+    assert "3. **Ship before demote**" in text, \
+        "closing.md skill-release block step 3 changed unexpectedly"
+    assert "The release scan must be fully green." in text, \
+        "closing.md release-checklist Gate section changed unexpectedly"
+
+
+# ---------------------------------------------------------------------------
 # skills/factory/SKILL.md — input-gate invariant bullet reworded
 # ---------------------------------------------------------------------------
 
@@ -245,9 +404,9 @@ def test_other_invariants_still_present_and_unweakened():
 # Version bump to 0.6.2 and description agreement
 # ---------------------------------------------------------------------------
 
-def test_plugin_version_is_0_6_2():
-    assert _plugin_data()["version"] == "0.6.2", \
-        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.6.2'"
+def test_plugin_version_is_current():
+    assert _plugin_data()["version"] == "0.6.3", \
+        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.6.3'"
 
 
 def test_skill_md_and_plugin_description_agree():

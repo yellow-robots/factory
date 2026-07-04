@@ -142,8 +142,8 @@ def test_no_orphan_references():
 # Plugin version and description sync
 # ---------------------------------------------------------------------------
 
-def test_plugin_version_is_0_6_0():
-    assert _plugin_data()["version"] == "0.6.2"
+def test_plugin_version_is_current():
+    assert _plugin_data()["version"] == "0.6.3"
 
 
 def test_skill_md_and_plugin_description_agree():
