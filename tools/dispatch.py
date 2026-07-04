@@ -6,10 +6,17 @@ NON-BLOCKING flock (single-flight), DETACHED, and returns immediately — the bu
 runner does its own GitHub I/O. An HTTP adapter (POST /build) lets n8n trigger it; the same core wraps
 as a YR MCP tool later (one core, two faces).
 
+`run_sweep()` is the same shape for the org-wide epic-gate sweep (RFC — epic-gate sweep): it fires
+`epic_gate.py` under its own NON-BLOCKING flock on a SEPARATE lock, DETACHED, and returns immediately.
+POST /sweep wraps it. The sweep takes no issue/repo — the board is org-wide and the tool does its own
+GitHub I/O — so dispatch here only flocks + spawns, same seam as build_task.
+
 Config (env): DISPATCH_TOKEN (bearer, required to start the HTTP server), DISPATCH_BIND (default
 127.0.0.1), DISPATCH_PORT (default 8770), DEV_RUNNER (default dev-runner.sh next to this file),
-DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock). Dispatch is fail-closed: every request must
-carry an explicit repo (owner/name) — there is no default repo, so a missing/unroutable repo never builds.
+DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock), EPIC_SWEEPER (default epic_gate.py next to
+this file), SWEEP_LOCK (default ~/.cache/dev-runner/epic-sweep.lock — distinct from DISPATCH_LOCK, so a
+sweep never blocks or is blocked by a build). Dispatch is fail-closed: every /build request must carry an
+explicit repo (owner/name) — there is no default repo, so a missing/unroutable repo never builds.
 """
 import hmac
 import json
@@ -23,6 +30,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 SELF = pathlib.Path(__file__).resolve()
 DEV_RUNNER = os.environ.get("DEV_RUNNER", str(SELF.parent / "dev-runner.sh"))
 LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
+EPIC_SWEEPER = os.environ.get("EPIC_SWEEPER", str(SELF.parent / "epic_gate.py"))
+SWEEP_LOCK = os.environ.get("SWEEP_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "epic-sweep.lock"))
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
 
@@ -53,6 +62,15 @@ def build_task(issue, repo=None, *, runner=None, lock=None, spawn=None):
     return {"ok": True, "issue": int(issue), "repo": repo, "dispatched": True}
 
 
+def run_sweep(*, sweeper=None, lock=None, spawn=None):
+    """Reusable core: fire the org-wide epic-gate sweep under its own non-blocking flock, detached.
+    Returns immediately. Takes no issue/repo — the sweep tool reads/writes the board itself; dispatch
+    only flocks + spawns, on a lock separate from the build lock so neither blocks the other."""
+    cmd = ["flock", "-n", lock or SWEEP_LOCK, sweeper or EPIC_SWEEPER]
+    (spawn or _SPAWN)(cmd)
+    return {"ok": True, "dispatched": True}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj).encode()
@@ -67,14 +85,18 @@ class Handler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         if not token or not hmac.compare_digest(auth, f"Bearer {token}"):   # constant-time
             return self._send(401, {"ok": False, "error": "unauthorized"})
-        if self.path.rstrip("/") != "/build":
+        path = self.path.rstrip("/")
+        if path not in ("/build", "/sweep"):
             return self._send(404, {"ok": False, "error": "not found"})
         try:
             length = int(self.headers.get("Content-Length") or 0)
             data = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             return self._send(400, {"ok": False, "error": "bad json"})
-        res = build_task(data.get("issue"), data.get("repo"))
+        if path == "/sweep":
+            res = run_sweep()
+        else:
+            res = build_task(data.get("issue"), data.get("repo"))
         self._send(202 if res["ok"] else 400, res)
 
     def log_message(self, *args):   # keep the server quiet

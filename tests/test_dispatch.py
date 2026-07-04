@@ -42,6 +42,36 @@ def test_build_task_rejects_bad_repo():
     assert not r["ok"] and calls == []
 
 
+# ---- run_sweep core ----
+
+def test_run_sweep_spawns_flocked_sweeper():
+    calls = []
+    r = dispatch.run_sweep(sweeper="/x/epic_gate.py", lock="/tmp/sweep.lock", spawn=calls.append)
+    assert r["ok"] and r["dispatched"]
+    assert calls == [["flock", "-n", "/tmp/sweep.lock", "/x/epic_gate.py"]]
+
+
+def test_run_sweep_takes_no_issue_or_repo_args():
+    calls = []
+    r = dispatch.run_sweep(spawn=calls.append)   # no issue/repo — org-wide, board is the input
+    assert r["ok"] and r["dispatched"]
+    assert len(calls) == 1 and len(calls[0]) == 4   # flock, -n, <lock>, <sweeper> — nothing else appended
+
+
+def test_sweep_lock_distinct_from_build_lock():
+    # default locks (no override) must differ so a build never blocks/blocks-on a sweep
+    assert dispatch.SWEEP_LOCK != dispatch.LOCK
+
+    build_calls, sweep_calls = [], []
+    dispatch.build_task("7", "o/r", runner="/x/run.sh", spawn=build_calls.append)
+    dispatch.run_sweep(sweeper="/x/epic_gate.py", spawn=sweep_calls.append)
+    build_lock_path = build_calls[0][2]
+    sweep_lock_path = sweep_calls[0][2]
+    assert build_lock_path != sweep_lock_path
+    assert build_lock_path == dispatch.LOCK
+    assert sweep_lock_path == dispatch.SWEEP_LOCK
+
+
 # ---- HTTP adapter ----
 
 @contextlib.contextmanager
@@ -117,3 +147,44 @@ def test_http_malformed_json_400():
         except urllib.error.HTTPError as e:
             code = e.code
         assert code == 400 and calls == []
+
+
+# ---- /sweep HTTP adapter ----
+
+def test_http_sweep_requires_token():
+    with _server() as (url, calls):
+        assert _post(url + "/sweep", {})[0] == 401                       # missing token
+        assert _post(url + "/sweep", {}, token="wrong")[0] == 401        # wrong token
+        assert calls == []                                               # never reached run_sweep
+
+
+def test_http_sweep_happy_202_spawns_once():
+    with _server() as (url, calls):
+        code, body = _post(url + "/sweep", {}, token="secret")
+        assert code == 202 and body["ok"] and body["dispatched"]
+        assert len(calls) == 1 and calls[0][:2] == ["flock", "-n"]
+
+
+def test_http_sweep_no_body_required():
+    with _server() as (url, calls):
+        req = urllib.request.Request(url + "/sweep", data=b"", method="POST")
+        req.add_header("Authorization", "Bearer secret")
+        with urllib.request.urlopen(req) as resp:
+            code = resp.status
+        assert code == 202 and len(calls) == 1
+
+
+def test_http_sweep_uses_lock_distinct_from_build_lock():
+    with _server() as (url, calls):
+        _post(url + "/build", {"issue": 5, "repo": "o/r"}, token="secret")
+        _post(url + "/sweep", {}, token="secret")
+        assert len(calls) == 2
+        build_lock = calls[0][2]
+        sweep_lock = calls[1][2]
+        assert build_lock != sweep_lock
+
+
+def test_http_unknown_path_404_still_enforced_with_sweep_route_present():
+    with _server() as (url, calls):
+        assert _post(url + "/nope", {}, token="secret")[0] == 404
+        assert calls == []
