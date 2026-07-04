@@ -102,12 +102,18 @@ class FakeGh:
         self.epic_details = epic_details
         self.edits = []       # (item_id, field_id, opt)
         self.comments = []    # (repo, number, body)
+        self.closes = []      # (repo, number, reason)
         self.edit_argv = []   # raw argv of each item-edit
         self.comment_argv = []
+        self.close_argv = []
         self._index = {}      # id -> the mutable node dict it names (board item or child projectItem)
+        self._by_number = {}  # issue number -> its board item node (for applying a native close)
         for it in board_nodes:
             if it.get("id"):
                 self._index[it["id"]] = it
+            content = it.get("content") or {}
+            if content.get("number") is not None:
+                self._by_number[content["number"]] = it
         for detail in epic_details.values():
             for ch in (detail.get("subIssues") or {}).get("nodes") or []:
                 for pi in (ch.get("projectItems") or {}).get("nodes") or []:
@@ -136,6 +142,13 @@ class FakeGh:
             self.comments.append((f["--repo"], argv[2], f["--body"]))
             self.comment_argv.append(argv)
             return ""
+        if argv[:2] == ["issue", "close"]:
+            f = _flags(argv)
+            number = int(argv[2])
+            self.closes.append((f["--repo"], argv[2], f["--reason"]))
+            self.close_argv.append(argv)
+            self._apply_close(number)
+            return ""
         raise AssertionError(f"unexpected gh call: {argv!r}")
 
     def _apply(self, item_id, field_id, opt):
@@ -146,6 +159,13 @@ class FakeGh:
             node["status"] = _select(INV_STATUS.get(opt, opt))
         elif field_id == REASON_FIELD:
             node["reason"] = _select(INV_REASON.get(opt, opt))
+
+    def _apply_close(self, number):
+        """A native close flips the board item's issue state to CLOSED, so a later tick's board read no
+        longer sees it as an OPEN candidate — this is how the fake proves self-close is idempotent."""
+        item = self._by_number.get(number)
+        if item is not None:
+            item["content"]["state"] = "CLOSED"
 
 
 def _sweep(fake):
@@ -547,6 +567,105 @@ def test_raise_not_a_task_is_idempotent_across_ticks():
     _sweep(fake)                                            # identical second tick
     assert fake.edits == edits_after_1
     assert fake.comments == comments_after_1
+
+
+# ============================================================================
+# Multiple Ready epics interleave — each processed independently, no prioritization
+# ============================================================================
+
+# ============================================================================
+# AC11 (#16) — a finished Ready epic (no open child left, has had >=1 child) self-closes natively
+# ============================================================================
+
+def test_finished_epic_with_completed_child_closes_completed():
+    """All children closed, at least one COMPLETED -> the epic closes with reason completed; the sweep
+    never edits Status directly (native close->Done automation is trusted to set it)."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        children=[_child(101, state="CLOSED", pi_id="PI-101"),
+                  _child(102, state="CLOSED", pi_id="PI-102")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    epics[100]["subIssues"]["nodes"][1]["stateReason"] = "NOT_PLANNED"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+
+    assert fake.closes == [(REPO, "100", "completed")]
+    close = fake.close_argv[0]
+    assert close[:3] == ["issue", "close", "100"]
+    # the sweep never sets Status=Done itself -- no Status field edit at all
+    assert _status_ready_edits(fake) == []
+    assert not any(e[0] == "EI-100" for e in fake.edits)
+    assert fake.comments == []                              # no promote/raise noise alongside a close
+
+
+def test_finished_epic_all_not_planned_closes_not_planned():
+    """Every child closed as NOT_PLANNED (none COMPLETED) -> the epic closes with reason 'not planned'."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        children=[_child(101, state="CLOSED", pi_id="PI-101"),
+                  _child(102, state="CLOSED", pi_id="PI-102")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "NOT_PLANNED"
+    epics[100]["subIssues"]["nodes"][1]["stateReason"] = "NOT_PLANNED"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+
+    assert fake.closes == [(REPO, "100", "not planned")]
+
+
+def test_childless_epic_never_closes():
+    """A childless epic is never 'finished' -> no close (mirrors the existing no-promotion behavior)."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[VALID_RECORD], children=[])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == []
+
+
+def test_non_ready_epic_with_all_children_closed_never_closes():
+    """Cord-pull: an epic not Status=Ready is never a sweep candidate, even if every child is closed."""
+    for epic_status in ("Backlog", "In Progress", "Done", None):
+        board = [_item(100, item_id="EI-100", itype="Feature", status=epic_status)]
+        epics = {100: _epic_detail(
+            comments=[VALID_RECORD],
+            children=[_child(101, state="CLOSED", pi_id="PI-101")])}
+        epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+        fake = FakeGh(board, epics)
+        _sweep(fake)
+        assert fake.closes == [], f"epic status={epic_status!r} should never self-close"
+
+
+def test_open_child_remaining_blocks_self_close():
+    """One child still OPEN -> no close; the epic instead follows the promotion/wait branch."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        children=[_child(101, state="CLOSED", pi_id="PI-101"),
+                  _child(102, state="OPEN", pi_id="PI-102", status="Backlog")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == []
+    # the open child is instead promoted (business as usual) -- proves self-close is the mutually
+    # exclusive "no open child" branch, not a bolt-on check
+    assert fake.edits == [("PI-102", STATUS_FIELD, "Ready")]
+
+
+def test_self_close_is_idempotent_across_ticks():
+    """Tick 1 closes the finished epic (the fake flips its board content.state to CLOSED). Tick 2's board
+    read no longer sees it OPEN, so it is not a candidate -> no second close call."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        children=[_child(101, state="CLOSED", pi_id="PI-101")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+
+    _sweep(fake)                                             # identical second tick
+    assert fake.closes == [(REPO, "100", "completed")]        # no duplicate close
 
 
 # ============================================================================
