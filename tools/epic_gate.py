@@ -4,8 +4,9 @@
 `sweep_epics(*, gh=None, ...)` is the reusable core: one sweep of the org board that, for each **Ready
 epic** carrying a valid standing-approval record, promotes the next open Task child in sub-issue order —
 one slice in flight per epic, stopping on any trouble, leaving an accountable record on each promoted
-child. This is the *promotion engine only*; self-close of a finished epic and stranded-claim detection are
-separate tasks that extend this same tool.
+child. The same per-epic pass also self-closes a Ready epic that has run out of open children — the
+"finished, not-yet-closed" branch mutually exclusive with promotion/waiting. Stranded-claim detection is a
+separate task that extends this same tool.
 
 Design (mirrors `tools/dispatch.py`'s injectable seams so the whole decision tree is unit-testable with no
 live `gh`): the one external — the `gh` CLI — is injected as a callable `gh(argv)` that runs a `gh` argv
@@ -83,6 +84,7 @@ query($owner: String!, $name: String!, $number: Int!) {
         nodes {
           number
           state
+          stateReason
           issueType { name }
           repository { nameWithOwner }
           projectItems(first: 20) {
@@ -211,6 +213,17 @@ def _comment(gh, repo, number, body):
     gh(["issue", "comment", str(number), "--repo", repo, "--body", body])
 
 
+def _close_issue(gh, repo, number, reason):
+    gh(["issue", "close", str(number), "--repo", repo, "--reason", reason])
+
+
+def _epic_close_reason(children):
+    """completed if any child closed as completed; not planned only if every child closed not-planned."""
+    if any((c.get("stateReason") or "").upper() == "COMPLETED" for c in children):
+        return "completed"
+    return "not planned"
+
+
 def _pi_node(subissue, project_number):
     """The child's project item for our board (project #project_number), or None if it isn't on the board."""
     for pi in ((subissue.get("projectItems") or {}).get("nodes") or []):
@@ -228,9 +241,18 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
     comments = [(c or {}).get("body") or "" for c in ((issue.get("comments") or {}).get("nodes") or [])]
     children = (issue.get("subIssues") or {}).get("nodes") or []
 
-    # (4) childless epic → do nothing (self-close is a separate task and also excludes childless epics).
+    # (4) childless epic → do nothing (an un-decomposed epic is never "finished").
     if not children:
         return []
+
+    # (5) no open child left → the epic is finished: self-close natively and let the board's native
+    #     close→Done automation set Status. Mutually exclusive with promoting/waiting below, and does not
+    #     depend on the standing-approval record (that record only gates promotion, not closing).
+    open_children = [c for c in children if (c.get("state") or "").upper() == "OPEN"]
+    if not open_children:
+        reason = _epic_close_reason(children)
+        _close_issue(gh, epic["repo"], epic["number"], reason)
+        return [{"epic": epic["number"], "action": "close", "reason": reason}]
 
     # (1) no valid approval record → raise Needs-info + stop; promote nothing. Idempotent: never re-raise
     #     (or re-comment) when the epic already carries the Reason this raise would set.
@@ -239,10 +261,6 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
             _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
             _comment(gh, epic["repo"], epic["number"], _needs_info_body())
             return [{"epic": epic["number"], "action": "raise", "reason": "Needs-info"}]
-        return []
-
-    open_children = [c for c in children if (c.get("state") or "").upper() == "OPEN"]
-    if not open_children:
         return []
 
     # (2) line busy / trouble → wait: any open child in flight or off-track blocks a new promotion.
@@ -317,6 +335,8 @@ def main(argv=None):
     for a in actions:
         if a["action"] == "promote":
             print(f"epic-gate: promoted #{a['child']} under epic #{a['epic']}")
+        elif a["action"] == "close":
+            print(f"epic-gate: closed epic #{a['epic']} (reason={a['reason']})")
         else:
             print(f"epic-gate: raised epic #{a['epic']} (Reason={a['reason']})")
     return 0
