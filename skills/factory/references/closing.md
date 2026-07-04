@@ -9,8 +9,11 @@
 
 ## 1. Promote to Ready
 
-**Who:** a human — always. No agent may set `Status=Ready`. This is the input gate and the only dispatch
-signal.
+**Who:** a human owns the input gate at the design artifacts — a human decides *what* gets built by
+setting a product-spec or feature-rfc `active`; no agent ever sets `active`. Below that standing approval,
+flipping a governed epic to Ready, promoting its next pre-approved slice, and closing a finished epic are
+**mechanical**, fail-closed back to the human on any doubt. A standalone task with no governing design
+above it has no standing approval to run on, so it keeps the original per-task human promotion.
 
 **Checklist before promoting:**
 - [ ] `check_links` is green on the technical-rfc (see [`gates.md`](gates.md)).

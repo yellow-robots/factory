@@ -34,7 +34,7 @@ A task must be **self-contained**: an implementer should never need to open Obsi
 
 ```
 product/RFC discussion (vault)  →  file a Task (Issue Form = Definition of Ready)
-   →  human sets Status = Ready   ← the ONLY human-gated dispatch signal
+   →  human sets Status = Ready   ← human at design-active; epic children auto-promote
    →  n8n poll (every 5 min) finds Ready  →  POST host endpoint  →  dev-runner
    →  implement → test → check → review → PR  (all autonomous, see below)
    →  human merges  ← the second and final human gate
