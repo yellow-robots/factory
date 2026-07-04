@@ -41,8 +41,15 @@ product/RFC discussion (vault)  →  file a Task (Issue Form = Definition of Rea
    →  native close → Status = Done
 ```
 
-The two human gates — **promote to Ready** and **merge the PR** — are deliberate. Everything between them
-runs without a human. We hold those gates ourselves; we do not auto-promote or auto-merge.
+The human **input** gate is exercised at the design artifacts, not at every `Ready` flip: a human decides
+*what gets built* by setting a product-spec or feature-rfc `active`. Below that standing approval,
+flipping a governed epic to Ready, promoting its next pre-approved slice, and closing a finished epic are
+**mechanical** — enacted without a human touch, fail-closed back to the human on any doubt (a missing or
+invalid approval record raises `Needs-info` rather than guessing). The cord-pull — un-Readying an epic —
+remains the human's veto, always available. A standalone task with no governing design above it has no
+standing approval to run on, so it keeps the original per-task human promotion. The **output** gate —
+**merge the PR** — is unchanged: a human merges every PR; implement → test → check → review → PR runs
+without a human throughout.
 
 ### Task lifecycle (state machine — RFC 0003)
 
@@ -55,7 +62,7 @@ State lives on **native GitHub primitives**, never labels:
 
 | Transition | Who | When |
 |---|---|---|
-| → Ready | **human** | task meets Definition of Ready and we want it built |
+| → Ready | **human** (standalone task) / **epic-gate** (child of a Ready epic) | standalone: meets Definition of Ready and a human wants it built. Epic child: the epic carries a standing-approval record — the epic-gate promotes the next slice automatically |
 | Ready → In Progress | runner | claims the task (drops it from the Ready poll → single-flight) |
 | → Backlog + Reason=Needs-info | runner | DoR content gate fails (empty acceptance criteria, bad `model:`) |
 | → Reason=Blocked | runner | any stage fails, or the tester touches production code |
