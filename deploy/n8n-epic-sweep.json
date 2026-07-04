@@ -1,0 +1,37 @@
+{
+  "name": "YR epic-gate sweep — poll the board, promote/close/raise",
+  "_comment": "STARTING SKELETON — import into n8n, then wire per deploy/DISPATCH.md: the dispatch URL + bearer token on the POST node. node typeVersions may need bumping to your n8n. Keep INACTIVE until the watched switch-on. No GraphQL/filter nodes: the sweep is org-wide and epic_gate.py reads the board itself.",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Every 5 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [260, 300],
+      "parameters": { "rule": { "interval": [ { "field": "minutes", "minutesInterval": 5 } ] } }
+    },
+    {
+      "id": "sweep",
+      "name": "POST /sweep",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://REPLACE_BIND_IP:8770/sweep",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Authorization", "value": "Bearer REPLACE_WITH_DISPATCH_TOKEN" }
+        ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}"
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 min": { "main": [ [ { "node": "POST /sweep", "type": "main", "index": 0 } ] ] }
+  }
+}

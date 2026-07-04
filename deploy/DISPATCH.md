@@ -69,3 +69,31 @@ Node `typeVersion`s may need bumping to your n8n; the JSON is a starting skeleto
 - **No double-pickup:** the runner claims (`Ready → In Progress`) as its first act, dropping the task off the Ready query within seconds.
 - **Fail-closed:** any runner failure → `Reason=Blocked` + comment, no PR. A bad task can't run wild.
 - **Grooming stays human:** dispatch only *pulls* `Ready`; promoting Backlog → Ready is a human/Joam decision.
+
+## Deploying the epic-gate sweep
+
+The same host service also exposes `POST /sweep`, which fires `tools/epic_gate.py` — the org-wide sweep
+that promotes the next pre-approved slice under a standing approval, self-closes a finished Ready epic,
+and raises stranded claims. It takes no issue/repo (the board is org-wide) and runs under its **own**
+lock (`SWEEP_LOCK`, default `~/.cache/dev-runner/epic-sweep.lock`), separate from the build lock
+(`DISPATCH_LOCK`) — a running build never blocks a sweep, and vice versa. No code change or restart is
+needed if the service is already running `/build`; `/sweep` is live on the same process.
+
+1. **Import the workflow.** Import `deploy/n8n-epic-sweep.json`, then wire the **POST /sweep** node:
+   set the URL to `http://<BIND>:8770/sweep` and `Authorization: Bearer <DISPATCH_TOKEN>` (same token
+   and bind as the build workflow — no separate networking setup required). There is no GraphQL/filter
+   node — the sweep needs no input, so the schedule trigger feeds `POST /sweep` directly.
+2. **Smoke test:**
+   ```bash
+   TOKEN=$(grep DISPATCH_TOKEN ~/.config/dev-runner/dispatch.env | cut -d= -f2-)
+   curl -s -XPOST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+        -d '{}' http://<BIND>:8770/sweep      # expect 202
+   ```
+3. **Watched switch-on.** Same discipline as the build workflow: run `/sweep` manually against the live
+   board (via "Execute Workflow" or the curl above) and watch it act — a slice promotion, an epic
+   self-close, or a stranded-claim raise. Repeat until boring, then activate the schedule.
+
+**Kill switch, sweep vs. build:** `systemctl --user stop dispatch` stops the whole host service — **both**
+`/build` and `/sweep` — instantly (new dispatches only; an in-flight build or sweep runs to completion,
+`KillMode=process`). To stop *only* promotions while builds keep running, deactivate just the epic-sweep
+n8n workflow — the build workflow (and `/build`) is unaffected.
