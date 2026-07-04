@@ -24,9 +24,19 @@ that issue's own `projectItems` via issue-side GraphQL; promotion order reads th
 
 CLI: `python -m epic_gate` / `epic_gate.py` runs one real sweep (default `gh`) and prints what it did —
 for the `/sweep` dispatch route (separate task) to invoke, and for manual watched switch-on.
+
+Stranded-claim detection (extends the same per-epic busy check): `tools/dev-runner.sh` claims a child
+(`Status -> In Progress`) as its first act, then either opens a PR (-> In Review) or fails via
+`fail_blocked` (-> `Reason=Blocked`). A hard death (signal/kill) between those two runs no handler,
+leaving Status=In Progress with no Reason forever — neither in flight nor off-track, so the epic would
+wait on it forever. The sweep raises such a claim (`Reason=Blocked` + an explanatory comment) once it has
+stood past a staleness bound with no open PR and no live build holding `dispatch.py`'s build lock.
 """
+import datetime
+import fcntl
 import json
 import os
+import pathlib
 import subprocess
 import sys
 
@@ -51,6 +61,11 @@ REASON_OPT = {
 # a child is "in flight / off-track" — the line is busy — while it holds any of these
 BUSY_STATUS = {"Ready", "In Progress", "In Review"}
 BUSY_REASON = {"Blocked", "Needs-info"}
+
+# --- stranded-claim config: how long an unstable In-Progress claim is given before it's suspect, and
+#     where dispatch.py's build-lock lives (the same default/env name it uses) ---------------------
+STRANDED_AFTER_MIN = int(os.environ.get("STRANDED_AFTER_MIN", "45"))
+DISPATCH_LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
 
 # --- GraphQL (fetch exactly what the algorithm needs; `first: 100` inherits the board-scale pagination
 #     TODO in deploy/ready-query.graphql — acceptable at current board size) ----------------------------
@@ -92,7 +107,7 @@ query($owner: String!, $name: String!, $number: Int!) {
               id
               project { number }
               status: fieldValueByName(name: "Status") {
-                ... on ProjectV2ItemFieldSingleSelectValue { name }
+                ... on ProjectV2ItemFieldSingleSelectValue { name updatedAt }
               }
               reason: fieldValueByName(name: "Reason") {
                 ... on ProjectV2ItemFieldSingleSelectValue { name }
@@ -129,6 +144,79 @@ def _query(gh, argv):
 def _fv_name(node):
     """The `.name` of a single-select field value node (or "" when the field is unset/null)."""
     return (node or {}).get("name") or ""
+
+
+# --- stranded-claim detection helpers -------------------------------------------------------------
+def _parse_dt(iso):
+    """Parse a GraphQL DateTime scalar (e.g. `2026-07-03T14:32:10Z`) into a naive UTC datetime,
+    comparable against the injectable `now()` clock."""
+    s = iso.strip()
+    if s.endswith("Z"):
+        s = s[:-1]
+    s = s.split("+", 1)[0]
+    if "." in s:
+        s = s.split(".", 1)[0]
+    return datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%S")
+
+
+def _utcnow():
+    """Default `now` clock — real wall-clock UTC (tests inject a fake for deterministic ages)."""
+    return datetime.datetime.utcnow()
+
+
+def _default_build_lock_held():
+    """Default `build_lock_held` probe — a non-blocking `flock` test on dispatch.py's build lock (same
+    default path/env as `dispatch.py`). Held (can't acquire) => a build is live. Absent/free => not."""
+    path = pathlib.Path(DISPATCH_LOCK)
+    if not path.exists():
+        return False
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:                                     # can't acquire => a build holds it
+        return True
+    finally:
+        os.close(fd)
+
+
+def _has_open_pr(gh, repo, child_number):
+    """True iff an open PR exists whose head branch is `task/<child_number>-…` (the runner's
+    `BRANCH="task/${ISSUE}-${SLUG}"`) — a completed build that only missed the In Review status write."""
+    out = gh(["pr", "list", "--repo", repo, "--state", "open", "--json", "number,headRefName"])
+    prs = out if isinstance(out, list) else json.loads(out)
+    prefix = f"task/{child_number}-"
+    return any((pr.get("headRefName") or "").startswith(prefix) for pr in prs)
+
+
+def _is_stranded(gh, child, pi, now, build_lock_held, stranded_after_min):
+    """True iff an In-Progress, Reason-less child's claim looks dead: its Status has stood unchanged
+    past the staleness bound, no build currently holds the build-lock, and no open PR exists for it.
+    Returns `(is_stranded, age_minutes)` — the age is reported even when not (yet) stranded is False."""
+    updated_at = ((pi or {}).get("status") or {}).get("updatedAt")
+    if not updated_at:
+        return False, 0
+    age_min = (now() - _parse_dt(updated_at)).total_seconds() / 60.0
+    if age_min <= stranded_after_min:
+        return False, age_min
+    if build_lock_held():                              # a build is live — defer, don't raise
+        return False, age_min
+    repo = (child.get("repository") or {}).get("nameWithOwner") or ""
+    if _has_open_pr(gh, repo, child["number"]):
+        return False, age_min
+    return True, age_min
+
+
+def _stranded_body(age_min):
+    return (
+        f"YR-EPIC-GATE: stranded claim — In Progress {int(age_min)} min with no live build; likely a "
+        "hard runner death (see `deploy/DISPATCH.md`). Recover: clear the Reason and re-Ready if the fix "
+        "warrants."
+    )
 
 
 # --- the standing-approval record: a comment on the epic carrying the sentinel + both fields ----------
@@ -232,7 +320,8 @@ def _pi_node(subissue, project_number):
     return None
 
 
-def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, status_opt, reason_opt):
+def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, status_opt, reason_opt,
+                   now, build_lock_held, stranded_after_min):
     """Run the per-epic algorithm for one Ready epic; return a list of the actions taken."""
     owner, _, name = (epic["repo"] or "").partition("/")
     detail = _query(gh, ["api", "graphql", "-f", "query=" + EPIC_QUERY,
@@ -264,10 +353,25 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
         return []
 
     # (2) line busy / trouble → wait: any open child in flight or off-track blocks a new promotion.
+    #     Along the way, catch a *stranded claim*: an In-Progress child with no Reason whose Status has
+    #     stood past the staleness bound, with no open PR and no live build — a hard runner death left no
+    #     handler to set Reason=Blocked, so the sweep raises it itself (still stops the line either way,
+    #     since In Progress is already BUSY_STATUS; the raise is what makes it visibly off-track).
+    stranded_actions = []
     for c in open_children:
         pi = _pi_node(c, project_number)
-        if _fv_name(pi and pi.get("status")) in BUSY_STATUS or _fv_name(pi and pi.get("reason")) in BUSY_REASON:
-            return []
+        status = _fv_name(pi and pi.get("status"))
+        reason = _fv_name(pi and pi.get("reason"))
+        if status == "In Progress" and not reason and pi and pi.get("id"):
+            stranded, age_min = _is_stranded(gh, c, pi, now, build_lock_held, stranded_after_min)
+            if stranded:
+                child_repo = (c.get("repository") or {}).get("nameWithOwner") or epic["repo"]
+                _set_field(gh, pi["id"], reason_field_id, reason_opt["Blocked"])
+                _comment(gh, child_repo, c["number"], _stranded_body(age_min))
+                stranded_actions.append({"epic": epic["number"], "action": "raise",
+                                         "child": c["number"], "reason": "Blocked"})
+        if status in BUSY_STATUS or reason in BUSY_REASON:
+            return stranded_actions
 
     # (3) promote the first open child in sub-issue order.
     first = open_children[0]
@@ -290,16 +394,23 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
 
 def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
                 status_field_id=STATUS_FIELD_ID, reason_field_id=REASON_FIELD_ID,
-                status_opt=None, reason_opt=None):
+                status_opt=None, reason_opt=None,
+                now=None, build_lock_held=None, stranded_after_min=None):
     """Run one sweep of the org board. For each OPEN, `Type=Feature`, `Status=Ready` epic (candidates,
     interleaved with no prioritization), apply the per-epic algorithm. Returns the list of actions taken.
 
     The sweep only ever *sets* Status/Reason and posts comments — it never clears a Reason (clearing is
     the human's explicit resume act), never builds, and never sets any Status but `Ready` (promotion).
-    Standalone tasks and children of non-Ready epics are never visited, so never touched (cord-pull)."""
+    Standalone tasks and children of non-Ready epics are never visited, so never touched (cord-pull).
+
+    `now` (a `() -> datetime.datetime` clock), `build_lock_held` (a `() -> bool` probe), and
+    `stranded_after_min` are injectable for the stranded-claim check — each defaults to a real read."""
     gh = gh or _gh
     status_opt = status_opt or STATUS_OPT
     reason_opt = reason_opt or REASON_OPT
+    now = now or _utcnow
+    build_lock_held = build_lock_held or _default_build_lock_held
+    stranded_after_min = STRANDED_AFTER_MIN if stranded_after_min is None else stranded_after_min
 
     board = _query(gh, ["api", "graphql", "-f", "query=" + BOARD_QUERY,
                         "-F", f"org={org}", "-F", f"project={project_number}"])
@@ -323,7 +434,7 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
             "reason": _fv_name(item.get("reason")),
         }
         actions += _process_epic(gh, epic, project_number, status_field_id, reason_field_id,
-                                 status_opt, reason_opt)
+                                 status_opt, reason_opt, now, build_lock_held, stranded_after_min)
     return actions
 
 
@@ -337,6 +448,9 @@ def main(argv=None):
             print(f"epic-gate: promoted #{a['child']} under epic #{a['epic']}")
         elif a["action"] == "close":
             print(f"epic-gate: closed epic #{a['epic']} (reason={a['reason']})")
+        elif a["action"] == "raise" and "child" in a:
+            print(f"epic-gate: raised stranded child #{a['child']} under epic #{a['epic']} "
+                  f"(Reason={a['reason']})")
         else:
             print(f"epic-gate: raised epic #{a['epic']} (Reason={a['reason']})")
     return 0
