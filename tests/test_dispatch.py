@@ -72,6 +72,13 @@ def test_sweep_lock_distinct_from_build_lock():
     assert sweep_lock_path == dispatch.SWEEP_LOCK
 
 
+def test_epic_sweeper_default_is_executable():
+    # flock execs the sweeper directly (run_sweep's argv), detached with stderr to DEVNULL — a missing
+    # exec bit means every /sweep 202s then dies silently (exit 126). Git checkouts preserve mode bits,
+    # so pin the bit here.
+    assert os.access(dispatch.EPIC_SWEEPER, os.X_OK)
+
+
 # ---- HTTP adapter ----
 
 @contextlib.contextmanager
