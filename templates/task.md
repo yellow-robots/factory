@@ -36,7 +36,9 @@ Definition of Ready) · **Source:** the technical-RFC slice — or, on a floor i
 <!-- SELF-CONTAINED. Paste the technical RFC's per-task slice here (modules to touch, pattern to
      follow, integration point, the gotcha; exact file paths). On a floor iteration there is no
      technical RFC — author the slice directly from the product-spec. A dev should NOT need to open
-     Obsidian. -->
+     Obsidian. If a cited path is this task's own not-yet-built output, name it on a `Deliverable:`
+     line (e.g. `Deliverable: \`tools/x.py\` — the new script`) — check_task exempts it from the
+     cited-path-exists gate; plain references still resolve. -->
 
 ## Test expectations
 <!-- How this is verified. The independent tester writes tests against the acceptance criteria above. -->
