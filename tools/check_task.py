@@ -18,7 +18,18 @@ expectations) — frontmatter is provenance and is ignored:
                          and a file extension on its last segment. Bare filenames, command spans, git
                          refs (`origin/main`), scoped packages (`@scope/pkg`), host/URL fragments, and
                          host paths (`~/…`, `/…`) are skipped (ambiguous or not-a-file → no false
-                         failures).
+                         failures). Two further rules keep this fail-loud without flagging legitimate
+                         citations (the #24/#31 false-positive tally):
+                           a. own deliverable — a path cited on a line starting with a `Deliverable:`
+                              or `Creates:` marker (optionally bulleted/bolded, e.g. "- **Deliverable:**
+                              `tools/x.py`") is exempt: the task is naming the file IT will create, so
+                              it can't exist yet. The same path cited elsewhere in the body, off a
+                              marker line, is a plain reference and is still checked.
+                           b. subtree-relative citation — when root-relative resolution fails, the path
+                              is retried as a suffix against every file in the repo tree (e.g.
+                              `references/closing.md` matching `skills/factory/references/closing.md`).
+                              Exactly one match resolves it; zero or two-or-more still errors (the
+                              latter names every candidate — genuinely ambiguous).
 
 Usage: check_task.py <task.md> [--repo-root DIR] [--base-ref REF]
 Exit 0 if self-contained; 1 (with `<file>: <message>` lines) otherwise.
@@ -37,6 +48,8 @@ _WIKILINK_RE = re.compile(r"\[\[[^\]]+\]\]")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _LINE_SUFFIX_RE = re.compile(r":\d+(?:-\d+)?$")
 _EXT_RE = re.compile(r"/[^/]*\.[A-Za-z0-9]+$")   # last path segment carries a file extension
+# a line naming the task's own deliverable — optional bullet/bold, then `Deliverable:` / `Creates:`
+_DELIVERABLE_RE = re.compile(r"^\s*[-*\s]*(?:deliverable|creates)\s*\**\s*:", re.IGNORECASE)
 
 
 def _strip_comments(s):
@@ -67,7 +80,8 @@ def _pathify(token):
     task citation is repo-relative, so requiring an extension skips the look-alikes that aren't repo
     files to resolve — git refs (`origin/main`), scoped npm packages (`@scope/pkg`), host/URL
     fragments (`example.com/a/b`), and host paths (`~/…`, `/…`) — killing those false positives
-    without losing a genuine citation.
+    without losing a genuine citation. This only filters the token shape; whether the resulting path
+    must already exist is decided later — see `check_task`'s deliverable-marker and suffix-match rules.
     """
     token = _LINE_SUFFIX_RE.sub("", token.strip())
     if " " in token or "/" not in token:
@@ -89,14 +103,60 @@ def _path_exists(path, repo_root, base_ref):
     return (pathlib.Path(repo_root) / path).exists()
 
 
+def _repo_files(repo_root, base_ref):
+    """Every file path in the target repo tree, forward-slash relative — for suffix resolution.
+
+    At `base_ref`, lists the git tree (`ls-tree -r`, empty on any git failure); otherwise walks the
+    working tree, skipping `.git`. Directories are excluded — only files are citable.
+    """
+    if base_ref:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-tree", "-r", "--name-only", base_ref],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            return []
+        return [line for line in result.stdout.splitlines() if line]
+    root = pathlib.Path(repo_root)
+    if not root.is_dir():
+        return []
+    return [
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*")
+        if p.is_file() and ".git" not in p.relative_to(root).parts
+    ]
+
+
+def _suffix_matches(path, repo_files):
+    """Repo files this subtree-relative `path` could mean: exact suffix on a path-segment boundary.
+
+    `references/closing.md` matches `skills/factory/references/closing.md` (suffix after a `/`) but not
+    `other-references/closing.md` (mid-segment). Exactly one hit ⇒ resolvable; anything else ⇒ not.
+    """
+    suffix = "/" + path
+    return sorted(f for f in repo_files if f.endswith(suffix))
+
+
 def check_task(text, *, repo_root, base_ref=None, path_exists=None):
     """Return error messages (list[str]) for self-containment failures; [] ⇒ build-ready.
 
     `path_exists(path) -> bool` is injectable (default checks the working tree, or `base_ref` via git).
+    A cited path that fails `path_exists` gets two more chances before it's reported missing:
+      1. deliverable marker — cited on a `Deliverable:`/`Creates:` line ⇒ exempt (the task's own
+         not-yet-built output; the same string cited elsewhere without the marker is NOT exempt).
+      2. subtree-relative suffix — a *unique* repo file ending in `/<path>` ⇒ resolved; zero or
+         multiple hits ⇒ still an error (multiple names every candidate).
     """
     _, body = split_frontmatter(text)
     sections = _sections(body)
     exists = path_exists or (lambda p: _path_exists(p, repo_root, base_ref))
+    repo_files_cache = None
+
+    def repo_files():
+        nonlocal repo_files_cache
+        if repo_files_cache is None:
+            repo_files_cache = _repo_files(repo_root, base_ref)
+        return repo_files_cache
+
     errors = []
 
     ctx = _strip_comments(sections.get("context & links", "")).strip()
@@ -112,11 +172,21 @@ def check_task(text, *, repo_root, base_ref=None, path_exists=None):
         if "obsidian://" in content:
             errors.append(f"build-critical section '{name}' contains an obsidian:// link — "
                           f"inline it; a dev never opens Obsidian")
-        for token in _BACKTICK_RE.findall(content):
-            path = _pathify(token)
-            if path and not exists(path):
-                errors.append(f"cited path `{path}` does not exist"
-                              + (f" at {base_ref}" if base_ref else ""))
+        for line in content.split("\n"):
+            is_deliverable = bool(_DELIVERABLE_RE.match(line))
+            for token in _BACKTICK_RE.findall(line):
+                path = _pathify(token)
+                if not path or exists(path) or is_deliverable:
+                    continue
+                candidates = _suffix_matches(path, repo_files())
+                if len(candidates) == 1:
+                    continue
+                where = f" at {base_ref}" if base_ref else ""
+                if len(candidates) > 1:
+                    errors.append(f"cited path `{path}` does not exist{where} and is an ambiguous "
+                                  f"subtree suffix — matches {', '.join(candidates)}")
+                else:
+                    errors.append(f"cited path `{path}` does not exist{where}")
     return errors
 
 
