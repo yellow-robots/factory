@@ -1,0 +1,31 @@
+# models.toml — the factory's model registry: every selectable model lives here, in one
+# operator-maintained place (data, not code). tools/registry.py is the stdlib loader: it validates
+# this file's self-consistency and resolves a role (build/review) from layered sources at runner
+# time — precedence per-task override > per-repo manifest > process env > this file's per-role
+# default (the same layering tools/dev-runner.sh already applies for MODEL/HARD_MODEL).
+#
+# Upper-pipeline convention: strategy, product definition, and RFC/spec authoring run on the
+# strongest available class (today: opus); execution — the lower pipeline's implement/test/check/
+# review stages — is delegated down-tier (today: sonnet) unless a task or repo manifest overrides
+# it. `review` therefore defaults to a strictly higher-ranked model than `build`: an independent
+# review should never run on a weaker model than the work it is checking.
+#
+# `rank` orders entries WITHIN one provider only — ranks are not comparable across providers.
+# `quota_pool` names the shared rate/spend pool an entry draws from (informational to this loader;
+# consumed by whatever meters usage).
+
+[models.sonnet]
+id = "claude-sonnet-5"
+provider = "anthropic"
+rank = 30
+quota_pool = "anthropic-main"
+
+[models.opus]
+id = "claude-opus-4-8"
+provider = "anthropic"
+rank = 40
+quota_pool = "anthropic-main"
+
+[roles]
+build = "sonnet"
+review = "opus"
