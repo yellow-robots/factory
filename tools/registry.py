@@ -142,6 +142,25 @@ def _cli_resolve(args):
     return 0
 
 
+def _cli_stage_tier(args):
+    """Resolve a stage's tier entry when roles.stage_tiers names one, else signal "no tier" ({}).
+
+    The runner shells to this to decide a repair stage's model: a set tier runs the stage at that
+    entry; no tier falls the stage back to the resolved build id. Kept separate from `resolve` so a
+    missing tier is an empty object (exit 0), not an error."""
+    data = load(args.registry)
+    name = _stage_tiers(data).get(args.stage)
+    if not name:
+        print(json.dumps({}))
+        return 0
+    entry = _entries(data).get(name)
+    if entry is None:
+        print(json.dumps({"error": f"stage tier '{args.stage}' names unknown model '{name}'"}))
+        return 1
+    print(json.dumps({"name": name, **entry}))
+    return 0
+
+
 def _cli_validate(args):
     data = load(args.registry)
     errors = validate(data)
@@ -160,6 +179,10 @@ def main(argv=None):
     p_resolve.add_argument("--manifest", default="", help="per-repo manifest value")
     p_resolve.add_argument("--env", default="", help="process env value")
     p_resolve.set_defaults(func=_cli_resolve)
+
+    p_stage = sub.add_parser("stage-tier", help="resolve a stage's tier entry if the registry sets one (JSON; {} if none)")
+    p_stage.add_argument("--stage", required=True, help="stage name, e.g. check_repair or review_repair")
+    p_stage.set_defaults(func=_cli_stage_tier)
 
     p_validate = sub.add_parser("validate", help="validate registry self-consistency (JSON)")
     p_validate.set_defaults(func=_cli_validate)

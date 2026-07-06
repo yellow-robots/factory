@@ -64,7 +64,7 @@ State lives on **native GitHub primitives**, never labels:
 |---|---|---|
 | → Ready | **human** (standalone task) / **epic-gate** (child of a Ready epic) | standalone: meets Definition of Ready and a human wants it built. Epic child: the epic carries a standing-approval record — the epic-gate promotes the next slice automatically |
 | Ready → In Progress | runner | claims the task (drops it from the Ready poll → single-flight) |
-| → Backlog + Reason=Needs-info | runner | DoR content gate fails (empty acceptance criteria, bad `model:`) |
+| → Backlog + Reason=Needs-info | runner | DoR content gate fails (empty acceptance criteria; a `model:`/`review_model:` or manifest model absent from the registry; an inverted or cross-provider ranked build/review pair) |
 | → Reason=Blocked | runner | any stage fails, or the tester touches production code |
 | In Progress → In Review | runner | PR opened |
 | → Done | **native automation** | PR merged → issue closes → Projects sets Done |
@@ -100,8 +100,9 @@ cold `claude -p` process** — independence by construction (builder ≠ verifie
 3. **Worktree** — a fresh `git worktree` off `origin/main` of the **target repo**. The implement stage runs
    `--permission-mode bypassPermissions` because the *worktree + scoped creds are the walls*, not a prompt
    (the confinement principle).
-4. **Implement** — writes the minimal change against the acceptance criteria. Model: Sonnet by default,
-   Opus when the issue body has `model: opus` (allowlisted: `opus`/`sonnet`).
+4. **Implement** — writes the minimal change against the acceptance criteria. Runs the **build role**
+   (implement/test/repair share it), resolved from the model registry (`models.toml` via
+   `tools/registry.py`); the reviewer runs the separate **review role**. See Conventions → Models.
 5. **Test (independent)** — a cold process derives tests from the **acceptance criteria (the spec)**, not
    from the implementation. **Boundary guard:** if the tester changes anything outside the repo's test
    tree, the run is **Blocked and raised** (no auto-revert) and the offending diff saved. Build artifacts
@@ -111,8 +112,10 @@ cold `claude -p` process** — independence by construction (builder ≠ verifie
    `check_cmd`). One repair attempt on a **code** failure; an **environment** failure (the check can't
    execute — exit 126/127, e.g. a broken venv) is reported as Blocked *without* a repair, so a broken
    toolchain is never papered over.
-7. **Review (independent)** — a cold process emits `VERDICT: APPROVE` or `REQUEST_CHANGES`. One repair
-   attempt, then the verdict gates the PR (fail-closed: anything but a clean APPROVE blocks).
+7. **Review (independent)** — a cold process, running the **review role**, emits `VERDICT: APPROVE` or
+   `REQUEST_CHANGES`. One repair attempt, then the verdict gates the PR (fail-closed: anything but a
+   clean APPROVE blocks). The reviewer never runs below the review rank; a repair stage with a registry
+   stage tier runs at that tier, else at the build role.
 8. **PR** — commit, push `task/<id>-<slug>`, open the PR, Status → In Review, post the review.
 
 Then a **human reviews and merges**. Merge → native close → Done.
@@ -157,7 +160,8 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
 | `tools/dev-runner.sh` | the autonomous build pipeline (gate → implement → test → check → review → PR) |
 | `tools/dispatch.py` | host endpoint n8n calls to fire a build (RFC 0004) |
 | `tools/textutil.py` | small shared text helpers (slug/truncate) |
-| `tests/` | pytest suite — `test_dev_runner.py` (stubbed, proves stage order + gates), `test_dispatch.py`, `test_textutil.py` |
+| `models.toml` + `tools/registry.py` | the model registry (build/review roles, ranks, stage tiers) + its stdlib loader/JSON CLI |
+| `tests/` | pytest suite — `test_dev_runner.py` (stubbed, proves stage order + gates), `test_registry.py`, `test_dispatch.py`, `test_textutil.py` |
 | `deploy/` | dispatch service unit, env example, n8n workflow + query, `DISPATCH.md` |
 | `docs/rfcs/` | **canonical** RFCs — the *why* in depth |
 
@@ -169,15 +173,26 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
 - **Workspace & per-repo config:** the factory finds its workspace relative to itself (`YR_WORKSPACE`,
   default `factory/../..`) and resolves each target repo's checkout as `$YR_WORKSPACE/<name>`. Build
   specifics live in the repo, not the factory — a `.yr/factory.toml` manifest declaring `check_cmd`
-  (yellow-robots → `pytest tests/ -q`, website → `python3 tools/check.py`), default `model` (`opus`/`sonnet`), and
-  `base_ref`. The runner runs the check in the ephemeral worktree with the repo's `.venv/bin` and
-  `node_modules/.bin` on PATH, so `check_cmd` names tools plainly (no venv path). Precedence: explicit env
-  > manifest > built-in default.
+  (yellow-robots → `pytest tests/ -q`, website → `python3 tools/check.py`), a per-repo `model` and
+  `review_model` (registry entry names — the build and review roles), and `base_ref`. The runner runs the
+  check in the ephemeral worktree with the repo's `.venv/bin` and `node_modules/.bin` on PATH, so
+  `check_cmd` names tools plainly (no venv path). Precedence: explicit env > manifest > built-in default.
 - **The factory's own check command:** `.venv/bin/python -m pytest tests/ -q` (the venv is authoritative;
   no system pytest).
 - **Commits** end with: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
-- **Models:** Sonnet is the default worker; Opus for hard reasoning. Per-task override via `model: opus` in
-  the issue body.
+- **Models — the registry is the model surface.** Every selectable model lives in `models.toml` (data,
+  not code; loader + JSON CLI in `tools/registry.py`), which also carries the **convention record** in its
+  header — strategy/authoring on the strongest class, execution delegated down-tier. The runner resolves
+  **two roles**: **build** (implementer, independent tester, repair stages) and **review** (the reviewer,
+  every round). Per role, precedence is **per-task > per-repo > registry default**, with an **operator env
+  override atop** (`BUILD_MODEL` / `REVIEW_MODEL` — these replace the retired `MODEL` / `HARD_MODEL`
+  tiers). Task selectors are bare, case-insensitive lines in the issue body: `model:` (build) and
+  `review_model:` (review); the manifest mirrors them (`model` / `review_model`). A name absent from the
+  registry — from the task body or the manifest — bounces to Needs-info before claiming, as does a ranked
+  build/review pair that is inverted (review weaker than build) or cross-provider; an **equal-rank** pair
+  builds (the strict review>build bar is the later merge gate, not intake). The **one** place a raw,
+  unregistered id may run is the operator env override — it runs **unranked with a loud warning** and is
+  never bounced.
 - **Auth is human work.** Creating GitHub orgs/repos, minting tokens/PATs, and granting scopes are done by
   a human, never by an agent.
 
