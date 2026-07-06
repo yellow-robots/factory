@@ -28,7 +28,15 @@ case "$1" in
       *)         echo "unhandled project $2" >&2; exit 9 ;;
     esac ;;
   pr) case "$2" in
-        comment) echo PRCOMMENT >> "$STUB_TIMELINE" ;;
+        view)    if [ -n "${STUB_PRVIEW_FAIL:-}" ]; then echo "pr view failed (stub env failure)" >&2; exit 5; fi
+                 if [ -n "${STUB_ROLLUP_JSON:-}" ]; then cat "$STUB_ROLLUP_JSON"
+                 else printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1"; fi ;;
+        comment) echo PRCOMMENT >> "$STUB_TIMELINE"
+                 if [ -n "${STUB_PRCOMMENTS:-}" ]; then
+                   __p=""; __bf=""
+                   for __a in "$@"; do [ "$__p" = "--body-file" ] && __bf="$__a"; __p="$__a"; done
+                   [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
+                 fi ;;
         *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
       esac ;;
   *)  echo "unhandled gh $*" >&2; exit 9 ;;
@@ -118,6 +126,7 @@ def _base_env(tmp, issue_json, item_json, binp):
         "STUB_ISSUE_JSON": str(issue_json), "STUB_ITEM_JSON": str(item_json),
         "STUB_TIMELINE": str(tmp / "timeline"), "STUB_GH_CALLS": str(tmp / "gh_calls"),
         "STUB_CLAUDE_ARGV": str(tmp / "claude_argv"),
+        "STUB_PRCOMMENTS": str(tmp / "prcomments"),
     }
 
 
@@ -657,3 +666,226 @@ def test_manifest_read_from_base_ref_not_stale_working_tree(tmp_path):
     checks_log = list((tmp_path / "drhome" / "runs").glob("5-*/checks.log"))[0].read_text()
     assert "MANIFEST_FROM_REF" in checks_log             # ran the ref's check_cmd, not the .venv default
     assert "https://stub/pr/1" in r.stdout               # proceeded to a PR
+
+
+# ============ Issue #37: terminal (shadow) merge-condition evaluator + loud record ============
+# After the PR opens, the runner runs a DETERMINISTIC terminal step (no new LLM stage) that evaluates
+# the fail-closed merge conditions IN ORDER, IN CODE (indeterminate = failed), and — treating every
+# repo as shadow — posts one loud, machine-readable YR-MERGE-SHADOW record on the PR, then stops for
+# the human exactly as today (still reaches In Review). The gh stub now serves a check rollup
+# (`gh pr view --json statusCheckRollup`) and captures PR comment bodies (STUB_PRCOMMENTS).
+
+EMDASH = "—"   # the marker separator: 'WOULD-BLOCK — <condition>'
+WOULD_MERGE = "YR-MERGE-SHADOW: WOULD-MERGE"
+
+# rollup entry shapes, as `gh pr view --json statusCheckRollup` returns them.
+CR_OK = {"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}
+CR_FAIL = {"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "FAILURE"}
+CR_INFLIGHT = {"__typename": "CheckRun", "name": "ci", "status": "IN_PROGRESS", "conclusion": None}
+
+# fields the epic fixes on the record — the versioned yr-merge-record/1 contract.
+SHADOW_FIELDS = {
+    "schema", "decision", "mode", "machinery_ok", "failed_condition", "bundle_sha256",
+    "base_sha", "head_sha", "main_tip_sha", "check_rollup", "checks", "review_verdict",
+    "rounds", "build", "review", "run_id", "timestamp",
+}
+
+
+def _would_block(cond):
+    return f"YR-MERGE-SHADOW: WOULD-BLOCK {EMDASH} {cond}"
+
+
+def _rollup(tmp, checks):
+    p = tmp / "rollup.json"
+    p.write_text(json.dumps({"statusCheckRollup": checks}))
+    return str(p)
+
+
+def _shadow_body(tmp, number=5):
+    """The shadow record body the runner wrote+posted (merge-shadow.md in the run dir), or None."""
+    files = list((tmp / "drhome" / "runs").glob(f"{number}-*/merge-shadow.md"))
+    return files[0].read_text() if files else None
+
+
+def _prcomments(tmp):
+    p = tmp / "prcomments"
+    return p.read_text() if p.exists() else ""
+
+
+def _shadow_block(body):
+    """Parse the fenced `yr-merge-record` JSON block out of a posted shadow comment."""
+    start = body.index("```yr-merge-record") + len("```yr-merge-record")
+    rest = body[start:]
+    return json.loads(rest[: rest.index("```")])
+
+
+def _shadow_env(tmp_path, *, title, checks, body=None, extra=None):
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    kw = {"number": 5, "title": title}
+    if body is not None:
+        kw["body"] = body
+    env = _real(tmp_path, _env(tmp_path, binp, **kw), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_ROLLUP_JSON"] = _rollup(tmp_path, checks)
+    # keep the CI wait cheap/deterministic in tests (no real sleeps for the all-complete rollups).
+    env["MERGE_CI_POLL_INTERVAL"] = "0"; env["MERGE_CI_TIMEOUT"] = "0"
+    if extra:
+        env.update(extra)
+    return env
+
+
+def _assert_not_blocked_and_in_review(tl, r):
+    assert "https://stub/pr/1" in r.stdout                                   # the PR was opened
+    assert any(l.startswith("EDIT") and "STATUSFIELD" in l and "InReview" in l for l in tl)
+    # criterion 7: a shadow WOULD-BLOCK is a NORMAL outcome, never Reason=Blocked.
+    assert not any("REASONFIELD" in l and "Blocked" in l for l in tl)
+
+
+def test_shadow_would_merge_and_reaches_in_review(tmp_path):
+    """Green CI + fresh base + clean approval + rank-holding pair -> WOULD-MERGE, posted on the PR,
+    and the run still stops for the human at In Review (criteria 1-7)."""
+    env = _shadow_env(tmp_path, title="Shadow would-merge", checks=[CR_OK])
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    body = _shadow_body(tmp_path)
+    assert body is not None, "the terminal step wrote no shadow record"
+    assert body.splitlines()[0] == WOULD_MERGE                               # first line is EXACTLY the marker
+    # exactly one shadow comment was posted on the PR.
+    assert _prcomments(tmp_path).count("YR-MERGE-SHADOW") == 1
+    rec = _shadow_block(body)
+    assert rec["schema"] == "yr-merge-record/1"
+    assert rec["decision"] == "WOULD-MERGE" and rec["failed_condition"] is None
+    assert rec["mode"] == "shadow" and rec["machinery_ok"] is True
+    assert SHADOW_FIELDS <= set(rec), f"missing: {SHADOW_FIELDS - set(rec)}"
+    assert rec["review_verdict"] == "VERDICT: APPROVE"
+    assert rec["check_rollup"] == "success"
+    assert len(rec["head_sha"]) == 40                                        # the pushed PR head commit
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_would_block_zero_checks_fails_fast(tmp_path):
+    """Zero configured checks is a failure evaluated WITHOUT the bounded wait (criterion 2). Proven by
+    a huge poll interval/timeout with a hard subprocess timeout: if it entered the wait it would hang."""
+    env = _shadow_env(tmp_path, title="Shadow zero checks", checks=[])
+    env["MERGE_CI_POLL_INTERVAL"] = "600"; env["MERGE_CI_TIMEOUT"] = "600"
+    full = {**os.environ, **READABLE_IDS, **env}
+    r = subprocess.run(["bash", str(RUNNER), "5", "--repo", "test/repo"],
+                       capture_output=True, text=True, env=full, cwd=str(ROOT), timeout=60)
+    assert r.returncode == 0, r.stderr
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == _would_block("ci_green")
+    rec = _shadow_block(body)
+    assert rec["decision"] == "WOULD-BLOCK" and rec["failed_condition"] == "ci_green"
+    assert rec["check_rollup"] == "empty"                                    # zero checks -> empty, not a wait/timeout
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_would_block_ci_failure(tmp_path):
+    """A failing configured check means CI is not green -> WOULD-BLOCK ci_green (criterion 2)."""
+    env = _shadow_env(tmp_path, title="Shadow ci failure", checks=[CR_OK, CR_FAIL])
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == _would_block("ci_green")
+    assert _shadow_block(body)["check_rollup"] == "failure"
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_would_block_ci_timeout(tmp_path):
+    """In-flight checks that never finish within the bounded wait time out -> failure (criterion 2)."""
+    env = _shadow_env(tmp_path, title="Shadow ci timeout", checks=[CR_INFLIGHT])
+    # MERGE_CI_TIMEOUT=0 (set by _shadow_env) makes the first poll with in-flight runs time out at once.
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == _would_block("ci_green")
+    assert _shadow_block(body)["check_rollup"] == "timed_out"
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_would_block_freshness(tmp_path):
+    """The reviewed base SHA must equal main's tip at decision time; a moved main tip -> WOULD-BLOCK
+    freshness (criterion 3). CI is green so freshness is the FIRST failing condition."""
+    env = _shadow_env(tmp_path, title="Shadow stale base", checks=[CR_OK],
+                      extra={"MERGE_MAIN_TIP": "0" * 40})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == _would_block("freshness")
+    rec = _shadow_block(body)
+    assert rec["failed_condition"] == "freshness"
+    assert rec["main_tip_sha"] == "0" * 40 and rec["base_sha"] != rec["main_tip_sha"]
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_would_block_rank_gate(tmp_path):
+    """An equal-rank pair (build==review) clears intake but fails the STRICT review>build merge gate ->
+    WOULD-BLOCK rank_gate (criterion 5). CI green + fresh, so rank_gate is the first failing condition."""
+    body_md = "### Acceptance criteria\n- [ ] x\n\nmodel: opus\nreview_model: opus\n"
+    env = _shadow_env(tmp_path, title="Shadow equal rank", checks=[CR_OK], body=body_md)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr                                       # intake did NOT bounce the equal pair
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == _would_block("rank_gate")
+    assert _shadow_block(body)["failed_condition"] == "rank_gate"
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_first_failed_condition_is_earliest_in_order(tmp_path):
+    """Conditions are evaluated IN ORDER (criterion 1): with BOTH ci_green (zero checks) and rank_gate
+    (equal pair) failing, the record names ci_green — the earliest — not rank_gate."""
+    body_md = "### Acceptance criteria\n- [ ] x\n\nmodel: opus\nreview_model: opus\n"
+    env = _shadow_env(tmp_path, title="Shadow ordering", checks=[], body=body_md)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == _would_block("ci_green")                  # earliest failing condition
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_reapproval_of_revised_diff_still_would_merge(tmp_path):
+    """criterion 4: the final round need only be a clean APPROVE — re-approval of a revised diff (after
+    a first-round REQUEST_CHANGES + repair) suffices, and yields WOULD-MERGE with rounds=2."""
+    env = _shadow_env(tmp_path, title="Shadow re-approval", checks=[CR_OK],
+                      extra={"STUB_REVIEW_BLOCK": "1"})   # block once, approve on re-review
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert tl.count("REVIEW") == 2 and "REVIEWFIX" in tl                     # blocked once, re-approved
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == WOULD_MERGE
+    rec = _shadow_block(body)
+    assert rec["decision"] == "WOULD-MERGE"
+    assert rec["rounds"] == 2 and rec["review_verdict"] == "VERDICT: APPROVE"
+
+
+def test_shadow_block_does_not_set_reason_blocked(tmp_path):
+    """criterion 7 (explicit): a shadow WOULD-BLOCK must NOT flip Reason=Blocked — it is a normal
+    negative outcome that stops for the human, distinct from the code/machinery Blocked path."""
+    env = _shadow_env(tmp_path, title="Shadow block not blocked", checks=[CR_FAIL])
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "Blocked" not in " ".join(_edits(tl))            # no Reason=Blocked anywhere
+    assert _shadow_body(tmp_path).splitlines()[0].startswith("YR-MERGE-SHADOW: WOULD-BLOCK")
+    _assert_not_blocked_and_in_review(tl, r)
+
+
+def test_shadow_environmental_failure_posts_no_record(tmp_path):
+    """criterion 8: when the terminal step's OWN execution fails environmentally (a gh API blip while
+    reading the rollup), it is classified environmental — NO machinery-error record is posted, the run
+    is not Blocked, and it still stops for the human at In Review (resumable)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Shadow env failure"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_PRVIEW_FAIL": "1"})   # gh pr view errors while evaluating CI
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _shadow_body(tmp_path) is None                    # no record was built/written
+    assert "YR-MERGE-SHADOW" not in _prcomments(tmp_path)    # and none was posted on the PR
+    tl = _timeline(tmp_path)
+    assert "Blocked" not in " ".join(_edits(tl))             # env failure of the terminal step never Blocks
+    _assert_not_blocked_and_in_review(tl, r)
+    # classified environmental / resumable in the log, not a machinery error.
+    assert "environmental" in r.stderr.lower() or "resumable" in r.stderr.lower()
