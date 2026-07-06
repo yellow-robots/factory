@@ -14,6 +14,7 @@
 | `check_task` | Task is self-contained: context slice present; no `[[wikilink]]` / `obsidian://` in build-critical sections; every backtick-cited repo path exists at the base ref. | `python3 tools/check_task.py <task.md> --repo-root <repo> --base-ref origin/main` |
 | `check_cmd` | The repo's own check (from `.yr/factory.toml`) — runs in the worktree with `.venv/bin` + `node_modules/.bin` on PATH. | The runner runs it. One repair attempt on a code failure; **no repair** on an environment failure (exit 126/127). |
 | Review verdict | An independent reviewer emits `VERDICT: APPROVE` or `REQUEST_CHANGES`. | The runner gates the PR on a clean `APPROVE`. Fail-closed: anything but a clean `APPROVE` blocks. |
+| Merge evaluator | Deterministic terminal step (no LLM): CI-green · freshness vs `main`'s tip · terminal clean `APPROVE` · strict review>build rank, in order, indeterminate = failed. | The runner runs it after the PR opens. Armed repo: all-pass squash-merges, any fail posts `YR-MERGE: BLOCKED`; otherwise a `YR-MERGE-SHADOW` record and the human merges. |
 
 ## Advisory vs. blocking
 
