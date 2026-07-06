@@ -114,9 +114,19 @@ def _issue(tmp, *, number=7, title="Do a thing", body="### Acceptance criteria\n
     return p
 
 
-def _item(tmp, *, number=7, status="Ready", item_id="ITEM1", in_project=True):
+def _item(tmp, *, number=7, status="Ready", item_id="ITEM1", in_project=True, repo="test/repo", foreign=None):
+    """`content.repository` (nameWithOwner) must be carried alongside `content.number`, since the
+    matcher (#57) requires both to agree — a bare number is not enough on a board shared across repos.
+    `foreign`, when given, is a same-numbered item from another repo placed AHEAD of the target in list
+    order (as in the live incident: board position decided the winner before the matcher was repo-scoped)."""
     p = tmp / "item.json"
-    items = [{"id": item_id, "status": status, "content": {"number": number}}] if in_project else []
+    items = []
+    if foreign is not None:
+        items.append({"id": foreign.get("item_id", "ITEMFOREIGN"), "status": foreign.get("status", "Done"),
+                       "content": {"number": foreign.get("number", number),
+                                   "repository": foreign.get("repo", "other/repo")}})
+    if in_project:
+        items.append({"id": item_id, "status": status, "content": {"number": number, "repository": repo}})
     p.write_text(json.dumps({"items": items}))
     return p
 
@@ -140,8 +150,9 @@ def _base_env(tmp, issue_json, item_json, binp):
 
 def _env(tmp, binp, **kw):
     num = kw.pop("number", 7); status = kw.pop("status", "Ready"); in_project = kw.pop("in_project", True)
+    item_id = kw.pop("item_id", "ITEM1"); repo = kw.pop("repo", "test/repo"); foreign = kw.pop("foreign", None)
     ij = _issue(tmp, number=num, **kw)
-    it = _item(tmp, number=num, status=status, in_project=in_project)
+    it = _item(tmp, number=num, status=status, in_project=in_project, item_id=item_id, repo=repo, foreign=foreign)
     return _base_env(tmp, ij, it, binp)
 
 
@@ -207,6 +218,59 @@ def test_project_query_failure_is_clear(tmp_path):
     r = _run(["7", "--repo", "test/repo"], env)
     assert r.returncode == 1 and "project" in r.stderr.lower()
     assert not _ran(_timeline(tmp_path))
+
+
+# ============ #57: cross-repo issue-number collision on the shared board ============
+# The "Yellow Robots — Dev" board spans every product repo, so two repos can carry a same-numbered
+# item. The matcher must key on (number, repository) together, never number alone — a foreign repo's
+# item, however it sorts on the board, must never be read, gated on, claimed, or written in place of
+# the dispatched repo's own item. `epic_gate.py` is not exercised here: it resolves per-issue Status
+# via that issue's own `projectItems` (GraphQL) plus native `subIssues` order, not a board-wide
+# number scan, so it is a different code path and not subject to this collision by construction.
+
+def test_foreign_done_same_number_does_not_gate_a_ready_target(tmp_path):
+    """A same-numbered Done item from another repo — listed ahead of the target, as board position
+    decided the (buggy) winner in the live incident — must never shadow the target's own Ready status.
+    The build must proceed to completion, never refusing with the foreign item's Done status."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, number=5, item_id="ITEM1", title="Real work",
+               foreign={"number": 5, "status": "Done", "item_id": "ITEMFOREIGN", "repo": "yellow-robots/other"})
+    env = _real(tmp_path, env, work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr        # must NOT gate as "not Ready (Status: Done)"
+    assert "not ready" not in r.stderr.lower()
+    edits = _edits(_timeline(tmp_path))
+    assert edits and all("ITEMFOREIGN" not in e for e in edits) and all("ITEM1" in e for e in edits)
+
+
+def test_foreign_ready_same_number_is_never_claimed_only_target_item_is_written(tmp_path):
+    """A same-numbered Ready item from a foreign repo must not be claimed in place of the dispatched
+    repo's own Ready item — every field write must carry the target's item id, never the foreign one."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, number=5, item_id="ITEMTARGET", title="Real work",
+               foreign={"number": 5, "status": "Ready", "item_id": "ITEMFOREIGN", "repo": "yellow-robots/other"})
+    env = _real(tmp_path, env, work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    edits = _edits(_timeline(tmp_path))
+    assert edits                                          # claim + In Review writes happened
+    assert all("ITEMFOREIGN" not in e for e in edits)
+    assert all("ITEMTARGET" in e for e in edits)
+
+
+def test_foreign_item_present_but_target_absent_still_gates_not_in_project(tmp_path):
+    """A same-numbered foreign-repo item existing on the board must not satisfy the DoR gate for the
+    dispatched repo's issue — with no item of its own, the "not in project" refusal fires exactly as
+    it would with an empty board (no false-positive match off the foreign repo's item)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, in_project=False, foreign={"status": "Ready", "repo": "yellow-robots/other"})
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode == 3 and "not in project" in r.stderr.lower()
+    assert not _ran(_timeline(tmp_path)) and not _edits(_timeline(tmp_path))
 
 
 def test_gate_rejects_non_task_type(tmp_path):

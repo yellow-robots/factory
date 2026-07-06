@@ -126,10 +126,11 @@ ITYPE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; t=json.load(sy
 ITEMS_JSON="$("$GH_BIN" project item-list "$PROJECT_NUMBER" --owner "$OWNER" --limit 500 --format json 2>/dev/null)" \
   || die "could not query project #$PROJECT_NUMBER on $OWNER (is the gh 'project' scope granted?)"
 ITEM_LINE="$(printf '%s' "$ITEMS_JSON" | python3 -c 'import sys,json
-n=int(sys.argv[1])
+n=int(sys.argv[1]); repo=sys.argv[2]
 for it in json.load(sys.stdin).get("items",[]):
-    if ((it.get("content") or {}).get("number")) == n:
-        print((it.get("id","") or "") + "\t" + (it.get("status","") or "")); break' "$ISSUE")"
+    c=it.get("content") or {}
+    if c.get("number") == n and (c.get("repository") or "") == repo:
+        print((it.get("id","") or "") + "\t" + (it.get("status","") or "")); break' "$ISSUE" "$REPO")"
 ITEM_ID="${ITEM_LINE%%$'\t'*}"; ITEM_STATUS="${ITEM_LINE#*$'\t'}"
 [ "$ITEM_ID" = "$ITEM_LINE" ] && ITEM_STATUS=""   # no tab => no match
 
