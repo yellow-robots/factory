@@ -51,6 +51,7 @@ esac
 CLAUDE_STUB = '''#!/usr/bin/env bash
 args="$*"
 [ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
+[ -n "${STUB_CLAUDE_ARGV_LOG:-}" ] && { printf '===STUB-CALL===\\n'; printf '%s\\n' "$@"; } >> "$STUB_CLAUDE_ARGV_LOG"
 [ -n "${STUB_CLAUDE_ENV_FILE:-}" ] && printf 'CLAUDE_CONFIG_DIR=%s\\n' "${CLAUDE_CONFIG_DIR:-}" >> "$STUB_CLAUDE_ENV_FILE"
 case "$args" in
   *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
@@ -144,6 +145,7 @@ def _base_env(tmp, issue_json, item_json, binp):
         "STUB_ISSUE_JSON": str(issue_json), "STUB_ITEM_JSON": str(item_json),
         "STUB_TIMELINE": str(tmp / "timeline"), "STUB_GH_CALLS": str(tmp / "gh_calls"),
         "STUB_CLAUDE_ARGV": str(tmp / "claude_argv"),
+        "STUB_CLAUDE_ARGV_LOG": str(tmp / "claude_argv_log"),
         "STUB_PRCOMMENTS": str(tmp / "prcomments"),
     }
 
@@ -164,6 +166,16 @@ def _timeline(tmp):
 def _edits(tl):    return [l for l in tl if l.startswith("EDIT")]
 def _comments(tl): return [l for l in tl if l.startswith("COMMENT")]
 def _ran(tl):      return any(m in tl for m in ("IMPL", "TEST", "REPAIR", "REVIEW", "REVIEWFIX"))
+
+
+def _argv_calls(tmp):
+    """Every `claude` invocation's argv, in call order, as a list of arg lists (STUB_CLAUDE_ARGV_LOG:
+    one call per '===STUB-CALL===' boundary, flattened one-arg-per-line same as STUB_CLAUDE_ARGV)."""
+    p = tmp / "claude_argv_log"
+    if not p.exists():
+        return []
+    chunks = p.read_text().split("===STUB-CALL===\n")
+    return [c.splitlines() for c in chunks if c]
 
 
 def _git(args, cwd):
@@ -1581,3 +1593,98 @@ def test_usage_summary_never_collides_with_the_yr_merge_shadow_record(tmp_path):
     assert "YR-MERGE" not in usage_comment
     assert not usage_comment.splitlines()[0].startswith("YR-")
     assert usage_comment.splitlines()[0] == "### dev-runner usage"
+
+
+# ============ Issue #49: stage context isolation — a stage loads only its job ============
+# A cold stage must not inherit the operator's consumer-session surface (user/local-scope settings,
+# MCP server configs). Every `run_stage` invocation carries `--setting-sources <sources>
+# --strict-mcp-config`, sources defaulting to "project" and overridable via STAGE_SETTING_SOURCES —
+# with every other argv element (model, effort, permission mode, allowed tools, system prompt, output
+# format) left exactly as it was. STUB_CLAUDE_ARGV_LOG (see CLAUDE_STUB) records one argv per claude
+# call, in call order, so every stage's own invocation can be checked — not just the last one.
+
+def _all_stages_env(tmp, binp, title):
+    """Drive a run through all five claude -p stage kinds: implement, tester, check-repair
+    (STUB_CHECK_FAIL), review + review-repair (STUB_REVIEW_BLOCK)."""
+    work, _ = _make_repo(tmp)
+    env = _real(tmp, _env(tmp, binp, number=5, title=title), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1", "STUB_REVIEW_BLOCK": "1"})
+    return env
+
+
+def test_isolation_flags_on_every_stage_call(tmp_path):
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Isolation on every stage")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    # every claude -p stage kind fired: implement, tester, check-repair, review (x2: block, then approve
+    # after repair), review-repair.
+    for marker in ("IMPL", "TEST", "REPAIR", "REVIEW", "REVIEWFIX"):
+        assert marker in tl, f"{marker} stage never ran — can't prove isolation flags on it"
+
+    calls = _argv_calls(tmp_path)
+    assert len(calls) >= 5, "expected at least 5 recorded claude invocations (one per stage kind)"
+    for i, argv in enumerate(calls):
+        assert "--setting-sources" in argv, f"call {i} missing --setting-sources: {argv}"
+        assert argv[argv.index("--setting-sources") + 1] == "project", \
+            f"call {i} default setting-sources should be 'project': {argv}"
+        assert "--strict-mcp-config" in argv, f"call {i} missing --strict-mcp-config: {argv}"
+
+
+def test_stage_setting_sources_env_overrides_default_on_every_call(tmp_path):
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Isolation override on every stage")
+    env["STAGE_SETTING_SOURCES"] = "user,project"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+
+    calls = _argv_calls(tmp_path)
+    assert len(calls) >= 5
+    for i, argv in enumerate(calls):
+        assert "--setting-sources" in argv
+        assert argv[argv.index("--setting-sources") + 1] == "user,project", \
+            f"call {i} did not pick up STAGE_SETTING_SOURCES: {argv}"
+        assert "--strict-mcp-config" in argv
+
+
+def test_isolation_flags_leave_every_other_stage_argument_unchanged(tmp_path):
+    """The isolation flags are additive: model, effort, permission mode, allowed tools, and the
+    output-format seam must be exactly what they were before, on every stage call."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Isolation preserves other args")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+
+    calls = _argv_calls(tmp_path)
+    assert len(calls) >= 5
+    for i, argv in enumerate(calls):
+        assert "--model" in argv
+        assert "--effort" in argv
+        assert argv[argv.index("--effort") + 1] == "high"
+        assert "--permission-mode" in argv
+        assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"
+        assert "--append-system-prompt" in argv
+        assert "--allowedTools" in argv
+        assert "--output-format" in argv
+        assert argv[argv.index("--output-format") + 1] == "json"
+        assert "--verbose" not in argv
+
+
+def test_isolation_flags_present_on_plain_happy_path_single_stage_chain(tmp_path):
+    """No repairs needed: implement -> tester -> check -> review, still carries the isolation flags
+    on each of those three claude calls (implement, tester, review)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Isolation happy path"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert tl.index("IMPL") < tl.index("TEST") < tl.index("REVIEW")
+
+    calls = _argv_calls(tmp_path)
+    assert len(calls) == 3   # implement, tester, review — no repairs fired
+    for argv in calls:
+        assert "--setting-sources" in argv and argv[argv.index("--setting-sources") + 1] == "project"
+        assert "--strict-mcp-config" in argv
