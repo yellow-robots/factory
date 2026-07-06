@@ -237,6 +237,12 @@ stage_repair_id(){
 }
 CHECK_REPAIR_ID="$(stage_repair_id check_repair)"; REVIEW_REPAIR_ID="$(stage_repair_id review_repair)"
 
+# a resolved role (name/id/provider/rank/ranked) as JSON, for the review bundle (tools/review_bundle.py).
+role_json(){ python3 -c 'import json,sys
+a=sys.argv
+print(json.dumps({"name":a[1] or None,"id":a[2],"provider":a[3] or None,
+                  "rank":(int(a[4]) if a[4] else None),"ranked":a[5]=="1"}))' "$1" "$2" "$3" "$4" "$5"; }
+
 # ---- DoR content gate -> Needs-info bounce (Status=Backlog + Reason=Needs-info). Dry-run stays read-only ----
 if [ -n "$NEEDS_INFO" ]; then
   [ "$DRY_RUN" = 1 ] && gate "$NEEDS_INFO"
@@ -344,12 +350,31 @@ if [ "$CHECK_RC" -ne 0 ]; then
   [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
 fi
 
+# ---- assemble the pre-review bundle: diff (base->head), acceptance criteria, check output, resolved
+# build/review pair — one canonical, hashed artifact (tools/review_bundle.py) that the reviewer reads
+# as input and each round's verdict is appended to.
+"$GIT_BIN" -C "$WT" add -A
+BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
+HEAD_SHA="$("$GIT_BIN" -C "$WT" write-tree)"
+"$GIT_BIN" -C "$WT" diff --cached > "$RUN_DIR/diff.patch"
+printf '%s\n' "$AC" > "$RUN_DIR/acceptance-criteria.txt"
+BUNDLE="$RUN_DIR/review-bundle.json"
+python3 "$SELF_DIR/review_bundle.py" init --bundle "$BUNDLE" \
+  --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" --diff-file "$RUN_DIR/diff.patch" \
+  --criteria-file "$RUN_DIR/acceptance-criteria.txt" --checks-log "$RUN_DIR/checks.log" \
+  --check-cmd "$CHECK_CMD" --check-exit "$CHECK_RC" \
+  --build-json "$(role_json "$BUILD_NAME" "$BUILD_ID" "$BUILD_PROVIDER" "$BUILD_RANK" "$BUILD_RANKED")" \
+  --review-json "$(role_json "$REVIEW_NAME" "$REVIEW_ID" "$REVIEW_PROVIDER" "$REVIEW_RANK" "$REVIEW_RANKED")" \
+  || fail_blocked "review bundle assembly failed"
+
 # ---- review stage (independent cold process: quality verdict on the diff; gate = no blockers) ----
 # Review is a judgment, so the gate is the reviewer's own verdict — but a separate cold process with
 # no stake, and fail-closed (anything but a clear APPROVE blocks). The verdict is attached to the PR.
 REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Tag each finding 'blocker' or 'nit'. Do NOT modify any files and do NOT run git commit or push. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
-                run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID"
+                run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID"
+                python3 "$SELF_DIR/review_bundle.py" record-verdict --bundle "$BUNDLE" --file "$RUN_DIR/review.md" \
+                  || fail_blocked "review bundle record-verdict failed"
                 # fail-closed: the LAST verdict line must be exactly "VERDICT: APPROVE" (only trailing whitespace
                 # trimmed) — a hedge ("APPROVE" then "REQUEST_CHANGES"), trailing junk, or a mangled token does NOT pass.
                 [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]; }
