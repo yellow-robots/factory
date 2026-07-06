@@ -8,7 +8,8 @@
 #   claim (Status=In Progress) -> fresh worktree -> implement -> independent test (boundary-guarded:
 #   tester writing outside tests/ -> Blocked) -> deterministic check gate (CHECK_CMD, one repair) ->
 #   independent review (VERDICT gate, one repair) -> commit/push -> open PR -> Status=In Review.
-#   empty acceptance criteria / unknown model override -> Status=Backlog + Reason=Needs-info (no LLM).
+#   empty acceptance criteria / a model (build or review) not in the registry / an inverted or
+#     cross-provider ranked build/review pair -> Status=Backlog + Reason=Needs-info (no LLM).
 #   any stage failure                                  -> Reason=Blocked + comment (failure stays visible).
 #   merge closes the issue; Projects' close->Done sets Status=Done natively.
 # Dispatch: n8n polls Ready -> tools/dispatch.py -> this runner (RFC 0004). Operating model: AGENTS.md.
@@ -23,7 +24,13 @@
 set -euo pipefail
 
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"; GH_BIN="${GH_BIN:-gh}"; GIT_BIN="${GIT_BIN:-git}"
-MODEL="${MODEL:-claude-sonnet-5}"; HARD_MODEL="${HARD_MODEL:-claude-opus-4-8}"; EFFORT="${EFFORT:-high}"
+EFFORT="${EFFORT:-high}"
+# Model roles come from the registry (models.toml via tools/registry.py) — the single model surface;
+# the old MODEL/HARD_MODEL tiers are retired. BUILD_MODEL/REVIEW_MODEL are the operator env overrides,
+# one per role, sitting ATOP task/manifest/registry-default. Either may name a registry entry (runs
+# ranked) OR a raw unregistered id (the ONLY place a non-registry id runs — unranked + loudly warned,
+# never bounced). MODELS_REGISTRY overrides the registry file (default: the factory's own models.toml).
+BUILD_MODEL="${BUILD_MODEL:-}"; REVIEW_MODEL="${REVIEW_MODEL:-}"
 DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
 # DoR Type gate: build only this native Issue Type. Empty disables it (repos without Issue Types).
 # Use the no-colon form so an explicit REQUIRE_ISSUE_TYPE='' stays empty (a true opt-out), not defaulted.
@@ -86,14 +93,14 @@ MANIFEST="$BASE_REPO/.yr/factory.toml"
 MANIFEST_REF="${MANIFEST_REF:-origin/main}"
 MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_REF:.yr/factory.toml" 2>/dev/null || true)"
 [ -z "$MF_RAW" ] && [ -f "$MANIFEST" ] && MF_RAW="$(cat "$MANIFEST")"
-MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""
+MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""
 if [ -n "$MF_RAW" ]; then
   _mf_out="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
 d=tomllib.loads(sys.stdin.read())
-for k in ("check_cmd","model","base_ref"): print(str(d.get(k) or "").replace("\n"," "))' 2>/dev/null)" \
+for k in ("check_cmd","model","base_ref","review_model"): print(str(d.get(k) or "").replace("\n"," "))' 2>/dev/null)" \
     || log "warn: could not parse manifest from $MANIFEST_REF"
   mapfile -t _mf <<<"$_mf_out"
-  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"
+  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"
 fi
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
@@ -156,21 +163,79 @@ SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
 [ -n "$SLUG" ] || SLUG="task"
 BRANCH="task/${ISSUE}-${SLUG}"
 
-# ---- model resolution: repo manifest sets the default tier; body `model:` override wins. Allowlisted. ----
-RESOLVED_MODEL="$MODEL"
-case "$MF_MODEL" in
-  opus)      RESOLVED_MODEL="$HARD_MODEL";;
-  sonnet|"") ;;                                   # sonnet or unset = the global default ($MODEL)
-  *)         log "warn: ignoring unknown model '$MF_MODEL' in $MANIFEST (allowed: opus, sonnet)";;
-esac
-OVERRIDE="$(printf '%s\n' "$BODY" | sed -n -E 's/^model:[[:space:]]*([^[:space:]]+).*/\1/Ip' | head -n1 | tr '[:upper:]' '[:lower:]')"
-if [ -n "$OVERRIDE" ]; then
-  case "$OVERRIDE" in
-    opus)   RESOLVED_MODEL="$HARD_MODEL";;
-    sonnet) RESOLVED_MODEL="$MODEL";;
-    *)      NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }unknown model override '$OVERRIDE' (allowed: opus, sonnet)";;
-  esac
+# ---- model roles from the registry: build (implement/test/repair) + review (reviewer). ----
+# Precedence per role: per-task (body model:/review_model:) > per-repo (manifest model/review_model) >
+# registry per-role default, with the operator env override (BUILD_MODEL/REVIEW_MODEL) ATOP all three.
+# Resolution shells to tools/registry.py — the same shell-to-python3 seam as the manifest parse above.
+REGISTRY="${MODELS_REGISTRY:-$SELF_DIR/../models.toml}"
+
+# body selectors: bare-line, case-insensitive (`model:` = build, `review_model:` = review). Same parser.
+body_select(){ printf '%s\n' "$BODY" | sed -n -E "s/^$1:[[:space:]]*([^[:space:]]+).*/\1/Ip" | head -n1 | tr '[:upper:]' '[:lower:]'; }
+BODY_BUILD="$(body_select model)"; BODY_REVIEW="$(body_select review_model)"
+
+# parse a registry entry JSON ({name,id,provider,rank,...}) into the R_* globals.
+_set_role_from_json(){
+  mapfile -t _rf < <(printf '%s' "$1" | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+print(d.get("name","") or "")
+print(d.get("id","") or "")
+print(d.get("provider","") or "")
+r=d.get("rank"); print(r if isinstance(r,int) and not isinstance(r,bool) else "")')
+  R_NAME="${_rf[0]:-}"; R_ID="${_rf[1]:-}"; R_PROVIDER="${_rf[2]:-}"; R_RANK="${_rf[3]:-}"
+  [ -n "$R_RANK" ] && R_RANKED=1 || R_RANKED=0
+}
+# resolve_role ROLE TASK_VAL MANIFEST_VAL ENV_VAL -> sets R_STATUS (ok|unknown|raw) + R_* fields.
+#   env override wins: a registry name resolves ranked; a raw unregistered id runs UNRANKED (R_STATUS=raw,
+#   no bounce — the only non-registry id allowed). Otherwise task>manifest>default; an unknown name from
+#   task/manifest is R_STATUS=unknown (bounced to Needs-info below).
+resolve_role(){
+  local role="$1" tval="$2" mval="$3" eval_="$4" out rc
+  R_NAME=""; R_ID=""; R_PROVIDER=""; R_RANK=""; R_RANKED=0
+  # && rc=0 || rc=$? keeps a non-zero registry exit (unknown name) from tripping `set -e` — it's a
+  # signal here, not a fatal error.
+  if [ -n "$eval_" ]; then
+    out="$(python3 "$SELF_DIR/registry.py" --registry "$REGISTRY" resolve --role "$role" --task "$eval_" 2>/dev/null)" && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ]; then _set_role_from_json "$out"; R_STATUS=ok
+    else
+      R_NAME="$eval_"; R_ID="$eval_"; R_PROVIDER=""; R_RANK=""; R_RANKED=0; R_STATUS=raw
+      log "WARNING: $role model '$eval_' (operator env override) is not in the registry — running it UNRANKED and rank-unchecked."
+    fi
+    return 0
+  fi
+  out="$(python3 "$SELF_DIR/registry.py" --registry "$REGISTRY" resolve --role "$role" --task "$tval" --manifest "$mval" 2>/dev/null)" && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then _set_role_from_json "$out"; R_STATUS=ok; else R_STATUS=unknown; fi
+}
+
+resolve_role build "$BODY_BUILD" "$MF_MODEL" "$BUILD_MODEL"
+BUILD_STATUS="$R_STATUS"; BUILD_NAME="$R_NAME"; BUILD_ID="$R_ID"; BUILD_PROVIDER="$R_PROVIDER"; BUILD_RANK="$R_RANK"; BUILD_RANKED="$R_RANKED"
+resolve_role review "$BODY_REVIEW" "$MF_REVIEW_MODEL" "$REVIEW_MODEL"
+REVIEW_STATUS="$R_STATUS"; REVIEW_NAME="$R_NAME"; REVIEW_ID="$R_ID"; REVIEW_PROVIDER="$R_PROVIDER"; REVIEW_RANK="$R_RANK"; REVIEW_RANKED="$R_RANKED"
+
+# fail-closed intake (before claiming): an unknown name from task body or manifest bounces; a ranked
+# pair that is inverted (review rank < build rank) or cross-provider bounces, naming the pair. A raw
+# env id (R_STATUS=raw) is unranked and exempt from both — it runs shadow-only, never at intake.
+if [ "$BUILD_STATUS" = unknown ]; then
+  NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }unknown build model '${BODY_BUILD:-$MF_MODEL}' — not in the registry (models.toml)"
 fi
+if [ "$REVIEW_STATUS" = unknown ]; then
+  NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }unknown review model '${BODY_REVIEW:-$MF_REVIEW_MODEL}' — not in the registry (models.toml)"
+fi
+if [ -z "$NEEDS_INFO" ] && [ "$BUILD_RANKED" = 1 ] && [ "$REVIEW_RANKED" = 1 ]; then
+  if [ "$BUILD_PROVIDER" != "$REVIEW_PROVIDER" ]; then
+    NEEDS_INFO="cross-provider model pair — build '$BUILD_NAME' (${BUILD_PROVIDER}) vs review '$REVIEW_NAME' (${REVIEW_PROVIDER}); ranks are not comparable across providers, so the reviewer can't be shown to be no weaker than the build"
+  elif [ "$REVIEW_RANK" -lt "$BUILD_RANK" ]; then
+    NEEDS_INFO="inverted model pair — review '$REVIEW_NAME' (rank $REVIEW_RANK) is weaker than build '$BUILD_NAME' (rank $BUILD_RANK); an independent reviewer must never run below the build"
+  fi
+fi
+
+# per-stage repair model: a repair stage runs at its registry stage tier when set, else the build id.
+stage_repair_id(){
+  local out id
+  out="$(python3 "$SELF_DIR/registry.py" --registry "$REGISTRY" stage-tier --stage "$1" 2>/dev/null)" || out=""
+  id="$(printf '%s' "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("id","") or "")' 2>/dev/null || true)"
+  [ -n "$id" ] && printf '%s' "$id" || printf '%s' "$BUILD_ID"
+}
+CHECK_REPAIR_ID="$(stage_repair_id check_repair)"; REVIEW_REPAIR_ID="$(stage_repair_id review_repair)"
 
 # ---- DoR content gate -> Needs-info bounce (Status=Backlog + Reason=Needs-info). Dry-run stays read-only ----
 if [ -n "$NEEDS_INFO" ]; then
@@ -181,14 +246,22 @@ if [ -n "$NEEDS_INFO" ]; then
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then        # read-only: report the resolved plan, write nothing
-  python3 -c 'import json,sys; print(json.dumps({"repo":sys.argv[1],"issue":int(sys.argv[2]),"branch":sys.argv[3],"model":sys.argv[4],"workspace":sys.argv[5],"base_repo":sys.argv[6],"base_ref":sys.argv[7],"check_cmd":sys.argv[8],"ready":True}))' \
-    "$REPO" "$ISSUE" "$BRANCH" "$RESOLVED_MODEL" "$YR_WORKSPACE" "$BASE_REPO" "$BASE_REF" "$CHECK_CMD"
+  # Additive: `model` stays = the resolved BUILD id (back-compat); `build`/`review` add the role objects.
+  python3 -c 'import json,sys
+a=sys.argv
+def role(name,mid,prov,rank): return {"name":name or None,"id":mid,"provider":prov or None,"rank":(int(rank) if rank else None)}
+print(json.dumps({"repo":a[1],"issue":int(a[2]),"branch":a[3],"model":a[4],"workspace":a[5],
+                  "base_repo":a[6],"base_ref":a[7],"check_cmd":a[8],
+                  "build":role(a[9],a[10],a[11],a[12]),"review":role(a[13],a[14],a[15],a[16]),"ready":True}))' \
+    "$REPO" "$ISSUE" "$BRANCH" "$BUILD_ID" "$YR_WORKSPACE" "$BASE_REPO" "$BASE_REF" "$CHECK_CMD" \
+    "$BUILD_NAME" "$BUILD_ID" "$BUILD_PROVIDER" "$BUILD_RANK" \
+    "$REVIEW_NAME" "$REVIEW_ID" "$REVIEW_PROVIDER" "$REVIEW_RANK"
   exit 0
 fi
 
 # ---- claim (Status: Ready -> In Progress) as early as possible ----
 set_status "In Progress"
-log "claimed #$ISSUE -> In Progress, branch $BRANCH, model $RESOLVED_MODEL"
+log "claimed #$ISSUE -> In Progress, branch $BRANCH, build=$BUILD_ID review=$REVIEW_ID"
 
 # from here, any failure flags Reason=Blocked (and comments) before exiting — failures are visible
 fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cleanup_wt; die "$1"; }
@@ -204,8 +277,8 @@ cleanup_wt(){ "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/nu
 "$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE_REF" || fail_blocked "worktree add failed"
 
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
-run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set)
-  local args=( -p "$2" --model "$RESOLVED_MODEL" --effort "$EFFORT"
+run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set), $5=model id (default: build)
+  local args=( -p "$2" --model "${5:-$BUILD_ID}" --effort "$EFFORT"
                --permission-mode bypassPermissions --append-system-prompt "$1"
                --allowedTools ${4:-Read Edit Write Bash} )
   [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ] && args+=( --output-format "$CLAUDE_OUTPUT_FORMAT" --verbose )
@@ -215,7 +288,7 @@ SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 
 # implementer — production code only
 IMPL_SYS="You are the IMPLEMENTER stage of an automated dev pipeline. Implement the task so it satisfies every acceptance criterion. Write PRODUCTION CODE ONLY — do not author the committed test suite (an independent tester stage does that). Do NOT run git or open PRs — the runner handles git. Work only inside this repository."
-log "implement: $(basename "$CLAUDE_BIN") [$RESOLVED_MODEL] in $WT"
+log "implement: $(basename "$CLAUDE_BIN") [$BUILD_ID] in $WT"
 run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" \
   || fail_blocked "implement stage failed (log: $RUN_DIR/implement.log)"
 
@@ -264,8 +337,8 @@ env_blocked(){ fail_blocked "check command could not execute (exit $1)$2 — an 
 CHECK_RC=0; run_checks || CHECK_RC=$?
 if is_env_failure "$CHECK_RC"; then env_blocked "$CHECK_RC" ""; fi
 if [ "$CHECK_RC" -ne 0 ]; then
-  log "checks failed (exit $CHECK_RC) — one repair attempt"
-  run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" || true
+  log "checks failed (exit $CHECK_RC) — one repair attempt [$CHECK_REPAIR_ID]"
+  run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || true
   CHECK_RC=0; run_checks || CHECK_RC=$?
   if is_env_failure "$CHECK_RC"; then env_blocked "$CHECK_RC" " after the repair attempt"; fi
   [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
@@ -276,14 +349,14 @@ fi
 # no stake, and fail-closed (anything but a clear APPROVE blocks). The verdict is attached to the PR.
 REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Tag each finding 'blocker' or 'nit'. Do NOT modify any files and do NOT run git commit or push. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
-                run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/review.md" "Read Bash"
+                run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID"
                 # fail-closed: the LAST verdict line must be exactly "VERDICT: APPROVE" (only trailing whitespace
                 # trimmed) — a hedge ("APPROVE" then "REQUEST_CHANGES"), trailing junk, or a mangled token does NOT pass.
                 [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]; }
 log "review: independent reviewer stage"
 if ! review_stage; then
-  log "review requested changes — one repair attempt"
-  run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" || true
+  log "review requested changes — one repair attempt [$REVIEW_REPAIR_ID]"
+  run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || true
   run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)"
   review_stage || fail_blocked "reviewer still requests changes after one repair"
 fi
@@ -291,9 +364,9 @@ fi
 # ---- commit / push / open PR ----
 "$GIT_BIN" -C "$WT" add -A
 if "$GIT_BIN" -C "$WT" diff --cached --quiet; then fail_blocked "no changes produced"; fi
-"$GIT_BIN" -C "$WT" commit -q -m "$(printf '%s\n\nImplements #%s (dev-runner, %s). Tests by the independent tester stage.' "$TITLE" "$ISSUE" "$RESOLVED_MODEL")"
+"$GIT_BIN" -C "$WT" commit -q -m "$(printf '%s\n\nImplements #%s (dev-runner, build %s). Tests by the independent tester stage.' "$TITLE" "$ISSUE" "$BUILD_ID")"
 "$GIT_BIN" -C "$WT" push -q -u origin "$BRANCH" || fail_blocked "push failed"
-PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (model: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$RESOLVED_MODEL")"
+PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$BUILD_ID" "$REVIEW_ID")"
 PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")" \
   || fail_blocked "pr create failed"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
