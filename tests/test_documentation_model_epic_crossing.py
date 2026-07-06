@@ -162,8 +162,8 @@ def test_frontmatter_vocabulary_still_closed_and_unchanged():
 # ---------------------------------------------------------------------------
 
 def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.7.0", \
-        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.6.3'"
+    assert _plugin_data()["version"] == "0.7.1", \
+        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.7.1'"
 
 
 def test_plugin_version_is_not_the_old_0_6_0():

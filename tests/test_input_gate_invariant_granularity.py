@@ -319,7 +319,9 @@ def test_closing_md_checklist_before_promoting_unchanged():
 def test_closing_md_sections_2_through_4_unchanged():
     """Issue #28 was wording-alignment only for §1, and this test froze §2-4 to prove it.
     The 0.7.0 release (iteration 6 shipped: the factory-executed output gate) legitimately
-    retargeted §2 — this pin now anchors the NEW §2 semantics; §3-4 and the release
+    retargeted §2 — this pin now anchors the NEW §2 semantics; 0.7.1 legitimately
+    retargeted the §3 crossed_to bullet (the stamp moved to the crossing — authoring.md
+    step 3 — and §3 became the verify-backstop); the rest of §3-4 and the release
     checklist stay frozen as before."""
     text = _closing_text()
     assert "**Who:** the **factory itself, for an armed repo** — otherwise a human." in text, \
@@ -330,6 +332,8 @@ def test_closing_md_sections_2_through_4_unchanged():
         "closing.md §2 durable-rule sentence changed unexpectedly"
     assert "Set `status: active` on any doc still at `draft`" in text, \
         "closing.md §3 'Doc-side freeze' content changed unexpectedly"
+    assert "Verify every doc that crossed carries its `crossed_to` stamp" in text, \
+        "closing.md §3 lost the crossed_to verify-backstop bullet (cross-time stamping, 0.7.1)"
     assert "This is **shipping freezes the why**" in text, \
         "closing.md §3 closing sentence changed unexpectedly"
     assert "1. **Version bump** — update `version` in `.claude-plugin/plugin.json`" in text, \
@@ -416,8 +420,8 @@ def test_other_invariants_still_present_and_unweakened():
 # ---------------------------------------------------------------------------
 
 def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.7.0", \
-        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.7.0'"
+    assert _plugin_data()["version"] == "0.7.1", \
+        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.7.1'"
 
 
 def test_skill_md_and_plugin_description_agree():
