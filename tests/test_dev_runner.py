@@ -1262,3 +1262,258 @@ def test_pool_seam_documented_in_dispatch_md_and_env_example():
     env_example = (ROOT / "deploy" / "dispatch.env.example").read_text()
     assert "YR_POOL_" in dispatch_md and "quota_pool" in dispatch_md.lower()
     assert "YR_POOL_" in env_example
+
+
+# ============ Issue #48: stage usage capture — every build records what it cost ============
+# `run_stage` now runs every claude -p stage with `--output-format json` by default, extracts the
+# CLI's single JSON result envelope on a clean exit, rewrites the stage log to the plain reply text,
+# and files the usage (fresh input/output/cache-write/cache-read + model + duration) as
+# usage-<stage>.json in the run dir. A log that never held an envelope (plain text — the rest of this
+# stub suite) or a failed stage is left completely untouched and yields no artifact. After PR create,
+# the per-stage artifacts are aggregated into usage-summary.json + one PR comment. An explicit
+# CLAUDE_OUTPUT_FORMAT still wins (old stream-json+--verbose pairing, no capture attempted).
+#
+# CLAUDE_STUB_JSON is a second claude stub, stage-aware like CLAUDE_STUB, but each branch emits a
+# single-line `--output-format json` result envelope (fixed, distinguishable token counts per stage)
+# instead of plain text — proving extraction, the rewrite, and the summary end-to-end.
+
+CLAUDE_STUB_JSON = '''#!/usr/bin/env bash
+args="$*"
+[ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
+emit_json() {  # $1=result-text $2=input $3=output $4=cache_write $5=cache_read $6=duration_ms
+  printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$2" "$3" "$4" "$5"
+}
+case "$args" in
+  *REVIEWER*)
+    echo REVIEW >> "$STUB_TIMELINE"
+    if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then
+      emit_json "VERDICT: REQUEST_CHANGES" 11 12 13 14 100
+    else
+      emit_json "VERDICT: APPROVE" 21 22 23 24 200
+    fi ;;
+  *"REQUESTED CHANGES"*)
+    echo REVIEWFIX >> "$STUB_TIMELINE"
+    : > review_repaired
+    emit_json "fixed the blockers" 31 32 33 34 300 ;;
+  *TESTER*)
+    echo TEST >> "$STUB_TIMELINE"
+    mkdir -p tests && printf 'pass\\n' > tests/test_stub_output.py
+    emit_json "wrote tests" 41 42 43 44 400 ;;
+  *"tests FAIL"*)
+    echo REPAIR >> "$STUB_TIMELINE"
+    : > repaired
+    emit_json "repaired the code" 51 52 53 54 500 ;;
+  *)
+    echo IMPL >> "$STUB_TIMELINE"
+    printf 'hello\\n' > feature.txt
+    emit_json "implemented the feature" 61 62 63 64 600
+    if [ -n "${STUB_IMPL_JSON_THEN_FAIL:-}" ]; then exit 1; fi ;;
+esac
+exit 0
+'''
+
+
+def _stubs_json(binp):
+    binp.mkdir(parents=True, exist_ok=True)
+    _exec(binp / "gh", GH_STUB)
+    _exec(binp / "claude", CLAUDE_STUB_JSON)
+    _exec(binp / "check.sh", CHECK_STUB)
+
+
+def _run_dir(tmp, number=5):
+    dirs = list((tmp / "drhome" / "runs").glob(f"{number}-*"))
+    assert len(dirs) == 1, f"expected exactly one run dir, found {dirs}"
+    return dirs[0]
+
+
+def _usage_files(rundir):
+    """Per-stage usage artifacts only — excludes the aggregate usage-summary.json, which is always
+    produced (even with zero per-stage artifacts) and is not itself a per-stage artifact."""
+    return sorted(p.name for p in rundir.glob("usage-*.json") if p.name != "usage-summary.json")
+
+
+def test_json_envelope_writes_per_stage_usage_and_rewrites_logs(tmp_path):
+    """The JSON-envelope stub case: per-stage usage artifacts are written (fresh input/output/cache
+    write/cache read + model + duration), each stage log is rewritten to the plain result text, the
+    fail-closed verdict gate still passes on that extracted text, and a usage-summary comment lands
+    on the PR after PR create."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Usage capture happy path"), work)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    rd = _run_dir(tmp_path)
+
+    # per-stage artifacts, named for the stage, with exactly the fields the envelope carried
+    assert json.loads((rd / "usage-implement.json").read_text()) == {
+        "stage": "implement", "model": "claude-sonnet-5", "duration_ms": 600,
+        "input_tokens": 61, "output_tokens": 62, "cache_write_tokens": 63, "cache_read_tokens": 64,
+    }
+    assert json.loads((rd / "usage-test.json").read_text()) == {
+        "stage": "test", "model": "claude-sonnet-5", "duration_ms": 400,
+        "input_tokens": 41, "output_tokens": 42, "cache_write_tokens": 43, "cache_read_tokens": 44,
+    }
+    assert json.loads((rd / "usage-review.json").read_text()) == {
+        "stage": "review", "model": "claude-opus-4-8", "duration_ms": 200,
+        "input_tokens": 21, "output_tokens": 22, "cache_write_tokens": 23, "cache_read_tokens": 24,
+    }
+
+    # every existing consumer of the stage log must keep seeing plain, byte-identical-in-shape text:
+    # the log is rewritten to EXACTLY the envelope's `result` text (verdict gate still parses it).
+    assert (rd / "implement.log").read_text() == "implemented the feature"
+    assert (rd / "test.log").read_text() == "wrote tests"
+    assert (rd / "review.md").read_text() == "VERDICT: APPROVE"
+
+    # the aggregate rolls up all three stages
+    summary = json.loads((rd / "usage-summary.json").read_text())
+    assert len(summary["stages"]) == 3
+    assert summary["totals"] == {"input_tokens": 61 + 41 + 21, "output_tokens": 62 + 42 + 22,
+                                  "cache_write_tokens": 63 + 43 + 23, "cache_read_tokens": 64 + 44 + 24}
+
+    # one usage-summary comment posted on the PR after PR create
+    tl = _timeline(tmp_path)
+    assert "PRCOMMENT" in tl
+    comments = _prcomments(tmp_path)
+    assert "### dev-runner usage" in comments
+    assert "YR-MERGE" not in comments.split("### dev-runner usage", 1)[1].split("=== PRCOMMENT ===")[0]
+
+
+def test_plain_text_stub_degrades_no_artifacts_logs_untouched_and_warns(tmp_path):
+    """The plain-text stub case (this whole suite's default `claude`): no usage artifacts are written,
+    every stage log is left byte-identical to the stub's plain output, the pipeline still goes green
+    end to end, and the zero-artifact degrade is logged loudly (never silent)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Plain text degrade"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    rd = _run_dir(tmp_path)
+
+    assert _usage_files(rd) == []                                   # no per-stage artifacts at all
+    assert (rd / "review.md").read_text() == "VERDICT: APPROVE\n"   # untouched, byte-identical
+
+    # the loud, visible degrade warning (never silent)
+    assert "WARNING" in r.stderr
+    assert "zero per-stage usage artifacts" in r.stderr.lower()
+
+    # the aggregate + comment are still produced, just say so
+    summary = json.loads((rd / "usage-summary.json").read_text())
+    assert summary["stages"] == []
+    comments = _prcomments(tmp_path)
+    assert "no per-stage usage artifacts" in comments.lower()
+    assert "YR-MERGE" not in comments
+
+
+def test_failed_json_stage_writes_no_usage_and_leaves_log_untouched(tmp_path):
+    """Criterion: a stage that FAILED must never get its output captured, even if that output happens
+    to be a well-formed envelope — the failure must never be masked by a plausible-looking artifact."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Envelope then fail"), work)
+    env["STUB_IMPL_JSON_THEN_FAIL"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "https://stub/pr/1" not in r.stdout
+    rd = _run_dir(tmp_path)
+    assert not (rd / "usage-implement.json").exists()
+    assert (rd / "implement.log").read_text().strip().startswith('{"type":"result"')   # untouched raw envelope
+
+
+def test_review_second_round_usage_is_suffixed_not_overwritten(tmp_path):
+    """The reviewer can run twice into the same log (blocked, repaired, re-approved): the second
+    round's artifact is suffixed rather than overwriting the first, so the summary counts both rounds."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Two review rounds"), work)
+    env["STUB_REVIEW_BLOCK"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rd = _run_dir(tmp_path)
+    round1 = json.loads((rd / "usage-review.json").read_text())
+    round2 = json.loads((rd / "usage-review-2.json").read_text())
+    assert round1["input_tokens"] == 11 and round2["input_tokens"] == 21   # distinct, both present
+    summary = json.loads((rd / "usage-summary.json").read_text())
+    stages = {r["stage"] for r in summary["stages"]}
+    assert "review" in stages and "review-2" in stages
+    assert summary["totals"]["input_tokens"] >= 11 + 21   # both rounds counted, not undercounted
+
+
+def test_default_output_format_is_json_without_verbose(tmp_path):
+    """The new default: every stage runs `--output-format json`, deliberately WITHOUT --verbose
+    (pairing it with --verbose turns the envelope into a stream array instead of one object)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Default format flags"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    argv = (tmp_path / "claude_argv").read_text().splitlines()
+    assert "--output-format" in argv
+    assert argv[argv.index("--output-format") + 1] == "json"
+    assert "--verbose" not in argv
+
+
+def test_explicit_output_format_env_wins_over_default_and_keeps_old_pairing(tmp_path):
+    """An explicitly set CLAUDE_OUTPUT_FORMAT must win over the new json default, verbatim (the old
+    stream-json + --verbose pairing) — and no usage capture is attempted on that path at all."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Explicit format override"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["CLAUDE_OUTPUT_FORMAT"] = "stream-json"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr                     # old behavior: pipeline still goes green
+    assert "https://stub/pr/1" in r.stdout
+    argv = (tmp_path / "claude_argv").read_text().splitlines()
+    assert "--output-format" in argv
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in argv
+    rd = _run_dir(tmp_path)
+    assert _usage_files(rd) == []                          # no capture attempted under the override
+
+
+def test_output_format_override_skips_capture_even_for_envelope_shaped_output(tmp_path):
+    """Even when a stage's raw stdout happens to be a well-formed envelope, an explicit
+    CLAUDE_OUTPUT_FORMAT override must skip extraction entirely (fmt_overridden) — proving the env
+    value truly wins over the new default rather than merely being unexercised."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Override with json-shaped output"), work)
+    env["CLAUDE_OUTPUT_FORMAT"] = "stream-json"
+    _run(["5", "--repo", "test/repo"], env)   # the run may fail downstream; that's not what's under test
+    rd = _run_dir(tmp_path)
+    assert _usage_files(rd) == []
+    assert (rd / "implement.log").read_text().strip().startswith('{"type":"result"')   # never rewritten
+
+
+def test_dryrun_json_contract_unchanged_by_usage_capture(tmp_path):
+    """Acceptance criterion: usage capture must not change the dry-run JSON contract. Pin the exact
+    key set the dry-run has always emitted (tools/registry.py-resolved build/review roles, etc.) —
+    no usage-related key must appear."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    assert r.returncode == 0, r.stderr
+    d = json.loads(r.stdout)
+    assert set(d) == {"repo", "issue", "branch", "model", "workspace", "base_repo", "base_ref",
+                       "check_cmd", "auto_merge", "build", "review", "ready"}
+
+
+def test_usage_summary_never_collides_with_the_yr_merge_shadow_record(tmp_path):
+    """A live test pinning the acceptance criterion exactly: across every PR-comment body posted for
+    a run (reviewer verdict, usage summary, terminal merge-shadow record), the string YR-MERGE-SHADOW
+    appears EXACTLY once (from the shadow record alone), and the usage comment neither contains
+    YR-MERGE anywhere nor opens with any YR- marker line."""
+    env = _shadow_env(tmp_path, title="Usage vs shadow marker", checks=[CR_OK])
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    all_comments = _prcomments(tmp_path)
+    assert all_comments.count("YR-MERGE-SHADOW") == 1
+
+    rd = _run_dir(tmp_path)
+    usage_comment = (rd / "usage-summary.md").read_text()
+    assert "YR-MERGE" not in usage_comment
+    assert not usage_comment.splitlines()[0].startswith("YR-")
+    assert usage_comment.splitlines()[0] == "### dev-runner usage"

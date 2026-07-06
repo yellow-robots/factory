@@ -7,7 +7,9 @@
 # Pipeline (each stage a separate cold `claude -p` — builder!=verifier): gate (Status==Ready, Type==Task) ->
 #   claim (Status=In Progress) -> fresh worktree -> implement -> independent test (boundary-guarded:
 #   tester writing outside tests/ -> Blocked) -> deterministic check gate (CHECK_CMD, one repair) ->
-#   independent review (VERDICT gate, one repair) -> commit/push -> open PR -> Status=In Review.
+#   independent review (VERDICT gate, one repair) -> commit/push -> open PR -> usage summary comment ->
+#   Status=In Review. Each stage's token/cache usage is captured to usage-<stage>.json (tools/stage_usage.py)
+#   and rolled up into one PR comment + usage-summary.json in the run dir (issue #48).
 #   empty acceptance criteria / a model (build or review) not in the registry / an inverted or
 #     cross-provider ranked build/review pair -> Status=Backlog + Reason=Needs-info (no LLM).
 #   any stage failure                                  -> Reason=Blocked + comment (failure stays visible).
@@ -368,19 +370,49 @@ pool_credential(){   # $1 = pool name -> the resolved YR_POOL_<POOL> value, or "
   printf '%s' "${!var:-}"
 }
 
+# capture_stage_usage (issue #48): on a stage's clean exit, best-effort extract the CLI's JSON result
+# envelope from its log via tools/stage_usage.py — rewriting the log to the plain reply text (every
+# downstream consumer: the verdict gate, review_bundle.py, the repair prompts, the PR-attached review
+# must keep seeing exactly that) and filing the token/cache usage + model id + duration as
+# usage-<stage>.json in the run dir. A log that never held an envelope (plain text, e.g. the stubbed
+# test suite's `claude`) is left completely untouched and no usage file is written. The reviewer can run
+# TWICE into the same log file (review.md, then again after a review-repair) — suffix the second round's
+# artifact (usage-review-2.json) rather than overwrite, so the summary counts both rounds.
+capture_stage_usage(){   # $1 = stage log file, $2 = model id used for this stage
+  local log="$1" model="$2" base stage out n=2
+  base="$(basename "$log")"; base="${base%.*}"
+  stage="$base"
+  while [ -e "$RUN_DIR/usage-$stage.json" ]; do stage="$base-$n"; n=$((n + 1)); done
+  out="$RUN_DIR/usage-$stage.json"
+  python3 "$SELF_DIR/stage_usage.py" extract --log "$log" --stage "$stage" --model "$model" --out "$out" \
+    >/dev/null 2>&1 || true
+}
+
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
 run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set), $5=model id (default: build)
-  local model="${5:-$BUILD_ID}" cred
+  local model="${5:-$BUILD_ID}" cred rc=0 fmt_overridden=0
   local args=( -p "$2" --model "$model" --effort "$EFFORT"
                --permission-mode bypassPermissions --append-system-prompt "$1"
                --allowedTools ${4:-Read Edit Write Bash} )
-  [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ] && args+=( --output-format "$CLAUDE_OUTPUT_FORMAT" --verbose )
+  if [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ]; then
+    # explicit operator override wins over the new default, verbatim (old pairing) — no usage capture
+    # is attempted on this path, so its output stays exactly as it always has.
+    args+=( --output-format "$CLAUDE_OUTPUT_FORMAT" --verbose ); fmt_overridden=1
+  else
+    # single JSON result envelope (issue #48). Deliberately WITHOUT --verbose: pairing it with
+    # `--output-format json` turns the output into a JSON ARRAY of stream events instead of the single
+    # object this parses (verified against the live CLI) — --verbose is only for the stream-json
+    # override above, never the default.
+    args+=( --output-format json )
+  fi
   cred="$(pool_credential "$(pool_for_model_id "$model")")"
   if [ -n "$cred" ]; then
-    ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1
+    ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 || rc=$?
   else
-    ( cd "$WT" && "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1
+    ( cd "$WT" && "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 || rc=$?
   fi
+  if [ "$rc" -eq 0 ] && [ "$fmt_overridden" -eq 0 ]; then capture_stage_usage "$3" "$model"; fi
+  return "$rc"
 }
 SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 
@@ -535,6 +567,26 @@ PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: 
 PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")" \
   || fail_blocked "pr create failed"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
+
+# ---- usage summary: aggregate the per-stage usage artifacts + post one PR comment (issue #48) --------
+# Always produced, even with zero per-stage artifacts (a degraded capture, e.g. every stage ran under
+# an explicit CLAUDE_OUTPUT_FORMAT override) — the aggregate + comment just say so, per
+# tools/stage_usage.py's render_summary_comment. Never touches the merge-shadow marker grammar
+# (tools/merge_shadow.py) or its YR-/YR-MERGE-prefixed records.
+USAGE_SUMMARY_JSON="$RUN_DIR/usage-summary.json"; USAGE_SUMMARY_COMMENT="$RUN_DIR/usage-summary.md"
+if python3 "$SELF_DIR/stage_usage.py" summarize --run-dir "$RUN_DIR" \
+     --out-json "$USAGE_SUMMARY_JSON" --out-comment "$USAGE_SUMMARY_COMMENT" 2>/dev/null; then
+  USAGE_STAGE_COUNT="$(python3 -c 'import json,sys
+d=json.load(open(sys.argv[1]))
+print(len(d.get("stages") or []))' "$USAGE_SUMMARY_JSON" 2>/dev/null || echo 0)"
+  if [ "${USAGE_STAGE_COUNT:-0}" -eq 0 ]; then
+    log "WARNING: zero per-stage usage artifacts were recorded for this run — usage capture degraded (check CLAUDE_OUTPUT_FORMAT and the stage logs under $RUN_DIR)"
+  fi
+  "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$USAGE_SUMMARY_COMMENT" >/dev/null 2>&1 \
+    || log "warn: could not post the usage-summary comment (non-fatal, PR already open)"
+else
+  log "warn: usage summary aggregation failed (non-fatal, PR already open)"
+fi
 
 # ---- terminal merge-condition evaluator + autonomous merge (issues #37 shadow, #38 arming) ----------
 # The runner's terminal post-PR responsibility: a DETERMINISTIC step (no new LLM stage) that evaluates
