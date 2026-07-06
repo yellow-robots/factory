@@ -275,15 +275,46 @@ log "claimed #$ISSUE -> In Progress, branch $BRANCH, build=$BUILD_ID review=$REV
 # from here, any failure flags Reason=Blocked (and comments) before exiting — failures are visible
 fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cleanup_wt; die "$1"; }
 
-# ---- fresh worktree (idempotent: clear any prior worktree AND branch so a retry isn't wedged) ----
+# ---- run dir (per-pid), worktree (branch-keyed, stable), per-branch stage-completion state (issue #39) --
+# The worktree + state dir are branch-keyed (stable across runs); the run dir is per-pid. As each stage
+# completes it drops a durable per-branch marker (NN-<stage>.done). On an ENVIRONMENTAL failure the
+# worktree + run dir + markers are PRESERVED (env_hold) and a relaunch resumes at the first stage without
+# a .done marker; on success or a CODE/MACHINERY failure the state is cleared and the worktree torn down
+# (cleanup_wt). Markers + a self-describing run.json live under state/<branch-slug>.
 RUN_DIR="$DEV_RUNNER_HOME/runs/${ISSUE}-$$"; mkdir -p "$RUN_DIR"
 WT="$DEV_RUNNER_HOME/wt/${BRANCH//\//-}"
+STATE_DIR="$DEV_RUNNER_HOME/state/${BRANCH//\//-}"
+HOLD_MARKER="$STATE_DIR/env-hold"
+stage_done(){ [ -f "$STATE_DIR/$1.done" ]; }               # has stage $1 already completed in a prior run?
+mark_stage(){ mkdir -p "$STATE_DIR"; : > "$STATE_DIR/$1.done"; }
+# cleanup_wt tears the worktree + branch down AND clears the stage-completion state — the success and
+# code/machinery-failure disposal. The environmental-hold path (env_hold) deliberately does NOT call it.
 cleanup_wt(){ "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/null || true
-              "$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true; }
-"$GIT_BIN" -C "$BASE_REPO" fetch -q origin || fail_blocked "git fetch failed"
-[ -e "$WT" ] && { "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"; }
-"$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true
-"$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE_REF" || fail_blocked "worktree add failed"
+              "$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true
+              rm -rf "$STATE_DIR"; }
+# run.json: the resume manifest (branch, base ref, resolved models, worktree path), written when a hold
+# is recorded so the preserved state is self-describing.
+write_run_json(){ mkdir -p "$STATE_DIR"
+  python3 -c 'import json,sys
+json.dump({"branch":sys.argv[1],"base_ref":sys.argv[2],"build_id":sys.argv[3],
+           "review_id":sys.argv[4],"worktree":sys.argv[5],"run_dir":sys.argv[6]}, open(sys.argv[7],"w"))' \
+    "$BRANCH" "$BASE_REF" "$BUILD_ID" "$REVIEW_ID" "$WT" "$RUN_DIR" "$STATE_DIR/run.json" 2>/dev/null || true; }
+
+# Resume-aware setup: an environmental hold left a marker + the branch-keyed worktree + the branch intact
+# -> REUSE them (stages with a .done marker are skipped below, re-entering at the first incomplete one).
+# Otherwise a FRESH worktree exactly as before (idempotently clearing any wedged prior worktree/branch and
+# any stale, non-hold state so a retry isn't wedged).
+branch_exists(){ "$GIT_BIN" -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; }
+if [ -f "$HOLD_MARKER" ] && [ -e "$WT" ] && branch_exists; then
+  log "resume: reusing preserved env-hold worktree ($WT) + branch $BRANCH — skipping completed stages"
+  "$GIT_BIN" -C "$BASE_REPO" fetch -q origin || true
+else
+  rm -rf "$STATE_DIR"                                       # no valid hold -> discard any stale markers
+  "$GIT_BIN" -C "$BASE_REPO" fetch -q origin || fail_blocked "git fetch failed"
+  [ -e "$WT" ] && { "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"; }
+  "$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true
+  "$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE_REF" || fail_blocked "worktree add failed"
+fi
 
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
 run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set), $5=model id (default: build)
@@ -297,38 +328,51 @@ SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 
 # implementer — production code only
 IMPL_SYS="You are the IMPLEMENTER stage of an automated dev pipeline. Implement the task so it satisfies every acceptance criterion. Write PRODUCTION CODE ONLY — do not author the committed test suite (an independent tester stage does that). Do NOT run git or open PRs — the runner handles git. Work only inside this repository."
-log "implement: $(basename "$CLAUDE_BIN") [$BUILD_ID] in $WT"
-run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" \
-  || fail_blocked "implement stage failed (log: $RUN_DIR/implement.log)"
+if stage_done 01-implement; then
+  log "resume: skipping implement (01-implement.done present)"
+  # the prior run's implementer output is already in the reused worktree; recover a tree for the guard.
+  "$GIT_BIN" -C "$WT" add -A
+  IMPL_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
+else
+  log "implement: $(basename "$CLAUDE_BIN") [$BUILD_ID] in $WT"
+  run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" \
+    || fail_blocked "implement stage failed (log: $RUN_DIR/implement.log)"
 
-# checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
-# detect violations structurally (confinement principle — not advisory / prompt-only).
-"$GIT_BIN" -C "$WT" add -A
-IMPL_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
+  # checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
+  # detect violations structurally (confinement principle — not advisory / prompt-only).
+  "$GIT_BIN" -C "$WT" add -A
+  IMPL_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
+  mark_stage 01-implement
+fi
 
 # tester — independent cold process: tests derived from the CRITERIA, not the implementation (builder≠verifier).
 # Writes to tests/** only — enforced below by diffing against IMPL_TREE (block-and-raise, no silent revert).
 TEST_SYS="You are the TESTER stage, independent of the implementer. Write automated tests that verify the ACCEPTANCE CRITERIA below, against the code now in this repository. Derive the tests from the CRITERIA (the spec), NOT from the implementation's internals. Do NOT modify production code — only add or extend tests. Do NOT run git. Work only inside this repository."
-log "test: independent tester stage"
-run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" \
-  || fail_blocked "tester stage failed (log: $RUN_DIR/test.log)"
+if stage_done 02-test; then
+  log "resume: skipping test (02-test.done present)"
+else
+  log "test: independent tester stage"
+  run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" \
+    || fail_blocked "tester stage failed (log: $RUN_DIR/test.log)"
 
-# tester boundary guard: block if tester modified anything outside tests/**
-# Block-and-raise (no auto-revert) so the violation is visible for diagnosis.
-"$GIT_BIN" -C "$WT" add -A
-TESTER_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
-TESTER_DIFF="$("$GIT_BIN" -C "$WT" diff-tree --no-commit-id -r --name-only "$IMPL_TREE" "$TESTER_TREE")"
-# Build artifacts (e.g. __pycache__/*.pyc from running the gate) are compiled FROM source the tester
-# cannot change, so they can't smuggle an implementation change past builder≠verifier — exclude them
-# from the offender set rather than false-block on them (a repo's .gitignore is the first line; this
-# is the backstop so a repo that forgets it still builds).
-TESTER_OFFENDERS="$(printf '%s' "$TESTER_DIFF" | grep -v '^tests/' | grep -vE '(^|/)__pycache__/|\.pyc$' || true)"
-if [ -n "$TESTER_OFFENDERS" ]; then
-  OFFENDER_LIST="$(printf '%s\n' "$TESTER_OFFENDERS" | tr '\n' ' ' | sed 's/ *$//')"
-  # preserve WHAT the tester changed (not just which files) before fail_blocked cleans the
-  # worktree — so a blocked run stays diagnosable ("understand the why").
-  "$GIT_BIN" -C "$WT" diff "$IMPL_TREE" "$TESTER_TREE" > "$RUN_DIR/boundary-violation.diff" 2>/dev/null || true
-  fail_blocked "tester modified files outside tests/: $OFFENDER_LIST (diff: $RUN_DIR/boundary-violation.diff)"
+  # tester boundary guard: block if tester modified anything outside tests/**
+  # Block-and-raise (no auto-revert) so the violation is visible for diagnosis.
+  "$GIT_BIN" -C "$WT" add -A
+  TESTER_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
+  TESTER_DIFF="$("$GIT_BIN" -C "$WT" diff-tree --no-commit-id -r --name-only "$IMPL_TREE" "$TESTER_TREE")"
+  # Build artifacts (e.g. __pycache__/*.pyc from running the gate) are compiled FROM source the tester
+  # cannot change, so they can't smuggle an implementation change past builder≠verifier — exclude them
+  # from the offender set rather than false-block on them (a repo's .gitignore is the first line; this
+  # is the backstop so a repo that forgets it still builds).
+  TESTER_OFFENDERS="$(printf '%s' "$TESTER_DIFF" | grep -v '^tests/' | grep -vE '(^|/)__pycache__/|\.pyc$' || true)"
+  if [ -n "$TESTER_OFFENDERS" ]; then
+    OFFENDER_LIST="$(printf '%s\n' "$TESTER_OFFENDERS" | tr '\n' ' ' | sed 's/ *$//')"
+    # preserve WHAT the tester changed (not just which files) before fail_blocked cleans the
+    # worktree — so a blocked run stays diagnosable ("understand the why").
+    "$GIT_BIN" -C "$WT" diff "$IMPL_TREE" "$TESTER_TREE" > "$RUN_DIR/boundary-violation.diff" 2>/dev/null || true
+    fail_blocked "tester modified files outside tests/: $OFFENDER_LIST (diff: $RUN_DIR/boundary-violation.diff)"
+  fi
+  mark_stage 02-test
 fi
 
 # deterministic check gate — the RUNNER runs the checks, not the LLM. One repair attempt.
@@ -342,15 +386,34 @@ run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.
 # to fix; handing it to the LLM repair invites host-mutating "fixes" (pip --break-system-packages) that
 # paper over it. Fail closed and report it as an environment problem, never an LLM repair.
 is_env_failure(){ [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; }
-env_blocked(){ fail_blocked "check command could not execute (exit $1)$2 — an ENVIRONMENT/toolchain failure, not a code failure. The check harness (e.g. $BASE_REPO/.venv) is missing or broken; rebuild it, then set Ready again — do not paper over it. (log: $RUN_DIR/checks.log)"; }
-CHECK_RC=0; run_checks || CHECK_RC=$?
-if is_env_failure "$CHECK_RC"; then env_blocked "$CHECK_RC" ""; fi
-if [ "$CHECK_RC" -ne 0 ]; then
-  log "checks failed (exit $CHECK_RC) — one repair attempt [$CHECK_REPAIR_ID]"
-  run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || true
+# env_hold: an environmental failure is NOT the implementer's to fix and is transient (rebuild the
+# toolchain, not the code). Rather than tear the run down, PRESERVE the worktree + run dir + stage
+# markers and record a VISIBLE hold on the issue (never a silently stranded claim) — a relaunch then
+# resumes at the first incomplete stage instead of re-paying every green stage (issue #39). It does NOT
+# call cleanup_wt (that would discard exactly what a resume needs). Reason=Blocked keeps the failure
+# visible on the board exactly as before; the hold marker + preserved worktree are what enable resume.
+env_hold(){   # $1 = check exit code, $2 = context suffix
+  local msg="check command could not execute (exit $1)$2 — an ENVIRONMENT/toolchain failure, not a code failure. The check harness (e.g. $BASE_REPO/.venv) is missing or broken; rebuild it, then set Ready again — do not paper over it. (log: $RUN_DIR/checks.log)"
+  write_run_json
+  mkdir -p "$STATE_DIR"; : > "$HOLD_MARKER"
+  set_reason Blocked
+  comment "dev-runner: **Environmental hold** — $msg  The worktree ($WT) and completed-stage checkpoints are preserved; a relaunch resumes at the first incomplete stage (green stages are not re-run)."
+  die "$msg"
+}
+if stage_done 03-check; then
+  log "resume: skipping check (03-check.done present)"
+  CHECK_RC=0
+else
   CHECK_RC=0; run_checks || CHECK_RC=$?
-  if is_env_failure "$CHECK_RC"; then env_blocked "$CHECK_RC" " after the repair attempt"; fi
-  [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
+  if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" ""; fi
+  if [ "$CHECK_RC" -ne 0 ]; then
+    log "checks failed (exit $CHECK_RC) — one repair attempt [$CHECK_REPAIR_ID]"
+    run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || true
+    CHECK_RC=0; run_checks || CHECK_RC=$?
+    if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the repair attempt"; fi
+    [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
+  fi
+  mark_stage 03-check
 fi
 
 # ---- assemble the pre-review bundle: diff (base->head), acceptance criteria, check output, resolved
@@ -382,11 +445,16 @@ review_stage(){ "$GIT_BIN" -C "$WT" add -A
                 # trimmed) — a hedge ("APPROVE" then "REQUEST_CHANGES"), trailing junk, or a mangled token does NOT pass.
                 [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]; }
 log "review: independent reviewer stage"
-if ! review_stage; then
-  log "review requested changes — one repair attempt [$REVIEW_REPAIR_ID]"
-  run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || true
-  run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)"
-  review_stage || fail_blocked "reviewer still requests changes after one repair"
+if stage_done 04-review; then
+  log "resume: skipping review (04-review.done present)"
+else
+  if ! review_stage; then
+    log "review requested changes — one repair attempt [$REVIEW_REPAIR_ID]"
+    run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || true
+    run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)"
+    review_stage || fail_blocked "reviewer still requests changes after one repair"
+  fi
+  mark_stage 04-review
 fi
 
 # ---- commit / push / open PR ----
