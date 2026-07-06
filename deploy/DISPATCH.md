@@ -76,6 +76,21 @@ touch "$DEV_RUNNER_HOME/merge-killswitch"     # DEV_RUNNER_HOME defaults to ~/.c
 
 This is a deliberate operator switch (distinct from an *environmental* failure, which the runner classifies as resumable and never treats as a block). Use it during an incident, a `main`-branch freeze, or any window where you want to hold the final merge gate by hand.
 
+## Quota/rate-limit holds on the `claude -p` stages
+
+A build or review stage (`claude -p`) can die because its account has hit a usage/rate limit — not because the code is wrong. The runner detects this from the stage's own log (an exit code alone isn't a stable signal: CLI exit codes for a limit kill aren't documented), never hands it to LLM repair, and holds the run exactly like the check gate's environmental failure (see AGENTS.md → "the deterministic check gate"): the worktree, run dir, and completed-stage checkpoints are **preserved**, `Reason=Blocked` is set with a comment naming it an **environmental hold (quota)**, and a relaunch **resumes** at the first incomplete stage — never a silently stranded claim.
+
+- **Signatures are data**, not a hardcoded exit code: `QUOTA_SIGNATURES` is a `grep -E` alternation checked against the stage's log (default: `usage limit|rate limit|quota|overloaded|429` — verified against the installed Claude CLI's own error vocabulary: "usage limit reached", "rate limited", "overloaded"/`overloaded_error`, and the Anthropic API's `429 rate_limit_error` status; `quota` is kept as a conservative catch-all). Override `QUOTA_SIGNATURES` in the dispatch environment to add or narrow signatures for a different CLI/provider mix. Keep it conservative — a signature that's too broad risks misclassifying a genuine code failure as environmental.
+- **Resume, don't repair:** a quota hold reuses the same branch-keyed worktree + per-branch `.done` markers as the check gate's env-hold (issue #39) — wait for the limit to reset, then re-run; the earlier green stages are not re-paid.
+
+### The pool → credential seam (`YR_POOL_<POOL>`)
+
+Every `models.toml` entry names a `quota_pool` — the shared rate/spend ceiling it draws from. A single account ceiling can halt every stage using that account at once, even across build and review. `YR_POOL_<POOL_UPPER_SNAKE>` (hyphens become underscores; e.g. pool `anthropic-main` → `YR_POOL_ANTHROPIC_MAIN`) in the dispatch environment names the **credential/config directory** (`CLAUDE_CONFIG_DIR`) to use for a stage whose resolved model belongs to that pool, letting different pools draw on different accounts.
+
+- **Fallback is the ambient default:** when a pool's `YR_POOL_*` variable is unset, the runner sets nothing and the stage runs exactly as it does today (single account) — this is why shipping the seam changes no behavior yet.
+- **This iteration only names the seam.** Both shipping registry entries (`sonnet`, `opus`) share `quota_pool = "anthropic-main"`, so no `YR_POOL_*` variable needs to be set until a second pool/account is actually provisioned (a separate, deliberate operator action — never automatic).
+- Set it in `~/.config/dev-runner/dispatch.env` alongside `DISPATCH_TOKEN` (see `deploy/dispatch.env.example`).
+
 ## Safety properties (already built)
 
 - **Single-flight:** the host `flock` serializes to one build at a time; a duplicate dispatch exits immediately.

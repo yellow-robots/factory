@@ -11,6 +11,8 @@
 #   empty acceptance criteria / a model (build or review) not in the registry / an inverted or
 #     cross-provider ranked build/review pair -> Status=Backlog + Reason=Needs-info (no LLM).
 #   any stage failure                                  -> Reason=Blocked + comment (failure stays visible).
+#   a claude -p stage killed by a quota/rate-limit signature -> environmental hold (preserve+resume,
+#     no LLM repair), same discipline as the check gate's environment failure.
 #   merge closes the issue; Projects' close->Done sets Status=Done natively.
 # Dispatch: n8n polls Ready -> tools/dispatch.py -> this runner (RFC 0004). Operating model: AGENTS.md.
 #
@@ -300,6 +302,18 @@ json.dump({"branch":sys.argv[1],"base_ref":sys.argv[2],"build_id":sys.argv[3],
            "review_id":sys.argv[4],"worktree":sys.argv[5],"run_dir":sys.argv[6]}, open(sys.argv[7],"w"))' \
     "$BRANCH" "$BASE_REF" "$BUILD_ID" "$REVIEW_ID" "$WT" "$RUN_DIR" "$STATE_DIR/run.json" 2>/dev/null || true; }
 
+# env_hold_record: the shared preserve+record core for an environmental hold — write the resume
+# manifest, drop the hold marker, flag Blocked (visible, never a silently stranded claim), post a
+# comment naming the hold, and die. Deliberately does NOT call cleanup_wt: that would discard exactly
+# what a resume needs. Shared by the check-gate env_hold and the claude-stage llm_quota_hold below.
+env_hold_record(){   # $1 = die/log message, $2 = issue comment body
+  write_run_json
+  mkdir -p "$STATE_DIR"; : > "$HOLD_MARKER"
+  set_reason Blocked
+  comment "$2"
+  die "$1"
+}
+
 # Resume-aware setup: an environmental hold left a marker + the branch-keyed worktree + the branch intact
 # -> REUSE them (stages with a .done marker are skipped below, re-entering at the first incomplete one).
 # Otherwise a FRESH worktree exactly as before (idempotently clearing any wedged prior worktree/branch and
@@ -316,13 +330,57 @@ else
   "$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE_REF" || fail_blocked "worktree add failed"
 fi
 
+# ---- quota/limit signatures (issue #40): a claude -p stage that dies with one of these in its log is
+# an ENVIRONMENTAL ceiling (account/rate limit), never a code failure to hand to LLM repair. CLI exit
+# codes for a limit kill are not documented/stable, so the signature is DATA — a default list pinned
+# after checking it against the live Claude CLI's own error vocabulary (its auth/limit classifier
+# strings: "usage limit reached", "rate limited", "overloaded_error"/"overloaded", and Anthropic API's
+# 429 rate_limit_error status) plus "quota" as a conservative catch-all for the quota-exceeded phrasing
+# other providers/backends use — fully overridable via QUOTA_SIGNATURES (a single grep -E alternation).
+QUOTA_SIGNATURES="${QUOTA_SIGNATURES:-usage limit|rate limit|quota|overloaded|429}"
+is_quota_failure(){ grep -qiE -- "$QUOTA_SIGNATURES" "$1" 2>/dev/null; }   # $1 = stage log file
+
+# llm_quota_hold: a claude -p stage exited non-zero AND its log matched a quota/limit signature — an
+# ENVIRONMENTAL ceiling (account/rate limit), not a code failure. Never hand it to LLM repair (there is
+# nothing wrong with the code) and never silently strand the claim: reuse the exact same preserve+
+# resume machinery as the check gate's env_hold (env_hold_record), worded so the Blocked comment marks
+# it environmental rather than code.
+llm_quota_hold(){   # $1 = stage label (e.g. "implement"), $2 = that stage's log file
+  local msg="the $1 stage hit a quota/rate-limit signature in its output (log: $2) — an ENVIRONMENTAL ceiling (account/rate limit), not a code failure. Wait for the limit to reset (or provision the quota_pool's credential — see deploy/DISPATCH.md), then set Ready again — do NOT send it to LLM repair."
+  env_hold_record "$msg" "dev-runner: **Environmental hold (quota)** — $msg  The worktree ($WT) and completed-stage checkpoints are preserved; a relaunch resumes at the first incomplete stage (green stages are not re-run)."
+}
+
+# ---- pool -> credential seam (issue #40): an entry's quota_pool selects a host credential via
+# YR_POOL_<POOL_UPPER_SNAKE> in the dispatch environment (documented in deploy/DISPATCH.md), falling
+# back to the ambient default (today's single-account behavior) when unset. This iteration only NAMES
+# the seam: both shipping registry entries share one pool, so no env var is set and no stage's
+# credential changes — pool_credential resolves empty and run_stage takes the no-override branch.
+pool_for_model_id(){   # $1 = model id -> its registry entry's quota_pool, or "" (unranked/unknown id)
+  python3 "$SELF_DIR/registry.py" --registry "$REGISTRY" pool-for-id --id "$1" 2>/dev/null \
+    | python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("quota_pool") or "")
+except Exception: print("")' 2>/dev/null || true
+}
+pool_credential(){   # $1 = pool name -> the resolved YR_POOL_<POOL> value, or "" (ambient default)
+  local pool="$1" var
+  [ -n "$pool" ] || return 0
+  var="YR_POOL_$(printf '%s' "$pool" | tr '[:lower:]-' '[:upper:]_')"
+  printf '%s' "${!var:-}"
+}
+
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
 run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set), $5=model id (default: build)
-  local args=( -p "$2" --model "${5:-$BUILD_ID}" --effort "$EFFORT"
+  local model="${5:-$BUILD_ID}" cred
+  local args=( -p "$2" --model "$model" --effort "$EFFORT"
                --permission-mode bypassPermissions --append-system-prompt "$1"
                --allowedTools ${4:-Read Edit Write Bash} )
   [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ] && args+=( --output-format "$CLAUDE_OUTPUT_FORMAT" --verbose )
-  ( cd "$WT" && "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1
+  cred="$(pool_credential "$(pool_for_model_id "$model")")"
+  if [ -n "$cred" ]; then
+    ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1
+  else
+    ( cd "$WT" && "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1
+  fi
 }
 SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 
@@ -335,8 +393,12 @@ if stage_done 01-implement; then
   IMPL_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
 else
   log "implement: $(basename "$CLAUDE_BIN") [$BUILD_ID] in $WT"
-  run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" \
-    || fail_blocked "implement stage failed (log: $RUN_DIR/implement.log)"
+  IMPL_RC=0
+  run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" || IMPL_RC=$?
+  if [ "$IMPL_RC" -ne 0 ]; then
+    is_quota_failure "$RUN_DIR/implement.log" && llm_quota_hold "implement" "$RUN_DIR/implement.log"
+    fail_blocked "implement stage failed (log: $RUN_DIR/implement.log)"
+  fi
 
   # checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
   # detect violations structurally (confinement principle — not advisory / prompt-only).
@@ -352,8 +414,12 @@ if stage_done 02-test; then
   log "resume: skipping test (02-test.done present)"
 else
   log "test: independent tester stage"
-  run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" \
-    || fail_blocked "tester stage failed (log: $RUN_DIR/test.log)"
+  TEST_RC=0
+  run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" || TEST_RC=$?
+  if [ "$TEST_RC" -ne 0 ]; then
+    is_quota_failure "$RUN_DIR/test.log" && llm_quota_hold "test" "$RUN_DIR/test.log"
+    fail_blocked "tester stage failed (log: $RUN_DIR/test.log)"
+  fi
 
   # tester boundary guard: block if tester modified anything outside tests/**
   # Block-and-raise (no auto-revert) so the violation is visible for diagnosis.
@@ -394,11 +460,7 @@ is_env_failure(){ [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; }
 # visible on the board exactly as before; the hold marker + preserved worktree are what enable resume.
 env_hold(){   # $1 = check exit code, $2 = context suffix
   local msg="check command could not execute (exit $1)$2 — an ENVIRONMENT/toolchain failure, not a code failure. The check harness (e.g. $BASE_REPO/.venv) is missing or broken; rebuild it, then set Ready again — do not paper over it. (log: $RUN_DIR/checks.log)"
-  write_run_json
-  mkdir -p "$STATE_DIR"; : > "$HOLD_MARKER"
-  set_reason Blocked
-  comment "dev-runner: **Environmental hold** — $msg  The worktree ($WT) and completed-stage checkpoints are preserved; a relaunch resumes at the first incomplete stage (green stages are not re-run)."
-  die "$msg"
+  env_hold_record "$msg" "dev-runner: **Environmental hold** — $msg  The worktree ($WT) and completed-stage checkpoints are preserved; a relaunch resumes at the first incomplete stage (green stages are not re-run)."
 }
 if stage_done 03-check; then
   log "resume: skipping check (03-check.done present)"
@@ -408,7 +470,9 @@ else
   if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" ""; fi
   if [ "$CHECK_RC" -ne 0 ]; then
     log "checks failed (exit $CHECK_RC) — one repair attempt [$CHECK_REPAIR_ID]"
-    run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || true
+    REPAIR_RC=0
+    run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || REPAIR_RC=$?
+    if [ "$REPAIR_RC" -ne 0 ] && is_quota_failure "$RUN_DIR/repair.log"; then llm_quota_hold "check repair" "$RUN_DIR/repair.log"; fi
     CHECK_RC=0; run_checks || CHECK_RC=$?
     if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the repair attempt"; fi
     [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
@@ -438,7 +502,9 @@ python3 "$SELF_DIR/review_bundle.py" init --bundle "$BUNDLE" \
 # no stake, and fail-closed (anything but a clear APPROVE blocks). The verdict is attached to the PR.
 REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Tag each finding 'blocker' or 'nit'. Do NOT modify any files and do NOT run git commit or push. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
-                run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID"
+                local rc=0
+                run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID" || rc=$?
+                if [ "$rc" -ne 0 ] && is_quota_failure "$RUN_DIR/review.md"; then llm_quota_hold "review" "$RUN_DIR/review.md"; fi
                 python3 "$SELF_DIR/review_bundle.py" record-verdict --bundle "$BUNDLE" --file "$RUN_DIR/review.md" \
                   || fail_blocked "review bundle record-verdict failed"
                 # fail-closed: the LAST verdict line must be exactly "VERDICT: APPROVE" (only trailing whitespace
@@ -450,7 +516,9 @@ if stage_done 04-review; then
 else
   if ! review_stage; then
     log "review requested changes — one repair attempt [$REVIEW_REPAIR_ID]"
-    run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || true
+    REVIEWREPAIR_RC=0
+    run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || REVIEWREPAIR_RC=$?
+    if [ "$REVIEWREPAIR_RC" -ne 0 ] && is_quota_failure "$RUN_DIR/review-repair.log"; then llm_quota_hold "review repair" "$RUN_DIR/review-repair.log"; fi
     run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)"
     review_stage || fail_blocked "reviewer still requests changes after one repair"
   fi
