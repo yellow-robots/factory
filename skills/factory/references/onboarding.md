@@ -18,9 +18,12 @@ Clone the repo to `/opt/yellow-robots/<name>`. The factory resolves repos as `$Y
 At the repo root:
 
 ```toml
-check_cmd = "<your check command>"   # e.g. "pytest tests/ -q" or "python3 tools/check.py"
-model     = "sonnet"                  # "sonnet" or "opus"
-base_ref  = "origin/main"
+check_cmd    = "<your check command>"  # e.g. "pytest tests/ -q" or "python3 tools/check.py"
+model        = "sonnet"                # build role — a models.toml registry entry name
+review_model = "opus"                  # review role — must out-rank the build role (registry default)
+base_ref     = "origin/main"
+# auto_merge = true                    # OPT-IN, later: arms factory merges — only after the repo's
+                                       # shadow phase completes; read live from the base ref.
 ```
 
 The runner runs `check_cmd` with `.venv/bin` and `node_modules/.bin` on PATH — name tools plainly,

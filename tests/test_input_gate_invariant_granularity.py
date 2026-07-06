@@ -317,11 +317,15 @@ def test_closing_md_checklist_before_promoting_unchanged():
 
 
 def test_closing_md_sections_2_through_4_unchanged():
-    """Issue #28 is wording-alignment only for §1 — §2-4 and the release checklist
-    must not have changed."""
+    """Issue #28 was wording-alignment only for §1, and this test froze §2-4 to prove it.
+    The 0.7.0 release (iteration 6 shipped: the factory-executed output gate) legitimately
+    retargeted §2 — this pin now anchors the NEW §2 semantics; §3-4 and the release
+    checklist stay frozen as before."""
     text = _closing_text()
-    assert "**Who:** a human reviews and merges the PR (v1). Native close → `Status=Done`." in text, \
-        "closing.md §2 'Merge → Done' Who line changed unexpectedly"
+    assert "**Who:** the **factory itself, for an armed repo** — otherwise a human." in text, \
+        "closing.md §2 'Merge → Done' Who line lost the factory-executed output gate"
+    assert "squash-merged by the factory with a durable `YR-MERGE: MERGED` record" in text, \
+        "closing.md §2 lost the armed-merge record semantics"
     assert "The **durable rule** is *a human decides what to build*" in text, \
         "closing.md §2 durable-rule sentence changed unexpectedly"
     assert "Set `status: active` on any doc still at `draft`" in text, \
@@ -412,8 +416,8 @@ def test_other_invariants_still_present_and_unweakened():
 # ---------------------------------------------------------------------------
 
 def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.6.3", \
-        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.6.3'"
+    assert _plugin_data()["version"] == "0.7.0", \
+        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.7.0'"
 
 
 def test_skill_md_and_plugin_description_agree():

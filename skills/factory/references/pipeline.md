@@ -1,40 +1,77 @@
 # Pipeline — the lower pipeline and dev-runner
 
 > **When to load this reference:** running, debugging, or understanding the lower pipeline — from
-> `Status=Ready` through `dispatch.py` → `dev-runner.sh` to the PR. For the human gates and closing,
-> see [`closing.md`](closing.md). For gate mechanics, see [`gates.md`](gates.md).
+> `Status=Ready` through `dispatch.py` → `dev-runner.sh` to the PR, and the terminal merge step. For
+> the human gates and closing, see [`closing.md`](closing.md). For gate mechanics, see
+> [`gates.md`](gates.md).
 
 ---
 
 ## How the lower pipeline runs
 
-Once a human sets `Status=Ready`, n8n polls the board every few minutes, finds the Ready task, and POSTs
-it (with explicit `owner/repo`) to the dispatch endpoint.
+Once a task is `Status=Ready` (a human's flip, or the epic-gate under a standing approval), n8n polls
+the board every few minutes, finds the Ready task, and POSTs it (with explicit `owner/repo`) to the
+dispatch endpoint. A second n8n workflow POSTs `/sweep` on the same cadence — the org-wide epic-gate
+pass (`tools/epic_gate.py`: promote the next pre-approved slice, raise stranded claims, close finished
+epics), on its own lock so a sweep never blocks a build.
 
-**Dispatch (`tools/dispatch.py`):** bearer-auth, `flock`-guarded (single run), fail-closed — a request
-that cannot name its `owner/repo` is refused and logged, never guessed. There is no default repo.
+**Dispatch (`tools/dispatch.py`):** bearer-auth, `flock`-guarded (single build in flight), detached
+fire-and-forget (it answers n8n before the runner runs — a refused or dying runner is invisible to
+n8n), fail-closed — a request that cannot name its `owner/repo` is refused and logged, never guessed.
+There is no default repo.
 
-**`dev-runner.sh <issue#> --repo <owner/name>`** runs the staged pipeline; each stage is a separate cold
-`claude -p` process (builder ≠ verifier, structural):
+**`dev-runner.sh <issue#> --repo <owner/name>`** runs the staged pipeline; each LLM stage is a separate
+cold `claude -p` process (builder ≠ verifier, structural). The **build role** runs implement / test /
+repair; the **review role** runs the reviewer — two independently resolved models (see *Model roles*
+below).
 
 | Stage | What it does | On failure |
 |---|---|---|
-| **DoR gate** | Open + on board + `Status=Ready` + `Type=Task` + non-empty acceptance criteria. No LLM call before this passes. | Refusal, no writes, `Status=Backlog` + `Reason=Needs-info`. |
-| **Claim** | Sets `Status=In Progress` (single-flight lock — drops task from the Ready poll). | — |
-| **Worktree** | Fresh `git worktree` off `origin/main` of the target repo. Reads code *and* `.yr/factory.toml` from the base ref — never a mutable working tree. | — |
-| **Implement** | Writes the minimal change against the acceptance criteria. `--permission-mode bypassPermissions` (the worktree + scoped creds are the walls). | — |
+| **DoR gate** | Open + on board + `Status=Ready` + `Type=Task` + non-empty acceptance criteria + both model roles resolve from the registry with a non-inverted, same-provider ranked pair. No LLM call before this passes. | Refusal, no writes — or `Status=Backlog` + `Reason=Needs-info` for content/model bounces. |
+| **Claim** | Sets `Status=In Progress` (single-flight lock — drops the task from the Ready poll). | — |
+| **Worktree** | Fresh `git worktree` off `origin/main` of the target repo. Reads code *and* `.yr/factory.toml` from the base ref — never a mutable working tree. Resume-aware: an environmental hold from a prior run reuses its preserved worktree and completed-stage checkpoints instead of tearing them down. | — |
+| **Implement** | Build-role model writes the minimal change against the acceptance criteria. `--permission-mode bypassPermissions` (the worktree + scoped creds are the walls). | `Blocked` |
 | **Test** | Independent cold process derives tests from the **acceptance criteria** (not the implementation). Boundary guard: any change outside the repo's test tree → `Blocked`, offending diff saved, no auto-revert. Build artifacts (`__pycache__/`, `*.pyc`) are excluded — they can't smuggle an implementation change. | `Blocked` |
-| **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`. One repair attempt on a code failure; no repair on an environment failure (exit 126/127). | `Blocked` |
-| **Review** | Independent cold process emits `VERDICT: APPROVE` or `REQUEST_CHANGES`. One repair attempt; then gates the PR. Fail-closed: anything but clean `APPROVE` blocks. | `Blocked` |
-| **PR** | Commit, push `task/<id>-<slug>`, open PR, `Status=In Review`, post review. | — |
+| **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`. One repair attempt on a code failure (at the registry's `check_repair` stage tier when set, else the build model); no repair on an environment failure (exit 126/127). | `Blocked` |
+| **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
+| **PR** | Commit, push `task/<id>-<slug>`, open PR, post the review. | — |
+| **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · strict rank gate (review > build, one provider, both ranked) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block |
+
+**Environmental vs code failure, everywhere:** a stage or step that *cannot run* — quota exhaustion on
+an LLM stage, a broken toolchain (exit 126/127), a gh/network blip in the evaluator — is classified
+**environmental**: `Blocked` with an ENVIRONMENTAL marker (or, in the evaluator, silently resumable),
+never an LLM repair, never a shadow-streak reset, and the run's completed-stage checkpoints + worktree
+are preserved under `DEV_RUNNER_HOME/state` so a relaunch **resumes from the last completed stage**
+instead of re-paying it. A code failure gets its one repair; a machinery contradiction resets the
+shadow streak.
 
 ## To run by hand
 
 ```
-tools/dev-runner.sh <issue#> --repo <owner/name>
+tools/dev-runner.sh <issue#> --repo <owner/name>           # full build
+tools/dev-runner.sh <issue#> --repo <owner/name> --dry-run # read-only: resolved plan or refusal reason
 ```
 
-Run from the factory root. The worktree is created and cleaned up by the runner.
+Run from the factory root. The worktree is created and cleaned up by the runner (preserved only on an
+environmental hold). `--dry-run` is the fastest way to see *why* a dispatch silently refuses.
+
+## Model roles — the registry
+
+Model choice is **operator-maintained data** (`models.toml` at the factory root; loader
+`tools/registry.py`), never pipeline code. Two roles resolve independently:
+
+- **build** (implement / test / repairs) and **review** (the reviewer) — per role, precedence is
+  per-task body line (`model:` / `review_model:`, bare, case-insensitive) > per-repo manifest
+  (`model` / `review_model`) > the registry's per-role default; the operator env override
+  (`BUILD_MODEL` / `REVIEW_MODEL`) sits atop all three.
+- Names must be registry entries — an unknown name from a body or manifest bounces `Needs-info`
+  before any claim. The **only** non-registry escape is the env override with a raw model id: it runs
+  unranked, loudly warned, and can never satisfy the merge rank gate (shadow-only by construction).
+- **Rank gate, fail-closed twice:** at intake, an inverted or cross-provider ranked pair bounces
+  `Needs-info`; at the merge evaluator, the bar is *strict* review-rank > build-rank on one provider —
+  an equal-rank pair that cleared intake still never auto-merges.
+- Optional per-stage repair tiers (`[roles.stage_tiers]`) let `check_repair` / `review_repair` run
+  cheaper than the build role, never above it.
 
 ## Judgment points
 
@@ -42,7 +79,13 @@ Run from the factory root. The worktree is created and cleaned up by the runner.
   don't use Issue Types yet.
 - The tester boundary guard is structural (the runner diffs the test tree), not a prompt — do not
   weaken it or paper over violations.
-- **Model selection:** Sonnet is the default. `model: opus` in the issue body selects Opus (allowlisted
-  values: `opus` / `sonnet`).
 - **Status is the single-flight lock:** claiming sets `Status=In Progress`, which removes the task from
-  the Ready poll. A task in flight cannot be double-dispatched.
+  the Ready poll. A task in flight cannot be double-dispatched. Cross-epic and standalone Ready items
+  interleave unprioritized, in board order — the dispatch `flock` serializes them.
+- **Shadow completion is mechanical:** a rolling window over the repo's last 5 merge-record-bearing
+  PRs — complete iff ≥ 3 landed unreverted successes and zero resets (an overridden `WOULD-BLOCK`, a
+  reverted merge, a malformed record, or a machinery error resets). Completion only *permits* arming;
+  the human arms a repo by setting `auto_merge = true` in its manifest, and the host **sentinel** file
+  is the always-available kill switch.
+- **Merge ≠ ship:** the factory merges only to the repo's integration branch; deploy stays separate
+  and attended.

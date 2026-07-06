@@ -28,11 +28,18 @@ human promote but fails DoR is set `Needs-info`.
 
 ## 2. Merge → Done
 
-**Who:** a human reviews and merges the PR (v1). Native close → `Status=Done`.
+**Who:** the **factory itself, for an armed repo** — otherwise a human. The runner's deterministic
+merge evaluator (see [`pipeline.md`](pipeline.md)) checks CI-green, freshness against `main`'s tip, a
+terminal clean `APPROVE`, and the strict review-rank > build-rank gate; an **armed** repo (manifest
+`auto_merge = true`, shadow phase complete, host sentinel not thrown) that passes them all is
+squash-merged by the factory with a durable `YR-MERGE: MERGED` record. Every other repo stays in
+**shadow**: a loud `YR-MERGE-SHADOW` would-merge/would-block record, then a human reviews and merges.
+Native close → `Status=Done` either way.
 
 - Merge ≠ ship. `main` is not production; deploy stays separate and attended.
-- The autonomous-merge iteration (in the brain) is slated to retire this human gate — green
-  deterministic gates + an independent reviewer stronger than the builder → the build merges itself.
+- Shadow completion is mechanical (a rolling window of clean, unreverted merge records — see
+  [`pipeline.md`](pipeline.md)); completion *permits* arming, and arming stays the human's manifest
+  edit. Un-arm or throw the sentinel to return a repo to the human gate at any time.
   The **durable rule** is *a human decides what to build*, not *a human merges every PR*.
 
 ---
