@@ -393,7 +393,8 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
   local model="${5:-$BUILD_ID}" cred rc=0 fmt_overridden=0
   local args=( -p "$2" --model "$model" --effort "$EFFORT"
                --permission-mode bypassPermissions --append-system-prompt "$1"
-               --allowedTools ${4:-Read Edit Write Bash} )
+               --allowedTools ${4:-Read Edit Write Bash}
+               --setting-sources "${STAGE_SETTING_SOURCES:-project}" --strict-mcp-config )
   if [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ]; then
     # explicit operator override wins over the new default, verbatim (old pairing) — no usage capture
     # is attempted on this path, so its output stays exactly as it always has.
