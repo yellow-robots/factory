@@ -8,7 +8,7 @@
 
 ## How the lower pipeline runs
 
-Once a human sets `Status=Ready`, n8n polls the board every 5 minutes, finds the Ready task, and POSTs
+Once a human sets `Status=Ready`, n8n polls the board every few minutes, finds the Ready task, and POSTs
 it (with explicit `owner/repo`) to the dispatch endpoint.
 
 **Dispatch (`tools/dispatch.py`):** bearer-auth, `flock`-guarded (single run), fail-closed — a request

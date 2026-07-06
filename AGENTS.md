@@ -35,7 +35,7 @@ A task must be **self-contained**: an implementer should never need to open Obsi
 ```
 product/RFC discussion (vault)  →  file a Task (Issue Form = Definition of Ready)
    →  human sets Status = Ready   ← human at design-active; epic children auto-promote
-   →  n8n poll (every 5 min) finds Ready  →  POST host endpoint  →  dev-runner
+   →  n8n poll (every few minutes) finds Ready  →  POST host endpoint  →  dev-runner
    →  implement → test → check → review → PR  (all autonomous, see below)
    →  human merges  ← the second and final human gate
    →  native close → Status = Done
@@ -122,7 +122,7 @@ Then a **human reviews and merges**. Merge → native close → Done.
 
 ### Dispatch (RFC 0004)
 
-An n8n workflow polls the board every 5 min for `Status=Ready & OPEN` and POSTs each issue **with its
+An n8n workflow polls the board every few minutes for `Status=Ready & OPEN` and POSTs each issue **with its
 explicit repo** to a host endpoint (`tools/dispatch.py`, bearer-auth), which `flock`-guards a single run and
 invokes the runner. Dispatch is **fail-closed** (RFC 0006): there is no default repo — a request that can't
 name its `owner/name` repo is refused and logged, never guessed, so a ticket can't be mis-routed into the

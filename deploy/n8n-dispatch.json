@@ -6,11 +6,11 @@
   "nodes": [
     {
       "id": "schedule",
-      "name": "Every 5 min",
+      "name": "Schedule tick",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [260, 300],
-      "parameters": { "rule": { "interval": [ { "field": "minutes", "minutesInterval": 5 } ] } }
+      "parameters": { "rule": { "interval": [ { "field": "minutes", "minutesInterval": 2 } ] } }
     },
     {
       "id": "ghquery",
@@ -60,7 +60,7 @@
     }
   ],
   "connections": {
-    "Every 5 min": { "main": [ [ { "node": "GitHub: Ready items", "type": "main", "index": 0 } ] ] },
+    "Schedule tick": { "main": [ [ { "node": "GitHub: Ready items", "type": "main", "index": 0 } ] ] },
     "GitHub: Ready items": { "main": [ [ { "node": "Extract Ready issue numbers", "type": "main", "index": 0 } ] ] },
     "Extract Ready issue numbers": { "main": [ [ { "node": "POST /build", "type": "main", "index": 0 } ] ] }
   }
