@@ -180,6 +180,7 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
 |---|---|
 | `tools/dev-runner.sh` | the autonomous build pipeline (gate → implement → test → check → review → PR → terminal merge decision) |
 | `tools/merge_shadow.py` | terminal merge-condition evaluator + `yr-merge-record` writer + mechanical shadow-completion (stdlib) |
+| `tools/stage_usage.py` | per-stage token/cache usage extraction + the PR usage-summary comment (stdlib) |
 | `tools/dispatch.py` | host endpoint n8n calls to fire a build (RFC 0004) |
 | `tools/textutil.py` | small shared text helpers (slug/truncate) |
 | `models.toml` + `tools/registry.py` | the model registry (build/review roles, ranks, stage tiers) + its stdlib loader/JSON CLI |
