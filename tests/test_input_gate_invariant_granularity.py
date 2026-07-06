@@ -172,12 +172,19 @@ def test_agents_md_keeps_standalone_task_promotion_human():
         "AGENTS.md input-gate paragraph does not say standalone tasks keep human promotion"
 
 
-def test_agents_md_merge_gate_wording_unchanged():
+def test_agents_md_output_gate_is_factory_executed_for_armed_repos():
+    # Issue #38 (autonomous merge) reworded the output gate that #19/#28 had left untouched: it is no
+    # longer 'a human merges every PR'. The merge is now FACTORY-EXECUTED for an armed repo under
+    # fail-closed conditions, and human-merged otherwise. The paragraph must still name the output gate.
     para = _agents_input_gate_paragraph()
     assert re.search(r"merge the pr", para, re.IGNORECASE), \
         "AGENTS.md input-gate paragraph must still name 'merge the PR' as the output gate"
-    assert re.search(r"human merges every pr", para, re.IGNORECASE), \
-        "AGENTS.md must still assert a human merges every PR"
+    assert re.search(r"factory.executed", para, re.IGNORECASE), \
+        "AGENTS.md output gate no longer describes the factory-executed merge for armed repos (#38)"
+    assert re.search(r"human.merged|a human merges", para, re.IGNORECASE), \
+        "AGENTS.md output gate dropped the human-merged fallback for non-armed repos"
+    assert not re.search(r"human merges every pr", para, re.IGNORECASE), \
+        "AGENTS.md still asserts 'a human merges every PR', which #38 (autonomous merge) overturns"
 
 
 def test_agents_md_no_longer_states_pertask_promote_as_the_sole_human_gate():

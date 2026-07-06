@@ -93,14 +93,17 @@ MANIFEST="$BASE_REPO/.yr/factory.toml"
 MANIFEST_REF="${MANIFEST_REF:-origin/main}"
 MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_REF:.yr/factory.toml" 2>/dev/null || true)"
 [ -z "$MF_RAW" ] && [ -f "$MANIFEST" ] && MF_RAW="$(cat "$MANIFEST")"
-MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""
+MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""; MF_AUTO_MERGE="false"
 if [ -n "$MF_RAW" ]; then
+  # auto_merge (issue #38) is parsed here alongside the rest, but the MERGE DECISION never trusts this
+  # start-of-run value — read_auto_merge re-reads it from the base ref's current tip at decision time.
   _mf_out="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
 d=tomllib.loads(sys.stdin.read())
-for k in ("check_cmd","model","base_ref","review_model"): print(str(d.get(k) or "").replace("\n"," "))' 2>/dev/null)" \
+for k in ("check_cmd","model","base_ref","review_model"): print(str(d.get(k) or "").replace("\n"," "))
+print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null)" \
     || log "warn: could not parse manifest from $MANIFEST_REF"
   mapfile -t _mf <<<"$_mf_out"
-  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"
+  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"; MF_AUTO_MERGE="${_mf[4]:-false}"
 fi
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
@@ -257,11 +260,11 @@ if [ "$DRY_RUN" -eq 1 ]; then        # read-only: report the resolved plan, writ
 a=sys.argv
 def role(name,mid,prov,rank): return {"name":name or None,"id":mid,"provider":prov or None,"rank":(int(rank) if rank else None)}
 print(json.dumps({"repo":a[1],"issue":int(a[2]),"branch":a[3],"model":a[4],"workspace":a[5],
-                  "base_repo":a[6],"base_ref":a[7],"check_cmd":a[8],
+                  "base_repo":a[6],"base_ref":a[7],"check_cmd":a[8],"auto_merge":a[17]=="true",
                   "build":role(a[9],a[10],a[11],a[12]),"review":role(a[13],a[14],a[15],a[16]),"ready":True}))' \
     "$REPO" "$ISSUE" "$BRANCH" "$BUILD_ID" "$YR_WORKSPACE" "$BASE_REPO" "$BASE_REF" "$CHECK_CMD" \
     "$BUILD_NAME" "$BUILD_ID" "$BUILD_PROVIDER" "$BUILD_RANK" \
-    "$REVIEW_NAME" "$REVIEW_ID" "$REVIEW_PROVIDER" "$REVIEW_RANK"
+    "$REVIEW_NAME" "$REVIEW_ID" "$REVIEW_PROVIDER" "$REVIEW_RANK" "$MF_AUTO_MERGE"
   exit 0
 fi
 
@@ -397,16 +400,25 @@ PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRAN
   || fail_blocked "pr create failed"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
 
-# ---- terminal merge-condition evaluator (shadow) — issue #37 ----------------------------------------
-# The runner's first post-PR responsibility: a DETERMINISTIC step (no new LLM stage) that evaluates the
-# fail-closed merge conditions IN ORDER, IN CODE, indeterminate = failed. Because arming is a later task,
-# EVERY repo is treated as shadow — post one loud, machine-readable YR-MERGE-SHADOW record on the PR, then
-# stop for the human exactly as today (still In Review below). A shadow WOULD-BLOCK is a NORMAL negative
-# outcome, NOT Reason=Blocked (contrast the code/machinery Blocked path). The step's OWN environmental
-# failures (a gh API blip / rate limit / network drop while evaluating or recording) are classified
-# environmental — no machinery-error record, resumable — and never Block.
+# ---- terminal merge-condition evaluator + autonomous merge (issues #37 shadow, #38 arming) ----------
+# The runner's terminal post-PR responsibility: a DETERMINISTIC step (no new LLM stage) that evaluates
+# the fail-closed merge conditions IN ORDER, IN CODE, indeterminate = failed. A repo is ARMED when its
+# manifest sets auto_merge=true (read at DECISION time from the base ref's current tip), the host sentinel
+# is not thrown, and shadow is complete (computed mechanically from prior PR merge records + main history).
+# An armed repo whose conditions all pass is squash-merged BY THE FACTORY into main — freshness remediation
+# (rebase + re-green) first if main moved — and recorded as a durable YR-MERGE: MERGED, letting native
+# close->Done finish the lifecycle (so the merge supersedes set_status "In Review"). Everything else stays
+# in shadow (YR-MERGE-SHADOW, stop for the human) or armed-blocked (YR-MERGE: BLOCKED + Reason=Blocked).
+# A shadow WOULD-BLOCK is a NORMAL negative outcome, NOT Reason=Blocked. The step's OWN environmental
+# failures (a gh API blip / network drop / merge API error while evaluating, recording, or merging) are
+# classified environmental — no machinery-error record, resumable — and never reset a streak or hard-Block.
 MERGE_CI_POLL_INTERVAL="${MERGE_CI_POLL_INTERVAL:-15}"   # poll cadence for in-flight CI (seconds)
 MERGE_CI_TIMEOUT="${MERGE_CI_TIMEOUT:-600}"              # bounded wait for in-flight CI (seconds); timeout = fail
+# The host sentinel (kill switch): a FILE in the dispatch home, read LIVE at decision time (a file, not an
+# inherited env var — a spawned runner carries its spawn-time environment; the file is global + git-free).
+MERGE_SENTINEL="${MERGE_SENTINEL:-$DEV_RUNNER_HOME/merge-killswitch}"
+SHADOW_WINDOW="${SHADOW_WINDOW:-5}"; SHADOW_NEED="${SHADOW_NEED:-3}"; SHADOW_SCAN="${SHADOW_SCAN:-40}"
+PR_NUMBER="${PR_URL##*/}"                                # the current PR number (excluded from the window)
 
 # (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); zero configured checks
 #     fails fast, WITHOUT the wait. Server CI is distinct from and additional to the in-build check_cmd.
@@ -459,27 +471,179 @@ shadow_rank_gate(){
      && [ "$BUILD_PROVIDER" = "$REVIEW_PROVIDER" ] && [ "$REVIEW_RANK" -gt "$BUILD_RANK" ]
   then RANK_RESULT=pass; else RANK_RESULT=fail; fi
 }
-shadow_record(){   # returns 2 on an environmental failure (skip the record — resumable, no machinery record).
-  CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
-  shadow_ci || return 2                       # bounded wait; gh API (environmental failure -> skip record)
-  shadow_freshness || return 2                # decision-time fetch of main's tip (env fetch failure -> skip)
-  shadow_terminal_approval; shadow_rank_gate
-  local body="$RUN_DIR/merge-shadow.md"
+# (5a) auto_merge — read at DECISION time from the base ref's CURRENT tip (NEVER the start-of-run parse
+#      at L~96). The decision-time fetch already ran in shadow_freshness, so origin/$BASE_BRANCH is fresh.
+#      A missing manifest/key -> not armed (false), not an error. MERGE_AUTO_MERGE overrides (for tests).
+read_auto_merge(){   # sets AUTO_MERGE (true|false); returns 2 on an environmental read/parse failure.
+  if [ -n "${MERGE_AUTO_MERGE:-}" ]; then AUTO_MERGE="$MERGE_AUTO_MERGE"; return 0; fi
+  local raw
+  raw="$("$GIT_BIN" -C "$WT" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
+  [ -z "$raw" ] && { AUTO_MERGE=false; return 0; }
+  AUTO_MERGE="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
+try: d=tomllib.loads(sys.stdin.read())
+except Exception: print("error"); sys.exit(0)
+print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null || echo error)"
+  [ "$AUTO_MERGE" = error ] && return 2
+  return 0
+}
+
+# (5b) shadow completion — MECHANICAL, from the repo's prior PR merge records + main history (no sidecar):
+#      one unified window over the last N merge records (shadow YR-MERGE-SHADOW and armed YR-MERGE alike),
+#      >=K landed unreverted successes and no reset. See tools/merge_shadow.py shadow-complete.
+compute_shadow_complete(){   # sets SHADOW_DONE (true|false) + SHADOW_PROGRESS (k/N); returns 2 on env failure.
+  local prs="$RUN_DIR/prs.json" mainlog="$RUN_DIR/main-log.txt" out succ size
+  "$GH_BIN" pr list --repo "$REPO" --base "$BASE_BRANCH" --state all --limit "$SHADOW_SCAN" \
+     --json number,state,mergeCommit,mergedAt,comments >"$prs" 2>/dev/null || return 2
+  "$GIT_BIN" -C "$WT" log "origin/$BASE_BRANCH" --max-count=300 --format='%H%x1e%B%x00' >"$mainlog" 2>/dev/null || return 2
+  out="$(python3 "$SELF_DIR/merge_shadow.py" shadow-complete --prs-file "$prs" --main-log-file "$mainlog" \
+         --repo "$REPO" --exclude-pr "$PR_NUMBER" --window "$SHADOW_WINDOW" --need "$SHADOW_NEED" 2>/dev/null)" || return 2
+  read -r SHADOW_DONE succ size <<<"$out" || return 2
+  SHADOW_PROGRESS="$succ/$SHADOW_WINDOW"
+  return 0
+}
+
+# emit the yr-merge record and post it on the PR. $1 = body file; the rest = mode-specific record args
+# (--mode / --decision / --block-reason / --merge-commit / --armed-note / --shadow-* / --sentinel).
+# returns 2 on an environmental record/post failure. Sets MERGE_MARKER to the record's marker line.
+emit_and_post(){
+  local body="$1"; shift
   python3 "$SELF_DIR/merge_shadow.py" record \
     --ci-green "$CI_RESULT" --freshness "$FRESH_RESULT" \
     --terminal-approval "$APPROVE_RESULT" --rank-gate "$RANK_RESULT" \
     --bundle "$BUNDLE" --base-sha "$BASE_SHA" --head-sha "$PR_HEAD_SHA" --main-tip-sha "${MAIN_TIP:-}" \
     --rollup-file "$RUN_DIR/check-rollup.json" --ci-state "$CI_STATE" \
-    --run-id "$(basename "$RUN_DIR")" --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --out "$body" \
-    || return 2
+    --run-id "$(basename "$RUN_DIR")" --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --auto-merge "${AUTO_MERGE:-false}" --out "$body" "$@" || return 2
   "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$body" >/dev/null 2>&1 || return 2
   MERGE_MARKER="$(head -n1 "$body")"
 }
-if shadow_record; then log "shadow merge record posted — $MERGE_MARKER"
-else log "warn: terminal merge-condition step hit an environmental failure — no shadow record posted (resumable)"; fi
 
-# ---- PR open -> Status: In Review ----
-set_status "In Review"
-log "PR opened: $PR_URL  (#$ISSUE -> In Review)"
+# freshness remediation: main moved, so rebase the branch onto the tip and RE-ESTABLISH green (re-run the
+# check gate + re-wait CI) before merging — the reviewed diff is unchanged so the verdict stands. A stale
+# green SHALL NOT merge. Returns 0 (remediated, ready to merge) / 1 (block: conflict or cannot re-green) /
+# 2 (environmental). Updates PR_HEAD_SHA/BASE_SHA/MAIN_TIP to the rebased state.
+rebase_onto_tip(){
+  "$GIT_BIN" -C "$WT" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
+  if ! "$GIT_BIN" -C "$WT" rebase "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+    "$GIT_BIN" -C "$WT" rebase --abort >/dev/null 2>&1 || true
+    return 1                                   # rebase conflict -> block for the human
+  fi
+  "$GIT_BIN" -C "$WT" push -q --force-with-lease origin "$BRANCH" 2>/dev/null || return 2
+  PR_HEAD_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
+  BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || echo "$BASE_SHA")"
+  local rc=0; run_checks || rc=$?             # re-run the deterministic check gate on the rebased tree
+  is_env_failure "$rc" && return 2
+  [ "$rc" -eq 0 ] || return 1                  # cannot re-establish green -> block (never merge a stale/red PR)
+  shadow_ci || return 2                        # re-wait CI on the rebased head
+  [ "$CI_RESULT" = pass ] || return 1
+  shadow_freshness || return 2                 # base==tip now
+  [ "$FRESH_RESULT" = pass ] || return 1
+  return 0
+}
+
+# squash-merge the PR into main ONLY (never a deploy/release target), passing --squash EXPLICITLY (nothing
+# server-side enforces it). Sets MERGE_COMMIT (best-effort). Returns 2 only if the merge API itself fails.
+do_squash_merge(){
+  "$GH_BIN" pr merge "$PR_URL" --repo "$REPO" --squash >/dev/null 2>&1 || return 2
+  MERGE_COMMIT="$("$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json mergeCommit 2>/dev/null \
+    | python3 -c 'import sys,json
+try: d=json.load(sys.stdin)
+except Exception: d={}
+print((d.get("mergeCommit") or {}).get("oid","") or "")' 2>/dev/null || true)"
+  return 0
+}
+
+# armed-blocked: record YR-MERGE: BLOCKED — <reason>, flag Reason=Blocked, comment. Sets ARMED_BLOCKED.
+armed_block(){   # $1 = block reason (condition id), $2 = human-facing detail
+  local body="$RUN_DIR/merge-record.md"
+  set_reason Blocked
+  emit_and_post "$body" --mode armed --decision BLOCKED --block-reason "$1" \
+    --shadow-complete "${SHADOW_DONE:-false}" --shadow-progress "${SHADOW_PROGRESS:-}" \
+    --sentinel "${SENTINEL_STATE:-ok}" || return 2
+  comment "dev-runner: **Blocked** — autonomous merge refused ($1): $2"
+  ARMED_BLOCKED=1
+  return 0
+}
+
+# The terminal decision. Returns 2 on ANY environmental failure (resumable — no record, no merge, no
+# streak reset, no Block). Sets MERGED=1 on a factory squash-merge; sets ARMED_BLOCKED=1 on an armed block.
+terminal_step(){
+  CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
+  SENTINEL_STATE=ok; SHADOW_DONE=false; SHADOW_PROGRESS=""; MERGE_COMMIT=""
+  shadow_ci || return 2                        # bounded CI wait (env gh/parse failure -> skip)
+  shadow_freshness || return 2                 # decision-time fetch of main's tip (env fetch failure -> skip)
+  shadow_terminal_approval; shadow_rank_gate
+  read_auto_merge || return 2                  # decision-time read of auto_merge from the base ref tip
+
+  local shadow_body="$RUN_DIR/merge-shadow.md"
+
+  # Not armed -> plain shadow (issue #37): the loud YR-MERGE-SHADOW record, then stop for the human.
+  if [ "$AUTO_MERGE" != true ]; then
+    emit_and_post "$shadow_body" --mode shadow || return 2
+    return 0
+  fi
+
+  # Armed regime. Shadow completion is computed at decision time from prior records + main history.
+  compute_shadow_complete || return 2
+  if [ "$SHADOW_DONE" != true ]; then
+    # Refuse to HONOR auto_merge until shadow is complete — a loud shadow record with the progress note.
+    emit_and_post "$shadow_body" --mode shadow --shadow-complete false --shadow-progress "$SHADOW_PROGRESS" \
+      --armed-note "armed, shadow-incomplete $SHADOW_PROGRESS" || return 2
+    return 0
+  fi
+
+  # Armed + shadow complete. The sentinel is a GLOBAL kill switch, read LIVE (a file stat, no git round-
+  # trip): if thrown, refuse this merge for the very next decision and hard-block for the human.
+  if [ -e "$MERGE_SENTINEL" ]; then
+    SENTINEL_STATE=thrown
+    armed_block sentinel "the host sentinel ($MERGE_SENTINEL) is thrown — clear it to resume autonomous merges" || return 2
+    return 0
+  fi
+
+  # The reviewed-diff conditions must hold; a moved main (freshness) is REMEDIATED below, not blocked.
+  local blk=""
+  [ "$APPROVE_RESULT" = pass ] || blk=terminal_approval
+  [ -z "$blk" ] && { [ "$RANK_RESULT" = pass ] || blk=rank_gate; }
+  [ -z "$blk" ] && { [ "$CI_RESULT" = pass ] || blk=ci_green; }
+  if [ -n "$blk" ]; then
+    armed_block "$blk" "the merge condition '$blk' failed — see the YR-MERGE record on the PR" || return 2
+    return 0
+  fi
+
+  # Freshness: if main advanced since the checks passed, rebase onto the tip and re-establish green before
+  # merging; a rebase conflict (or a failure to re-green) hard-blocks for the human — a stale green never merges.
+  if [ "$FRESH_RESULT" != pass ]; then
+    local rc=0; rebase_onto_tip || rc=$?
+    if [ "$rc" -eq 2 ]; then return 2; fi
+    if [ "$rc" -ne 0 ]; then
+      armed_block freshness "main advanced and the rebase onto ${MAIN_TIP:-the tip} could not be re-established green — resolve by hand" || return 2
+      return 0
+    fi
+  fi
+
+  # Full armed pass: squash-merge into main, post the durable YR-MERGE: MERGED, let native close->Done finish.
+  do_squash_merge || return 2                  # merge API failure -> environmental, resumable (no reset)
+  MERGED=1
+  emit_and_post "$RUN_DIR/merge-record.md" --mode armed --decision MERGED --merge-commit "${MERGE_COMMIT:-}" \
+    --shadow-complete true --shadow-progress "$SHADOW_PROGRESS" --sentinel ok \
+    || log "warn: PR merged but the YR-MERGE: MERGED record failed to post (environmental, resumable)"
+  return 0
+}
+
+MERGED=0; ARMED_BLOCKED=0; MERGE_MARKER=""
+if terminal_step; then
+  if [ "$MERGED" -eq 1 ]; then log "autonomous squash-merge complete — ${MERGE_MARKER:-YR-MERGE: MERGED}"
+  else log "terminal merge record posted — ${MERGE_MARKER:-<none>}"; fi
+else
+  log "warn: terminal merge step hit an environmental failure — classified environmental, resumable (no record, no merge, not Blocked)"
+fi
+
+# ---- lifecycle: a factory merge supersedes In Review (native close->Done finishes); else stop for the human ----
+if [ "$MERGED" -eq 1 ]; then
+  log "PR squash-merged by the factory: $PR_URL  (#$ISSUE -> native close -> Done)"
+else
+  set_status "In Review"
+  log "PR opened: $PR_URL  (#$ISSUE -> In Review${ARMED_BLOCKED:+, Reason=Blocked})"
+fi
 cleanup_wt
 echo "$PR_URL"

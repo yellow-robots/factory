@@ -37,7 +37,7 @@ product/RFC discussion (vault)  →  file a Task (Issue Form = Definition of Rea
    →  human sets Status = Ready   ← human at design-active; epic children auto-promote
    →  n8n poll (every 5 min) finds Ready  →  POST host endpoint  →  dev-runner
    →  implement → test → check → review → PR  (all autonomous, see below)
-   →  human merges  ← the second and final human gate
+   →  merge  ← factory-executed for an armed repo under fail-closed conditions; a human otherwise
    →  native close → Status = Done
 ```
 
@@ -48,8 +48,13 @@ flipping a governed epic to Ready, promoting its next pre-approved slice, and cl
 invalid approval record raises `Needs-info` rather than guessing). The cord-pull — un-Readying an epic —
 remains the human's veto, always available. A standalone task with no governing design above it has no
 standing approval to run on, so it keeps the original per-task human promotion. The **output** gate —
-**merge the PR** — is unchanged: a human merges every PR; implement → test → check → review → PR runs
-without a human throughout.
+**merge the PR** — is **factory-executed for an armed repo under fail-closed conditions**: a repo whose
+manifest sets `auto_merge = true`, that has completed the shadow phase, and whose host **sentinel** kill
+switch is not thrown gets its green, fresh, approved, rank-holding PR **squash-merged by the factory
+itself**, with a durable `YR-MERGE: MERGED` record; any failed condition posts `YR-MERGE: BLOCKED` and
+stops for the human. Every **other** repo is **human-merged** exactly as before — the factory only
+evaluates and records (shadow), never merges. Either way, implement → test → check → review → PR runs
+without a human throughout, and no PR reaches `main` without passing the deterministic gates.
 
 ### Task lifecycle (state machine — RFC 0003)
 
@@ -66,8 +71,8 @@ State lives on **native GitHub primitives**, never labels:
 | Ready → In Progress | runner | claims the task (drops it from the Ready poll → single-flight) |
 | → Backlog + Reason=Needs-info | runner | DoR content gate fails (empty acceptance criteria; a `model:`/`review_model:` or manifest model absent from the registry; an inverted or cross-provider ranked build/review pair) |
 | → Reason=Blocked | runner | any stage fails, or the tester touches production code |
-| In Progress → In Review | runner | PR opened |
-| → Done | **native automation** | PR merged → issue closes → Projects sets Done |
+| In Progress → In Review | runner | PR opened (and left for the human, unless the factory merges it below) |
+| → Done | **native automation** | PR merged → issue closes → Projects sets Done. The merge is **factory-executed** for an armed repo (squash-merge under fail-closed conditions) or **human** otherwise |
 
 One shared board — **"Yellow Robots — Dev"** — spans every product repo; each item carries its repo, and
 the runner builds against that repo. Lean backlog: we do **not** park no-foreseeable-start tasks. Drop them
@@ -117,8 +122,20 @@ cold `claude -p` process** — independence by construction (builder ≠ verifie
    clean APPROVE blocks). The reviewer never runs below the review rank; a repair stage with a registry
    stage tier runs at that tier, else at the build role.
 8. **PR** — commit, push `task/<id>-<slug>`, open the PR, Status → In Review, post the review.
+9. **Terminal merge decision (deterministic, no LLM stage)** — evaluate the fail-closed merge conditions
+   in order, in code (indeterminate = failed): CI green + fresh against `main`, a clean terminal
+   `VERDICT: APPROVE`, and the strict review-rank > build-rank gate. A repo is **armed** when its manifest
+   sets `auto_merge = true` (read at *decision time* from the base ref's current tip), the host
+   **sentinel** kill switch is not thrown, and **shadow is complete** (computed mechanically from the
+   repo's prior PR merge records + `main` history — a rolling window of clean, unreverted merges). An armed
+   repo whose conditions all hold is **squash-merged into `main` by the factory** (rebasing + re-establishing
+   green first if `main` moved; a rebase conflict blocks for the human), recorded as a durable
+   `YR-MERGE: MERGED`, and left to native close→Done. Any failed condition for an armed repo posts
+   `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. A repo that is **not** armed (or armed but
+   shadow-incomplete) stays in **shadow**: a loud `YR-MERGE-SHADOW` record and the PR waits for a human.
+   Environmental failures while evaluating/recording/merging are resumable — never a streak reset or a hard Block.
 
-Then a **human reviews and merges**. Merge → native close → Done.
+For a non-armed (or armed-but-blocked) PR, a **human reviews and merges**. Merge → native close → Done.
 
 ### Dispatch (RFC 0004)
 
@@ -157,7 +174,8 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
 
 | Path | What |
 |---|---|
-| `tools/dev-runner.sh` | the autonomous build pipeline (gate → implement → test → check → review → PR) |
+| `tools/dev-runner.sh` | the autonomous build pipeline (gate → implement → test → check → review → PR → terminal merge decision) |
+| `tools/merge_shadow.py` | terminal merge-condition evaluator + `yr-merge-record` writer + mechanical shadow-completion (stdlib) |
 | `tools/dispatch.py` | host endpoint n8n calls to fire a build (RFC 0004) |
 | `tools/textutil.py` | small shared text helpers (slug/truncate) |
 | `models.toml` + `tools/registry.py` | the model registry (build/review roles, ranks, stage tiers) + its stdlib loader/JSON CLI |
@@ -174,9 +192,16 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
   default `factory/../..`) and resolves each target repo's checkout as `$YR_WORKSPACE/<name>`. Build
   specifics live in the repo, not the factory — a `.yr/factory.toml` manifest declaring `check_cmd`
   (yellow-robots → `pytest tests/ -q`, website → `python3 tools/check.py`), a per-repo `model` and
-  `review_model` (registry entry names — the build and review roles), and `base_ref`. The runner runs the
-  check in the ephemeral worktree with the repo's `.venv/bin` and `node_modules/.bin` on PATH, so
-  `check_cmd` names tools plainly (no venv path). Precedence: explicit env > manifest > built-in default.
+  `review_model` (registry entry names — the build and review roles), `base_ref`, and `auto_merge` (a
+  bool, default false — see the terminal merge decision). The runner runs the check in the ephemeral
+  worktree with the repo's `.venv/bin` and `node_modules/.bin` on PATH, so `check_cmd` names tools plainly
+  (no venv path). Precedence: explicit env > manifest > built-in default. `auto_merge` alone is read
+  **not** with the rest but re-read from the base ref's *current tip at decision time* (a start-of-run
+  value must never arm a merge).
+- **The merge kill switch (sentinel):** a host-level file (`$DEV_RUNNER_HOME/merge-killswitch`, default
+  `~/.cache/dev-runner/merge-killswitch`) read **live** at each merge decision. Present → the factory
+  refuses that merge globally, without a git round-trip (a file, not an env var — a spawned runner carries
+  its spawn-time environment). See [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
 - **The factory's own check command:** `.venv/bin/python -m pytest tests/ -q` (the venv is authoritative;
   no system pytest).
 - **Commits** end with: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.

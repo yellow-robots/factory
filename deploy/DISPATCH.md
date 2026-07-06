@@ -61,7 +61,20 @@ Node `typeVersion`s may need bumping to your n8n; the JSON is a starting skeleto
 2. Repeat for a few tasks until boring.
 3. **Then** activate the workflow (the schedule starts polling). Autonomy is on.
 
-**Kill switch:** deactivate the n8n workflow, or `systemctl --user stop dispatch` — either stops *new* dispatch instantly. The unit uses `KillMode=process`, so an **in-flight build runs to completion** (it is not killed). To also abort a running build, `pkill -f dev-runner.sh` — note it then dies mid-stage and leaves the issue at `In Progress` with a leftover worktree, for a human to reset.
+**Kill switch (dispatch):** deactivate the n8n workflow, or `systemctl --user stop dispatch` — either stops *new* dispatch instantly. The unit uses `KillMode=process`, so an **in-flight build runs to completion** (it is not killed). To also abort a running build, `pkill -f dev-runner.sh` — note it then dies mid-stage and leaves the issue at `In Progress` with a leftover worktree, for a human to reset.
+
+**Merge kill switch (the sentinel) — stop autonomous merges without stopping builds.** For an *armed* repo (`auto_merge = true` in its `.yr/factory.toml`) the runner squash-merges a green, fresh, approved, rank-holding PR itself (see AGENTS.md → "the terminal merge decision"). To halt **all** factory merges globally — leaving every PR for a human to merge by hand, while builds keep flowing to open PRs — throw the **sentinel**:
+
+```bash
+touch "$DEV_RUNNER_HOME/merge-killswitch"     # DEV_RUNNER_HOME defaults to ~/.cache/dev-runner
+```
+
+- It is a **host file**, read **live** at each merge decision — not an environment variable, because a spawned runner carries its spawn-time environment and would miss a later change. A file is seen by the very next decision, globally, with no git round-trip.
+- While it is present, an armed repo whose merge conditions otherwise pass is **refused**: the runner posts `YR-MERGE: BLOCKED — sentinel`, sets `Reason=Blocked`, and leaves the PR at `In Review` for a human. It does **not** stop building, testing, reviewing, or opening PRs, and it never affects a non-armed (shadow) repo (which was never going to auto-merge anyway).
+- **Clear it** to resume autonomous merges: `rm "$DEV_RUNNER_HOME/merge-killswitch"`. PRs blocked while it was thrown stay `Reason=Blocked` until re-run or merged by hand — clear the reason (or re-Ready to rebuild) once you have merged or are ready for the factory to.
+- Override the path with `MERGE_SENTINEL=/some/other/file` if the dispatch home is not the default.
+
+This is a deliberate operator switch (distinct from an *environmental* failure, which the runner classifies as resumable and never treats as a block). Use it during an incident, a `main`-branch freeze, or any window where you want to hold the final merge gate by hand.
 
 ## Safety properties (already built)
 
