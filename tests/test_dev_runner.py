@@ -889,3 +889,158 @@ def test_shadow_environmental_failure_posts_no_record(tmp_path):
     _assert_not_blocked_and_in_review(tl, r)
     # classified environmental / resumable in the log, not a machinery error.
     assert "environmental" in r.stderr.lower() or "resumable" in r.stderr.lower()
+
+
+# ============ Issue #39: stage-completion checkpoints + resume on environmental failure ============
+# On an ENVIRONMENTAL check failure (the existing 126/127 path) the runner PRESERVES the branch-keyed
+# worktree + run dir + per-branch stage-completion markers (env_hold) instead of tearing them down, and a
+# relaunch REUSES them, re-entering at the first stage without a `.done` marker. On success or a
+# code/machinery failure the state is cleared and the worktree torn down exactly as today. The env failure
+# is driven deterministically via STUB_CHECK_ENVFAIL (as the test_check_env_failure_* fixtures do), so no
+# real toolchain break is needed. State lives under $DEV_RUNNER_HOME (= tmp/drhome via _real).
+
+def _state_dir(tmp):
+    """The single per-branch stage-completion state dir under the dispatch home, or None."""
+    dirs = [d for d in (tmp / "drhome" / "state").glob("*") if d.is_dir()]
+    return dirs[0] if dirs else None
+
+
+def _wt_dir(tmp):
+    """The single preserved branch-keyed worktree dir, or None once torn down."""
+    dirs = [d for d in (tmp / "drhome" / "wt").glob("*") if d.is_dir()]
+    return dirs[0] if dirs else None
+
+
+def _run_dirs(tmp, number=5):
+    return list((tmp / "drhome" / "runs").glob(f"{number}-*"))
+
+
+def test_env_failure_preserves_worktree_markers_and_run_dir(tmp_path):
+    """Criteria 1 & 2: each completed stage drops a durable per-branch `.done` marker, and an
+    environmental check failure PRESERVES the worktree, the run dir, and those markers (env_hold does NOT
+    tear down) — plus an env-hold marker and a self-describing run.json so the state is resumable."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Broken toolchain"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    # the branch-keyed worktree is preserved (not torn down by the env-failure path)
+    wt = _wt_dir(tmp_path)
+    assert wt is not None and wt.exists()
+    # the run dir (with its check output) is preserved
+    rundirs = _run_dirs(tmp_path)
+    assert rundirs and (rundirs[0] / "checks.log").exists()
+    # per-branch stage markers: implement + test completed before the check failed -> present;
+    # the check never completed -> no marker (criterion 1: a marker is written as each stage completes).
+    sd = _state_dir(tmp_path)
+    assert sd is not None
+    assert (sd / "01-implement.done").exists()
+    assert (sd / "02-test.done").exists()
+    assert not (sd / "03-check.done").exists()
+    # the env-hold marker + the self-describing resume manifest
+    assert (sd / "env-hold").exists()
+    rj = json.loads((sd / "run.json").read_text())
+    assert rj["branch"] == "task/5-broken-toolchain"        # per-branch, stable across runs
+    assert rj["worktree"] == str(wt)
+
+
+def test_relaunch_resumes_at_first_incomplete_stage(tmp_path):
+    """Criterion 3: relaunching an issue with preserved env-hold state REUSES the worktree + branch and
+    resumes at the first stage without a `.done` marker — the earlier green stages are NOT re-run."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Broken toolchain"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})
+    r1 = _run(["5", "--repo", "test/repo"], env)
+    assert r1.returncode != 0
+    wt1 = _wt_dir(tmp_path)
+    assert wt1 is not None
+    # relaunch: same preserved state, but the toolchain is healthy now (no ENVFAIL). Isolate the timeline
+    # so we assert only what the SECOND run does.
+    env2 = {**env, "STUB_TIMELINE": str(tmp_path / "timeline2")}
+    del env2["STUB_CHECK_ENVFAIL"]
+    r2 = _run(["5", "--repo", "test/repo"], env2)
+    assert r2.returncode == 0, r2.stderr
+    assert "https://stub/pr/1" in r2.stdout                          # resumed all the way to a PR
+    tl2 = (tmp_path / "timeline2").read_text().splitlines()
+    # implement + test carried `.done` markers -> skipped on the relaunch timeline (not re-run)
+    assert "IMPL" not in tl2 and "TEST" not in tl2
+    # resumed at the first incomplete stage (check) and continued (review)
+    assert "CHECK" in tl2 and "REVIEW" in tl2
+    # the SAME preserved worktree/branch was reused, not a fresh one (the resume log names its path)
+    assert "reusing preserved env-hold worktree" in r2.stderr
+    assert str(wt1) in r2.stderr
+    assert "resume: skipping implement" in r2.stderr and "resume: skipping test" in r2.stderr
+    # after the successful resume, cleanup_wt cleared the state and tore the worktree down (criterion 5)
+    assert _state_dir(tmp_path) is None
+    assert list((tmp_path / "drhome" / "wt").glob("*")) == []
+
+
+def test_relaunch_without_preserved_state_runs_fresh(tmp_path):
+    """Criterion 4: with no preserved env-hold state, a run creates a FRESH worktree and runs every stage
+    exactly as today — nothing is skipped and no resume path is taken."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Fresh run"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "IMPL" in tl and "TEST" in tl and "CHECK" in tl and "REVIEW" in tl   # every stage ran fresh
+    assert "reusing preserved env-hold" not in r.stderr                         # no resume path taken
+    assert "resume: skipping" not in r.stderr
+
+
+def test_success_clears_state_and_tears_down(tmp_path):
+    """Criterion 5 (success branch): a successful build clears the stage-completion state and tears the
+    worktree down exactly as today — no markers or worktree leak into the next run."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Clean success"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    assert _wt_dir(tmp_path) is None        # worktree torn down
+    assert _state_dir(tmp_path) is None     # stage-completion state cleared
+
+
+def test_code_failure_clears_state_and_tears_down_no_resume(tmp_path):
+    """Criterion 5 + the constraint 'resume must never reuse state across a code failure': a CODE failure
+    (check fails, the one repair can't fix) clears the stage state and tears the worktree down as today,
+    and a later relaunch runs FRESH — resume is for environmental failures only."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Cannot fix"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1", "STUB_REPAIR_NOFIX": "1"})
+    r1 = _run(["5", "--repo", "test/repo"], env)
+    assert r1.returncode != 0 and "Blocked" in " ".join(_edits(_timeline(tmp_path)))
+    # torn down: no worktree, no state dir, no lingering env-hold survive a code failure
+    assert _wt_dir(tmp_path) is None
+    assert _state_dir(tmp_path) is None
+    # relaunch with a healthy build must run FRESH (state was cleared, not preserved -> no resume)
+    env2 = {**env, "STUB_TIMELINE": str(tmp_path / "timeline2")}
+    env2.pop("STUB_CHECK_FAIL"); env2.pop("STUB_REPAIR_NOFIX")
+    r2 = _run(["5", "--repo", "test/repo"], env2)
+    assert r2.returncode == 0, r2.stderr
+    tl2 = (tmp_path / "timeline2").read_text().splitlines()
+    assert "IMPL" in tl2 and "TEST" in tl2          # everything re-run from scratch, nothing skipped
+    assert "reusing preserved env-hold" not in r2.stderr
+
+
+def test_env_hold_is_visible_on_the_issue(tmp_path):
+    """Criterion 6: an environmental hold is recorded VISIBLY on the issue (a comment naming the hold and
+    the preserved-state resume + Reason=Blocked on the board) — never a silently stranded claim."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Broken toolchain"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    comments = " ".join(_comments(tl))
+    assert comments                                                 # a comment WAS posted (not silent)
+    assert "hold" in comments.lower()                              # it is named an (environmental) hold
+    assert "resume" in comments.lower() or "preserved" in comments.lower()  # the preserved-state resume
+    assert "Blocked" in " ".join(_edits(tl))                       # and visible on the board too
