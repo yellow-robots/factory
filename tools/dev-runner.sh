@@ -390,11 +390,93 @@ fi
 "$GIT_BIN" -C "$WT" add -A
 if "$GIT_BIN" -C "$WT" diff --cached --quiet; then fail_blocked "no changes produced"; fi
 "$GIT_BIN" -C "$WT" commit -q -m "$(printf '%s\n\nImplements #%s (dev-runner, build %s). Tests by the independent tester stage.' "$TITLE" "$ISSUE" "$BUILD_ID")"
+PR_HEAD_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"   # the pushed PR head commit (for the shadow merge record)
 "$GIT_BIN" -C "$WT" push -q -u origin "$BRANCH" || fail_blocked "push failed"
 PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$BUILD_ID" "$REVIEW_ID")"
 PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")" \
   || fail_blocked "pr create failed"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
+
+# ---- terminal merge-condition evaluator (shadow) — issue #37 ----------------------------------------
+# The runner's first post-PR responsibility: a DETERMINISTIC step (no new LLM stage) that evaluates the
+# fail-closed merge conditions IN ORDER, IN CODE, indeterminate = failed. Because arming is a later task,
+# EVERY repo is treated as shadow — post one loud, machine-readable YR-MERGE-SHADOW record on the PR, then
+# stop for the human exactly as today (still In Review below). A shadow WOULD-BLOCK is a NORMAL negative
+# outcome, NOT Reason=Blocked (contrast the code/machinery Blocked path). The step's OWN environmental
+# failures (a gh API blip / rate limit / network drop while evaluating or recording) are classified
+# environmental — no machinery-error record, resumable — and never Block.
+MERGE_CI_POLL_INTERVAL="${MERGE_CI_POLL_INTERVAL:-15}"   # poll cadence for in-flight CI (seconds)
+MERGE_CI_TIMEOUT="${MERGE_CI_TIMEOUT:-600}"              # bounded wait for in-flight CI (seconds); timeout = fail
+
+# (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); zero configured checks
+#     fails fast, WITHOUT the wait. Server CI is distinct from and additional to the in-build check_cmd.
+shadow_ci(){   # sets CI_RESULT (pass|fail) + CI_STATE; returns 2 on an environmental gh/parse failure.
+  local rollup="$RUN_DIR/check-rollup.json" start now rc counts total in_flight failed
+  start="$(date +%s)"
+  while :; do
+    rc=0; "$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json statusCheckRollup >"$rollup" 2>/dev/null || rc=$?
+    [ "$rc" -eq 0 ] || return 2
+    counts="$(python3 "$SELF_DIR/merge_shadow.py" classify-checks --rollup-file "$rollup" 2>/dev/null)" || return 2
+    read -r total in_flight failed <<<"$counts" || true
+    if [ "${total:-0}" -eq 0 ]; then CI_RESULT=fail; CI_STATE=empty; return 0; fi          # zero checks: fail fast
+    if [ "${in_flight:-0}" -eq 0 ]; then
+      if [ "${failed:-0}" -eq 0 ]; then CI_RESULT=pass; CI_STATE=success; else CI_RESULT=fail; CI_STATE=failure; fi
+      return 0
+    fi
+    now="$(date +%s)"
+    if [ "$((now - start))" -ge "$MERGE_CI_TIMEOUT" ]; then CI_RESULT=fail; CI_STATE=timed_out; return 0; fi
+    sleep "$MERGE_CI_POLL_INTERVAL"
+  done
+}
+# (2) freshness — the reviewed base SHA must equal main's tip at decision time (a boolean here; the
+#     rebase/re-green remediation is the arming task's, since only a factory-executed merge mutates the
+#     branch). MERGE_MAIN_TIP overrides the decision-time tip; else FETCH origin/$BASE_BRANCH now and read
+#     it. The only earlier fetch ran at build start (minutes ago, before implement/test/review + the CI
+#     wait), and BASE_SHA is that same base checkout — so without a decision-time re-fetch the local
+#     origin/$BASE_BRANCH still equals BASE_SHA and freshness is a structural no-op that can never see a
+#     moved main. A fetch failure is environmental (network/API), classified like the CI read (return 2) —
+#     never a false pass.
+shadow_freshness(){   # sets FRESH_RESULT (pass|fail) + MAIN_TIP; returns 2 on an environmental fetch failure.
+  if [ -n "${MERGE_MAIN_TIP:-}" ]; then MAIN_TIP="$MERGE_MAIN_TIP"
+  else
+    "$GIT_BIN" -C "$WT" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2               # decision-time re-fetch
+    MAIN_TIP="$("$GIT_BIN" -C "$WT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || true)"
+  fi
+  [ -n "$MAIN_TIP" ] || { FRESH_RESULT=fail; return 0; }                                    # indeterminate -> fail
+  [ "$BASE_SHA" = "$MAIN_TIP" ] && FRESH_RESULT=pass || FRESH_RESULT=fail
+}
+# (3) terminal_approval — the LAST review round must be a clean 'VERDICT: APPROVE' (re-approval of a
+#     revised diff counts; the first pass need not have been clean). Same exact-match rule as the gate.
+shadow_terminal_approval(){
+  if [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" 2>/dev/null | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]
+  then APPROVE_RESULT=pass; else APPROVE_RESULT=fail; fi
+}
+# (4) rank_gate — the resolved pair must satisfy STRICT review-rank > build-rank on ONE provider, both
+#     ranked (an unranked emergency override fails here -> shadow-only by construction; an equal-rank pair
+#     that cleared intake also fails here — strict > is the merge bar, not the intake bar).
+shadow_rank_gate(){
+  if [ "$BUILD_RANKED" = 1 ] && [ "$REVIEW_RANKED" = 1 ] \
+     && [ "$BUILD_PROVIDER" = "$REVIEW_PROVIDER" ] && [ "$REVIEW_RANK" -gt "$BUILD_RANK" ]
+  then RANK_RESULT=pass; else RANK_RESULT=fail; fi
+}
+shadow_record(){   # returns 2 on an environmental failure (skip the record — resumable, no machinery record).
+  CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
+  shadow_ci || return 2                       # bounded wait; gh API (environmental failure -> skip record)
+  shadow_freshness || return 2                # decision-time fetch of main's tip (env fetch failure -> skip)
+  shadow_terminal_approval; shadow_rank_gate
+  local body="$RUN_DIR/merge-shadow.md"
+  python3 "$SELF_DIR/merge_shadow.py" record \
+    --ci-green "$CI_RESULT" --freshness "$FRESH_RESULT" \
+    --terminal-approval "$APPROVE_RESULT" --rank-gate "$RANK_RESULT" \
+    --bundle "$BUNDLE" --base-sha "$BASE_SHA" --head-sha "$PR_HEAD_SHA" --main-tip-sha "${MAIN_TIP:-}" \
+    --rollup-file "$RUN_DIR/check-rollup.json" --ci-state "$CI_STATE" \
+    --run-id "$(basename "$RUN_DIR")" --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --out "$body" \
+    || return 2
+  "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$body" >/dev/null 2>&1 || return 2
+  MERGE_MARKER="$(head -n1 "$body")"
+}
+if shadow_record; then log "shadow merge record posted — $MERGE_MARKER"
+else log "warn: terminal merge-condition step hit an environmental failure — no shadow record posted (resumable)"; fi
 
 # ---- PR open -> Status: In Review ----
 set_status "In Review"
