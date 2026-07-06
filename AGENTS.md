@@ -116,7 +116,11 @@ cold `claude -p` process** — independence by construction (builder ≠ verifie
 6. **Check gate** — the *runner* (not an LLM) runs the repo's check command (its `.yr/factory.toml`
    `check_cmd`). One repair attempt on a **code** failure; an **environment** failure (the check can't
    execute — exit 126/127, e.g. a broken venv) is reported as Blocked *without* a repair, so a broken
-   toolchain is never papered over.
+   toolchain is never papered over. The same discipline extends to every `claude -p` stage (implement/
+   test/repair/review): a stage that exits non-zero with a quota/rate-limit signature in its log — data,
+   in `QUOTA_SIGNATURES` — is Blocked as **environmental**, never sent to LLM repair, using the same
+   preserve/resume path (see `deploy/DISPATCH.md` for the signature list and the `quota_pool` →
+   `YR_POOL_<POOL>` credential seam).
 7. **Review (independent)** — a cold process, running the **review role**, emits `VERDICT: APPROVE` or
    `REQUEST_CHANGES`. One repair attempt, then the verdict gates the PR (fail-closed: anything but a
    clean APPROVE blocks). The reviewer never runs below the review rank; a repair stage with a registry

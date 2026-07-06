@@ -5,6 +5,7 @@ self-consistency check over the *shipped* registry, resolution-precedence tests,
 rank-check tests. Uses only the loader's public surface (load/validate/resolve/rank_check).
 """
 import copy
+import json
 import pathlib
 import subprocess
 import sys
@@ -294,3 +295,21 @@ def test_cli_resolve_task_override_wins():
     result = _run_cli("resolve", "--role", "build", "--task", "opus")
     assert result.returncode == 0
     assert "claude-opus-4-8" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# pool-for-id: the pool->credential seam (issue #40) — resolve a model id to its quota_pool
+# ---------------------------------------------------------------------------
+
+def test_cli_pool_for_id_known_model_returns_its_quota_pool():
+    result = _run_cli("pool-for-id", "--id", "claude-sonnet-5")
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert data["name"] == "sonnet"
+    assert data["quota_pool"] == "anthropic-main"
+
+
+def test_cli_pool_for_id_unknown_model_returns_empty_object():
+    result = _run_cli("pool-for-id", "--id", "not-a-real-model")
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {}

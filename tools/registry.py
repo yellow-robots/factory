@@ -142,6 +142,21 @@ def _cli_resolve(args):
     return 0
 
 
+def _cli_pool_for_id(args):
+    """Resolve a model id to its registry entry's quota_pool (the pool->credential seam, issue #40).
+
+    Looked up by id (not name) because the runner calls stages with resolved ids (BUILD_ID/REVIEW_ID/
+    a stage-tier id), and a raw operator-override id never matches a registry entry. No match -> {}
+    (exit 0, not an error) so the caller falls back to the ambient default credential."""
+    data = load(args.registry)
+    for name, entry in _entries(data).items():
+        if entry.get("id") == args.id:
+            print(json.dumps({"name": name, "quota_pool": entry.get("quota_pool")}))
+            return 0
+    print(json.dumps({}))
+    return 0
+
+
 def _cli_stage_tier(args):
     """Resolve a stage's tier entry when roles.stage_tiers names one, else signal "no tier" ({}).
 
@@ -183,6 +198,10 @@ def main(argv=None):
     p_stage = sub.add_parser("stage-tier", help="resolve a stage's tier entry if the registry sets one (JSON; {} if none)")
     p_stage.add_argument("--stage", required=True, help="stage name, e.g. check_repair or review_repair")
     p_stage.set_defaults(func=_cli_stage_tier)
+
+    p_pool = sub.add_parser("pool-for-id", help="resolve a model id to its entry's quota_pool (JSON; {} if unknown)")
+    p_pool.add_argument("--id", required=True, help="model id, e.g. claude-sonnet-5")
+    p_pool.set_defaults(func=_cli_pool_for_id)
 
     p_validate = sub.add_parser("validate", help="validate registry self-consistency (JSON)")
     p_validate.set_defaults(func=_cli_validate)

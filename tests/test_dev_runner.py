@@ -7,7 +7,7 @@ CHECK_CMD is a stub script — both append to the timeline, so tests can prove t
 claim → IMPL → TEST → CHECK → (REPAIR → CHECK) → In Review, and that the check gate is deterministic.
 Field/option ids are overridden to readable strings (STATUSFIELD, InProgress, …) for legible assertions.
 """
-import json, os, stat, subprocess, pathlib
+import json, os, re, stat, subprocess, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "dev-runner.sh"
@@ -51,18 +51,26 @@ esac
 CLAUDE_STUB = '''#!/usr/bin/env bash
 args="$*"
 [ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
+[ -n "${STUB_CLAUDE_ENV_FILE:-}" ] && printf 'CLAUDE_CONFIG_DIR=%s\\n' "${CLAUDE_CONFIG_DIR:-}" >> "$STUB_CLAUDE_ENV_FILE"
 case "$args" in
   *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
+                        if [ -n "${STUB_REVIEW_QUOTA:-}" ]; then echo "${STUB_REVIEW_QUOTA}" >&2; exit 1; fi
                         if [ -n "${STUB_REVIEW_VERDICT:-}" ]; then printf '%s\\n' "$STUB_REVIEW_VERDICT"
                         elif [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then echo "VERDICT: REQUEST_CHANGES"
                         else echo "VERDICT: APPROVE"; fi ;;
   *"REQUESTED CHANGES"*) echo REVIEWFIX >> "$STUB_TIMELINE"; [ -n "${STUB_REVIEWFIX_CRASH:-}" ] && exit 7; [ -z "${STUB_REVIEW_NOFIX:-}" ] && : > review_repaired ;;
   *TESTER*)             echo TEST   >> "$STUB_TIMELINE"
+                        if [ -n "${STUB_TESTER_QUOTA:-}" ]; then echo "${STUB_TESTER_QUOTA}" >&2; exit 1; fi
                         [ -n "${STUB_TESTER_PROD_CHANGE:-}" ] && printf 'by tester\\n' > tester_prod.txt
                         [ -n "${STUB_TESTER_TEST_CHANGE:-}" ] && { mkdir -p tests && printf 'pass\\n' > tests/test_stub_output.py; }
                         [ -n "${STUB_TESTER_ARTIFACT_CHANGE:-}" ] && { mkdir -p tools/__pycache__ && printf 'bytecode\\n' > tools/__pycache__/check.cpython-314.pyc; } ;;
-  *"tests FAIL"*)       echo REPAIR >> "$STUB_TIMELINE"; [ -z "${STUB_REPAIR_NOFIX:-}" ] && : > repaired ;;
-  *)                    echo IMPL   >> "$STUB_TIMELINE"; [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\\n' > feature.txt ;;
+  *"tests FAIL"*)       echo REPAIR >> "$STUB_TIMELINE"
+                        if [ -n "${STUB_REPAIR_QUOTA:-}" ]; then echo "${STUB_REPAIR_QUOTA}" >&2; exit 1; fi
+                        [ -z "${STUB_REPAIR_NOFIX:-}" ] && : > repaired ;;
+  *)                    echo IMPL   >> "$STUB_TIMELINE"
+                        if [ -n "${STUB_IMPL_QUOTA:-}" ]; then echo "${STUB_IMPL_QUOTA}" >&2; exit 1; fi
+                        if [ -n "${STUB_IMPL_FAIL:-}" ]; then echo "${STUB_IMPL_FAIL}" >&2; exit 1; fi
+                        [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\\n' > feature.txt ;;
 esac
 exit 0
 '''
@@ -1044,3 +1052,213 @@ def test_env_hold_is_visible_on_the_issue(tmp_path):
     assert "hold" in comments.lower()                              # it is named an (environmental) hold
     assert "resume" in comments.lower() or "preserved" in comments.lower()  # the preserved-state resume
     assert "Blocked" in " ".join(_edits(tl))                       # and visible on the board too
+
+
+# ============ Issue #40: claude -p stage quota/limit kill classified environmental ============
+# A `claude -p` stage (implement/test/check-repair/review) that exits non-zero AND whose log matches a
+# quota/rate-limit signature is an ENVIRONMENTAL ceiling, never a code failure: no LLM repair, the same
+# preserve+resume path as the check gate's env_hold (issue #39), and a Blocked comment naming it
+# environmental (quota) rather than a generic code failure. QUOTA_SIGNATURES is overridable data, and a
+# non-zero stage whose log has no signature match stays a plain code failure exactly as before.
+
+def test_implement_quota_kill_is_environmental_hold(tmp_path):
+    """A build-stage (implement) death with a quota signature in its log is classified environmental:
+    Blocked (visible on the board), but named a quota/environmental hold rather than a code failure —
+    and preserved/resumable (no cleanup_wt), matching the check gate's env_hold discipline (issue #39).
+    No later stage (test/check) ever ran."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Quota kill on implement"), work)
+    env["STUB_IMPL_QUOTA"] = "Error: usage limit reached for this account, try again later"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "IMPL" in tl and "TEST" not in tl and "CHECK" not in tl        # died at implement; nothing after
+    edits = " ".join(_edits(tl))
+    assert "REASONFIELD" in edits and "Blocked" in edits                 # still visible as Blocked
+    comments = " ".join(_comments(tl))
+    assert comments and "environmental" in comments.lower() and "quota" in comments.lower()
+    assert "environmental" in r.stderr.lower() and "quota" in r.stderr.lower()
+    assert "https://stub/pr/1" not in r.stdout
+    # preserved for resume — NOT torn down the way a plain code failure would be
+    wt = _wt_dir(tmp_path); assert wt is not None and wt.exists()
+    sd = _state_dir(tmp_path); assert sd is not None
+    assert (sd / "env-hold").exists()
+    assert not (sd / "01-implement.done").exists()   # died before the implement checkpoint was recorded
+
+
+def test_implement_generic_failure_without_quota_signature_stays_code_blocked(tmp_path):
+    """Control case: a non-zero implement exit with NO quota/limit signature in its log is a plain code
+    failure exactly as today — Blocked, torn down (no preserved resume state), no 'environmental' or
+    'quota' wording anywhere."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Generic implement crash"), work)
+    env["STUB_IMPL_FAIL"] = "TypeError: unexpected keyword argument 'foo'"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "IMPL" in tl and "TEST" not in tl
+    assert "Blocked" in " ".join(_edits(tl))
+    assert "environmental" not in r.stderr.lower() and "quota" not in r.stderr.lower()
+    assert "https://stub/pr/1" not in r.stdout
+    # torn down like any other code/machinery failure — no resumable state left behind
+    assert _wt_dir(tmp_path) is None
+    assert _state_dir(tmp_path) is None
+
+
+def test_quota_signatures_overridable_via_env(tmp_path):
+    """QUOTA_SIGNATURES is overridable data: a phrase absent from the DEFAULT list is not classified
+    environmental (plain code failure, torn down), but IS once QUOTA_SIGNATURES is overridden to
+    include it (environmental hold, preserved)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    phrase = "acme-provider-daily-cap-hit"
+
+    env1 = _real(tmp_path, _env(tmp_path, binp, number=5, title="Custom signature"), work)
+    env1["STUB_IMPL_QUOTA"] = phrase
+    r1 = _run(["5", "--repo", "test/repo"], env1)
+    assert r1.returncode != 0
+    assert "environmental" not in r1.stderr.lower()
+    assert _wt_dir(tmp_path) is None and _state_dir(tmp_path) is None   # torn down, not preserved
+
+    env2 = _real(tmp_path, _env(tmp_path, binp, number=5, title="Custom signature"), work)
+    env2["STUB_IMPL_QUOTA"] = phrase
+    env2["QUOTA_SIGNATURES"] = phrase
+    r2 = _run(["5", "--repo", "test/repo"], env2)
+    assert r2.returncode != 0
+    assert "environmental" in r2.stderr.lower()
+    assert _wt_dir(tmp_path) is not None and _state_dir(tmp_path) is not None   # preserved this time
+
+
+def test_default_quota_signatures_cover_the_epic_proposed_list():
+    """Guard: the shipped default QUOTA_SIGNATURES covers the epic-proposed signatures (usage limit,
+    rate limit, quota, overloaded, 429) — the live-CLI verification (manual, noted in the PR) pins
+    against exactly this list, so a default drifting away from it would silently narrow coverage."""
+    src = RUNNER.read_text()
+    m = re.search(r'QUOTA_SIGNATURES="\$\{QUOTA_SIGNATURES:-([^}]*)\}"', src)
+    assert m, "QUOTA_SIGNATURES default assignment not found in dev-runner.sh"
+    default = m.group(1)
+    for sig in ("usage limit", "rate limit", "quota", "overloaded", "429"):
+        assert sig in default, f"default QUOTA_SIGNATURES missing '{sig}': {default!r}"
+
+
+def test_check_repair_quota_kill_is_environmental(tmp_path):
+    """A quota kill in the CHECK-REPAIR claude stage (fired after a failing check) is classified
+    environmental — not the generic 'checks still failing' code Blocked — and no second check ever runs."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Quota kill on check repair"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1",
+                "STUB_REPAIR_QUOTA": "429 Too Many Requests"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert tl.count("CHECK") == 1 and "REPAIR" in tl        # one failing check, one (quota-killed) repair
+    assert "still failing" not in r.stderr.lower()
+    assert "environmental" in r.stderr.lower() and "quota" in r.stderr.lower()
+    comments = " ".join(_comments(tl))
+    assert "environmental" in comments.lower() and "quota" in comments.lower()
+    assert _wt_dir(tmp_path) is not None and _state_dir(tmp_path) is not None
+    assert "https://stub/pr/1" not in r.stdout
+
+
+def test_review_quota_kill_is_environmental(tmp_path):
+    """A quota kill in the REVIEWER claude stage is classified environmental, not the generic
+    'reviewer still requests changes' code Blocked."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Quota kill on review"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_QUOTA": "the account is rate limited"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "CHECK" in tl and "REVIEW" in tl
+    assert "environmental" in r.stderr.lower() and "quota" in r.stderr.lower()
+    comments = " ".join(_comments(tl))
+    assert "environmental" in comments.lower() and "quota" in comments.lower()
+    assert "https://stub/pr/1" not in r.stdout
+    assert _wt_dir(tmp_path) is not None and _state_dir(tmp_path) is not None
+
+
+# ============ Issue #40: pool -> credential seam (YR_POOL_<POOL>) ============
+# Every registry entry names a quota_pool; a stage whose resolved model belongs to pool "<pool>" looks up
+# YR_POOL_<POOL_UPPER_SNAKE> in the dispatch environment to select its claude credential (CLAUDE_CONFIG_DIR),
+# falling back to the ambient default (today's single-account behavior) when unset. STUB_CLAUDE_ENV_FILE
+# has the claude stub record the CLAUDE_CONFIG_DIR it saw on each invocation, in call order.
+
+def test_pool_credential_falls_back_to_ambient_default_when_unset(tmp_path):
+    """With no YR_POOL_* set, every claude invocation runs with no CLAUDE_CONFIG_DIR override — today's
+    single-account behavior is unchanged (the seam is named but not exercised)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="No pool override"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_CLAUDE_ENV_FILE"] = str(tmp_path / "claude_env")
+    env["CLAUDE_CONFIG_DIR"] = ""   # isolate from any ambient value on the host running the test
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "claude_env").read_text().splitlines()
+    assert lines and all(l == "CLAUDE_CONFIG_DIR=" for l in lines)
+
+
+def test_pool_credential_selects_env_var_when_set(tmp_path):
+    """Both shipping registry entries (sonnet, opus) share quota_pool='anthropic-main'. Setting
+    YR_POOL_ANTHROPIC_MAIN selects that credential for every claude invocation (build and review)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Pool override set"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_CLAUDE_ENV_FILE"] = str(tmp_path / "claude_env")
+    env["YR_POOL_ANTHROPIC_MAIN"] = "/creds/anthropic-main"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "claude_env").read_text().splitlines()
+    assert lines and all(l == "CLAUDE_CONFIG_DIR=/creds/anthropic-main" for l in lines)
+
+
+def test_pool_credential_differs_by_role_pool(tmp_path):
+    """A registry where build and review draw from DIFFERENT pools: only the pool with a YR_POOL_*
+    value set gets a credential override; the other role falls back to the ambient default."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    registry = tmp_path / "custom-models.toml"
+    registry.write_text('''
+[models.sonnet]
+id = "claude-sonnet-5"
+provider = "anthropic"
+rank = 30
+quota_pool = "pool-a"
+
+[models.opus]
+id = "claude-opus-4-8"
+provider = "anthropic"
+rank = 40
+quota_pool = "pool-b"
+
+[roles]
+build = "sonnet"
+review = "opus"
+''')
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Differential pool"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_CLAUDE_ENV_FILE"] = str(tmp_path / "claude_env")
+    env["MODELS_REGISTRY"] = str(registry)
+    env["CLAUDE_CONFIG_DIR"] = ""    # isolate from any ambient value on the host running the test
+    env["YR_POOL_POOL_A"] = "/creds/pool-a"   # only pool-a (build) has a credential set; pool-b does not
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "claude_env").read_text().splitlines()
+    assert len(lines) == 3                                       # implement, test (both build/pool-a), review
+    assert lines[0] == "CLAUDE_CONFIG_DIR=/creds/pool-a"          # implement
+    assert lines[1] == "CLAUDE_CONFIG_DIR=/creds/pool-a"          # test
+    assert lines[2] == "CLAUDE_CONFIG_DIR="                       # review (pool-b, no override -> ambient)
+
+
+def test_pool_seam_documented_in_dispatch_md_and_env_example():
+    """Acceptance criterion: the pool->credential seam is documented in deploy/DISPATCH.md and
+    deploy/dispatch.env.example (not just implemented)."""
+    dispatch_md = (ROOT / "deploy" / "DISPATCH.md").read_text()
+    env_example = (ROOT / "deploy" / "dispatch.env.example").read_text()
+    assert "YR_POOL_" in dispatch_md and "quota_pool" in dispatch_md.lower()
+    assert "YR_POOL_" in env_example
