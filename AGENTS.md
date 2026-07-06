@@ -179,7 +179,9 @@ wrong repo. Polling (not webhooks) is deliberate — self-healing, no missed eve
   `check_cmd` names tools plainly (no venv path). Precedence: explicit env > manifest > built-in default.
 - **The factory's own check command:** `.venv/bin/python -m pytest tests/ -q` (the venv is authoritative;
   no system pytest).
-- **Commits** end with: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+- **Commits** credit the authoring model, never a hardcoded name: the runner stamps the commit body
+  (`dev-runner, <model-id>`); an attended agent commit ends with a
+  `Co-Authored-By: <authoring model> <noreply@anthropic.com>` trailer.
 - **Models — the registry is the model surface.** Every selectable model lives in `models.toml` (data,
   not code; loader + JSON CLI in `tools/registry.py`), which also carries the **convention record** in its
   header — strategy/authoring on the strongest class, execution delegated down-tier. The runner resolves
