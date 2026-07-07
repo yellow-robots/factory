@@ -59,7 +59,7 @@ The crossing is **fail-loud**: a `source_*` link that does not resolve **stops**
 - **The product-spec (`01`) is the iteration's front door** — it states the intent and links the iteration's features and research. There is no separate hub note.
 - **Every doc links its neighbours, navigably:**
   - *up the spine* — `source_*` frontmatter (`source_spec`, `source_feature_rfc`, `source_technical_rfc`): a `[[wikilink]]` when the target is in Obsidian, a `#issue`/URL when on GitHub. These are exactly the crossing-links `check_links` verifies. (The **product-spec is the pipeline root** — it carries no `source_*`; intent/vision is a human brain doc *outside* the pipeline, referenced in prose if useful, never a gated crossing-link.)
-  - `crossed_to: owner/repo/path` records where a design was built.
+  - `crossed_to` records where a design crossed the airlock — the epic Issue ref (`owner/repo#N`), or a repo path for a file crossing. **Stamped at the crossing itself**, in the attended session that files the epic — never deferred to close: a missing stamp is silent and ambiguous (not-yet-crossed vs. forgot), while a stamp on an epic later closed *not planned* is loud, true history — the epic records its own outcome.
   - everything else (related / builds-on / see-also) is a prose `[[wikilink]]` in context.
 
 ## Frontmatter — one closed vocabulary
@@ -67,7 +67,7 @@ The crossing is **fail-loud**: a `source_*` link that does not resolve **stops**
 Every doc — spine, supporting, or free-form brain — carries the *same* small property set. It is a **closed vocabulary: never invent keys.** (An AI left free to add properties invents hundreds of nonsensical ones; a fixed set keeps the brain queryable as it grows into product, business, and legal.) Anything not on this list belongs in the **body**, not the frontmatter.
 
 - **Base — every doc:** `type` · `status` · `created` · `updated`.
-- **Crossing-links — only where they apply:** `source_spec` / `source_feature_rfc` / `source_technical_rfc` (the up-spine link; the product-spec is the root and carries none) · `crossed_to` (where a design was built) · `superseded_by` / `retired_reason` (on retirement).
+- **Crossing-links — only where they apply:** `source_spec` / `source_feature_rfc` / `source_technical_rfc` (the up-spine link; the product-spec is the root and carries none) · `crossed_to` (where a design crossed — stamped at the crossing) · `superseded_by` / `retired_reason` (on retirement).
 
 That is the whole set. `title` is the H1, not a field; `stage` is the `type`; `home` is the `type`; the component and iteration are the **folder** — none of them are frontmatter. A new area (legal, marketing, business) earns a new **`type`** deliberately when it's built out; until then those docs are `note`, the wildcard.
 

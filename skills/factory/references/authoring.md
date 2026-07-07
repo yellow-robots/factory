@@ -68,6 +68,11 @@ is product-spec → task, and the task cites `source_spec:`; skip to step 4.)
 **Before filing:** run `check_links` on the draft (see [`gates.md`](gates.md)). File as **clean prose**
 — never raw frontmatter (GitHub renders frontmatter as noise).
 
+**On filing** — the moment the epic Issue exists — stamp `crossed_to: owner/repo#N` on the Obsidian
+doc that crossed (the feature-rfc, or the product-spec when none is earned). The stamp records the
+crossing when it happens; the close-time freeze only verifies it (see
+[`documentation-model.md`](documentation-model.md) — *Identity & navigation*).
+
 **Gate: *review the technical-rfc* (human).** For the review discipline that feeds this gate, see
 [`reviewing.md`](reviewing.md).
 

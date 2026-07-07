@@ -53,8 +53,9 @@ When the PR merges, the iteration's Obsidian docs become immutable records:
   the wrong move — the drift is recorded by the *next* iteration, not by rewriting the frozen one.
 - The technical-rfc on the epic Issue stays as the permanent record; the PR carries the link to the
   resulting code.
-- Record where the design was built: `crossed_to: owner/repo/path` on the Obsidian doc that crossed —
-  see [`documentation-model.md`](documentation-model.md) — *Identity & navigation*.
+- Verify every doc that crossed carries its `crossed_to` stamp — set **at the crossing**, not here
+  (see [`documentation-model.md`](documentation-model.md) — *Identity & navigation*). Stamp any doc
+  found missing one: epics self-close, so this checklist is the backstop, not the act.
 - If the shipped change replaces an older doc, retire it **by kind** — supersede in place vs.
   migrate-delete (see [`migrating.md`](migrating.md), step 4).
 
