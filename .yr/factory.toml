@@ -3,3 +3,9 @@
 check_cmd = "pytest tests/ -q"
 model = "sonnet"
 base_ref = "origin/main"
+
+# Armed 2026-07-07, shadow window complete (5/5 clean unreverted merges): the factory itself
+# squash-merges a green, fresh, approved, rank-holding PR. The merge decision re-reads this key
+# from origin/main's tip — un-arm by removing it, or throw the host sentinel
+# ($DEV_RUNNER_HOME/merge-killswitch) to refuse all merges without a git round-trip.
+auto_merge = true
