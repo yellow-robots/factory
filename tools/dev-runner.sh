@@ -505,7 +505,12 @@ fi
 # The worktree is ephemeral (no .venv / node_modules — both gitignored, they live in the base checkout),
 # so put the base repo's toolchain dirs on PATH: a manifest names tools plainly (`pytest`, `vitest`) and
 # the runner supplies them, instead of hardcoding a venv path the worktree doesn't have.
-run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
+# GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM are neutralized to /dev/null so host-ambient git config (e.g. an
+# operator's global user.email) can never make this check greener than CI (PR #65: a helper that needed
+# git identity passed here on host config but failed in CI with no identity). A check that genuinely
+# needs git identity/config must set it up in its own fixtures, same as CI. This is scoped to the check
+# child only — LLM stages and the runner's own git operations (worktree/commit/push) keep full host config.
+run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
 # Distinguish a CODE failure (the harness ran and tests failed) from an ENVIRONMENT failure (the harness
 # could not execute at all: 127=command not found, 126=found-but-not-executable — e.g. a venv whose
 # console-script shebang points at a moved/rebuilt interpreter). An env failure is NOT the implementer's
