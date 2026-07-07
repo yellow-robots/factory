@@ -48,12 +48,15 @@ shadow streak.
 ## To run by hand
 
 ```
-tools/dev-runner.sh <issue#> --repo <owner/name>           # full build
-tools/dev-runner.sh <issue#> --repo <owner/name> --dry-run # read-only: resolved plan or refusal reason
+tools/dev-runner.sh <issue#> --repo <owner/name>                       # full build
+tools/dev-runner.sh <issue#> --repo <owner/name> --dry-run             # read-only: resolved plan or refusal reason
+tools/dev-runner.sh <issue#> --repo <owner/name> --re-evaluate <pr#>   # re-run the terminal decision only
 ```
 
 Run from the factory root. The worktree is created and cleaned up by the runner (preserved only on an
 environmental hold). `--dry-run` is the fastest way to see *why* a dispatch silently refuses.
+`--re-evaluate` is the recovery path for a shadow record gone stale — see *Shadow merge choreography*
+below.
 
 ## Model roles — the registry
 
@@ -72,6 +75,36 @@ Model choice is **operator-maintained data** (`models.toml` at the factory root;
   an equal-rank pair that cleared intake still never auto-merges.
 - Optional per-stage repair tiers (`[roles.stage_tiers]`) let `check_repair` / `review_repair` run
   cheaper than the build role, never above it.
+
+## Shadow merge choreography
+
+Shadow completion (below) reads its window from prior PR **merge records**, mechanically — it has no
+concept of "a build is currently running." That makes the human side of the choreography load-bearing:
+
+- **Merge only while no build is in flight.** A human-merge click races the next dispatch's worktree cut
+  the moment `main` moves: a branch cut *just before* the merge lands is stale the instant it's checked,
+  even though every reviewed condition (CI, approval, rank) is clean. The runner honestly records
+  `YR-MERGE-SHADOW: WOULD-BLOCK — freshness` on an otherwise-mergeable PR — this is the race from issue
+  #67/PR #69, not a bug. Merging serially (never mid-build) avoids it entirely.
+- **A merged-over `WOULD-BLOCK` is a rolling-window RESET, with no reason carve-out.**
+  `tools/merge_shadow.py classify_event` does not distinguish *why* a blocked PR was blocked — a
+  freshness-stale WOULD-BLOCK that a human merges anyway resets the shadow streak exactly like an
+  overridden CI failure would. There is no exception for "it was only stale." If the PR is otherwise
+  clean, don't merge over the block — recover the record instead (next point) so the eventual merge
+  posts a true `WOULD-MERGE` and counts as a success, not a reset.
+- **Recovery for a freshness-stale PR: a content-identical rebase, then `--re-evaluate`.** Rebase the
+  branch onto the moved tip by hand (attended — the runner never rebases outside its own armed-merge
+  remediation) so the diff is unchanged and the existing review verdict still applies; then run
+  `tools/dev-runner.sh <issue#> --repo <owner/name> --re-evaluate <pr#>`. This re-runs *only* the four
+  terminal conditions (`ci_green` / `freshness` / `terminal_approval` / `rank_gate`) against the PR's
+  *current* head — no DoR gate, no claim, no worktree, no LLM stage — reusing the originating run's
+  review verdict, bundle hash, and resolved build/review roles/ranks from
+  `$DEV_RUNNER_HOME/runs/<issue>-<id>/` (located via the `run_id` on the PR's last merge record). It
+  posts a fresh shadow record whose note names the record it supersedes, so history reads truthfully;
+  it never merges, rebases, claims, or writes board state, even on an armed repo with shadow already
+  complete — the posted record is the only write. A closed/merged PR, a PR that doesn't belong to the
+  named issue, or an originating run whose artifacts are missing all refuse fail-closed, before any
+  write.
 
 ## Judgment points
 

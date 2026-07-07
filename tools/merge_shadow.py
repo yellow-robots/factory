@@ -167,19 +167,21 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
     }
 
 
-def render_comment(record, armed_note=None):
+def render_comment(record, note=None):
     """Line 1 the loud marker; then the fenced `yr-merge-record` JSON block. The marker prefix is
     `YR-MERGE` for an armed record (MERGED/BLOCKED) and `YR-MERGE-SHADOW` for a shadow record
-    (WOULD-MERGE/WOULD-BLOCK). A block/blocked record names its reason on line 1; an armed-but-shadow-
-    incomplete WOULD-MERGE carries the `armed, shadow-incomplete n/N` progress note there."""
+    (WOULD-MERGE/WOULD-BLOCK). A block/blocked record names its reason on line 1. `note`, when given, is
+    appended after its own em dash regardless of decision — display-only, never persisted in the JSON
+    block (no new record grammar): the armed-but-shadow-incomplete `armed, shadow-incomplete n/N`
+    progress note and the `--re-evaluate` supersession note (issue #70) both render this way."""
     prefix = MARKER_ARMED if record.get("mode") == "armed" else MARKER_SHADOW
     decision = record["decision"]
     if decision in ("WOULD-MERGE", "MERGED"):
         marker = f"{prefix}: {decision}"
-        if armed_note and decision == "WOULD-MERGE":
-            marker += f" — {armed_note}"
     else:  # WOULD-BLOCK / BLOCKED
         marker = f"{prefix}: {decision} — {record['failed_condition']}"
+    if note:
+        marker += f" — {note}"
     block = json.dumps(record, indent=2, sort_keys=True)
     return f"{marker}\n\n```yr-merge-record\n{block}\n```\n"
 
@@ -361,11 +363,38 @@ def _cli_record(args):
         sentinel=(args.sentinel or None), checks=checks, check_rollup=args.ci_state,
         run_id=args.run_id, timestamp=args.timestamp,
     )
-    comment = render_comment(record, armed_note=(args.armed_note or None))
+    comment = render_comment(record, note=(args.note or None))
     if args.out:
         pathlib.Path(args.out).write_text(comment)
     else:
         sys.stdout.write(comment)
+    return 0
+
+
+def _cli_last_record(args):
+    """The LAST YR-MERGE(-SHADOW) record on a PR's comments — what `--re-evaluate` (issue #70) supersedes
+    and locates the originating run from. Prints one JSON object: `{"found": false}` when the PR carries
+    no merge record at all; `{"found": true, "malformed": true}` when the last one can't be parsed
+    (fail-closed — the caller must refuse rather than guess); otherwise `{"found": true, "malformed":
+    false, "run_id", "decision", "failed_condition", "mode"}` from the parsed record."""
+    comments = _read_json(args.comments_file)
+    if isinstance(comments, dict):
+        comments = comments.get("comments", [])
+    rec, malformed, seen = _last_merge_record(comments)
+    if not seen:
+        print(json.dumps({"found": False}))
+        return 0
+    if malformed or rec is None:
+        print(json.dumps({"found": True, "malformed": True}))
+        return 0
+    print(json.dumps({
+        "found": True,
+        "malformed": False,
+        "run_id": rec.get("run_id"),
+        "decision": rec.get("decision"),
+        "failed_condition": rec.get("failed_condition"),
+        "mode": rec.get("mode"),
+    }))
     return 0
 
 
@@ -413,8 +442,16 @@ def main(argv=None):
     p_r.add_argument("--shadow-complete", default="", choices=("", "true", "false"))
     p_r.add_argument("--shadow-progress", default="", help="e.g. '2/5'")
     p_r.add_argument("--sentinel", default="", help="'ok' | 'thrown'")
-    p_r.add_argument("--armed-note", default="", help="marker note for an armed-but-shadow-incomplete WOULD-MERGE")
+    p_r.add_argument("--note", default="",
+                      help="marker note, e.g. an armed-but-shadow-incomplete progress note or a "
+                           "--re-evaluate supersession note (display-only, never persisted)")
     p_r.set_defaults(func=_cli_record)
+
+    p_lr = sub.add_parser("last-record",
+                          help="the LAST YR-MERGE(-SHADOW) record parsed from a PR's comments (for --re-evaluate)")
+    p_lr.add_argument("--comments-file", required=True,
+                       help="JSON array of PR comments (`gh pr view --json comments` .comments, or the bare array)")
+    p_lr.set_defaults(func=_cli_last_record)
 
     p_sc = sub.add_parser("shadow-complete",
                           help="compute shadow completion from prior PR merge records + main history")

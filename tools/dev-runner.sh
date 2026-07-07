@@ -60,22 +60,28 @@ declare -A REASON_OPT=( [Needs-info]="${OPT_NEEDSINFO:-803a86fb}" [Blocked]="${O
 
 die()  { echo "dev-runner: ERROR: $*" >&2; exit 1; }
 gate() { echo "dev-runner: NOT READY: $*" >&2; exit 3; }   # DoR refusal — distinct exit code
+reeval_refuse() { echo "dev-runner: RE-EVALUATE REFUSED: $*" >&2; exit 3; }  # --re-evaluate refusal, same family as gate
 log()  { echo "dev-runner: $*" >&2; }
-usage(){ echo "usage: dev-runner.sh <issue#> [--repo <owner/name>] [--dry-run]" >&2; exit 2; }
+usage(){ echo "usage: dev-runner.sh <issue#> [--repo <owner/name>] [--dry-run] [--re-evaluate <pr#>]" >&2; exit 2; }
 
 # ---- parse args ----
-ISSUE=""; REPO=""; DRY_RUN=0
+ISSUE=""; REPO=""; DRY_RUN=0; REEVAL_PR=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)    REPO="${2:-}"; shift 2;;
-    --dry-run) DRY_RUN=1; shift;;
-    -h|--help) usage;;
-    -*)        die "unknown flag: $1";;
-    *)         if [ -z "$ISSUE" ]; then ISSUE="$1"; shift; else die "unexpected arg: $1"; fi;;
+    --repo)        REPO="${2:-}"; shift 2;;
+    --dry-run)     DRY_RUN=1; shift;;
+    --re-evaluate) REEVAL_PR="${2:-}"; shift 2;;
+    -h|--help)     usage;;
+    -*)            die "unknown flag: $1";;
+    *)             if [ -z "$ISSUE" ]; then ISSUE="$1"; shift; else die "unexpected arg: $1"; fi;;
   esac
 done
 [ -n "$ISSUE" ] || usage
 case "$ISSUE" in *[!0-9]*|"") die "issue must be a number, got: '$ISSUE'";; esac
+if [ -n "$REEVAL_PR" ]; then
+  case "$REEVAL_PR" in *[!0-9]*|"") die "--re-evaluate requires a numeric PR number, got: '$REEVAL_PR'";; esac
+  [ "$DRY_RUN" -eq 0 ] || die "--dry-run and --re-evaluate are mutually exclusive"
+fi
 
 # ---- resolve repo / owner ----
 if [ -z "$REPO" ]; then
@@ -87,6 +93,223 @@ OWNER="${REPO%/*}"
 # ---- resolve the target repo's checkout + its build manifest (all relative to the workspace) ----
 NAME="${REPO#*/}"
 BASE_REPO="${BASE_REPO:-$YR_WORKSPACE/$NAME}"   # checkout convention: $YR_WORKSPACE/<name> (override: BASE_REPO)
+
+# ---- shared terminal-merge-decision helpers (issues #37/#38, hoisted here for #70 --re-evaluate reuse) --
+# shadow_ci / shadow_freshness / shadow_terminal_approval / shadow_rank_gate / read_auto_merge /
+# emit_and_post are the exact terminal-decision core: the normal end-of-build path calls them from
+# terminal_step() (below, after the PR opens); --re-evaluate calls them directly against an EXISTING
+# PR's current head, with no DoR gate, no claim, no worktree, no LLM stage. MERGE_GIT_DIR is the git
+# checkout freshness/auto_merge are read from — the branch-keyed worktree ($WT) for a live build (set
+# right after $WT below), the base checkout ($BASE_REPO) for a re-evaluation (no worktree exists there).
+MERGE_CI_POLL_INTERVAL="${MERGE_CI_POLL_INTERVAL:-15}"   # poll cadence for in-flight CI (seconds)
+MERGE_CI_TIMEOUT="${MERGE_CI_TIMEOUT:-600}"              # bounded wait for in-flight CI (seconds); timeout = fail
+# An empty rollup read moments after `gh pr create` can be a real repo's CI not having registered yet
+# (GitHub Actions registers check runs asynchronously) rather than zero configured checks -- so an empty
+# read gets its OWN bounded registration grace, distinct from and much shorter than the in-flight wait above.
+MERGE_CI_REG_POLL_INTERVAL="${MERGE_CI_REG_POLL_INTERVAL:-5}"  # poll cadence during the registration grace (seconds)
+MERGE_CI_REG_GRACE="${MERGE_CI_REG_GRACE:-10}"                 # bounded wait for a check to register (seconds)
+
+# (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); a rollup still empty
+#     after its own bounded registration grace fails fast, WITHOUT the (much longer) in-flight wait.
+#     Server CI is distinct from and additional to the in-build check_cmd.
+shadow_ci(){   # sets CI_RESULT (pass|fail) + CI_STATE; returns 2 on an environmental gh/parse failure.
+  local rollup="$RUN_DIR/check-rollup.json" start now rc counts total in_flight failed grace_start
+  start="$(date +%s)"
+  while :; do
+    rc=0; "$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json statusCheckRollup >"$rollup" 2>/dev/null || rc=$?
+    [ "$rc" -eq 0 ] || return 2
+    counts="$(python3 "$SELF_DIR/merge_shadow.py" classify-checks --rollup-file "$rollup" 2>/dev/null)" || return 2
+    read -r total in_flight failed <<<"$counts" || true
+    if [ "${total:-0}" -eq 0 ]; then
+      # a fresh PR's rollup can legitimately read empty for a few seconds -- GitHub Actions registers
+      # check runs asynchronously, moments after `gh pr create` -- so re-poll for a bounded REGISTRATION
+      # GRACE before concluding "no CI configured" (zero-registered is not zero-configured).
+      grace_start="$(date +%s)"
+      while :; do
+        now="$(date +%s)"
+        if [ "$((now - grace_start))" -ge "$MERGE_CI_REG_GRACE" ]; then
+          CI_RESULT=fail; CI_STATE=empty_after_grace; return 0      # still empty after grace: fail fast
+        fi
+        sleep "$MERGE_CI_REG_POLL_INTERVAL"
+        rc=0; "$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json statusCheckRollup >"$rollup" 2>/dev/null || rc=$?
+        [ "$rc" -eq 0 ] || return 2
+        counts="$(python3 "$SELF_DIR/merge_shadow.py" classify-checks --rollup-file "$rollup" 2>/dev/null)" || return 2
+        read -r total in_flight failed <<<"$counts" || true
+        [ "${total:-0}" -gt 0 ] && break                            # registered -> fall through to the normal wait
+      done
+      start="$(date +%s)"                                           # the normal bounded CI wait starts fresh here
+    fi
+    if [ "${in_flight:-0}" -eq 0 ]; then
+      if [ "${failed:-0}" -eq 0 ]; then CI_RESULT=pass; CI_STATE=success; else CI_RESULT=fail; CI_STATE=failure; fi
+      return 0
+    fi
+    now="$(date +%s)"
+    if [ "$((now - start))" -ge "$MERGE_CI_TIMEOUT" ]; then CI_RESULT=fail; CI_STATE=timed_out; return 0; fi
+    sleep "$MERGE_CI_POLL_INTERVAL"
+  done
+}
+# (2) freshness — the reviewed base SHA must equal main's tip at decision time (a boolean here; the
+#     rebase/re-green remediation is the arming task's, since only a factory-executed merge mutates the
+#     branch). MERGE_MAIN_TIP overrides the decision-time tip; else FETCH origin/$BASE_BRANCH now and read
+#     it. MERGE_GIT_DIR is the worktree for a live build, or the base checkout for a --re-evaluate (no
+#     worktree exists there) — either way a decision-time re-fetch is required: the only earlier fetch for
+#     a live build ran at build start (minutes ago), and BASE_SHA is that same base checkout, so without
+#     this re-fetch origin/$BASE_BRANCH would still equal BASE_SHA and freshness could never see a moved
+#     main. A fetch failure is environmental (network/API), classified like the CI read (return 2) — never
+#     a false pass.
+shadow_freshness(){   # sets FRESH_RESULT (pass|fail) + MAIN_TIP; returns 2 on an environmental fetch failure.
+  if [ -n "${MERGE_MAIN_TIP:-}" ]; then MAIN_TIP="$MERGE_MAIN_TIP"
+  else
+    "$GIT_BIN" -C "$MERGE_GIT_DIR" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2   # decision-time re-fetch
+    MAIN_TIP="$("$GIT_BIN" -C "$MERGE_GIT_DIR" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || true)"
+  fi
+  [ -n "$MAIN_TIP" ] || { FRESH_RESULT=fail; return 0; }                                    # indeterminate -> fail
+  [ "$BASE_SHA" = "$MAIN_TIP" ] && FRESH_RESULT=pass || FRESH_RESULT=fail
+}
+# (3) terminal_approval — the LAST review round must be a clean 'VERDICT: APPROVE' (re-approval of a
+#     revised diff counts; the first pass need not have been clean). Same exact-match rule as the gate.
+shadow_terminal_approval(){
+  if [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" 2>/dev/null | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]
+  then APPROVE_RESULT=pass; else APPROVE_RESULT=fail; fi
+}
+# (4) rank_gate — the resolved pair must satisfy STRICT review-rank > build-rank on ONE provider, both
+#     ranked (an unranked emergency override fails here -> shadow-only by construction; an equal-rank pair
+#     that cleared intake also fails here — strict > is the merge bar, not the intake bar).
+shadow_rank_gate(){
+  if [ "$BUILD_RANKED" = 1 ] && [ "$REVIEW_RANKED" = 1 ] \
+     && [ "$BUILD_PROVIDER" = "$REVIEW_PROVIDER" ] && [ "$REVIEW_RANK" -gt "$BUILD_RANK" ]
+  then RANK_RESULT=pass; else RANK_RESULT=fail; fi
+}
+# (5a) auto_merge — read at DECISION time from the base ref's CURRENT tip (NEVER the start-of-run parse
+#      at L~96). The decision-time fetch already ran in shadow_freshness, so origin/$BASE_BRANCH is fresh.
+#      A missing manifest/key -> not armed (false), not an error. MERGE_AUTO_MERGE overrides (for tests).
+read_auto_merge(){   # sets AUTO_MERGE (true|false); returns 2 on an environmental read/parse failure.
+  if [ -n "${MERGE_AUTO_MERGE:-}" ]; then AUTO_MERGE="$MERGE_AUTO_MERGE"; return 0; fi
+  local raw
+  raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
+  [ -z "$raw" ] && { AUTO_MERGE=false; return 0; }
+  AUTO_MERGE="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
+try: d=tomllib.loads(sys.stdin.read())
+except Exception: print("error"); sys.exit(0)
+print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null || echo error)"
+  [ "$AUTO_MERGE" = error ] && return 2
+  return 0
+}
+
+# emit the yr-merge record and post it on the PR. $1 = body file; the rest = mode-specific record args
+# (--mode / --decision / --block-reason / --merge-commit / --note / --shadow-* / --sentinel).
+# returns 2 on an environmental record/post failure. Sets MERGE_MARKER to the record's marker line.
+emit_and_post(){
+  local body="$1"; shift
+  python3 "$SELF_DIR/merge_shadow.py" record \
+    --ci-green "$CI_RESULT" --freshness "$FRESH_RESULT" \
+    --terminal-approval "$APPROVE_RESULT" --rank-gate "$RANK_RESULT" \
+    --bundle "$BUNDLE" --base-sha "$BASE_SHA" --head-sha "$PR_HEAD_SHA" --main-tip-sha "${MAIN_TIP:-}" \
+    --rollup-file "$RUN_DIR/check-rollup.json" --ci-state "$CI_STATE" \
+    --run-id "$(basename "$RUN_DIR")" --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --auto-merge "${AUTO_MERGE:-false}" --out "$body" "$@" || return 2
+  "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$body" >/dev/null 2>&1 || return 2
+  MERGE_MARKER="$(head -n1 "$body")"
+}
+
+# ---- --re-evaluate <pr#>: re-run ONLY the terminal merge decision against an existing PR's CURRENT head,
+# reusing the originating run's persisted inputs (review verdict, bundle hash, resolved roles/ranks) —
+# no DoR gate, no claim, no worktree, no LLM stage, and NEVER a merge/rebase/board write (an armed repo
+# included: the posted record is the only write). Fail-closed: a closed/merged PR, a PR that doesn't name
+# this issue (via its branch, task/<issue>-*), or a missing/malformed/unlocatable originating run all
+# refuse before any write. The four conditions are recomputed LIVE against the PR's current head via the
+# exact same functions the end-of-build path uses; the posted record's mode is always "shadow" (arming,
+# shadow-completion, sentinel, and the merge/rebase they gate are never exercised here) and its note names
+# the record it supersedes, so history reads truthfully (issue #70).
+_json_field(){   # $1 = JSON text, $2 = top-level key -> its value (bools as true/false, missing as "")
+  printf '%s' "$1" | python3 -c "import sys,json
+v=json.load(sys.stdin).get(\"$2\")
+if isinstance(v, bool): print('true' if v else 'false')
+elif v is None: print('')
+else: print(v)"
+}
+re_evaluate(){
+  mkdir -p "$DEV_RUNNER_HOME"
+  local pr="$REEVAL_PR" prjson
+  prjson="$("$GH_BIN" pr view "$pr" --repo "$REPO" \
+    --json number,state,url,headRefName,baseRefName,headRefOid,comments 2>/dev/null)" \
+    || reeval_refuse "could not fetch PR #$pr from $REPO"
+
+  local state url head_ref base_ref head_oid
+  state="$(_json_field "$prjson" state)"; url="$(_json_field "$prjson" url)"
+  head_ref="$(_json_field "$prjson" headRefName)"; base_ref="$(_json_field "$prjson" baseRefName)"
+  head_oid="$(_json_field "$prjson" headRefOid)"
+
+  [ "$state" = "OPEN" ] || reeval_refuse "PR #$pr is not open (state: ${state:-unknown}) — re-evaluation only runs on an open PR"
+  case "$head_ref" in
+    "task/${ISSUE}-"*) : ;;
+    *) reeval_refuse "PR #$pr's branch ($head_ref) does not belong to issue #$ISSUE (expected task/${ISSUE}-*)" ;;
+  esac
+
+  local cfile; cfile="$DEV_RUNNER_HOME/.reeval-comments-$$.json"
+  printf '%s' "$prjson" | python3 -c 'import sys,json; json.dump(json.load(sys.stdin).get("comments") or [], sys.stdout)' > "$cfile"
+  local origrec; origrec="$(python3 "$SELF_DIR/merge_shadow.py" last-record --comments-file "$cfile" 2>/dev/null)"
+  rm -f "$cfile"
+  [ -n "$origrec" ] || reeval_refuse "could not evaluate PR #$pr's prior merge records"
+
+  [ "$(_json_field "$origrec" found)" = "true" ] || reeval_refuse "PR #$pr carries no prior YR-MERGE(-SHADOW) record — nothing to re-evaluate"
+  [ "$(_json_field "$origrec" malformed)" != "true" ] || reeval_refuse "PR #$pr's last merge record is malformed — refusing to guess the originating run"
+
+  local run_id sup_decision sup_cond
+  run_id="$(_json_field "$origrec" run_id)"; sup_decision="$(_json_field "$origrec" decision)"
+  sup_cond="$(_json_field "$origrec" failed_condition)"
+  [ -n "$run_id" ] || reeval_refuse "PR #$pr's last merge record carries no run_id — cannot locate the originating run"
+  case "$run_id" in
+    "${ISSUE}-"*) : ;;
+    *) reeval_refuse "PR #$pr's originating run ($run_id) does not belong to issue #$ISSUE" ;;
+  esac
+
+  local orig_dir="$DEV_RUNNER_HOME/runs/$run_id"
+  [ -d "$orig_dir" ] || reeval_refuse "the originating run dir ($orig_dir) is missing — cannot re-evaluate"
+  [ -f "$orig_dir/review.md" ] || reeval_refuse "the originating run's review.md is missing ($orig_dir/review.md)"
+  [ -f "$orig_dir/review-bundle.json" ] || reeval_refuse "the originating run's review-bundle.json is missing ($orig_dir/review-bundle.json)"
+
+  RUN_DIR="$orig_dir"; BUNDLE="$RUN_DIR/review-bundle.json"
+  PR_URL="${url:-$pr}"; BASE_BRANCH="$base_ref"; MERGE_GIT_DIR="$BASE_REPO"; PR_HEAD_SHA="$head_oid"
+
+  "$GIT_BIN" -C "$BASE_REPO" fetch -q origin "$BASE_BRANCH" "$head_ref" 2>/dev/null \
+    || reeval_refuse "git fetch of $BASE_BRANCH / $head_ref failed — cannot re-evaluate"
+  BASE_SHA="$("$GIT_BIN" -C "$BASE_REPO" rev-parse "${head_oid}^" 2>/dev/null || true)"
+  [ -n "$BASE_SHA" ] || reeval_refuse "could not resolve the parent of the PR's current head ($head_oid) — is it a single-commit PR?"
+
+  # resolved roles/ranks: REUSED verbatim from the originating run's bundle, never re-derived or re-resolved.
+  local roles; roles="$(python3 -c 'import json,sys
+b=json.load(open(sys.argv[1]))
+def r(role):
+    d=b.get(role) or {}
+    print(d.get("provider") or "")
+    print(d.get("rank") if d.get("rank") is not None else "")
+    print("1" if d.get("ranked") else "0")
+r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not read resolved roles from $BUNDLE"
+  mapfile -t _roles <<<"$roles"
+  BUILD_PROVIDER="${_roles[0]:-}"; BUILD_RANK="${_roles[1]:-}"; BUILD_RANKED="${_roles[2]:-0}"
+  REVIEW_PROVIDER="${_roles[3]:-}"; REVIEW_RANK="${_roles[4]:-}"; REVIEW_RANKED="${_roles[5]:-0}"
+
+  AUTO_MERGE=""; read_auto_merge || true   # informational only in this mode — never gates or arms anything
+
+  CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
+  shadow_ci || reeval_refuse "environmental failure reading CI status for PR #$pr — retry later, no record posted"
+  shadow_freshness || reeval_refuse "environmental failure reading $BASE_BRANCH's current tip — retry later, no record posted"
+  shadow_terminal_approval
+  shadow_rank_gate
+
+  local note="re-evaluation of run $run_id — supersedes ${sup_decision:-an unknown decision}${sup_cond:+ — $sup_cond}"
+  emit_and_post "$RUN_DIR/merge-shadow-reeval.md" --mode shadow --note "$note" \
+    || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+
+  log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $run_id) — ${MERGE_MARKER:-<none>}"
+  echo "$PR_URL"
+}
+if [ -n "$REEVAL_PR" ]; then
+  re_evaluate
+  exit 0
+fi
+
 # Per-repo build config lives in the repo, not the factory: .yr/factory.toml (check_cmd / model / base_ref).
 MANIFEST="$BASE_REPO/.yr/factory.toml"
 # Read the manifest from the build's base ref (origin/main), NOT the base checkout's working tree:
@@ -288,6 +511,7 @@ fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cl
 # (cleanup_wt). Markers + a self-describing run.json live under state/<branch-slug>.
 RUN_DIR="$DEV_RUNNER_HOME/runs/${ISSUE}-$$"; mkdir -p "$RUN_DIR"
 WT="$DEV_RUNNER_HOME/wt/${BRANCH//\//-}"
+MERGE_GIT_DIR="$WT"   # the shared terminal-decision helpers' git checkout, for a live build (see above)
 STATE_DIR="$DEV_RUNNER_HOME/state/${BRANCH//\//-}"
 HOLD_MARKER="$STATE_DIR/env-hold"
 stage_done(){ [ -f "$STATE_DIR/$1.done" ]; }               # has stage $1 already completed in a prior run?
@@ -641,104 +865,14 @@ fi
 # A shadow WOULD-BLOCK is a NORMAL negative outcome, NOT Reason=Blocked. The step's OWN environmental
 # failures (a gh API blip / network drop / merge API error while evaluating, recording, or merging) are
 # classified environmental — no machinery-error record, resumable — and never reset a streak or hard-Block.
-MERGE_CI_POLL_INTERVAL="${MERGE_CI_POLL_INTERVAL:-15}"   # poll cadence for in-flight CI (seconds)
-MERGE_CI_TIMEOUT="${MERGE_CI_TIMEOUT:-600}"              # bounded wait for in-flight CI (seconds); timeout = fail
-# An empty rollup read moments after `gh pr create` can be a real repo's CI not having registered yet
-# (GitHub Actions registers check runs asynchronously) rather than zero configured checks -- so an empty
-# read gets its OWN bounded registration grace, distinct from and much shorter than the in-flight wait above.
-MERGE_CI_REG_POLL_INTERVAL="${MERGE_CI_REG_POLL_INTERVAL:-5}"  # poll cadence during the registration grace (seconds)
-MERGE_CI_REG_GRACE="${MERGE_CI_REG_GRACE:-10}"                 # bounded wait for a check to register (seconds)
+# shadow_ci / shadow_freshness / shadow_terminal_approval / shadow_rank_gate / read_auto_merge /
+# emit_and_post — conditions (1)-(4), auto_merge, and the record post — are defined earlier (hoisted
+# right after BASE_REPO resolution, issue #70) so --re-evaluate can reuse them without a worktree.
 # The host sentinel (kill switch): a FILE in the dispatch home, read LIVE at decision time (a file, not an
 # inherited env var — a spawned runner carries its spawn-time environment; the file is global + git-free).
 MERGE_SENTINEL="${MERGE_SENTINEL:-$DEV_RUNNER_HOME/merge-killswitch}"
 SHADOW_WINDOW="${SHADOW_WINDOW:-5}"; SHADOW_NEED="${SHADOW_NEED:-3}"; SHADOW_SCAN="${SHADOW_SCAN:-40}"
 PR_NUMBER="${PR_URL##*/}"                                # the current PR number (excluded from the window)
-
-# (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); a rollup still empty
-#     after its own bounded registration grace fails fast, WITHOUT the (much longer) in-flight wait.
-#     Server CI is distinct from and additional to the in-build check_cmd.
-shadow_ci(){   # sets CI_RESULT (pass|fail) + CI_STATE; returns 2 on an environmental gh/parse failure.
-  local rollup="$RUN_DIR/check-rollup.json" start now rc counts total in_flight failed grace_start
-  start="$(date +%s)"
-  while :; do
-    rc=0; "$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json statusCheckRollup >"$rollup" 2>/dev/null || rc=$?
-    [ "$rc" -eq 0 ] || return 2
-    counts="$(python3 "$SELF_DIR/merge_shadow.py" classify-checks --rollup-file "$rollup" 2>/dev/null)" || return 2
-    read -r total in_flight failed <<<"$counts" || true
-    if [ "${total:-0}" -eq 0 ]; then
-      # a fresh PR's rollup can legitimately read empty for a few seconds -- GitHub Actions registers
-      # check runs asynchronously, moments after `gh pr create` -- so re-poll for a bounded REGISTRATION
-      # GRACE before concluding "no CI configured" (zero-registered is not zero-configured).
-      grace_start="$(date +%s)"
-      while :; do
-        now="$(date +%s)"
-        if [ "$((now - grace_start))" -ge "$MERGE_CI_REG_GRACE" ]; then
-          CI_RESULT=fail; CI_STATE=empty_after_grace; return 0      # still empty after grace: fail fast
-        fi
-        sleep "$MERGE_CI_REG_POLL_INTERVAL"
-        rc=0; "$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json statusCheckRollup >"$rollup" 2>/dev/null || rc=$?
-        [ "$rc" -eq 0 ] || return 2
-        counts="$(python3 "$SELF_DIR/merge_shadow.py" classify-checks --rollup-file "$rollup" 2>/dev/null)" || return 2
-        read -r total in_flight failed <<<"$counts" || true
-        [ "${total:-0}" -gt 0 ] && break                            # registered -> fall through to the normal wait
-      done
-      start="$(date +%s)"                                           # the normal bounded CI wait starts fresh here
-    fi
-    if [ "${in_flight:-0}" -eq 0 ]; then
-      if [ "${failed:-0}" -eq 0 ]; then CI_RESULT=pass; CI_STATE=success; else CI_RESULT=fail; CI_STATE=failure; fi
-      return 0
-    fi
-    now="$(date +%s)"
-    if [ "$((now - start))" -ge "$MERGE_CI_TIMEOUT" ]; then CI_RESULT=fail; CI_STATE=timed_out; return 0; fi
-    sleep "$MERGE_CI_POLL_INTERVAL"
-  done
-}
-# (2) freshness — the reviewed base SHA must equal main's tip at decision time (a boolean here; the
-#     rebase/re-green remediation is the arming task's, since only a factory-executed merge mutates the
-#     branch). MERGE_MAIN_TIP overrides the decision-time tip; else FETCH origin/$BASE_BRANCH now and read
-#     it. The only earlier fetch ran at build start (minutes ago, before implement/test/review + the CI
-#     wait), and BASE_SHA is that same base checkout — so without a decision-time re-fetch the local
-#     origin/$BASE_BRANCH still equals BASE_SHA and freshness is a structural no-op that can never see a
-#     moved main. A fetch failure is environmental (network/API), classified like the CI read (return 2) —
-#     never a false pass.
-shadow_freshness(){   # sets FRESH_RESULT (pass|fail) + MAIN_TIP; returns 2 on an environmental fetch failure.
-  if [ -n "${MERGE_MAIN_TIP:-}" ]; then MAIN_TIP="$MERGE_MAIN_TIP"
-  else
-    "$GIT_BIN" -C "$WT" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2               # decision-time re-fetch
-    MAIN_TIP="$("$GIT_BIN" -C "$WT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || true)"
-  fi
-  [ -n "$MAIN_TIP" ] || { FRESH_RESULT=fail; return 0; }                                    # indeterminate -> fail
-  [ "$BASE_SHA" = "$MAIN_TIP" ] && FRESH_RESULT=pass || FRESH_RESULT=fail
-}
-# (3) terminal_approval — the LAST review round must be a clean 'VERDICT: APPROVE' (re-approval of a
-#     revised diff counts; the first pass need not have been clean). Same exact-match rule as the gate.
-shadow_terminal_approval(){
-  if [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" 2>/dev/null | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]
-  then APPROVE_RESULT=pass; else APPROVE_RESULT=fail; fi
-}
-# (4) rank_gate — the resolved pair must satisfy STRICT review-rank > build-rank on ONE provider, both
-#     ranked (an unranked emergency override fails here -> shadow-only by construction; an equal-rank pair
-#     that cleared intake also fails here — strict > is the merge bar, not the intake bar).
-shadow_rank_gate(){
-  if [ "$BUILD_RANKED" = 1 ] && [ "$REVIEW_RANKED" = 1 ] \
-     && [ "$BUILD_PROVIDER" = "$REVIEW_PROVIDER" ] && [ "$REVIEW_RANK" -gt "$BUILD_RANK" ]
-  then RANK_RESULT=pass; else RANK_RESULT=fail; fi
-}
-# (5a) auto_merge — read at DECISION time from the base ref's CURRENT tip (NEVER the start-of-run parse
-#      at L~96). The decision-time fetch already ran in shadow_freshness, so origin/$BASE_BRANCH is fresh.
-#      A missing manifest/key -> not armed (false), not an error. MERGE_AUTO_MERGE overrides (for tests).
-read_auto_merge(){   # sets AUTO_MERGE (true|false); returns 2 on an environmental read/parse failure.
-  if [ -n "${MERGE_AUTO_MERGE:-}" ]; then AUTO_MERGE="$MERGE_AUTO_MERGE"; return 0; fi
-  local raw
-  raw="$("$GIT_BIN" -C "$WT" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
-  [ -z "$raw" ] && { AUTO_MERGE=false; return 0; }
-  AUTO_MERGE="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
-try: d=tomllib.loads(sys.stdin.read())
-except Exception: print("error"); sys.exit(0)
-print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null || echo error)"
-  [ "$AUTO_MERGE" = error ] && return 2
-  return 0
-}
 
 # (5b) shadow completion — MECHANICAL, from the repo's prior PR merge records + main history (no sidecar):
 #      one unified window over the last N merge records (shadow YR-MERGE-SHADOW and armed YR-MERGE alike),
@@ -753,22 +887,6 @@ compute_shadow_complete(){   # sets SHADOW_DONE (true|false) + SHADOW_PROGRESS (
   read -r SHADOW_DONE succ size <<<"$out" || return 2
   SHADOW_PROGRESS="$succ/$SHADOW_WINDOW"
   return 0
-}
-
-# emit the yr-merge record and post it on the PR. $1 = body file; the rest = mode-specific record args
-# (--mode / --decision / --block-reason / --merge-commit / --armed-note / --shadow-* / --sentinel).
-# returns 2 on an environmental record/post failure. Sets MERGE_MARKER to the record's marker line.
-emit_and_post(){
-  local body="$1"; shift
-  python3 "$SELF_DIR/merge_shadow.py" record \
-    --ci-green "$CI_RESULT" --freshness "$FRESH_RESULT" \
-    --terminal-approval "$APPROVE_RESULT" --rank-gate "$RANK_RESULT" \
-    --bundle "$BUNDLE" --base-sha "$BASE_SHA" --head-sha "$PR_HEAD_SHA" --main-tip-sha "${MAIN_TIP:-}" \
-    --rollup-file "$RUN_DIR/check-rollup.json" --ci-state "$CI_STATE" \
-    --run-id "$(basename "$RUN_DIR")" --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --auto-merge "${AUTO_MERGE:-false}" --out "$body" "$@" || return 2
-  "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$body" >/dev/null 2>&1 || return 2
-  MERGE_MARKER="$(head -n1 "$body")"
 }
 
 # freshness remediation: main moved, so rebase the branch onto the tip and RE-ESTABLISH green (re-run the
@@ -841,7 +959,7 @@ terminal_step(){
   if [ "$SHADOW_DONE" != true ]; then
     # Refuse to HONOR auto_merge until shadow is complete — a loud shadow record with the progress note.
     emit_and_post "$shadow_body" --mode shadow --shadow-complete false --shadow-progress "$SHADOW_PROGRESS" \
-      --armed-note "armed, shadow-incomplete $SHADOW_PROGRESS" || return 2
+      --note "armed, shadow-incomplete $SHADOW_PROGRESS" || return 2
     return 0
   fi
 
