@@ -33,9 +33,14 @@ case "$1" in
                  else printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1"; fi ;;
         comment) echo PRCOMMENT >> "$STUB_TIMELINE"
                  if [ -n "${STUB_PRCOMMENTS:-}" ]; then
-                   __p=""; __bf=""
-                   for __a in "$@"; do [ "$__p" = "--body-file" ] && __bf="$__a"; __p="$__a"; done
+                   __p=""; __bf=""; __body=""
+                   for __a in "$@"; do
+                     [ "$__p" = "--body-file" ] && __bf="$__a"
+                     [ "$__p" = "--body" ] && __body="$__a"
+                     __p="$__a"
+                   done
                    [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
+                   [ -n "$__body" ] && { echo "=== PRCOMMENT ==="; printf '%s\\n' "$__body"; } >> "$STUB_PRCOMMENTS"
                  fi ;;
         *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
       esac ;;
@@ -199,6 +204,31 @@ def _real(tmp, env, work):
     env.update({"GIT_BIN": "git", "BASE_REF": "origin/main",
                 "BASE_REPO": str(work), "DEV_RUNNER_HOME": str(tmp / "drhome")})
     return env
+
+
+def _make_factory_repo(tmp, behind=0, name="factory"):
+    """A local git repo (bare origin + checkout), independent of the target BASE_REPO, standing in for
+    the factory's OWN deployment — so FACTORY_DIR can be driven to a controlled behind-count without
+    touching the real factory checkout these tests run from. `behind` commits are pushed to origin from
+    a separate clone, so `work`'s HEAD never sees them until it fetches."""
+    origin = tmp / f"{name}_origin.git"; origin.mkdir()
+    _git(["init", "--bare", "-b", "main", "."], origin)
+    work = tmp / f"{name}_work"; work.mkdir()
+    _git(["init", "-b", "main", "."], work)
+    _git(["config", "user.email", "t@t"], work); _git(["config", "user.name", "tester"], work)
+    (work / "README.md").write_text("seed\n")
+    _git(["add", "-A"], work); _git(["commit", "-q", "-m", "seed"], work)
+    _git(["remote", "add", "origin", str(origin)], work)
+    _git(["push", "-q", "origin", "main"], work)
+    if behind:
+        other = tmp / f"{name}_other"
+        _git(["clone", "-q", str(origin), str(other)], tmp)
+        _git(["config", "user.email", "t@t"], other); _git(["config", "user.name", "tester"], other)
+        for i in range(behind):
+            (other / f"extra{i}.txt").write_text("x\n")
+            _git(["add", "-A"], other); _git(["commit", "-q", "-m", f"extra {i}"], other)
+        _git(["push", "-q", "origin", "main"], other)
+    return work
 
 
 # ============ DoR gate: refuse before any work, no stages, no writes ============
@@ -1694,3 +1724,97 @@ def test_isolation_flags_present_on_plain_happy_path_single_stage_chain(tmp_path
     for argv in calls:
         assert "--setting-sources" in argv and argv[argv.index("--setting-sources") + 1] == "project"
         assert "--strict-mcp-config" in argv
+
+
+# ============ Issue #58: loud staleness warning when the deployed factory is behind its origin/main ==
+# The FACTORY's own checkout (FACTORY_DIR, default SELF_DIR/..) can drift behind ITS origin/main
+# independently of the target repo being built — a stale deployment silently building current code.
+# Visibility only: one loud `log` line in the run log, and one additive PR comment naming the commit
+# count, when behind; total silence when current; a silent skip when the freshness check itself can't
+# run (offline/no origin) — never a gate, never a Blocked/failure outcome.
+
+def test_staleness_warning_names_commits_behind_in_log_and_pr_comment(tmp_path):
+    """Acceptance: a factory behind its own origin/main by N commits gets one loud warning in the run
+    log AND on the PR, naming N — without blocking or otherwise altering the build."""
+    work, _ = _make_repo(tmp_path)
+    factory = _make_factory_repo(tmp_path, behind=3)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Stale factory deployment"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["FACTORY_DIR"] = str(factory)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout                     # the build was never blocked/delayed
+    assert "WARNING" in r.stderr
+    assert "3 commit" in r.stderr and "behind" in r.stderr.lower()
+    comments = _prcomments(tmp_path)
+    assert "staleness" in comments.lower()
+    assert "3 commit" in comments
+
+
+def test_no_staleness_output_when_factory_checkout_is_current(tmp_path):
+    """Acceptance: while the deployed factory checkout is current, no staleness output appears anywhere
+    (run log or PR)."""
+    work, _ = _make_repo(tmp_path)
+    factory = _make_factory_repo(tmp_path, behind=0)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Current factory deployment"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["FACTORY_DIR"] = str(factory)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "commit(s) behind" not in r.stderr
+    assert "staleness warning" not in _prcomments(tmp_path).lower()
+    assert "commit(s) behind" not in _prcomments(tmp_path)
+
+
+def test_freshness_check_fetch_failure_skips_silently_build_unaffected(tmp_path):
+    """Acceptance: if the freshness check itself cannot run (here: FACTORY_DIR has no `origin` to fetch
+    from), it is skipped silently — no warning anywhere — and the build proceeds and completes exactly
+    as if the check had never run."""
+    work, _ = _make_repo(tmp_path)
+    unreachable = tmp_path / "not_a_git_repo"; unreachable.mkdir()  # fetch fails immediately, no network
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Offline freshness check"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["FACTORY_DIR"] = str(unreachable)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr                          # the build is unaffected
+    assert "https://stub/pr/1" in r.stdout
+    assert "commit(s) behind" not in r.stderr
+    assert "staleness warning" not in _prcomments(tmp_path).lower()
+
+
+def test_staleness_comment_clear_of_merge_grammar_alongside_a_shadow_record(tmp_path):
+    """Acceptance: the staleness comment stays clear of every parsed comment grammar — no `YR-` marker
+    line, no `YR-MERGE` string anywhere — proven live alongside a shadow terminal-merge run so the
+    YR-MERGE-SHADOW marker still appears EXACTLY once (the staleness comment must not add a second, and
+    must not itself open with a `YR-` marker)."""
+    factory = _make_factory_repo(tmp_path, behind=2)
+    env = _shadow_env(tmp_path, title="Staleness vs shadow grammar", checks=[CR_OK])
+    env["FACTORY_DIR"] = str(factory)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    all_comments = _prcomments(tmp_path)
+    assert all_comments.count("YR-MERGE-SHADOW") == 1
+    blocks = all_comments.split("=== PRCOMMENT ===")
+    stale_blocks = [b for b in blocks if "staleness" in b.lower()]
+    assert len(stale_blocks) == 1, "expected exactly one staleness comment on the PR"
+    stale_comment = stale_blocks[0].strip()
+    assert "YR-MERGE" not in stale_comment
+    assert not stale_comment.splitlines()[0].startswith("YR-")
+
+
+def test_self_build_reads_behind_count_without_double_fetch_or_error(tmp_path):
+    """When BASE_REPO IS the factory's own checkout (the factory building itself), the freshness check
+    must not fetch a second time or error — the target-repo fetch already refreshed origin/main there,
+    and reading the count directly must not disturb the (silent, current) happy path."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Factory builds itself"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["FACTORY_DIR"] = str(work)          # same repo as BASE_REPO
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    assert "commit(s) behind" not in r.stderr   # BASE_REPO/FACTORY_DIR are the same, already-fetched repo

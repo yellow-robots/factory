@@ -333,6 +333,24 @@ else
   "$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE_REF" || fail_blocked "worktree add failed"
 fi
 
+# ---- factory self-freshness (issue #58): a stale deployment must never run invisibly. Best-effort only —
+# this is visibility, never a gate: any failure (offline, no origin, whatever) skips silently, and a
+# current checkout adds no output at all. SELF_DIR/.. is the factory's own checkout (override for tests:
+# FACTORY_DIR). When the build target IS the factory itself (BASE_REPO == FACTORY_DIR), the target-repo
+# fetch above already refreshed origin/main here — read the count without fetching again.
+FACTORY_DIR="${FACTORY_DIR:-$(cd "$SELF_DIR/.." && pwd)}"
+FACTORY_FETCH_TIMEOUT="${FACTORY_FETCH_TIMEOUT:-10}"
+STALE_COUNT=""
+if [ "$(cd "$BASE_REPO" 2>/dev/null && pwd)" = "$FACTORY_DIR" ]; then
+  STALE_COUNT="$("$GIT_BIN" -C "$FACTORY_DIR" rev-list --count HEAD..origin/main 2>/dev/null || true)"
+elif GIT_TERMINAL_PROMPT=0 timeout "$FACTORY_FETCH_TIMEOUT" "$GIT_BIN" -C "$FACTORY_DIR" fetch -q origin main 2>/dev/null; then
+  STALE_COUNT="$("$GIT_BIN" -C "$FACTORY_DIR" rev-list --count HEAD..origin/main 2>/dev/null || true)"
+fi
+case "$STALE_COUNT" in ''|*[!0-9]*) STALE_COUNT="";; esac
+if [ -n "$STALE_COUNT" ] && [ "$STALE_COUNT" -gt 0 ]; then
+  log "WARNING: this dev-runner deployment ($FACTORY_DIR) is $STALE_COUNT commit(s) behind its own origin/main — the machinery that built this task may be stale. Redeploy (git pull) to pick up what's already shipped."
+fi
+
 # ---- quota/limit signatures (issue #40): a claude -p stage that dies with one of these in its log is
 # an ENVIRONMENTAL ceiling (account/rate limit), never a code failure to hand to LLM repair. CLI exit
 # codes for a limit kill are not documented/stable, so the signature is DATA — a default list pinned
@@ -569,6 +587,14 @@ PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: 
 PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")" \
   || fail_blocked "pr create failed"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
+
+# staleness warning (issue #58): additive alongside the reviewer verdict + usage summary, and deliberately
+# clear of every parsed comment grammar (no `YR-` marker line, no `YR-MERGE` anywhere) — visibility only,
+# never a gate.
+if [ -n "$STALE_COUNT" ] && [ "$STALE_COUNT" -gt 0 ]; then
+  "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body "dev-runner: **staleness warning** — the factory deployment that built this PR was $STALE_COUNT commit(s) behind its own origin/main at build time. Redeploy it to pick up already-shipped capability." >/dev/null 2>&1 \
+    || log "warn: could not post the staleness-warning comment (non-fatal, PR already open)"
+fi
 
 # ---- usage summary: aggregate the per-stage usage artifacts + post one PR comment (issue #48) --------
 # Always produced, even with zero per-stage artifacts (a degraded capture, e.g. every stage ran under
