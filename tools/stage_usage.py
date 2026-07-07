@@ -34,6 +34,15 @@ USAGE_FIELDS = (
     ("cache_read_input_tokens", "cache_read_tokens"),
 )
 
+# The it-8 census cost measure (benchmark protocol on yellow-robots/factory#47): fresh input, output,
+# cache-write, cache-read weights for the census-weighted token total.
+WEIGHTED_TOTAL_WEIGHTS = {
+    "input_tokens": 1,
+    "output_tokens": 5,
+    "cache_write_tokens": 1.25,
+    "cache_read_tokens": 0.1,
+}
+
 
 def find_result_envelope(text):
     """The LAST line in `text` that parses as JSON with `"type": "result"`, or None. Line-based (not a
@@ -100,7 +109,8 @@ def build_summary(records):
     for r in records:
         for out_key in totals:
             totals[out_key] += int(r.get(out_key) or 0)
-    return {"stages": records, "totals": totals}
+    weighted_total = round(sum(totals[k] * w for k, w in WEIGHTED_TOTAL_WEIGHTS.items()))
+    return {"stages": records, "totals": totals, "weighted_total": weighted_total}
 
 
 def render_summary_comment(summary):
@@ -123,6 +133,7 @@ def render_summary_comment(summary):
             ))
         t = summary["totals"]
         lines.append("| **total** |  | **{input_tokens}** | **{output_tokens}** | **{cache_write_tokens}** | **{cache_read_tokens}** |  |".format(**t))
+        lines.append("**weighted total: {}** (fresh input ×1 · output ×5 · cache-write ×1.25 · cache-read ×0.1)".format(summary["weighted_total"]))
     lines.append("")
     lines.append("```json")
     lines.append(json.dumps(summary, indent=2, sort_keys=True))

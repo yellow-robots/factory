@@ -251,6 +251,71 @@ def test_build_summary_empty_records_yields_zero_totals():
     assert all(v == 0 for v in summary["totals"].values())
 
 
+# ============ build_summary: weighted_total (issue #76) ============
+
+def test_build_summary_weighted_total_combines_totals_with_census_weights():
+    """fresh input x1 + output x5 + cache-write x1.25 + cache-read x0.1, over the run's TOTALS
+    (already summed across stages), rounded to the nearest integer."""
+    records = [
+        {"stage": "implement", "input_tokens": 10, "output_tokens": 20, "cache_write_tokens": 4, "cache_read_tokens": 10},
+        {"stage": "test", "input_tokens": 5, "output_tokens": 6, "cache_write_tokens": 0, "cache_read_tokens": 10},
+    ]
+    summary = build_summary(records)
+    # totals: input=15, output=26, cache_write=4, cache_read=20
+    # weighted: 15*1 + 26*5 + 4*1.25 + 20*0.1 = 15 + 130 + 5 + 2 = 152
+    assert summary["totals"] == {
+        "input_tokens": 15, "output_tokens": 26, "cache_write_tokens": 4, "cache_read_tokens": 20,
+    }
+    assert summary["weighted_total"] == 152
+
+
+def test_build_summary_weighted_total_rounds_fraction_up():
+    """Fractional weights (cache-write x1.25, cache-read x0.1) can produce a non-integer raw sum;
+    the reported weighted_total must be rounded to the nearest integer. Uses fractional values away
+    from the x.5 boundary to avoid floating-point/banker's-rounding ambiguity."""
+    records = [
+        {"stage": "implement", "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 6},
+    ]
+    # raw: 0*1 + 0*5 + 0*1.25 + 6*0.1 = 0.6 -> rounds up to 1
+    summary = build_summary(records)
+    assert summary["weighted_total"] == 1
+    assert isinstance(summary["weighted_total"], int)
+
+
+def test_build_summary_weighted_total_rounds_fraction_down():
+    records = [
+        {"stage": "implement", "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 4},
+    ]
+    # raw: 4*0.1 = 0.4 -> rounds down to 0
+    summary = build_summary(records)
+    assert summary["weighted_total"] == 0
+    assert isinstance(summary["weighted_total"], int)
+
+
+def test_build_summary_weighted_total_is_zero_for_empty_records():
+    summary = build_summary([])
+    assert summary["weighted_total"] == 0
+
+
+def test_build_summary_weighted_total_zero_when_all_totals_zero():
+    summary = build_summary([{"stage": "implement"}])
+    assert summary["totals"] == {
+        "input_tokens": 0, "output_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0,
+    }
+    assert summary["weighted_total"] == 0
+
+
+def test_weighted_total_weights_constant_matches_documented_census_measure():
+    """The four weights (fresh input x1, output x5, cache-write x1.25, cache-read x0.1) live in one
+    module-level constant beside USAGE_FIELDS — this is the it-8 census cost measure pinned in the
+    benchmark protocol on yellow-robots/factory#47."""
+    weights = stage_usage.WEIGHTED_TOTAL_WEIGHTS
+    assert weights["input_tokens"] == 1
+    assert weights["output_tokens"] == 5
+    assert weights["cache_write_tokens"] == 1.25
+    assert weights["cache_read_tokens"] == 0.1
+
+
 # ============ render_summary_comment: no YR- marker grammar, degrade message ============
 
 def test_render_summary_comment_opens_with_the_dev_runner_usage_header():
@@ -281,6 +346,56 @@ def test_render_summary_comment_includes_per_stage_row_and_totals():
     comment = render_summary_comment(build_summary(records))
     assert "implement" in comment and "claude-sonnet-5" in comment
     assert "61" in comment and "62" in comment and "63" in comment and "64" in comment
+
+
+# ============ render_summary_comment: weighted-total line (issue #76) ============
+
+def test_render_summary_comment_weighted_line_follows_totals_row_exactly():
+    """Exactly one line after the totals row: '**weighted total: <N>** (fresh input x1 ·
+    output x5 · cache-write x1.25 · cache-read x0.1)'."""
+    records = [{"stage": "implement", "model": "claude-sonnet-5", "input_tokens": 10, "output_tokens": 20,
+                "cache_write_tokens": 4, "cache_read_tokens": 10}]
+    summary = build_summary(records)
+    comment = render_summary_comment(summary)
+    lines = comment.splitlines()
+    totals_idx = next(i for i, l in enumerate(lines) if l.startswith("| **total**"))
+    weighted_line = lines[totals_idx + 1]
+    assert weighted_line == (
+        "**weighted total: {}** (fresh input ×1 · output ×5 · "
+        "cache-write ×1.25 · cache-read ×0.1)"
+    ).format(summary["weighted_total"])
+    # exactly one such line — no duplicate weighted-total line anywhere else
+    assert sum(1 for l in lines if l.startswith("**weighted total:")) == 1
+
+
+def test_render_summary_comment_weighted_line_value_matches_json_weighted_total():
+    records = [{"stage": "implement", "input_tokens": 61, "output_tokens": 62,
+                "cache_write_tokens": 63, "cache_read_tokens": 64}]
+    summary = build_summary(records)
+    comment = render_summary_comment(summary)
+    assert "**weighted total: {}**".format(summary["weighted_total"]) in comment
+
+
+def test_render_summary_comment_omits_weighted_line_when_zero_artifacts():
+    comment = render_summary_comment(build_summary([]))
+    assert "weighted total" not in comment.lower()
+    assert "no per-stage usage artifacts were recorded for this run." in comment
+    # sentence renders unchanged, and no per-stage table/totals row either
+    assert "| **total**" not in comment
+
+
+def test_render_summary_comment_empty_case_json_weighted_total_is_zero():
+    summary = build_summary([])
+    comment = render_summary_comment(summary)
+    fenced = comment.split("```json", 1)[1].rsplit("```", 1)[0]
+    assert json.loads(fenced)["weighted_total"] == 0
+
+
+def test_render_summary_comment_no_line_starts_with_yr_including_weighted_line():
+    records = [{"stage": "implement", "model": "claude-sonnet-5", "input_tokens": 61, "output_tokens": 62,
+                "cache_write_tokens": 63, "cache_read_tokens": 64, "duration_ms": 600}]
+    comment = render_summary_comment(build_summary(records))
+    assert not any(l.startswith("YR-") for l in comment.splitlines())
 
 
 def test_render_summary_comment_includes_fenced_raw_json():
