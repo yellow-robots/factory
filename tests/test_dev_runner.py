@@ -223,6 +223,7 @@ def _make_factory_repo(tmp, behind=0, name="factory"):
     if behind:
         other = tmp / f"{name}_other"
         _git(["clone", "-q", str(origin), str(other)], tmp)
+        _git(["config", "user.email", "t@t"], other); _git(["config", "user.name", "tester"], other)
         for i in range(behind):
             (other / f"extra{i}.txt").write_text("x\n")
             _git(["add", "-A"], other); _git(["commit", "-q", "-m", f"extra {i}"], other)
