@@ -58,6 +58,7 @@ args="$*"
 [ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
 [ -n "${STUB_CLAUDE_ARGV_LOG:-}" ] && { printf '===STUB-CALL===\\n'; printf '%s\\n' "$@"; } >> "$STUB_CLAUDE_ARGV_LOG"
 [ -n "${STUB_CLAUDE_ENV_FILE:-}" ] && printf 'CLAUDE_CONFIG_DIR=%s\\n' "${CLAUDE_CONFIG_DIR:-}" >> "$STUB_CLAUDE_ENV_FILE"
+[ -n "${STUB_CLAUDE_GITENV_FILE:-}" ] && printf 'GIT_CONFIG_GLOBAL=%s GIT_CONFIG_SYSTEM=%s\\n' "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_SYSTEM:-unset}" >> "$STUB_CLAUDE_GITENV_FILE"
 case "$args" in
   *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
                         if [ -n "${STUB_REVIEW_QUOTA:-}" ]; then echo "${STUB_REVIEW_QUOTA}" >&2; exit 1; fi
@@ -85,6 +86,7 @@ exit 0
 # EXECUTE — an environment failure, not a test failure — which no 'repaired' marker can clear.
 CHECK_STUB = '''#!/usr/bin/env bash
 echo CHECK >> "$STUB_TIMELINE"
+[ -n "${STUB_CHECK_GITENV_FILE:-}" ] && printf 'GIT_CONFIG_GLOBAL=%s GIT_CONFIG_SYSTEM=%s\\n' "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_SYSTEM:-unset}" >> "$STUB_CHECK_GITENV_FILE"
 [ -n "${STUB_CHECK_ENVFAIL:-}" ] && exit "${STUB_CHECK_ENVFAIL}"
 if [ -n "${STUB_CHECK_FAIL:-}" ] && [ ! -f repaired ]; then exit 1; fi
 exit 0
@@ -198,6 +200,34 @@ def _make_repo(tmp):
     _git(["remote", "add", "origin", str(origin)], work)
     _git(["push", "-q", "origin", "main"], work)
     return work, origin
+
+
+def _make_repo_no_local_identity(tmp):
+    """Like `_make_repo`, but the repo's own (persistent) git config never gets a `user.email`/`user.name`
+    — the seed commit is made with one-shot `-c` flags that don't persist. Any later commit inside this
+    repo (or a worktree of it) that succeeds must be getting its identity from elsewhere (global config),
+    which is exactly what #67 must NOT let a neutralized `check_cmd` fall back to, while the runner's own
+    git operations must still be free to."""
+    origin = tmp / "origin.git"; origin.mkdir()
+    _git(["init", "--bare", "-b", "main", "."], origin)
+    work = tmp / "work"; work.mkdir()
+    _git(["init", "-b", "main", "."], work)
+    (work / "README.md").write_text("seed\n")
+    _git(["add", "-A"], work)
+    subprocess.run(["git", "-c", "user.email=seed@seed", "-c", "user.name=seed", "commit", "-q", "-m", "seed"],
+                   cwd=str(work), check=True, capture_output=True, text=True)
+    _git(["remote", "add", "origin", str(origin)], work)
+    _git(["push", "-q", "origin", "main"], work)
+    return work
+
+
+def _fake_global_gitconfig(tmp, name="fakehome"):
+    """A fixture HOME whose `.gitconfig` supplies a git identity — standing in for the operator's
+    host-global git config in PR #65 (an ambient identity that must never leak into a neutralized
+    `check_cmd`, but must remain visible to every other process the runner spawns)."""
+    home = tmp / name; home.mkdir()
+    (home / ".gitconfig").write_text("[user]\n\tname = Host Operator\n\temail = host-operator@example.com\n")
+    return home
 
 
 def _real(tmp, env, work):
@@ -481,6 +511,105 @@ exit 1
     assert "environment" in r.stderr.lower() or "toolchain" in r.stderr.lower()
     assert "still failing" not in r.stderr.lower()     # reported as env, not the generic code-failure message
     assert "https://stub/pr/1" not in r.stdout
+
+
+# ============ #67: neutralize host git config for the check gate ============
+# Host-ambient git config (an operator's global user.email/user.name, or a system-level config) must
+# never make the check gate greener than CI. The runner sets GIT_CONFIG_GLOBAL=/dev/null and
+# GIT_CONFIG_SYSTEM=/dev/null in the check_cmd child ONLY — every other spawned process (the LLM stages,
+# and the runner's own git worktree/commit/push) keeps the full host environment.
+
+def test_check_gate_git_config_neutralized_initial_and_recheck(tmp_path):
+    """GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM must read /dev/null inside the check_cmd child, in BOTH
+    the initial check and the post-repair re-check (the two call sites named in the acceptance criteria)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Git config neutralized"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1",
+                "STUB_CHECK_GITENV_FILE": str(tmp_path / "check_gitenv")})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr                # code failure earns a repair, then passes
+    tl = _timeline(tmp_path)
+    assert tl.count("CHECK") == 2                      # initial check + post-repair re-check
+    lines = (tmp_path / "check_gitenv").read_text().splitlines()
+    assert lines == ["GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null"] * 2
+
+
+def test_check_gate_git_config_neutralized_on_review_repair_recheck_too(tmp_path):
+    """The check re-run after a review-repair (a third call site sharing the same `run_checks`) is
+    neutralized the same way as the initial/code-repair checks."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Review repair recheck"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_BLOCK": "1",
+                "STUB_CHECK_GITENV_FILE": str(tmp_path / "check_gitenv")})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "REVIEWFIX" in tl                           # a review-repair round fired
+    lines = (tmp_path / "check_gitenv").read_text().splitlines()
+    assert len(lines) == 2                             # initial check + the review-repair re-check
+    assert all(l == "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null" for l in lines)
+
+
+def test_llm_stages_are_not_git_config_neutralized(tmp_path):
+    """The scrub is scoped to the check_cmd child only: an LLM stage (implement/test/repair/review) must
+    see the ambient GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM untouched, never /dev/null."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="LLM stage git env"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CLAUDE_GITENV_FILE": str(tmp_path / "claude_gitenv")})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "claude_gitenv").read_text().splitlines()
+    assert lines                                       # at least one LLM stage ran and recorded its env
+    assert all("/dev/null" not in l for l in lines)     # never neutralized for an LLM stage
+
+
+def test_runner_own_git_commit_is_not_neutralized(tmp_path):
+    """The runner's own git operations (worktree add, the PR commit, push) must keep the full host git
+    config. Using a repo with NO local git identity plus a fixture HOME whose global .gitconfig supplies
+    one, the runner's own commit (which stamps the PR) must still succeed by falling back to that host-
+    global identity — proving the neutralization does not leak past the check_cmd child."""
+    work = _make_repo_no_local_identity(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    fake_home = _fake_global_gitconfig(tmp_path)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Runner commit falls back to host identity"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["HOME"] = str(fake_home)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout             # the runner's own commit succeeded and reached a PR
+
+
+def test_check_gate_fails_the_pr65_scenario_instead_of_masking_it(tmp_path):
+    """The PR #65 failure mode, reproduced directly: a check_cmd that does `git commit` in a *worktree
+    that has no local git identity*, relying on a fallback to host-global config to supply one (a fixture
+    HOME's .gitconfig stands in for the operator's ambient config). Before #67 this would pass on the
+    host (global config supplies an identity) while CI — with no such ambient config — fails with exit
+    128. With the neutralization in place, the check gate must fail here too: host-green can no longer
+    mask CI-red."""
+    work, _ = _make_repo(tmp_path)   # the target repo (has local identity) — irrelevant to the check_cmd below
+    binp = tmp_path / "bin"; _stubs(binp)
+    fake_home = _fake_global_gitconfig(tmp_path)
+    commit_check = tmp_path / "commit_check.sh"
+    _exec(commit_check, '''#!/usr/bin/env bash
+set -e
+repo="$(mktemp -d)"
+git init -q "$repo"
+cd "$repo"
+echo x > f.txt
+git add f.txt
+git commit -q -m "no local identity, relies on global config"
+''')
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="PR 65 repro"), work)
+    env["CHECK_CMD"] = f"bash {commit_check}"
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["HOME"] = str(fake_home)   # would supply an identity if the check_cmd child weren't neutralized
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0                           # gate fails, not silently green
+    assert "https://stub/pr/1" not in r.stdout          # caught before a PR ever exists
+    assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
 
 
 def test_no_change_blocks(tmp_path):
