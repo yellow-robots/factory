@@ -140,7 +140,13 @@ def _item(tmp, *, number=7, status="Ready", item_id="ITEM1", in_project=True, re
 
 
 def _run(args, env_extra, cwd=None):
-    env = {**os.environ, **READABLE_IDS, **env_extra}
+    # Scrub the check gate's own GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM neutralization (#67/#69,
+    # tools/dev-runner.sh:737) from the ambient os.environ BEFORE merging env_extra, so a factory
+    # self-build (whose check_cmd process tree carries these as /dev/null) doesn't leak that
+    # neutralization into the inner runner spawned here — while a test that sets either key via
+    # env_extra still wins (#77).
+    base_env = {k: v for k, v in os.environ.items() if k not in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")}
+    env = {**base_env, **READABLE_IDS, **env_extra}
     return subprocess.run(["bash", str(RUNNER), *args],
                           capture_output=True, text=True, env=env, cwd=str(cwd or ROOT))
 
@@ -580,6 +586,43 @@ def test_runner_own_git_commit_is_not_neutralized(tmp_path):
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
     assert "https://stub/pr/1" in r.stdout             # the runner's own commit succeeded and reached a PR
+
+
+def test_run_helper_scrubs_ambient_git_config_neutralization(monkeypatch, tmp_path):
+    """#77: `_run` must not let the check gate's own GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM neutralization
+    (the factory's own check-gate ambient, tools/dev-runner.sh:737) ride into the inner runner it spawns —
+    reproducing the self-build recursion where these tests run themselves under `run_checks`. With both
+    keys set to /dev/null in the ambient os.environ, an LLM stage of the _run-spawned runner must observe
+    them as unset, while an explicit env_extra value for either key still wins."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Ambient scrub"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CLAUDE_GITENV_FILE": str(tmp_path / "claude_gitenv")})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "claude_gitenv").read_text().splitlines()
+    assert lines
+    assert all("GIT_CONFIG_GLOBAL=unset GIT_CONFIG_SYSTEM=unset" == l for l in lines)
+
+
+def test_run_helper_lets_explicit_env_extra_win_over_the_scrub(monkeypatch, tmp_path):
+    """The scrub in `_run` only drops the ambient os.environ copy of the two keys before merging
+    env_extra — a test that sets either key explicitly via env_extra (as the #67 check-gate-neutralized
+    tests do with the real runner) must still see that value, not `unset`."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Explicit env_extra wins"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CLAUDE_GITENV_FILE": str(tmp_path / "claude_gitenv"),
+                "GIT_CONFIG_GLOBAL": "/explicit/global", "GIT_CONFIG_SYSTEM": "/explicit/system"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "claude_gitenv").read_text().splitlines()
+    assert lines
+    assert all("GIT_CONFIG_GLOBAL=/explicit/global GIT_CONFIG_SYSTEM=/explicit/system" == l for l in lines)
 
 
 def test_check_gate_fails_the_pr65_scenario_instead_of_masking_it(tmp_path):
