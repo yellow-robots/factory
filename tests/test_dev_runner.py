@@ -1818,3 +1818,207 @@ def test_self_build_reads_behind_count_without_double_fetch_or_error(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "https://stub/pr/1" in r.stdout
     assert "commit(s) behind" not in r.stderr   # BASE_REPO/FACTORY_DIR are the same, already-fetched repo
+
+
+# ============ Issue #50: stage charter — every stage knows its walls, in every repo ============
+# Every stage the runner spawns (in every target repo, not just the factory's own) must get one shared
+# confinement contract appended to its system prompt, so a stage building a foreign repo — which carries
+# none of this knowledge itself — still knows the walls it runs inside. The three role prompts
+# (IMPL_SYS/TEST_SYS/REVIEW_SYS) are expected to shed the clauses the charter now states once, globally.
+#
+# Hard constraint: the stage-aware stub above routes on four CASE-SENSITIVE literals — TESTER, REVIEWER,
+# "tests FAIL", "REQUESTED CHANGES". A literal leaked into the wrong stage's argv (e.g. via a careless
+# shared charter) misroutes the stub and silently corrupts every stage-order assertion in this whole
+# suite — so exclusivity is checked explicitly here, live, not just inferred from the rest passing.
+
+ROUTED_LITERALS = ["TESTER", "REVIEWER", "tests FAIL", "REQUESTED CHANGES"]
+
+
+def _shell_var(name):
+    """The literal value assigned to a single-line shell string variable in the runner source (e.g.
+    `STAGE_CHARTER="..."`). Used, per the task's own rebuild note, to reconstruct the expected appended
+    system prompt (`role + "\\n\\n" + charter`) straight from the shell variables and compare it
+    byte-for-byte against what each stage actually sent to `claude` — not a paraphrase of it."""
+    src = RUNNER.read_text()
+    m = re.search(rf'(?m)^{name}="(.*)"$', src)
+    assert m, f"could not find a single-line shell assignment for {name} in {RUNNER}"
+    return m.group(1)
+
+
+def _argv_raw_calls(tmp):
+    """Every `claude` invocation's raw argv text, embedded newlines preserved (unlike _argv_calls',
+    which flattens on every newline) — needed because the appended system prompt itself spans multiple
+    lines (role prompt, blank line, charter)."""
+    p = tmp / "claude_argv_log"
+    if not p.exists():
+        return []
+    chunks = p.read_text().split("===STUB-CALL===\n")
+    return [c for c in chunks if c]
+
+
+def _extract_append_system_prompt(raw_call):
+    """Pull the exact `--append-system-prompt` value out of one raw call's text. `--allowedTools`
+    always immediately follows it in run_stage's args array, and that literal never appears inside any
+    role prompt or the charter, so the span between the two is the exact value passed to `claude`."""
+    m = re.search(r'--append-system-prompt\n(.*?)\n--allowedTools\n', raw_call, re.S)
+    assert m, f"could not find --append-system-prompt in call:\n{raw_call}"
+    return m.group(1)
+
+
+def _stage_calls(tmp):
+    """Every recorded `claude` call, grouped by which stage fired it — paired positionally with the
+    timeline's stage markers (IMPL/TEST/REPAIR/REVIEW/REVIEWFIX), which fire in the same order as the
+    claude invocations they came from (one timeline entry per claude call, every stub branch here)."""
+    tl = [l for l in _timeline(tmp) if l in ("IMPL", "TEST", "REPAIR", "REVIEW", "REVIEWFIX")]
+    calls = _argv_raw_calls(tmp)
+    assert len(tl) == len(calls), (tl, len(calls))
+    out = {}
+    for stage, call in zip(tl, calls):
+        out.setdefault(stage, []).append(call)
+    return out
+
+
+def test_stage_charter_itself_is_free_of_stub_routing_literals():
+    """Acceptance: the charter is kept free of the four stub routing literals (their uppercase routed
+    forms — the stub's matching is case-sensitive) — checked directly against the charter text alone,
+    independent of any particular run."""
+    charter = _shell_var("STAGE_CHARTER")
+    for literal in ROUTED_LITERALS:
+        assert literal not in charter, f"stage charter must not contain the routed literal {literal!r}"
+
+
+def test_existing_stub_marker_pin_still_passes():
+    """The existing presence pin (test_runner_prompts_contain_stub_markers) must stay green, unedited,
+    alongside the new charter work — re-run its exact assertions here as a belt-and-braces check that
+    this test module didn't have to touch it to make the suite pass."""
+    src = RUNNER.read_text()
+    assert "TESTER" in src and "REVIEWER" in src
+    assert "tests FAIL" in src and "REQUESTED CHANGES" in src
+
+
+def test_routing_literals_appear_only_in_their_own_stage_argv(tmp_path):
+    """Acceptance: each of the four routed literals appears in exactly its own stage's argv and no
+    other stage's — proven live across a run that fires all five stage kinds (implement, tester,
+    check-repair, review x2, review-repair)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Routing literal exclusivity")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    by_stage = _stage_calls(tmp_path)
+    assert set(by_stage) >= {"IMPL", "TEST", "REPAIR", "REVIEW", "REVIEWFIX"}
+
+    owner = {"TESTER": "TEST", "REVIEWER": "REVIEW", "tests FAIL": "REPAIR", "REQUESTED CHANGES": "REVIEWFIX"}
+    for literal, own_stage in owner.items():
+        for stage, calls in by_stage.items():
+            for call in calls:
+                if stage == own_stage:
+                    assert literal in call, f"{literal!r} missing from its own stage {stage}'s argv"
+                else:
+                    assert literal not in call, \
+                        f"{literal!r} (owned by {own_stage}) leaked into stage {stage}'s argv"
+
+
+def test_charter_appended_to_every_stage_and_states_required_clauses(tmp_path):
+    """Acceptance: every stage the runner spawns gets one stage charter appended to its system prompt,
+    stating: one stage of an automated pipeline in one fresh worktree; builder != verifier with the
+    three roles' separation; worktree-only writes; no git or board writes (the reviewer's read-only git
+    excepted); tests derived from the acceptance criteria; gates never weakened; Blocked as a correct
+    outcome; PRs only, never deploy or host work."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Charter on every stage")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    by_stage = _stage_calls(tmp_path)
+    assert set(by_stage) >= {"IMPL", "TEST", "REPAIR", "REVIEW", "REVIEWFIX"}
+
+    required_clauses = [
+        "one stage",                              # one stage of an automated pipeline
+        "automated pipeline",
+        "fresh worktree",                          # in one fresh worktree
+        "implementer", "tester", "reviewer",       # the three roles' separation
+        "write only inside this worktree",          # worktree-only writes
+        "no git or board writes",                   # no git or board writes
+        "read-only git",                             # the reviewer's read-only git carve-out
+        "derived from the acceptance criteria",     # tests derived from the acceptance criteria
+        "never weaken a gate",                       # gates never weakened
+        "blocked run is a correct outcome",          # Blocked as a correct outcome
+        "pull request only",                          # PRs only
+        "deploy",                                     # never deploy or host work
+    ]
+    for stage, calls in by_stage.items():
+        for call in calls:
+            prompt = _extract_append_system_prompt(call).lower()
+            for clause in required_clauses:
+                assert clause in prompt, f"stage {stage} missing charter clause {clause!r}"
+
+
+def test_stage_charter_append_is_byte_exact_role_then_blank_line_then_charter(tmp_path):
+    """Acceptance (rebuild note): the append is byte-exact — role prompt, then exactly one blank line,
+    then the charter, with no stray trailing whitespace/newline after the role prompt and none leading
+    the charter. Reconstruct `role + "\\n\\n" + charter` from the shell variables themselves and compare
+    it byte-for-byte against what each stage actually sent to `claude` (the prior build's regression:
+    a stray trailing newline/whitespace on the role prompt broke exactly this comparison)."""
+    charter = _shell_var("STAGE_CHARTER")
+    impl_sys = _shell_var("IMPL_SYS")
+    test_sys = _shell_var("TEST_SYS")
+    review_sys = _shell_var("REVIEW_SYS")
+
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Byte-exact charter append")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    by_stage = _stage_calls(tmp_path)
+
+    # repair stages (check-repair, review-repair) run at the IMPL_SYS role, same as the implementer.
+    expected_role = {
+        "IMPL": impl_sys, "REPAIR": impl_sys, "REVIEWFIX": impl_sys,
+        "TEST": test_sys, "REVIEW": review_sys,
+    }
+    for stage, role_text in expected_role.items():
+        for call in by_stage[stage]:
+            actual = _extract_append_system_prompt(call)
+            assert actual == f"{role_text}\n\n{charter}", \
+                f"stage {stage}: appended system prompt is not exactly role + blank line + charter"
+
+
+def test_tester_production_code_ban_and_reviewer_verdict_protocol_pinned(tmp_path):
+    """Acceptance: the tester's operative production-code ban stays inside the tester prompt, and the
+    reviewer's verdict protocol stays byte-exact (unrelated to the git-ban clause the charter absorbed)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Ban and verdict protocol pinned")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    by_stage = _stage_calls(tmp_path)
+
+    for call in by_stage["TEST"]:
+        prompt = _extract_append_system_prompt(call)
+        assert "Do NOT modify production code — only add or extend tests." in prompt
+
+    verdict_protocol = (
+        "Tag each finding 'blocker' or 'nit'. Do NOT modify any files. "
+        "End your reply with a final line that is exactly 'VERDICT: APPROVE' "
+        "if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
+    )
+    for call in by_stage["REVIEW"]:
+        prompt = _extract_append_system_prompt(call)
+        assert verdict_protocol in prompt, "reviewer verdict protocol is not byte-exact"
+
+
+def test_repair_prompt_templates_unchanged(tmp_path):
+    """Acceptance: the repair prompt templates (check-repair, review-repair) are left untouched — their
+    literals are load-bearing stub routing, unrelated to the charter dedupe (they're task prompts, not
+    the shared role/charter system prompt)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Repair templates unchanged")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    by_stage = _stage_calls(tmp_path)
+
+    check_repair_fragment = "The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests."
+    for call in by_stage["REPAIR"]:
+        assert check_repair_fragment in call
+
+    review_repair_fragment = ("A reviewer REQUESTED CHANGES. Fix the blocking findings "
+                               "(production code; only touch a test if the test itself is wrong).")
+    for call in by_stage["REVIEWFIX"]:
+        assert review_repair_fragment in call

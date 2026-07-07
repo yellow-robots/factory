@@ -410,8 +410,9 @@ capture_stage_usage(){   # $1 = stage log file, $2 = model id used for this stag
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
 run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set), $5=model id (default: build)
   local model="${5:-$BUILD_ID}" cred rc=0 fmt_overridden=0
+  local sys_prompt; sys_prompt="$(printf '%s\n\n%s' "$1" "$STAGE_CHARTER")"
   local args=( -p "$2" --model "$model" --effort "$EFFORT"
-               --permission-mode bypassPermissions --append-system-prompt "$1"
+               --permission-mode bypassPermissions --append-system-prompt "$sys_prompt"
                --allowedTools ${4:-Read Edit Write Bash}
                --setting-sources "${STAGE_SETTING_SOURCES:-project}" --strict-mcp-config )
   if [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ]; then
@@ -436,8 +437,15 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
 }
 SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 
+# ---- stage charter (issue #50): the confinement contract every stage runs under, in every target repo —
+# appended (by run_stage) to each stage's role prompt so a stage building a foreign repo still gets it, not
+# just the factory's own. Kept free of the stage-aware test stub's four routed literals (its case-sensitive
+# `case` match on argv: TESTER, REVIEWER, "tests FAIL", "REQUESTED CHANGES") — a leaked literal here would
+# misroute every stage, not just its own.
+STAGE_CHARTER="You are one stage of an automated pipeline, running in one fresh worktree cut from the base ref. The pipeline holds builder ≠ verifier: the implementer writes production code and never authors the committed test suite; the tester writes tests only, derived from the acceptance criteria and never from the implementation's internals; the reviewer changes nothing. Write only inside this worktree — never the host. Make no git or board writes; the runner owns them (the reviewer's read-only git, e.g. diffing staged changes, is the one carve-out). Never weaken a gate: do not edit checks, CI configuration, .yr/factory.toml, or any test you were told not to touch. If the task cannot be done within these rules, stop and say so — a Blocked run is a correct outcome, not a failure to route around. This pipeline produces a pull request only; deploy and host work are never a stage's."
+
 # implementer — production code only
-IMPL_SYS="You are the IMPLEMENTER stage of an automated dev pipeline. Implement the task so it satisfies every acceptance criterion. Write PRODUCTION CODE ONLY — do not author the committed test suite (an independent tester stage does that). Do NOT run git or open PRs — the runner handles git. Work only inside this repository."
+IMPL_SYS="You are the IMPLEMENTER stage of an automated dev pipeline. Implement the task so it satisfies every acceptance criterion. Write PRODUCTION CODE ONLY — do not author the committed test suite (an independent tester stage does that)."
 if stage_done 01-implement; then
   log "resume: skipping implement (01-implement.done present)"
   # the prior run's implementer output is already in the reused worktree; recover a tree for the guard.
@@ -461,7 +469,7 @@ fi
 
 # tester — independent cold process: tests derived from the CRITERIA, not the implementation (builder≠verifier).
 # Writes to tests/** only — enforced below by diffing against IMPL_TREE (block-and-raise, no silent revert).
-TEST_SYS="You are the TESTER stage, independent of the implementer. Write automated tests that verify the ACCEPTANCE CRITERIA below, against the code now in this repository. Derive the tests from the CRITERIA (the spec), NOT from the implementation's internals. Do NOT modify production code — only add or extend tests. Do NOT run git. Work only inside this repository."
+TEST_SYS="You are the TESTER stage, independent of the implementer. Write automated tests that verify the ACCEPTANCE CRITERIA below, against the code now in this repository. Derive the tests from the CRITERIA (the spec), NOT from the implementation's internals. Do NOT modify production code — only add or extend tests."
 if stage_done 02-test; then
   log "resume: skipping test (02-test.done present)"
 else
@@ -552,7 +560,7 @@ python3 "$SELF_DIR/review_bundle.py" init --bundle "$BUNDLE" \
 # ---- review stage (independent cold process: quality verdict on the diff; gate = no blockers) ----
 # Review is a judgment, so the gate is the reviewer's own verdict — but a separate cold process with
 # no stake, and fail-closed (anything but a clear APPROVE blocks). The verdict is attached to the PR.
-REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Tag each finding 'blocker' or 'nit'. Do NOT modify any files and do NOT run git commit or push. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
+REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Tag each finding 'blocker' or 'nit'. Do NOT modify any files. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
                 local rc=0
                 run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID" || rc=$?
