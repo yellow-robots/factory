@@ -849,10 +849,14 @@ def test_shadow_would_merge_and_reaches_in_review(tmp_path):
 
 
 def test_shadow_would_block_zero_checks_fails_fast(tmp_path):
-    """Zero configured checks is a failure evaluated WITHOUT the bounded wait (criterion 2). Proven by
-    a huge poll interval/timeout with a hard subprocess timeout: if it entered the wait it would hang."""
+    """Zero configured checks, still zero after the registration grace elapses, is a failure evaluated
+    WITHOUT the (much longer) in-flight CI wait (issue #61, criterion 2). Proven by a huge poll interval/
+    timeout for that in-flight wait with a hard subprocess timeout: if it ever entered that wait it would
+    hang. The grace itself is collapsed to zero so the test stays fast and deterministic — its own
+    tunability is covered by tests/test_ci_registration_grace.py."""
     env = _shadow_env(tmp_path, title="Shadow zero checks", checks=[])
     env["MERGE_CI_POLL_INTERVAL"] = "600"; env["MERGE_CI_TIMEOUT"] = "600"
+    env["MERGE_CI_REG_GRACE"] = "0"; env["MERGE_CI_REG_POLL_INTERVAL"] = "0"
     full = {**os.environ, **READABLE_IDS, **env}
     r = subprocess.run(["bash", str(RUNNER), "5", "--repo", "test/repo"],
                        capture_output=True, text=True, env=full, cwd=str(ROOT), timeout=60)
@@ -861,7 +865,9 @@ def test_shadow_would_block_zero_checks_fails_fast(tmp_path):
     assert body.splitlines()[0] == _would_block("ci_green")
     rec = _shadow_block(body)
     assert rec["decision"] == "WOULD-BLOCK" and rec["failed_condition"] == "ci_green"
-    assert rec["check_rollup"] == "empty"                                    # zero checks -> empty, not a wait/timeout
+    # issue #61: the registration grace still yielded nothing, so the state is the NEW, distinguishing
+    # 'empty_after_grace' — never confused with a rollup that registered and then failed/timed out.
+    assert rec["check_rollup"] == "empty_after_grace"
     _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
 
 

@@ -604,23 +604,47 @@ fi
 # classified environmental — no machinery-error record, resumable — and never reset a streak or hard-Block.
 MERGE_CI_POLL_INTERVAL="${MERGE_CI_POLL_INTERVAL:-15}"   # poll cadence for in-flight CI (seconds)
 MERGE_CI_TIMEOUT="${MERGE_CI_TIMEOUT:-600}"              # bounded wait for in-flight CI (seconds); timeout = fail
+# An empty rollup read moments after `gh pr create` can be a real repo's CI not having registered yet
+# (GitHub Actions registers check runs asynchronously) rather than zero configured checks -- so an empty
+# read gets its OWN bounded registration grace, distinct from and much shorter than the in-flight wait above.
+MERGE_CI_REG_POLL_INTERVAL="${MERGE_CI_REG_POLL_INTERVAL:-5}"  # poll cadence during the registration grace (seconds)
+MERGE_CI_REG_GRACE="${MERGE_CI_REG_GRACE:-10}"                 # bounded wait for a check to register (seconds)
 # The host sentinel (kill switch): a FILE in the dispatch home, read LIVE at decision time (a file, not an
 # inherited env var — a spawned runner carries its spawn-time environment; the file is global + git-free).
 MERGE_SENTINEL="${MERGE_SENTINEL:-$DEV_RUNNER_HOME/merge-killswitch}"
 SHADOW_WINDOW="${SHADOW_WINDOW:-5}"; SHADOW_NEED="${SHADOW_NEED:-3}"; SHADOW_SCAN="${SHADOW_SCAN:-40}"
 PR_NUMBER="${PR_URL##*/}"                                # the current PR number (excluded from the window)
 
-# (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); zero configured checks
-#     fails fast, WITHOUT the wait. Server CI is distinct from and additional to the in-build check_cmd.
+# (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); a rollup still empty
+#     after its own bounded registration grace fails fast, WITHOUT the (much longer) in-flight wait.
+#     Server CI is distinct from and additional to the in-build check_cmd.
 shadow_ci(){   # sets CI_RESULT (pass|fail) + CI_STATE; returns 2 on an environmental gh/parse failure.
-  local rollup="$RUN_DIR/check-rollup.json" start now rc counts total in_flight failed
+  local rollup="$RUN_DIR/check-rollup.json" start now rc counts total in_flight failed grace_start
   start="$(date +%s)"
   while :; do
     rc=0; "$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json statusCheckRollup >"$rollup" 2>/dev/null || rc=$?
     [ "$rc" -eq 0 ] || return 2
     counts="$(python3 "$SELF_DIR/merge_shadow.py" classify-checks --rollup-file "$rollup" 2>/dev/null)" || return 2
     read -r total in_flight failed <<<"$counts" || true
-    if [ "${total:-0}" -eq 0 ]; then CI_RESULT=fail; CI_STATE=empty; return 0; fi          # zero checks: fail fast
+    if [ "${total:-0}" -eq 0 ]; then
+      # a fresh PR's rollup can legitimately read empty for a few seconds -- GitHub Actions registers
+      # check runs asynchronously, moments after `gh pr create` -- so re-poll for a bounded REGISTRATION
+      # GRACE before concluding "no CI configured" (zero-registered is not zero-configured).
+      grace_start="$(date +%s)"
+      while :; do
+        now="$(date +%s)"
+        if [ "$((now - grace_start))" -ge "$MERGE_CI_REG_GRACE" ]; then
+          CI_RESULT=fail; CI_STATE=empty_after_grace; return 0      # still empty after grace: fail fast
+        fi
+        sleep "$MERGE_CI_REG_POLL_INTERVAL"
+        rc=0; "$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json statusCheckRollup >"$rollup" 2>/dev/null || rc=$?
+        [ "$rc" -eq 0 ] || return 2
+        counts="$(python3 "$SELF_DIR/merge_shadow.py" classify-checks --rollup-file "$rollup" 2>/dev/null)" || return 2
+        read -r total in_flight failed <<<"$counts" || true
+        [ "${total:-0}" -gt 0 ] && break                            # registered -> fall through to the normal wait
+      done
+      start="$(date +%s)"                                           # the normal bounded CI wait starts fresh here
+    fi
     if [ "${in_flight:-0}" -eq 0 ]; then
       if [ "${failed:-0}" -eq 0 ]; then CI_RESULT=pass; CI_STATE=success; else CI_RESULT=fail; CI_STATE=failure; fi
       return 0

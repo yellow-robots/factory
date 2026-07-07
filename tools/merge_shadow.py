@@ -11,7 +11,8 @@ everything else stays in shadow (`YR-MERGE-SHADOW`) or armed-blocked (`YR-MERGE:
 
 The four base conditions, in evaluation order (their ids are the WOULD-BLOCK / BLOCKED reason):
   ci_green           — every configured check on the PR head concluded successful (bounded wait for
-                       in-flight runs upstream; zero configured checks is a failure).
+                       in-flight runs upstream; a rollup still empty after a bounded registration
+                       grace — see shadow_ci's own env pair — is a failure).
   freshness          — the reviewed base SHA equals main's tip at decision time.
   terminal_approval  — the final review round is a clean `VERDICT: APPROVE`.
   rank_gate          — the resolved pair satisfies strict review-rank > build-rank on one provider.
@@ -398,7 +399,8 @@ def main(argv=None):
     p_r.add_argument("--head-sha", required=True)
     p_r.add_argument("--main-tip-sha", default="")
     p_r.add_argument("--rollup-file", default="", help="JSON check rollup (for the normalized checks list)")
-    p_r.add_argument("--ci-state", default="", help="overall CI rollup state (success/failure/empty/timed_out)")
+    p_r.add_argument("--ci-state", default="",
+                      help="overall CI rollup state (success/failure/timed_out/empty_after_grace)")
     p_r.add_argument("--run-id", required=True)
     p_r.add_argument("--timestamp", required=True)
     p_r.add_argument("--out", default="", help="write the comment here (default: stdout)")
