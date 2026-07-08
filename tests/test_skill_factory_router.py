@@ -23,6 +23,7 @@ REQUIRED_REFS = [
     "closing.md",
     "migrating.md",
     "onboarding.md",
+    "architect.md",
 ]
 
 
@@ -143,7 +144,7 @@ def test_no_orphan_references():
 # ---------------------------------------------------------------------------
 
 def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.7.2"
+    assert _plugin_data()["version"] == "0.8.0"
 
 
 def test_skill_md_and_plugin_description_agree():
@@ -351,3 +352,182 @@ def test_reviewing_md_feeds_human_gate():
         "reviewing.md missing spec-ready gate reference"
     assert "approve" in lower, \
         "reviewing.md missing approve-RFC gate reference"
+
+
+# ---------------------------------------------------------------------------
+# SKILL.md Architect router row (#93)
+# ---------------------------------------------------------------------------
+
+def test_skill_md_has_architect_router_row():
+    """The Operations table must gain a bold **Architect** row linking references/architect.md,
+    matching the existing row format (bold name | one-line When | relative link)."""
+    text = _skill_text()
+    assert re.search(r"\|\s*\*\*Architect\*\*\s*\|", text), \
+        "SKILL.md missing a bold **Architect** row in the Operations table"
+    assert "[`references/architect.md`](references/architect.md)" in text, \
+        "SKILL.md Architect row does not link references/architect.md in the house-style format"
+
+
+# ---------------------------------------------------------------------------
+# architect.md content — the operation reference for the architect role (#93)
+#
+# Derived from the Issue #93 acceptance criteria / charter (the spec), not from
+# the reference file's own prose.
+# ---------------------------------------------------------------------------
+
+def _architect_text():
+    return (REFS / "architect.md").read_text(encoding="utf-8")
+
+
+def _architect_text_normalized():
+    """architect.md text with runs of whitespace (incl. line wraps) folded to a single space,
+    so a phrase wrapped across a markdown line (e.g. '**partially\\n   affected**') still
+    matches a plain substring check."""
+    return re.sub(r"\s+", " ", _architect_text().lower())
+
+
+def test_architect_md_has_when_to_load_block():
+    """architect.md must open with the house-style 'When to load this reference' block."""
+    head = "\n".join(_architect_text().splitlines()[:8])
+    assert "When to load this reference" in head, \
+        "architect.md is missing the house-style opening 'When to load this reference' block"
+
+
+def test_architect_md_cites_documentation_model():
+    """architect.md must cite documentation-model.md (cites-never-copies), not restate its content."""
+    assert "documentation-model.md" in _architect_text(), \
+        "architect.md does not cite documentation-model.md"
+
+
+def test_architect_md_has_three_bound_moments():
+    """Charter: the architect is bound to three existing pipeline moments, never a fourth
+    stage added on top — spec-ready, the crossing, and the ship-walk."""
+    lower = _architect_text_normalized()
+    assert "spec-ready" in lower or "spec ready" in lower, \
+        "architect.md missing the spec-ready moment"
+    assert "crossing" in lower, "architect.md missing the crossing moment"
+    assert "ship-walk" in lower or "ship walk" in lower, \
+        "architect.md missing the ship-walk moment"
+    assert "three" in lower, \
+        "architect.md does not state the charter is bound to three moments (never a fourth stage)"
+
+
+def test_architect_md_spec_ready_covers_grounding_and_disposition():
+    """Spec-ready: grounding against the world (not only doc-vs-tree) plus a challenged
+    supersession disposition — a per-target wholly-replaced/partially-affected/unaffected
+    ruling, partial routing to a living-map drift entry, tombstones landing only at accept."""
+    lower = _architect_text_normalized()
+    assert "forward" in lower, \
+        "architect.md missing the forward-claims-tested-against-the-world grounding check"
+    assert "wholly replaced" in lower, "architect.md missing the 'wholly replaced' disposition ruling"
+    assert "partially affected" in lower, \
+        "architect.md missing the 'partially affected' disposition ruling"
+    assert "unaffected" in lower, "architect.md missing the 'unaffected' disposition ruling"
+    assert "drift" in lower, \
+        "architect.md missing the partial-ruling-routes-to-a-drift-entry rule"
+    assert "tombstone" in lower, \
+        "architect.md missing the tombstones-land-only-at-accept rule"
+    assert "accept" in lower, \
+        "architect.md missing that tombstones are written only by the accepting session"
+
+
+def test_architect_md_crossing_covers_rfc_stamp_and_drift_pass():
+    """The crossing: author the technical-rfc and slices against the current tree, stamp
+    crossed_to the moment the epic exists, and run a final citation-drift pass against the
+    tip at filing (the base can move mid-session)."""
+    lower = _architect_text_normalized()
+    assert "technical-rfc" in lower or "technical rfc" in lower, \
+        "architect.md missing the crossing's technical-rfc authoring step"
+    assert "slices" in lower or "slice" in lower, \
+        "architect.md missing the crossing's self-contained slices"
+    assert "crossed_to" in _architect_text(), \
+        "architect.md missing the crossed_to stamp"
+    assert "drift" in lower and ("citation" in lower or "cite" in lower), \
+        "architect.md missing the final citation-drift pass against the tip at filing"
+
+
+def test_architect_md_ship_walk_covers_grounding_list_and_observables():
+    """The ship-walk: walk the grounding list, update the living reference in place, supersede
+    replaced research, verify stamps, and record the pilot observables with the iteration."""
+    lower = _architect_text_normalized()
+    assert "grounding list" in lower, \
+        "architect.md missing the ship-walk's grounding-list walk"
+    assert "living reference" in lower, \
+        "architect.md missing the living-reference update-in-place step"
+    assert "supersede" in lower, \
+        "architect.md missing the supersede-replaced-research step"
+    assert "stamp" in lower, \
+        "architect.md missing the verify-the-stamps step"
+    assert "observable" in lower, \
+        "architect.md missing the record-pilot-observables step"
+
+
+def test_architect_md_has_independence_and_ordering_rules():
+    """The architect runs as its own independent cold session (author != fit-checker); where a
+    doc also earns adversarial review, the review runs first and folds in, the architect last."""
+    lower = _architect_text_normalized()
+    assert "independent" in lower, \
+        "architect.md missing the independent-cold-session rule"
+    assert "fit-check" in lower or "fit check" in lower or "fit-checker" in lower, \
+        "architect.md missing the author != fit-checker framing"
+    assert "review" in lower and "first" in lower, \
+        "architect.md missing the review-runs-first rule"
+    assert "last" in lower, \
+        "architect.md missing the architect-runs-last rule"
+
+
+def test_architect_md_has_fail_closed_rules():
+    """Fail-closed: an undecidable replacement/fit question goes on a 'for the human' list,
+    never a guess or silent pass; a factual slip in an already-active spec routes to the human."""
+    lower = _architect_text_normalized()
+    assert "for the human" in lower or "for-the-human" in lower, \
+        "architect.md missing the fail-closed 'for the human' list"
+    assert "guess" in lower, \
+        "architect.md missing the never-a-guess fail-closed rule"
+    assert "silent" in lower, \
+        "architect.md missing the never-a-silent-pass / never-a-silent-edit fail-closed rule"
+    assert "active" in lower, \
+        "architect.md missing the already-active-spec routing-to-human rule"
+
+
+def test_architect_md_has_earn_test_with_three_arms():
+    """The earn-test is decidable from the draft alone: a non-empty supersedes declaration, an
+    earned technical-rfc read from the draft's Next-stage statement, or changes touching the
+    living reference's load-bearing sections; no arm holding means the role is skipped."""
+    lower = _architect_text_normalized()
+    assert "earn" in lower, "architect.md missing the earn-test"
+    assert "supersedes" in lower, \
+        "architect.md earn-test missing the non-empty supersedes-declaration arm"
+    assert "next-stage" in lower or "next stage" in lower, \
+        "architect.md earn-test missing the earned-technical-rfc-from-Next-stage-statement arm"
+    assert "load-bearing" in lower, \
+        "architect.md earn-test missing the load-bearing-sections arm"
+    assert "skip" in lower, \
+        "architect.md missing the no-arm-holds-the-role-is-skipped path"
+
+
+def test_architect_md_has_session_practice_rules():
+    """Session practice earned by the pilot: cite prior dispositions as precedent, run the
+    crossing's drift check at filing always, ground spec-ready against the world, declare
+    hand-executed approved-but-unshipped gates, and cite the counting rule for census claims."""
+    lower = _architect_text_normalized()
+    assert "precedent" in lower, \
+        "architect.md missing the cite-prior-dispositions-as-precedent practice"
+    assert "hand" in lower and ("gate" in lower or "check" in lower), \
+        "architect.md missing the declared-hand-executed-approved-but-unshipped-gates practice"
+    assert "census" in lower or "count" in lower, \
+        "architect.md missing the cite-the-counting-rule-for-census-claims practice"
+
+
+def test_architect_md_has_report_shapes_per_moment():
+    """The report ends in the moment's standard shape: fit check (verdict, dispositions,
+    deltas, census, for-the-human, observables) and crossing (epic + ordered slices, EARS-landing
+    map, gate outputs verbatim, choices with tradeoffs, for-the-human, observables)."""
+    lower = _architect_text_normalized()
+    assert "verdict" in lower, "architect.md fit-check report shape missing verdict"
+    assert "delta" in lower, "architect.md fit-check report shape missing deltas"
+    assert "ears" in lower, "architect.md crossing report shape missing the EARS-landing map"
+    assert "tradeoff" in lower or "trade-off" in lower or "trade off" in lower, \
+        "architect.md crossing report shape missing choices with tradeoffs"
+    assert "observable" in lower, \
+        "architect.md report shapes missing observables"
