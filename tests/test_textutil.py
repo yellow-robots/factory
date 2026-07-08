@@ -192,3 +192,83 @@ def test_split_unclosed_frontmatter_treated_as_no_frontmatter():
     meta, body = split_frontmatter(text)
     assert meta == {}
     assert body == text
+
+
+# --- block-style lists (Obsidian's property editor writes non-empty lists this way) ---
+
+def test_split_block_style_list_single_item():
+    text = '---\nsupersedes:\n  - "[[old spec]]"\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["supersedes"] == ["[[old spec]]"]
+
+
+def test_split_block_style_list_multiple_items():
+    text = "---\ntags:\n  - alpha\n  - beta\n  - gamma\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["tags"] == ["alpha", "beta", "gamma"]
+
+
+def test_split_block_style_list_strips_quotes_per_item():
+    text = '---\nsupersedes:\n  - "[[a spec]]"\n  - "[[b spec]]"\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["supersedes"] == ["[[a spec]]", "[[b spec]]"]
+
+
+def test_split_block_style_list_followed_by_another_key():
+    text = "---\ntags:\n  - alpha\n  - beta\ntype: task\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["tags"] == ["alpha", "beta"]
+    assert meta["type"] == "task"
+
+
+def test_split_block_style_list_tolerates_tab_indented_items():
+    text = "---\ntags:\n\t- alpha\n\t- beta\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["tags"] == ["alpha", "beta"]
+
+
+def test_split_bare_key_with_no_following_dash_items_is_empty_string():
+    # a genuinely empty scalar (no block list follows) parses exactly as before
+    text = "---\nnotes:\ntype: task\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["notes"] == ""
+    assert meta["type"] == "task"
+
+
+# --- inline lists: per-item quotes stripped (new), existing shape unchanged otherwise ---
+
+def test_split_inline_list_strips_quotes_per_item():
+    text = '---\ndecision_makers: ["jose", "claude"]\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["decision_makers"] == ["jose", "claude"]
+
+
+def test_split_inline_list_mixed_quoted_and_unquoted_items():
+    text = '---\ntags: [alpha, "beta gamma"]\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["tags"] == ["alpha", "beta gamma"]
+
+
+def test_split_inline_list_unquoted_items_unchanged_regression():
+    # existing behavior (no quotes to strip) must still work exactly as before
+    text = "---\ndecision_makers: [jose, claude]\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["decision_makers"] == ["jose", "claude"]
+
+
+def test_split_inline_list_empty_unchanged_regression():
+    text = "---\ntags: []\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["tags"] == []
+
+
+def test_split_scalar_double_quoted_value_unchanged_regression():
+    text = '---\ntitle: "Hello world"\n---\nbody\n'
+    meta, _ = split_frontmatter(text)
+    assert meta["title"] == "Hello world"
+
+
+def test_split_scalar_unquoted_trailing_comment_unchanged_regression():
+    text = "---\nstatus: draft              # draft | in-review | approved\n---\nbody\n"
+    meta, _ = split_frontmatter(text)
+    assert meta["status"] == "draft"
