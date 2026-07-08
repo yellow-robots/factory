@@ -56,8 +56,14 @@ When the PR merges, the iteration's Obsidian docs become immutable records:
 - Verify every doc that crossed carries its `crossed_to` stamp — set **at the crossing**, not here
   (see [`documentation-model.md`](documentation-model.md) — *Identity & navigation*). Stamp any doc
   found missing one: epics self-close, so this checklist is the backstop, not the act.
-- If the shipped change replaces an older doc, retire it **by kind** — supersede in place vs.
-  migrate-delete (see [`migrating.md`](migrating.md), step 4).
+- Tombstones land at accept, not here (`status: superseded` + `superseded_by`, stamped in the same
+  session — see [`documentation-model.md`](documentation-model.md) — *Lifecycle*). This checklist verifies every supersession pair the iteration's declarations created: run `check_supersession.py --sweep`
+  and stamp only what's found missing — the accept session is the act, this checklist is the backstop,
+  exactly like the `crossed_to` bullet above. If the shipped change instead **migrated** a doc (moved,
+  decision unchanged), retire it by kind per [`migrating.md`](migrating.md) step 4.
+- **Write at ship** (the maintenance-contract trigger, see [`documentation-model.md`](documentation-model.md)
+  — *The maintenance contract*): walking the grounding list is the **architect's** ship-walk where that
+  role is earned on the component, the **closing session's** otherwise.
 
 This is **shipping freezes the why** from the documentation model; see
 [`documentation-model.md`](documentation-model.md) — *Two principles*.

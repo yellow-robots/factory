@@ -39,7 +39,9 @@ Three more types **support** the spine — they belong to an iteration but are n
 | `note` | the **wildcard**: any other document the project needs — a marketing brief, a legal doc, a distilled how-X |
 | `runbook` | an operational how-to (imperative steps + verification); cross-cutting / host-ops only |
 
-No other types. `research` is frozen (dated; you stop editing it). `note` and `runbook` are living.
+No other types. `research` is frozen (dated; you stop editing it) — its `active` status is
+concluded-and-citable dated testimony, never a claim about the present (see *Lifecycle*). `note` and
+`runbook` are living.
 
 ## The airlock (Obsidian ↔ GitHub)
 
@@ -67,9 +69,10 @@ The crossing is **fail-loud**: a `source_*` link that does not resolve **stops**
 Every doc — spine, supporting, or free-form brain — carries the *same* small property set. It is a **closed vocabulary: never invent keys.** (An AI left free to add properties invents hundreds of nonsensical ones; a fixed set keeps the brain queryable as it grows into product, business, and legal.) Anything not on this list belongs in the **body**, not the frontmatter.
 
 - **Base — every doc:** `type` · `status` · `created` · `updated`.
-- **Crossing-links — only where they apply:** `source_spec` / `source_feature_rfc` / `source_technical_rfc` (the up-spine link; the product-spec is the root and carries none) · `crossed_to` (where a design crossed — stamped at the crossing) · `superseded_by` / `retired_reason` (on retirement).
+- **Crossing-links — only where they apply:** `source_spec` / `source_feature_rfc` / `source_technical_rfc` (the up-spine link; the product-spec is the root and carries none) · `crossed_to` (where a design crossed — stamped at the crossing) · `supersedes` (the declaration: required on `product-spec` and `feature-rfc` at authoring — a list of `[[wikilink]]`s naming what this doc replaces; empty (`[]`) is allowed only with a one-line body justification; never on a task) / `superseded_by` (the reverse edge, set on the target) / `retired_reason` (on retirement).
 
-That is the whole set. `title` is the H1, not a field; `stage` is the `type`; `home` is the `type`; the component and iteration are the **folder** — none of them are frontmatter. A new area (legal, marketing, business) earns a new **`type`** deliberately when it's built out; until then those docs are `note`, the wildcard.
+That is the whole set — grown by exactly one key this iteration, `supersedes` (the declaration
+counterpart to the pre-existing `superseded_by`). `title` is the H1, not a field; `stage` is the `type`; `home` is the `type`; the component and iteration are the **folder** — none of them are frontmatter. A new area (legal, marketing, business) earns a new **`type`** deliberately when it's built out; until then those docs are `note`, the wildcard.
 
 ## Naming
 
@@ -92,6 +95,9 @@ stateDiagram-v2
 - **Crossing to a repo does not change status** — a built doc stays `active`, recorded with `crossed_to`. A doc retires only when a newer one replaces it (`superseded`, with `superseded_by`).
 - Supersession is a **state, not a move**: set the status, don't relocate the file (`archive/` is for retiring a whole era, not a single doc).
 - **Supersession needs a posterior invalidator — a *move* is not a supersession.** A doc goes `superseded` only when a *later* doc changed the decision. A doc whose content merely **moved** — re-homed onto the model, the decision unchanged — was *migrated*: the original is **deleted** (its content now lives at the new path; the bytes survive in `.trash`/git), never tombstoned. Mislabelling a move as `superseded` lies about history and leaves a drift-prone duplicate.
+- **The accept act stamps the pair.** The attended session that accepts a declaring doc (`draft → active` on a `product-spec` or `feature-rfc` carrying `supersedes`) stamps every named target `status: superseded` with its `superseded_by` back-pointer to the replacer, **in that same session** — tombstones land at accept, never deferred to close. The accepting session then runs the supersession sweep (`check_supersession.py --sweep`, see [`gates.md`](gates.md)) to verify every pair it just created.
+- **The down-flow rule.** A superseded `product-spec` obliges a disposition for every *active* spine doc whose `source_spec` resolves to it: each must be named directly in the declaring doc's `supersedes` list, or cited in its body as carried forward from the replacing intent. An undispositioned child is a hard finding for `check_supersession`.
+- **Supporting docs (`research`/`note`/`runbook`) read `active` differently.** For these, `active` means *concluded-and-citable dated testimony* — never a claim about the present state of things. Freshness is **event-driven**, via an optional named revisit trigger in the doc's body — never gated on a clock. `research` is superseded only by newer research, never by a spine doc. For this gloss, no new status value is introduced — the same `draft`/`active`/`rejected`/`superseded` set already covers supporting docs.
 - **This model reference is *living*** — like code (king, always current), it is kept up to date. *Shipping freezes the why* was always scoped to iteration **spine** docs (`product-spec`/`feature-rfc`/`technical-rfc`); supporting types (`research`/`note`/`runbook`) were always living, and this reference — like any component's living reference (*The cross-cutting layer*) — is one of them: not an exemption from the freeze, an **obligation** to stay current on top of it. It ships as a version of the factory skill; its history is the skill's version history. Every shipped spine doc (spec/rfc) is frozen; a change to one is a new iteration, never a rewrite — so their `updated:` only ever reflects a frontmatter normalization.
 
 ## Reviewing a doc
@@ -134,7 +140,7 @@ Alongside `iterations/`, a component may grow **domain-noun folders** — `archi
 
 ### The living reference
 
-A component may declare **at most one living reference**: a `note` holding the cross-cutting big picture (what it must be · how it's built · deployed · maintained), **kept current**. At most one, because a component has one big picture — a second is the first step back toward the hub note this model bans; further detail belongs in the domain homes' own `research`/`runbook` docs, cited from the reference.
+A component may declare **at most one living reference**: a `note` holding the cross-cutting big picture (what it must be · how it's built · deployed · maintained), **kept current**. At most one, because a component has one big picture — a second is the first step back toward the hub note this model bans; further detail belongs in the domain homes' own `research`/`runbook` docs, cited from the reference. A living reference names which of its sections are **load-bearing** — the component's architect charter defines the set; touching a load-bearing section is an architect earn-arm.
 
 **The mirror line** is what separates a living reference from a banned mirror: it may render cross-cutting facts as a **navigational summary**, *provided* every fact **cites its authoritative home** and **none is asserted on the reference's own authority.** It cites, never copies. When code ships, its "how" sections become **pointers into the repo**.
 
@@ -156,7 +162,7 @@ The closed set of update triggers. Each binds to a **named factory moment**; enf
 |---|---|
 | **Grounding** | authoring the `01` — cite the cross-cutting doc(s) it relies on or affects |
 | **Read at spec-ready** | the spec-ready gate — verify the grounding docs still hold true before the spec goes `active` |
-| **Write at ship** | the iteration close — walk the grounding list: the living reference updates in place; `research` is **superseded**, never edited |
+| **Write at ship** | the iteration close — walk the grounding list: the living reference updates in place (the **architect's** ship-walk where that role is earned on the component, the **closing session's** otherwise); `research` is **superseded**, never edited |
 | **Executed records** | the operation's own execution — `operations/` appends when the operation runs, on its own clock |
 | **Framing events** | the framing conversation — a human framing/vision change lands in the living reference the same day, attributed and dated |
 
