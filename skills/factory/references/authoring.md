@@ -21,6 +21,12 @@ implementation decisions.
 `THE SYSTEM SHALL …` for static content). `type: product-spec`, `status: draft` (→ `active` at the gate).
 Named `01-<slug>.md` in `<component>/iterations/<n>-<slug>/`.
 
+**Declaration:** carry `supersedes` from the template — a list of `[[wikilink]]`s naming what this spec
+replaces, or `[]` when nothing is replaced (an empty declaration needs a one-line body justification, see
+[`documentation-model.md`](documentation-model.md) — *Frontmatter*). Run `check_supersession.py` in draft
+mode while authoring (see [`gates.md`](gates.md)) — it checks the declaration's grammar, resolves each
+named target, and flags any active spine doc still undispositioned under a superseded target.
+
 **How to work:** open the `01` draft early and evolve WHAT/WHY *there* with the human, in Obsidian. Don't
 brainstorm in the terminal and paste a finished spec — the doc is where the thinking lives. The spec must
 be developed *in* the doc, not assembled from a finished outline.
@@ -29,7 +35,10 @@ be developed *in* the doc, not assembled from a finished outline.
 proposed design is sound, without knowing how it will be built? If not, it is not ready.
 
 **Gate: *spec-ready* (human).** A human reads the spec and decides it is complete enough to design against.
-For the review discipline that feeds this gate, see [`reviewing.md`](reviewing.md).
+Accepting a spec that declares `supersedes` is the **accept act**: in that same session, stamp every named
+target `status: superseded` with `superseded_by` back-pointing to this spec, then run
+`check_supersession.py --sweep` to verify the pairs (see [`gates.md`](gates.md)). For the review discipline
+that feeds this gate, see [`reviewing.md`](reviewing.md).
 
 ---
 
@@ -41,14 +50,22 @@ the change is small or the approach obvious, go directly to step 3 (floor: produ
 **Content:** the approach, decision, scope, non-goals. `source_spec:` the product-spec as a
 `[[wikilink]]`. Author in Obsidian, from `templates/feature-rfc.md`.
 
+**Declaration:** carry `supersedes` from the template — a list of `[[wikilink]]`s naming what this
+feature-rfc replaces, or `[]` when nothing is replaced (an empty declaration needs a one-line body
+justification, see [`documentation-model.md`](documentation-model.md) — *Frontmatter*). Run
+`check_supersession.py` in draft mode while authoring (see [`gates.md`](gates.md)).
+
 **How to work:** send the outline to the human first — it is cheaper to redirect here than after full
 authoring. Then draft in full.
 
 **Judgment:** is the approach worth arguing, or is it routine? Would skipping this layer cost a reviewer
 meaningful context about *why* this approach over alternatives?
 
-**Gate: *approve-RFC* (human).** Human reviews the outline, then the draft. For the review discipline,
-see [`reviewing.md`](reviewing.md).
+**Gate: *approve-RFC* (human).** Human reviews the outline, then the draft. Accepting a draft that
+declares `supersedes` is the **accept act**: in that same session, stamp every named target
+`status: superseded` with `superseded_by` back-pointing to this feature-rfc, then run
+`check_supersession.py --sweep` to verify the pairs (see [`gates.md`](gates.md)). For the review
+discipline, see [`reviewing.md`](reviewing.md).
 
 ---
 

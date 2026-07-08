@@ -385,7 +385,7 @@ def test_frontmatter_vocabulary_unchanged():
     known_keys = {
         "type", "status", "created", "updated",
         "source_spec", "source_feature_rfc", "source_technical_rfc",
-        "crossed_to", "superseded_by", "retired_reason",
+        "crossed_to", "supersedes", "superseded_by", "retired_reason",
     }
     found_keys = set()
     for line in key_list_lines:
