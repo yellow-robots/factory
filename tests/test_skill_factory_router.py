@@ -14,6 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "factory" / "SKILL.md"
 REFS = ROOT / "skills" / "factory" / "references"
 PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
+EPIC_GATE = ROOT / "tools" / "epic_gate.py"
 
 REQUIRED_REFS = [
     "authoring.md",
@@ -24,6 +25,7 @@ REQUIRED_REFS = [
     "migrating.md",
     "onboarding.md",
     "architect.md",
+    "debt-rounds.md",
 ]
 
 
@@ -69,8 +71,8 @@ def _plugin_data():
 # File existence
 # ---------------------------------------------------------------------------
 
-def test_all_seven_references_exist():
-    """All seven operation references must be present on disk."""
+def test_all_nine_references_exist():
+    """All nine operation references must be present on disk."""
     for ref in REQUIRED_REFS:
         assert (REFS / ref).exists(), f"Missing reference file: skills/factory/references/{ref}"
 
@@ -188,6 +190,7 @@ def test_each_reference_cites_documentation_model():
         "reviewing.md",
         "closing.md",
         "migrating.md",
+        "debt-rounds.md",
     ]
     for ref in refs_needing_doc_model_citation:
         text = (REFS / ref).read_text(encoding="utf-8")
@@ -531,3 +534,53 @@ def test_architect_md_has_report_shapes_per_moment():
         "architect.md crossing report shape missing choices with tradeoffs"
     assert "observable" in lower, \
         "architect.md report shapes missing observables"
+
+
+# ---------------------------------------------------------------------------
+# debt-rounds.md ↔ tools/epic_gate.py — record grammars pinned against the code (#91)
+#
+# The reference is canon; epic_gate.py is the machinery. Both must agree on the literal
+# markers so the two can never drift apart silently.
+# ---------------------------------------------------------------------------
+
+def _debt_rounds_text():
+    return (REFS / "debt-rounds.md").read_text(encoding="utf-8")
+
+
+def _epic_gate_text():
+    return EPIC_GATE.read_text(encoding="utf-8")
+
+
+def test_debt_rounds_kind_line_matches_epic_gate():
+    assert "YR-ITERATION-KIND: tech-debt" in _debt_rounds_text(), \
+        "debt-rounds.md missing the YR-ITERATION-KIND: tech-debt kind line"
+    assert "YR-ITERATION-KIND: tech-debt" in _epic_gate_text(), \
+        "tools/epic_gate.py missing the YR-ITERATION-KIND: tech-debt kind line"
+
+
+def test_debt_rounds_ledger_marker_matches_epic_gate():
+    assert "YR-DEBT-LEDGER" in _debt_rounds_text(), \
+        "debt-rounds.md missing the YR-DEBT-LEDGER marker"
+    assert "YR-DEBT-LEDGER" in _epic_gate_text(), \
+        "tools/epic_gate.py missing the YR-DEBT-LEDGER marker"
+
+
+def test_debt_rounds_due_marker_matches_epic_gate():
+    assert "YR-DEBT-DUE" in _debt_rounds_text(), \
+        "debt-rounds.md missing the YR-DEBT-DUE marker"
+    assert "YR-DEBT-DUE" in _epic_gate_text(), \
+        "tools/epic_gate.py missing the YR-DEBT-DUE marker"
+
+
+def test_debt_rounds_hold_marker_matches_epic_gate():
+    assert "YR-DEBT-HOLD" in _debt_rounds_text(), \
+        "debt-rounds.md missing the YR-DEBT-HOLD marker"
+    assert "YR-DEBT-HOLD" in _epic_gate_text(), \
+        "tools/epic_gate.py missing the YR-DEBT-HOLD marker"
+
+
+def test_debt_rounds_has_net_lines_marker():
+    """The net-lines PR-body record is reference-only: epic_gate.py never parses per-PR net-lines
+    bodies, aggregation into the ledger verdict is an attended round-close duty, not a sweep one."""
+    assert "YR-DEBT-NET-LINES" in _debt_rounds_text(), \
+        "debt-rounds.md missing the YR-DEBT-NET-LINES marker"
