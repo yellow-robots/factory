@@ -13,7 +13,9 @@ Once a task is `Status=Ready` (a human's flip, or the epic-gate under a standing
 the board every few minutes, finds the Ready task, and POSTs it (with explicit `owner/repo`) to the
 dispatch endpoint. A second n8n workflow POSTs `/sweep` on the same cadence — the org-wide epic-gate
 pass (`tools/epic_gate.py`: promote the next pre-approved slice, raise stranded claims, close finished
-epics), on its own lock so a sweep never blocks a build.
+epics), on its own lock so a sweep never blocks a build. The tick cadence is configuration, not
+prose: the live number is whatever `deploy/n8n-dispatch.json` / `deploy/n8n-epic-sweep.json` say —
+cite the file, never state a figure.
 
 **Dispatch (`tools/dispatch.py`):** bearer-auth, `flock`-guarded (single build in flight), detached
 fire-and-forget (it answers n8n before the runner runs — a refused or dying runner is invisible to

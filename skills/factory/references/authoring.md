@@ -90,7 +90,10 @@ doc that crossed (the feature-rfc, or the product-spec when none is earned). The
 crossing when it happens; the close-time freeze only verifies it (see
 [`documentation-model.md`](documentation-model.md) — *Identity & navigation*).
 
-**Gate: *review the technical-rfc* (human).** For the review discipline that feeds this gate, see
+**Gate: *the technical-rfc review* — the adversarial review discipline under the standing approval.**
+The human's structural gate sits at design-active, upstream; past the airlock there is no per-RFC
+human sign-off, and open questions never ride the epic — an unresolved WHAT-call sends the question
+back into the governing design doc. For the review discipline that feeds this gate, see
 [`reviewing.md`](reviewing.md).
 
 ---

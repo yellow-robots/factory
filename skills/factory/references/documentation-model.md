@@ -15,7 +15,7 @@ A consequence worth stating plainly: **shipping freezes the why.** When an itera
 - **Iterations are not uniform** — one may be a one-line fix, another a whole subsystem. We **encourage small**: the smaller the iteration, the cheaper its why-record and the clearer the history.
 - **Iterations are ordered** — you read them in the order they happened. Order lives in the numbered iteration folders (`1-…`, `2-…`) and the ordinal in each filename.
 - **An iteration is a container.** It groups the documents that explain *what* the change is and *why*, and links them to the code that resulted. Even the broad, sometimes far-fetched research you do at the start of a change belongs to the iteration that spawned it.
-- **Iterations live in an `iterations/` folder — and *everything inside it is an iteration*,** governed by this model, no exceptions. That claim is absolute precisely because it is *scoped*: **alongside `iterations/`, a component may grow governed cross-cutting homes** — optional domain-noun folders, see *The cross-cutting layer* — **and free-form brain** — business, legal, marketing, brand assets, an ideas-backlog, and an optional **orientation note** (its contract is the next bullet) — that this model does not govern. Free-form docs still carry the base frontmatter (see *Frontmatter*) but sit outside the spine. A folder draws the line, so the strong rule and the freedom coexist.
+- **Iterations live in an `iterations/` folder — and *everything inside it is an iteration*,** governed by this model, no exceptions. That claim is absolute precisely because it is *scoped*: **alongside `iterations/`, a component may grow governed cross-cutting homes** — optional domain-noun folders, see *The cross-cutting layer* — **and free-form brain** — business, legal, marketing, an ideas-backlog, and an optional **orientation note** (its contract is the next bullet) — that this model does not govern. Free-form docs still carry the base frontmatter (see *Frontmatter*) but sit outside the spine. A folder draws the line, so the strong rule and the freedom coexist. **Org-level cross-cutting homes sit above every component** — today `brand/` (the YR identity home, upstream of GTM and the website) and `strategy/`, plus an org-level ideas-backlog when born; brand assets live there, not in a component's free-form brain.
 - **The orientation note — the one free-form doc with a contract.** A component's *working context*: purpose + north-star, conventions, what's deliberately not built, open threads. **Context only — never an index of iterations** (that is `ls` + each `01`, and it is the part that rots: an unscoped overview note decays into a dead stub). Hand-authored and optional, never auto-generated; `type: note`; it *cites* the repo's `AGENTS.md`, never duplicates it. This is the line between a durable orientation note and the hub note the model forbids — orientation = working context, hub = duplicated structure.
 
 ## The document types
@@ -70,6 +70,7 @@ Every doc — spine, supporting, or free-form brain — carries the *same* small
 
 - **Base — every doc:** `type` · `status` · `created` · `updated`.
 - **Crossing-links — only where they apply:** `source_spec` / `source_feature_rfc` / `source_technical_rfc` (the up-spine link; the product-spec is the root and carries none) · `crossed_to` (where a design crossed — stamped at the crossing) · `supersedes` (the declaration: required on `product-spec` and `feature-rfc` at authoring — a list of `[[wikilink]]`s naming what this doc replaces; empty (`[]`) is allowed only with a one-line body justification; never on a task) / `superseded_by` (the reverse edge, set on the target) / `retired_reason` (on retirement).
+- **Link idiom.** Vault-internal references in vault docs are wikilinks — the double-square-bracket form — never paths: wikilinks survive renames and moves; backtick paths are for repo files only.
 
 That is the whole set — grown by exactly one key this iteration, `supersedes` (the declaration
 counterpart to the pre-existing `superseded_by`). `title` is the H1, not a field; `stage` is the `type`; `home` is the `type`; the component and iteration are the **folder** — none of them are frontmatter. A new area (legal, marketing, business) earns a new **`type`** deliberately when it's built out; until then those docs are `note`, the wildcard.
@@ -116,6 +117,8 @@ The test is not a finding-count: *does the review's reasoning belong in the froz
 A component's governed space is **`iterations/`**, plus any **cross-cutting homes** it has grown (*The cross-cutting layer*, next); free-form brain sits alongside both. Inside an iteration, the spine and its research sit flat, and the Base sorts them by `type`/`status`.
 
 ```
+04 projects/<program>/       org level — cross-cutting homes above every component: brand/ (YR identity,
+                              upstream of GTM and the website) · strategy/ · an org-level ideas-backlog when born
 04 projects/<program>/<component>/
   iterations/                 the governed space — everything in here is an iteration
     1-<iteration>/              a numbered iteration (ship order)
@@ -124,7 +127,7 @@ A component's governed space is **`iterations/`**, plus any **cross-cutting home
     2-<iteration>/ …
   architecture/ · operations/ · strategy/ …   optional cross-cutting homes — domain-noun folders,
                               fully governed, supporting types only (research/note/runbook)
-  <free-form brain>           business · legal · marketing · brand assets · ideas-backlog · optional orientation note
+  <free-form brain>           business · legal · marketing · ideas-backlog · optional orientation note
                               — base frontmatter only, outside every governed space
 ```
 
