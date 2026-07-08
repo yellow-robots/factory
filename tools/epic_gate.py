@@ -39,6 +39,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tomllib
 
 # --- Projects field config (reused from the runner; env-overridable, same live defaults) ---------------
 ORG = os.environ.get("YR_ORG", "yellow-robots")
@@ -66,6 +67,11 @@ BUSY_REASON = {"Blocked", "Needs-info"}
 #     where dispatch.py's build-lock lives (the same default/env name it uses) ---------------------
 STRANDED_AFTER_MIN = int(os.environ.get("STRANDED_AFTER_MIN", "45"))
 DISPATCH_LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
+
+# --- debt-round counter config: how many closed-as-completed feature epics (since the last closed debt
+#     epic) it takes to raise the need for a round; per-repo override lives in the manifest (see
+#     `_resolve_debt_threshold`) ---------------------------------------------------------------------
+DEBT_ROUND_EVERY = int(os.environ.get("DEBT_ROUND_EVERY", "10"))
 
 # --- GraphQL (fetch exactly what the algorithm needs; `first: 100` inherits the board-scale pagination
 #     TODO in deploy/ready-query.graphql — acceptable at current board size) ----------------------------
@@ -113,6 +119,49 @@ query($owner: String!, $name: String!, $number: Int!) {
               reason: fieldValueByName(name: "Reason") {
                 ... on ProjectV2ItemFieldSingleSelectValue { name }
               }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+# --- debt-counter searches: repo-side, through the search index (search lags a close by minutes — an
+#     accepted tradeoff for an idempotent reminder re-swept every few minutes; see `_sweep_debt_counters`)
+DEBT_CLOSED_SEARCH_QUERY = """
+query($q: String!, $cursor: String) {
+  search(query: $q, type: ISSUE, first: 100, after: $cursor) {
+    nodes {
+      ... on Issue {
+        number
+        closedAt
+        stateReason
+        body
+        issueType { name }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
+DEBT_RAISE_SEARCH_QUERY = """
+query($q: String!) {
+  search(query: $q, type: ISSUE, first: 20) {
+    nodes {
+      ... on Issue {
+        number
+        body
+        url
+        projectItems(first: 20) {
+          nodes {
+            id
+            project { number }
+            status: fieldValueByName(name: "Status") {
+              ... on ProjectV2ItemFieldSingleSelectValue { name }
             }
           }
         }
@@ -225,6 +274,7 @@ def _stranded_body(age_min):
 DEBT_KIND_LINE = "YR-ITERATION-KIND: tech-debt"
 LEDGER_MARKER = "YR-DEBT-LEDGER"
 HOLD_MARKER = "YR-DEBT-HOLD"
+DUE_MARKER = "YR-DEBT-DUE"
 
 
 def _extract_field(body, key):
@@ -359,6 +409,184 @@ def _pi_node(subissue, project_number):
     return None
 
 
+# --- the per-repo debt counter: closed-as-completed feature epics since the most recent closed debt epic
+#     (the anchor), raising the need for a round exactly once at the threshold ------------------------
+def _debt_repo_set(nodes):
+    """Distinct `repository.nameWithOwner` over board items whose content is an Issue of Type Feature —
+    any state, any Status. Reuses the content/type guards of the sweep's own board loop, without its
+    OPEN/Ready filters: the counted-repo set is every repo that holds a feature epic on the board at all,
+    live or finished."""
+    repos = set()
+    for item in nodes:
+        content = item.get("content") or {}
+        if not content:
+            continue
+        if ((content.get("issueType") or {}).get("name") or "").lower() != "feature":
+            continue
+        repo = (content.get("repository") or {}).get("nameWithOwner") or ""
+        if repo:
+            repos.add(repo)
+    return repos
+
+
+def _search_closed_feature_epics(gh, repo):
+    """Every closed, Type=Feature issue on `repo`, paginated through the search index."""
+    nodes = []
+    cursor = None
+    while True:
+        argv = ["api", "graphql", "-f", "query=" + DEBT_CLOSED_SEARCH_QUERY,
+                "-f", f"q=repo:{repo} is:issue state:closed type:Feature"]
+        if cursor:
+            argv += ["-f", f"cursor={cursor}"]
+        data = _query(gh, argv)
+        search = data.get("search") or {}
+        nodes += search.get("nodes") or []
+        page = search.get("pageInfo") or {}
+        if not page.get("hasNextPage"):
+            break
+        cursor = page.get("endCursor")
+    return [n for n in nodes if ((n.get("issueType") or {}).get("name") or "").lower() == "feature"]
+
+
+def _debt_anchor_and_countable(closed_epics):
+    """The anchor (the debt-kind epic with the latest `closedAt`, any `stateReason`, or None when there
+    isn't one) and the countable set (`stateReason == COMPLETED`, not debt-kind, closed after the anchor
+    — all of them when there is no anchor). Nodes missing `closedAt` are skipped defensively."""
+    dated = [(n, _parse_dt(n["closedAt"])) for n in closed_epics if n.get("closedAt")]
+    anchor_node, anchor_dt = None, None
+    for n, dt in dated:
+        if _is_debt_epic(n.get("body") or "") and (anchor_dt is None or dt > anchor_dt):
+            anchor_node, anchor_dt = n, dt
+    countable = [
+        n for n, dt in dated
+        if (n.get("stateReason") or "").upper() == "COMPLETED"
+        and not _is_debt_epic(n.get("body") or "")
+        and (anchor_dt is None or dt > anchor_dt)
+    ]
+    return anchor_node, countable
+
+
+def _read_manifest_threshold(gh, repo):
+    """`debt_round_every` from `repo`'s `.yr/factory.toml`, read via the gh contents API and parsed with
+    stdlib `tomllib`. Raises on any missing/unreadable/unparseable/non-int/<1 value — the caller folds
+    every such failure into the same default fallback."""
+    owner, _, name = repo.partition("/")
+    raw = gh(["api", f"repos/{owner}/{name}/contents/.yr/factory.toml",
+              "-H", "Accept: application/vnd.github.raw"])
+    text = raw if isinstance(raw, str) else json.dumps(raw)
+    value = tomllib.loads(text).get("debt_round_every")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("invalid debt_round_every")
+    return value
+
+
+def _resolve_debt_threshold(gh, repo):
+    """`DEBT_ROUND_EVERY` env beats `repo`'s own manifest key `debt_round_every` beats the default — any
+    read, parse, or validity failure (missing, non-integer, below 1) falls back to the default, never an
+    error or a skipped count."""
+    if os.environ.get("DEBT_ROUND_EVERY") is not None:
+        return DEBT_ROUND_EVERY
+    try:
+        return _read_manifest_threshold(gh, repo)
+    except Exception:
+        return DEBT_ROUND_EVERY
+
+
+def _is_due_raise(body, repo, anchor_str):
+    """True iff `body` carries the due marker on its own whole stripped line AND its own `repo:`/
+    `anchor:` fields match the current (repo, anchor) key — a raise whose anchor differs is a *different*
+    key, so it never suppresses a new raise."""
+    if not any(line.strip() == DUE_MARKER for line in (body or "").splitlines()):
+        return False
+    return _extract_field(body, "repo") == repo and _extract_field(body, "anchor") == anchor_str
+
+
+def _search_open_due_raise(gh, repo, anchor_str):
+    """The existing open raise issue for (`repo`, `anchor_str`), or None."""
+    argv = ["api", "graphql", "-f", "query=" + DEBT_RAISE_SEARCH_QUERY,
+            "-f", f"q=repo:{repo} is:issue is:open {DUE_MARKER}"]
+    data = _query(gh, argv)
+    nodes = ((data.get("search") or {}).get("nodes")) or []
+    for n in nodes:
+        if _is_due_raise(n.get("body") or "", repo, anchor_str):
+            return n
+    return None
+
+
+def _due_title(count, anchor_node):
+    since = f"#{anchor_node['number']}" if anchor_node else "the first countable epic"
+    return f"Tech-debt round due ({count} feature epics since {since})"
+
+
+def _due_body(repo, anchor_str, count, counted_numbers):
+    counted_str = ", ".join(f"#{n}" for n in counted_numbers)
+    return (
+        f"{DUE_MARKER}\n"
+        f"repo: {repo}\n"
+        f"anchor: {anchor_str}\n"
+        f"count: {count}\n"
+        f"counted: {counted_str}\n\n"
+        f"A tech-debt round is due on **{repo}**: {count} feature epic(s) have closed as completed since "
+        "the anchor above with no debt epic of their own. See `skills/factory/references/debt-rounds.md` "
+        "for the round protocol. Promotion stays a human act — this issue only names the need."
+    )
+
+
+def _sweep_debt_counters(gh, repos, *, project_number, status_field_id, status_opt, org):
+    """Per repo holding a Feature epic on the board: count closed-as-completed feature epics since the
+    most recent closed debt epic (the anchor), and at the threshold raise the need exactly once — as a
+    Type=Task Backlog issue keyed on (repo, anchor), never re-keyed on the count. Never sets Ready, never
+    promotes, never closes, never clears a Reason.
+
+    A failure on one repo is isolated: caught here, surfaced as a `debt-error` action, and never touches
+    epic processing or any other repo's counting."""
+    actions = []
+    for r in sorted(repos):
+        try:
+            closed = _search_closed_feature_epics(gh, r)
+            anchor_node, countable = _debt_anchor_and_countable(closed)
+            threshold = _resolve_debt_threshold(gh, r)
+            count = len(countable)
+            anchor_str = f"#{anchor_node['number']}" if anchor_node else "none"
+
+            if count < threshold:
+                actions.append({"action": "debt-count", "repo": r, "count": count, "threshold": threshold})
+                continue
+
+            existing = _search_open_due_raise(gh, r, anchor_str)
+            if existing is not None:
+                pi = _pi_node(existing, project_number)
+                if pi and pi.get("id"):
+                    continue                       # already fully on the board -- never touched
+                url = existing.get("url")
+                if not url:
+                    continue
+                added = gh(["project", "item-add", str(project_number), "--owner", org,
+                            "--url", url, "--format", "json"])
+                added = added if isinstance(added, dict) else json.loads(added)
+                item_id = added.get("id")
+                if item_id:
+                    _set_field(gh, item_id, status_field_id, status_opt["Backlog"])
+                actions.append({"action": "debt-repair", "repo": r, "issue": existing.get("number")})
+                continue
+
+            counted_numbers = sorted(n["number"] for n in countable)
+            title = _due_title(count, anchor_node)
+            body = _due_body(r, anchor_str, count, counted_numbers)
+            out = gh(["issue", "create", "--repo", r, "--title", title, "--type", "Task", "--body", body])
+            url = out.strip() if isinstance(out, str) else out
+            added = gh(["project", "item-add", str(project_number), "--owner", org,
+                        "--url", url, "--format", "json"])
+            added = added if isinstance(added, dict) else json.loads(added)
+            item_id = added.get("id")
+            if item_id:
+                _set_field(gh, item_id, status_field_id, status_opt["Backlog"])
+            actions.append({"action": "debt-raise", "repo": r, "count": count, "anchor": anchor_str})
+        except Exception as exc:
+            actions.append({"action": "debt-error", "repo": r, "error": str(exc)})
+    return actions
+
+
 def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, status_opt, reason_opt,
                    now, build_lock_held, stranded_after_min):
     """Run the per-epic algorithm for one Ready epic; return a list of the actions taken."""
@@ -449,11 +677,16 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
                 status_opt=None, reason_opt=None,
                 now=None, build_lock_held=None, stranded_after_min=None):
     """Run one sweep of the org board. For each OPEN, `Type=Feature`, `Status=Ready` epic (candidates,
-    interleaved with no prioritization), apply the per-epic algorithm. Returns the list of actions taken.
+    interleaved with no prioritization), apply the per-epic algorithm. Then run the per-repo debt counter
+    over the distinct repositories holding any Type=Feature issue on the board (any state, any Status).
+    Returns the list of actions taken.
 
     The sweep only ever *sets* Status/Reason and posts comments — it never clears a Reason (clearing is
     the human's explicit resume act), never builds, and never sets any Status but `Ready` (promotion).
-    Standalone tasks and children of non-Ready epics are never visited, so never touched (cord-pull).
+    Standalone tasks and children of non-Ready epics are never visited, so never touched (cord-pull). The
+    debt counter adds exactly three write kinds on top — create the raise issue, add it to the board, set
+    its Status to Backlog — and still never sets Ready, never promotes, never closes, never clears a
+    Reason.
 
     `now` (a `() -> datetime.datetime` clock), `build_lock_held` (a `() -> bool` probe), and
     `stranded_after_min` are injectable for the stranded-claim check — each defaults to a real read."""
@@ -487,6 +720,10 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
         }
         actions += _process_epic(gh, epic, project_number, status_field_id, reason_field_id,
                                  status_opt, reason_opt, now, build_lock_held, stranded_after_min)
+
+    debt_repos = _debt_repo_set(nodes)
+    actions += _sweep_debt_counters(gh, debt_repos, project_number=project_number,
+                                    status_field_id=status_field_id, status_opt=status_opt, org=org)
     return actions
 
 
@@ -505,6 +742,15 @@ def main(argv=None):
         elif a["action"] == "raise" and "child" in a:
             print(f"epic-gate: raised stranded child #{a['child']} under epic #{a['epic']} "
                   f"(Reason={a['reason']})")
+        elif a["action"] == "debt-count":
+            print(f"epic-gate: debt-count {a['repo']} = {a['count']}/{a['threshold']}")
+        elif a["action"] == "debt-raise":
+            print(f"epic-gate: raised a tech-debt round for {a['repo']} "
+                  f"(count={a['count']}, anchor={a['anchor']})")
+        elif a["action"] == "debt-repair":
+            print(f"epic-gate: repaired tech-debt raise #{a['issue']} onto the board for {a['repo']}")
+        elif a["action"] == "debt-error":
+            print(f"epic-gate: debt-error on {a['repo']}: {a.get('error', '')}")
         else:
             print(f"epic-gate: raised epic #{a['epic']} (Reason={a['reason']})")
     return 0

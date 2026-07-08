@@ -14,8 +14,10 @@ assertions; the defaults themselves (reuse of the runner's ids) are asserted sep
 """
 import datetime
 import importlib
+import inspect
 import json
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -753,7 +755,10 @@ def test_finished_non_debt_epic_closes_byte_for_byte_as_today():
     actions = _sweep(fake)
     assert fake.closes == [(REPO, "100", "completed")]
     assert fake.comments == []
-    assert actions == [{"epic": 100, "action": "close", "reason": "completed"}]
+    # the debt counter rides along on every sweep too -- REPO has 0 closed feature epics in this fake's
+    # canned data, so it only observes (nothing written), same as every other plain-FakeGh test below
+    assert actions == [{"epic": 100, "action": "close", "reason": "completed"},
+                        {"action": "debt-count", "repo": REPO, "count": 0, "threshold": 10}]
 
 
 def test_body_mentioning_kind_sentinel_inline_is_not_a_debt_epic():
@@ -777,7 +782,9 @@ def test_debt_epic_with_no_verdict_holds_instead_of_closing():
     actions = _sweep(fake)
 
     assert fake.closes == []                                # never closed
-    assert actions == [{"epic": 100, "action": "hold"}]
+    # the debt counter's own observability action (0 closed feature epics for REPO) rides along too
+    assert actions == [{"epic": 100, "action": "hold"},
+                        {"action": "debt-count", "repo": REPO, "count": 0, "threshold": 10}]
     # hold comment posted on the epic, opening with the marker on its own line
     assert len(fake.comments) == 1
     repo, number, comment_body = fake.comments[0]
@@ -818,7 +825,8 @@ def test_stale_needs_info_reason_does_not_suppress_the_hold_comment():
     board, epics = _debt_epic_detail(comments=[], epic_reason="Needs-info")
     fake = FakeGh(board, epics)
     actions = _sweep(fake)
-    assert actions == [{"epic": 100, "action": "hold"}]
+    assert actions == [{"epic": 100, "action": "hold"},
+                        {"action": "debt-count", "repo": REPO, "count": 0, "threshold": 10}]
     hold_comments = [c for c in fake.comments if c[1] == "100"]
     assert len(hold_comments) == 1
     assert "YR-DEBT-HOLD" in hold_comments[0][2]
@@ -859,7 +867,8 @@ def test_ledger_marker_and_fields_split_across_two_comments_is_not_a_verdict():
     fake = FakeGh(board, epics)
     actions = _sweep(fake)
     assert fake.closes == []
-    assert actions == [{"epic": 100, "action": "hold"}]
+    assert actions == [{"epic": 100, "action": "hold"},
+                        {"action": "debt-count", "repo": REPO, "count": 0, "threshold": 10}]
 
 
 def test_debt_epic_with_valid_verdict_closes_exactly_as_today():
@@ -867,7 +876,8 @@ def test_debt_epic_with_valid_verdict_closes_exactly_as_today():
     fake = FakeGh(board, epics)
     actions = _sweep(fake)
     assert fake.closes == [(REPO, "100", "completed")]
-    assert actions == [{"epic": 100, "action": "close", "reason": "completed"}]
+    assert actions == [{"epic": 100, "action": "close", "reason": "completed"},
+                        {"action": "debt-count", "repo": REPO, "count": 0, "threshold": 10}]
     # no hold comment, no Reason edit -- closes exactly like the non-debt path
     assert not any(c[1] == "100" and "YR-DEBT-HOLD" in c[2] for c in fake.comments)
     assert _reason_edits(fake) == []
@@ -1051,3 +1061,559 @@ def test_stranded_raise_is_idempotent_across_ticks():
     _sweep(fake, now=_now, build_lock_held=_lock_free)                 # identical second tick
     assert fake.edits == edits_after_1                                 # no re-raise edit
     assert fake.comments == comments_after_1                           # no duplicate comment
+
+
+# ============================================================================
+# #90 — the per-repo debt counter and the once-only raise
+#
+# Extends the stubbed-`gh` harness with the debt-counter's own reads/writes: a paginated closed-Feature-
+# epic search per repo, the open-due-raise search, the manifest contents read, `issue create`, and
+# `project item-add`. `FakeDebtGh` subclasses `FakeGh` so a test can freely mix ordinary epic-processing
+# fixtures with debt-counter fixtures in the same fake (used by the isolation test below).
+# ============================================================================
+
+DEBT_REPO_A = "yellow-robots/repo-a"
+DEBT_REPO_B = "yellow-robots/repo-b"
+
+
+def _closed_epic(number, *, closed_at, state_reason="COMPLETED", body="", itype="Feature"):
+    """A closed-issue search-result node, as DEBT_CLOSED_SEARCH_QUERY returns it."""
+    return {"number": number, "closedAt": closed_at, "stateReason": state_reason, "body": body,
+            "issueType": {"name": itype}}
+
+
+def _hand_written_due_body(repo, anchor, count=10, counted=(101,)):
+    """A due-raise body authored straight from the AC's grammar (marker line, then repo/anchor/count/
+    counted, then prose) -- independent of the implementation's own `_due_body` wording, so the match
+    logic is proven against the spec's letter rather than against itself."""
+    counted_str = ", ".join(f"#{n}" for n in counted)
+    return (
+        f"{epic_gate.DUE_MARKER}\n"
+        f"repo: {repo}\n"
+        f"anchor: {anchor}\n"
+        f"count: {count}\n"
+        f"counted: {counted_str}\n\n"
+        "Prose pointing at the round protocol."
+    )
+
+
+def _due_raise_node(number, *, repo, anchor, count=10, counted=(101,), on_board=True,
+                     project_number=1, item_id="PI-EXISTING", wrong_project=False):
+    """An open due-raise search-result node, as DEBT_RAISE_SEARCH_QUERY returns it. `on_board=False` (or
+    `wrong_project=True`) models the half-done raise -- created, but never added to our board."""
+    nodes = []
+    if on_board:
+        nodes.append({"id": item_id, "project": {"number": 999 if wrong_project else project_number}})
+    return {"number": number, "body": _hand_written_due_body(repo, anchor, count, counted),
+            "url": f"https://github.com/{repo}/issues/{number}", "projectItems": {"nodes": nodes}}
+
+
+class FakeDebtGh(FakeGh):
+    """Extends `FakeGh` with the debt counter's reads/writes.
+
+    `closed_epic_pages`: repo -> list of *pages* (each page a list of `_closed_epic` nodes) -- a
+    single-page repo can just pass `[page]`. `manifest_repos`: repo -> raw `.yr/factory.toml` text (a
+    repo absent from this dict makes the contents read raise, modelling a missing/unreadable manifest).
+    `due_raise_nodes`: repo -> list of existing open-raise nodes. `search_raises`: repos whose closed-
+    epic search raises, to prove per-repo failure isolation.
+
+    A created issue is fed back into its own `due_raise_nodes` bucket, and a later `item-add` for that
+    issue's URL attaches a project item onto it -- so calling `_sweep_debt_counters` twice on the SAME
+    fake is a genuine two-tick idempotency proof, not just two independently-seeded calls."""
+
+    def __init__(self, board_nodes, epic_details, open_prs=None, *,
+                 closed_epic_pages=None, manifest_repos=None, due_raise_nodes=None, search_raises=None):
+        super().__init__(board_nodes, epic_details, open_prs)
+        self.closed_epic_pages = {r: [list(p) for p in pages] for r, pages in (closed_epic_pages or {}).items()}
+        self.manifest_repos = dict(manifest_repos or {})
+        self.due_raise_nodes = {r: list(ns) for r, ns in (due_raise_nodes or {}).items()}
+        self.search_raises = set(search_raises or [])
+        self.search_argv = []
+        self.manifest_argv = []
+        self.issue_create_argv = []
+        self.item_add_argv = []
+        self._next_id = 9000
+
+    def __call__(self, argv):
+        argv = list(argv)
+        if argv[:2] == ["api", "graphql"]:
+            q = cursor = None
+            for a in argv:
+                if a.startswith("q="):
+                    q = a[len("q="):]
+                elif a.startswith("cursor="):
+                    cursor = a[len("cursor="):]
+            if q is not None:
+                self.search_argv.append(argv)
+                return self._search(q, cursor)
+        elif argv[0] == "api" and len(argv) > 1 and "contents/.yr/factory.toml" in argv[1]:
+            self.manifest_argv.append(argv)
+            m = re.match(r"repos/([^/]+)/([^/]+)/contents/", argv[1])
+            repo = f"{m.group(1)}/{m.group(2)}"
+            if repo not in self.manifest_repos:
+                raise RuntimeError(f"gh api {argv[1]} failed (404): Not Found")
+            return self.manifest_repos[repo]
+        elif argv[:2] == ["issue", "create"]:
+            f = _flags(argv)
+            self.issue_create_argv.append(argv)
+            self._next_id += 1
+            number = self._next_id
+            url = f"https://github.com/{f['--repo']}/issues/{number}"
+            node = {"number": number, "body": f["--body"], "url": url, "projectItems": {"nodes": []}}
+            self.due_raise_nodes.setdefault(f["--repo"], []).append(node)
+            return url + "\n"
+        elif argv[:2] == ["project", "item-add"]:
+            f = _flags(argv)
+            self.item_add_argv.append(argv)
+            self._next_id += 1
+            item_id = f"PI-DUE-{self._next_id}"
+            pn = int(argv[2])
+            for nodes in self.due_raise_nodes.values():
+                for n in nodes:
+                    if n.get("url") == f["--url"]:
+                        n["projectItems"]["nodes"] = [{"id": item_id, "project": {"number": pn}}]
+            return {"id": item_id}
+        return super().__call__(argv)
+
+    def _search(self, q, cursor):
+        m = re.search(r"repo:(\S+)", q)
+        repo = m.group(1) if m else None
+        if "state:closed" in q:
+            if repo in self.search_raises:
+                raise RuntimeError(f"gh api graphql failed: search unavailable for {repo}")
+            pages = self.closed_epic_pages.get(repo, [[]])
+            idx = int(cursor) if cursor else 0
+            nodes = pages[idx] if idx < len(pages) else []
+            has_next = idx + 1 < len(pages)
+            return {"data": {"search": {"nodes": nodes,
+                                         "pageInfo": {"hasNextPage": has_next,
+                                                      "endCursor": str(idx + 1) if has_next else None}}}}
+        if epic_gate.DUE_MARKER in q:
+            return {"data": {"search": {"nodes": self.due_raise_nodes.get(repo, [])}}}
+        raise AssertionError(f"unexpected search query: {q!r}")
+
+
+def _run_debt_sweep(fake, repos, *, project_number=1):
+    return epic_gate._sweep_debt_counters(
+        fake, repos, project_number=project_number,
+        status_field_id=STATUS_FIELD, status_opt=STATUS_OPT, org="yellow-robots",
+    )
+
+
+# ---- repo-set derivation: distinct repos over Feature-type board items, any state, any Status --------
+
+def test_debt_repo_set_any_state_any_status_feature_only():
+    nodes = [
+        _item(1, item_id="A", itype="Feature", status="Ready", state="OPEN", repo="org/r1"),
+        _item(2, item_id="B", itype="Feature", status=None, state="CLOSED", repo="org/r2"),
+        _item(3, item_id="C", itype="Feature", status="Backlog", state="OPEN", repo="org/r1"),  # dup
+        _item(4, item_id="D", itype="Task", status="Backlog", state="OPEN", repo="org/r3"),     # not Feature
+        {"id": "E", "content": None},                                                           # draft item
+    ]
+    assert epic_gate._debt_repo_set(nodes) == {"org/r1", "org/r2"}
+
+
+# ---- anchor selection + countable classification (`_debt_anchor_and_countable`) -----------------------
+
+def test_no_anchor_all_countable_epics_count():
+    closed = [_closed_epic(1, closed_at="2026-01-01T00:00:00Z"),
+              _closed_epic(2, closed_at="2026-02-01T00:00:00Z"),
+              _closed_epic(3, closed_at="2026-03-01T00:00:00Z")]
+    anchor, countable = epic_gate._debt_anchor_and_countable(closed)
+    assert anchor is None
+    assert sorted(n["number"] for n in countable) == [1, 2, 3]
+
+
+def test_anchor_is_the_latest_closed_debt_epic():
+    closed = [
+        _closed_epic(1, closed_at="2026-01-01T00:00:00Z", body=DEBT_BODY),
+        _closed_epic(2, closed_at="2026-03-01T00:00:00Z", body=DEBT_BODY),   # the latest debt epic
+        _closed_epic(3, closed_at="2026-02-01T00:00:00Z"),                  # before the anchor -> excluded
+        _closed_epic(4, closed_at="2026-04-01T00:00:00Z"),                  # after the anchor -> counted
+    ]
+    anchor, countable = epic_gate._debt_anchor_and_countable(closed)
+    assert anchor["number"] == 2
+    assert [n["number"] for n in countable] == [4]
+
+
+def test_not_planned_closed_debt_epic_still_anchors():
+    """The spec's letter: any closed debt epic anchors, regardless of close reason."""
+    closed = [_closed_epic(1, closed_at="2026-01-01T00:00:00Z", state_reason="NOT_PLANNED", body=DEBT_BODY),
+              _closed_epic(2, closed_at="2026-02-01T00:00:00Z")]
+    anchor, countable = epic_gate._debt_anchor_and_countable(closed)
+    assert anchor["number"] == 1
+    assert [n["number"] for n in countable] == [2]
+
+
+def test_not_planned_feature_epic_never_counts():
+    """Pins the coupling with `_epic_close_reason`'s 'completed' write: an epic only closes with reason
+    `completed` when >=1 child completed, and the counter's own filter requires `stateReason ==
+    COMPLETED` -- a not-planned closed epic must never be countable."""
+    closed = [_closed_epic(1, closed_at="2026-01-01T00:00:00Z", state_reason="NOT_PLANNED")]
+    _, countable = epic_gate._debt_anchor_and_countable(closed)
+    assert countable == []
+    assert epic_gate._epic_close_reason([{"stateReason": "NOT_PLANNED"}]) == "not planned"
+
+
+def test_debt_epic_itself_never_countable_even_if_completed():
+    closed = [_closed_epic(1, closed_at="2026-01-01T00:00:00Z", state_reason="COMPLETED", body=DEBT_BODY)]
+    anchor, countable = epic_gate._debt_anchor_and_countable(closed)
+    assert countable == []
+    assert anchor["number"] == 1
+
+
+def test_node_missing_closed_at_is_skipped_defensively():
+    closed = [
+        {"number": 1, "closedAt": None, "stateReason": "COMPLETED", "body": DEBT_BODY,
+         "issueType": {"name": "Feature"}},
+        _closed_epic(2, closed_at="2026-01-01T00:00:00Z"),
+    ]
+    anchor, countable = epic_gate._debt_anchor_and_countable(closed)
+    assert anchor is None                              # the debt epic with no closedAt never anchors
+    assert [n["number"] for n in countable] == [2]
+
+
+# ---- threshold resolution: env beats manifest beats default; any failure falls back to the default ----
+
+def test_debt_round_every_default_is_10():
+    assert epic_gate.DEBT_ROUND_EVERY == 10
+
+
+def test_manifest_threshold_used_when_env_unset(monkeypatch):
+    monkeypatch.delenv("DEBT_ROUND_EVERY", raising=False)
+    assert epic_gate._resolve_debt_threshold(lambda argv: "debt_round_every = 7\n", "org/repo") == 7
+
+
+def test_env_threshold_beats_manifest_and_short_circuits_the_read(monkeypatch):
+    monkeypatch.setenv("DEBT_ROUND_EVERY", "4")
+    try:
+        importlib.reload(epic_gate)
+
+        def gh(argv):
+            raise AssertionError("the manifest must not be read when the env override is set")
+
+        assert epic_gate._resolve_debt_threshold(gh, "org/repo") == 4
+    finally:
+        monkeypatch.undo()
+        importlib.reload(epic_gate)
+
+
+def test_unreadable_manifest_falls_back_to_default(monkeypatch):
+    monkeypatch.delenv("DEBT_ROUND_EVERY", raising=False)
+
+    def gh(argv):
+        raise RuntimeError("gh api ... failed (404): Not Found")
+
+    assert epic_gate._resolve_debt_threshold(gh, "org/repo") == epic_gate.DEBT_ROUND_EVERY
+
+
+def test_manifest_invalid_values_fall_back_to_default(monkeypatch):
+    monkeypatch.delenv("DEBT_ROUND_EVERY", raising=False)
+    bad_manifests = [
+        "other_key = 1\n",              # missing debt_round_every
+        "debt_round_every = 0\n",       # below 1
+        "debt_round_every = -3\n",      # below 1
+        "debt_round_every = true\n",    # a TOML boolean, not an integer
+        'debt_round_every = "5"\n',     # a TOML string, not an integer
+        "not [ valid toml",             # unparseable
+    ]
+    for raw in bad_manifests:
+        def gh(argv, raw=raw):
+            return raw
+        assert epic_gate._resolve_debt_threshold(gh, "org/repo") == epic_gate.DEBT_ROUND_EVERY, raw
+
+
+def test_env_threshold_overrides_manifest_end_to_end(monkeypatch):
+    """The precedence proven through the real counting path, not just the resolver in isolation."""
+    monkeypatch.setenv("DEBT_ROUND_EVERY", "1")
+    try:
+        importlib.reload(epic_gate)
+        closed = [_closed_epic(1, closed_at="2026-01-01T00:00:00Z")]
+        fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                           manifest_repos={DEBT_REPO_A: "debt_round_every = 100\n"})
+        actions = epic_gate._sweep_debt_counters(
+            fake, {DEBT_REPO_A}, project_number=1,
+            status_field_id=STATUS_FIELD, status_opt=STATUS_OPT, org="yellow-robots")
+        assert actions and actions[0]["action"] == "debt-raise"   # env(1) reached, not manifest(100)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(epic_gate)
+
+
+# ---- the search itself: query shape, pagination, defensive client-side type re-filter ------------------
+
+def test_closed_epic_search_query_shape():
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [[]]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 5\n"})
+    _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert len(fake.search_argv) == 1
+    q = next(a for a in fake.search_argv[0] if a.startswith("q="))
+    assert f"repo:{DEBT_REPO_A}" in q and "state:closed" in q and "type:Feature" in q
+
+
+def test_closed_epic_search_paginates_across_two_pages():
+    page1 = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z")]
+    page2 = [_closed_epic(102, closed_at="2026-02-01T00:00:00Z")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [page1, page2]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 5\n"})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert actions == [{"action": "debt-count", "repo": DEBT_REPO_A, "count": 2, "threshold": 5}]
+    assert len(fake.search_argv) == 2                  # both pages were actually fetched
+
+
+def test_closed_epic_search_filters_non_feature_nodes_defensively():
+    contaminated = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+                    _closed_epic(999, closed_at="2026-01-01T00:00:00Z", itype="Task")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [contaminated]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 5\n"})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert actions == [{"action": "debt-count", "repo": DEBT_REPO_A, "count": 1, "threshold": 5}]
+
+
+# ---- below / at threshold ------------------------------------------------------------------------------
+
+def test_below_threshold_writes_nothing():
+    closed = [_closed_epic(1, closed_at="2026-01-01T00:00:00Z"),
+              _closed_epic(2, closed_at="2026-02-01T00:00:00Z")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 5\n"})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert actions == [{"action": "debt-count", "repo": DEBT_REPO_A, "count": 2, "threshold": 5}]
+    assert fake.issue_create_argv == [] and fake.item_add_argv == [] and fake.edit_argv == []
+
+
+def test_at_threshold_creates_issue_item_add_and_backlog_edit_with_due_record():
+    closed = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+              _closed_epic(102, closed_at="2026-02-01T00:00:00Z")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 2\n"})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+
+    assert len(fake.issue_create_argv) == 1
+    f = _flags(fake.issue_create_argv[0])
+    assert f["--repo"] == DEBT_REPO_A and f["--type"] == "Task"
+    assert "2" in f["--title"]                              # names the count
+
+    body = f["--body"]
+    assert body.splitlines()[0] == epic_gate.DUE_MARKER      # the marker on its own whole line
+    assert epic_gate._extract_field(body, "repo") == DEBT_REPO_A
+    assert epic_gate._extract_field(body, "anchor") == "none"
+    assert epic_gate._extract_field(body, "count") == "2"
+    counted_field = epic_gate._extract_field(body, "counted")
+    assert "101" in counted_field and "102" in counted_field
+    assert "debt-rounds.md" in body
+
+    assert len(fake.item_add_argv) == 1
+    add_f = _flags(fake.item_add_argv[0])
+    assert fake.item_add_argv[0][2] == "1"                  # project_number positional
+    assert add_f["--owner"] == "yellow-robots" and add_f["--format"] == "json"
+
+    assert len(fake.edit_argv) == 1
+    ef = _flags(fake.edit_argv[0])
+    assert ef["--field-id"] == STATUS_FIELD
+    assert ef["--single-select-option-id"] == "Backlog"
+    assert ef["--project-id"] == epic_gate.PROJECT_ID
+
+    assert actions == [{"action": "debt-raise", "repo": DEBT_REPO_A, "count": 2, "anchor": "none"}]
+
+
+# ---- search-before-create: no duplicate raise, repair a half-done one, a differing anchor is a new key -
+
+def test_existing_raise_fully_on_board_creates_nothing():
+    closed = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+              _closed_epic(102, closed_at="2026-02-01T00:00:00Z")]
+    existing = _due_raise_node(900, repo=DEBT_REPO_A, anchor="none", count=2, counted=(101, 102),
+                                on_board=True)
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 2\n"},
+                       due_raise_nodes={DEBT_REPO_A: [existing]})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert actions == []
+    assert fake.issue_create_argv == [] and fake.item_add_argv == [] and fake.edit_argv == []
+
+
+def test_debt_raise_is_idempotent_across_two_ticks():
+    """A genuine two-tick proof: tick 1 creates the raise (through this same fake's create/item-add
+    handlers, which feed the new issue back into the search state); tick 2 sees it already fully on the
+    board and creates nothing more."""
+    closed = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+              _closed_epic(102, closed_at="2026-02-01T00:00:00Z")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 2\n"})
+
+    actions_1 = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert actions_1 and actions_1[0]["action"] == "debt-raise"
+    assert len(fake.issue_create_argv) == 1 and len(fake.item_add_argv) == 1
+
+    actions_2 = _run_debt_sweep(fake, {DEBT_REPO_A})               # identical second tick
+    assert actions_2 == []                                         # no re-raise
+    assert len(fake.issue_create_argv) == 1                        # no duplicate create
+    assert len(fake.item_add_argv) == 1                             # no duplicate item-add
+
+
+def test_existing_raise_with_different_anchor_does_not_suppress_a_new_raise():
+    closed = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+              _closed_epic(102, closed_at="2026-02-01T00:00:00Z")]
+    stale = _due_raise_node(800, repo=DEBT_REPO_A, anchor="#5", count=2, counted=(50, 51), on_board=True)
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 2\n"},
+                       due_raise_nodes={DEBT_REPO_A: [stale]})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert len(fake.issue_create_argv) == 1
+    assert actions and actions[0]["action"] == "debt-raise"
+
+
+def test_existing_raise_missing_from_board_gets_repaired():
+    closed = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+              _closed_epic(102, closed_at="2026-02-01T00:00:00Z")]
+    existing = _due_raise_node(900, repo=DEBT_REPO_A, anchor="none", count=2, counted=(101, 102),
+                                on_board=False)
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 2\n"},
+                       due_raise_nodes={DEBT_REPO_A: [existing]})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+
+    assert fake.issue_create_argv == []                             # never re-created
+    assert len(fake.item_add_argv) == 1
+    assert _flags(fake.item_add_argv[0])["--url"] == existing["url"]
+    assert len(fake.edit_argv) == 1
+    assert _flags(fake.edit_argv[0])["--single-select-option-id"] == "Backlog"
+    assert actions == [{"action": "debt-repair", "repo": DEBT_REPO_A, "issue": 900}]
+
+
+def test_existing_raise_on_a_different_project_gets_repaired_too():
+    closed = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z")]
+    existing = _due_raise_node(900, repo=DEBT_REPO_A, anchor="none", count=1, counted=(101,),
+                                on_board=True, wrong_project=True)
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 1\n"},
+                       due_raise_nodes={DEBT_REPO_A: [existing]})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert fake.issue_create_argv == []
+    assert len(fake.item_add_argv) == 1
+    assert actions == [{"action": "debt-repair", "repo": DEBT_REPO_A, "issue": 900}]
+
+
+# ---- a counter failure on one repo is isolated ---------------------------------------------------------
+
+def test_debt_error_on_one_repo_does_not_affect_another_repos_counting():
+    closed_b = [_closed_epic(201, closed_at="2026-01-01T00:00:00Z")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_B: [closed_b]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 2\n",
+                                       DEBT_REPO_B: "debt_round_every = 5\n"},
+                       search_raises={DEBT_REPO_A})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A, DEBT_REPO_B})
+    by_repo = {a["repo"]: a for a in actions}
+    assert by_repo[DEBT_REPO_A]["action"] == "debt-error"
+    assert by_repo[DEBT_REPO_B] == {"action": "debt-count", "repo": DEBT_REPO_B, "count": 1, "threshold": 5}
+
+
+def test_debt_error_does_not_affect_epic_processing():
+    """The failure is scoped to the counter's own repo loop -- a Ready epic elsewhere on the board still
+    promotes normally in the very same sweep."""
+    board = [
+        _item(100, item_id="EI-100", itype="Feature", status="Ready", repo=DEBT_REPO_A),
+        _item(200, item_id="EI-200", itype="Feature", status=None, state="CLOSED", repo=DEBT_REPO_B),
+    ]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                                children=[_child(101, pi_id="PI-101", status="Backlog", repo=DEBT_REPO_A)])}
+    fake = FakeDebtGh(board, epics,
+                       closed_epic_pages={DEBT_REPO_B: [[_closed_epic(201, closed_at="2026-01-01T00:00:00Z")]]},
+                       manifest_repos={DEBT_REPO_B: "debt_round_every = 5\n"},
+                       search_raises={DEBT_REPO_A})
+    actions = epic_gate.sweep_epics(
+        gh=fake, org="yellow-robots", project_number=1,
+        status_field_id=STATUS_FIELD, reason_field_id=REASON_FIELD,
+        status_opt=STATUS_OPT, reason_opt=REASON_OPT,
+    )
+    assert ("PI-101", STATUS_FIELD, "Ready") in fake.edits              # the epic's own promotion succeeded
+    kinds = {a["action"] for a in actions}
+    assert "promote" in kinds and "debt-error" in kinds
+    assert any(a.get("action") == "debt-error" and a.get("repo") == DEBT_REPO_A for a in actions)
+    assert any(a.get("action") == "debt-count" and a.get("repo") == DEBT_REPO_B for a in actions)
+
+
+# ---- write mechanics + the invariant: never Ready, never close, never touches Reason -------------------
+
+def test_writes_use_the_runner_gh_mechanisms_for_a_raise():
+    closed = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [closed]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 1\n"})
+    _run_debt_sweep(fake, {DEBT_REPO_A})
+
+    create = fake.issue_create_argv[0]
+    assert create[:2] == ["issue", "create"]
+    add = fake.item_add_argv[0]
+    assert add[:2] == ["project", "item-add"]
+    edit = fake.edit_argv[0]
+    assert edit[:2] == ["project", "item-edit"]
+
+
+def test_debt_counter_never_sets_ready_closes_or_touches_reason():
+    closed_a = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+                _closed_epic(102, closed_at="2026-02-01T00:00:00Z")]
+    existing_half = _due_raise_node(900, repo=DEBT_REPO_B, anchor="none", count=1, counted=(201,),
+                                     on_board=False)
+    fake = FakeDebtGh(
+        [], {},
+        closed_epic_pages={DEBT_REPO_A: [closed_a],
+                            DEBT_REPO_B: [[_closed_epic(201, closed_at="2026-01-01T00:00:00Z")]]},
+        manifest_repos={DEBT_REPO_A: "debt_round_every = 2\n", DEBT_REPO_B: "debt_round_every = 1\n"},
+        due_raise_nodes={DEBT_REPO_B: [existing_half]},
+    )
+    _run_debt_sweep(fake, {DEBT_REPO_A, DEBT_REPO_B})
+
+    assert fake.closes == []                                # never closes anything
+    for _id, field, opt in fake.edits:
+        assert field == STATUS_FIELD                        # never touches the Reason field
+        assert opt == "Backlog"                              # never sets Ready
+
+
+def test_sweep_debt_counters_signature_has_no_reason_param():
+    """Structural guarantee behind the "never touches Reason" invariant: the function isn't even handed
+    a Reason field id or option map to write with."""
+    params = inspect.signature(epic_gate._sweep_debt_counters).parameters
+    assert "reason_field_id" not in params and "reason_opt" not in params
+
+
+# ---- `main()`'s print lines for every debt action kind --------------------------------------------------
+
+def test_main_prints_debt_count_line(capsys, monkeypatch):
+    board = [_item(200, item_id="EI-200", itype="Feature", status=None, state="CLOSED", repo=DEBT_REPO_A)]
+    fake = FakeDebtGh(board, {},
+                       closed_epic_pages={DEBT_REPO_A: [[_closed_epic(1, closed_at="2026-01-01T00:00:00Z")]]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 5\n"})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    rc = epic_gate.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"debt-count {DEBT_REPO_A}" in out and "1/5" in out
+
+
+def test_main_prints_every_debt_action_kind(capsys, monkeypatch):
+    repo_count, repo_raise = "yellow-robots/repo-count", "yellow-robots/repo-raise"
+    repo_repair, repo_error = "yellow-robots/repo-repair", "yellow-robots/repo-error"
+    board = [_item(n, item_id=f"I{n}", itype="Feature", status=None, state="CLOSED", repo=r)
+             for n, r in enumerate((repo_count, repo_raise, repo_repair, repo_error), start=1)]
+    existing_half = _due_raise_node(900, repo=repo_repair, anchor="none", count=1, counted=(31,),
+                                     on_board=False)
+    fake = FakeDebtGh(
+        board, {},
+        closed_epic_pages={
+            repo_count: [[_closed_epic(11, closed_at="2026-01-01T00:00:00Z")]],
+            repo_raise: [[_closed_epic(21, closed_at="2026-01-01T00:00:00Z")]],
+            repo_repair: [[_closed_epic(31, closed_at="2026-01-01T00:00:00Z")]],
+        },
+        manifest_repos={repo_count: "debt_round_every = 5\n", repo_raise: "debt_round_every = 1\n",
+                         repo_repair: "debt_round_every = 1\n"},
+        due_raise_nodes={repo_repair: [existing_half]},
+        search_raises={repo_error},
+    )
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    rc = epic_gate.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "debt-count" in out and repo_count in out
+    assert "raised a tech-debt round" in out and repo_raise in out
+    assert "repaired tech-debt raise #900" in out and repo_repair in out
+    assert "debt-error" in out and repo_error in out
