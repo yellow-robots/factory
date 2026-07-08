@@ -94,6 +94,7 @@ EPIC_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
+      body
       comments(first: 100) { nodes { body } }
       subIssues(first: 100) {
         nodes {
@@ -220,6 +221,12 @@ def _stranded_body(age_min):
 
 
 # --- the standing-approval record: a comment on the epic carrying the sentinel + both fields ----------
+# --- the debt-epic ledger gate: a body sentinel marking a debt epic, and a comment-borne verdict record
+DEBT_KIND_LINE = "YR-ITERATION-KIND: tech-debt"
+LEDGER_MARKER = "YR-DEBT-LEDGER"
+HOLD_MARKER = "YR-DEBT-HOLD"
+
+
 def _extract_field(body, key):
     """Pull `key`'s value from an approval comment. Accepts both the block form (`design: <v>` on its own
     line) and the one-line form (`... design=<v> review=<v>`), case-insensitive; returns "" if absent."""
@@ -265,6 +272,23 @@ def _has_valid_approval(comments):
     return False
 
 
+def _is_debt_epic(body):
+    """True iff some line of the epic body, stripped, is exactly the debt-kind sentinel line — a substring
+    test would also fire on a prose mention or a quoted/backticked example, so this checks whole lines."""
+    return any(line.strip() == DEBT_KIND_LINE for line in (body or "").splitlines())
+
+
+def _has_ledger_verdict(comments):
+    """True iff some epic comment carries the `YR-DEBT-LEDGER` marker on its own line AND that same
+    comment yields non-empty `items` and `net-lines` fields — the machine-checked pair."""
+    for body in comments:
+        if not any(line.strip() == LEDGER_MARKER for line in body.splitlines()):
+            continue
+        if _extract_field(body, "items") and _extract_field(body, "net-lines"):
+            return True
+    return False
+
+
 # --- comment bodies (each raise tells the human to clear the epic's Reason to resume) ------------------
 def _promoted_body(epic_number):
     return (
@@ -288,6 +312,21 @@ def _not_a_task_body(child_number):
         f"YR-EPIC-GATE: next open child #{child_number} is not a Task — nested decompositions are out of "
         "scope; promotion stopped. The gate does not skip ahead to a later Task. Reorder so the next open "
         "child is a Task (or split it out), then clear this epic's Reason to resume."
+    )
+
+
+def _debt_hold_body():
+    # The grammar sample deliberately never spells a field as a bare `key: value` line — that would
+    # itself satisfy `_has_ledger_verdict` on the next tick (the hold comment "counting" as its own
+    # missing verdict). Field names stay backticked, inline prose instead.
+    return (
+        f"{HOLD_MARKER}\n\n"
+        "This is a debt epic with no open children left, but no valid ledger verdict is on record — the "
+        f"epic-gate will not self-close it without one. A verdict is a comment carrying the {LEDGER_MARKER} "
+        "marker line plus the fields `items`, `net-lines`, `files-removed`, `deps-removed`, `pins-added`, "
+        "`suite-duration`, and `incidents` — naming `items:` and `net-lines:` as the machine-checked pair "
+        "(both must be non-empty). Post the verdict and the next sweep self-closes this epic, or close it "
+        "attended and clear the Reason."
     )
 
 
@@ -327,6 +366,7 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
     detail = _query(gh, ["api", "graphql", "-f", "query=" + EPIC_QUERY,
                          "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"number={epic['number']}"])
     issue = ((detail.get("repository") or {}).get("issue")) or {}
+    body = issue.get("body") or ""
     comments = [(c or {}).get("body") or "" for c in ((issue.get("comments") or {}).get("nodes") or [])]
     children = (issue.get("subIssues") or {}).get("nodes") or []
 
@@ -334,11 +374,23 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
     if not children:
         return []
 
-    # (5) no open child left → the epic is finished: self-close natively and let the board's native
-    #     close→Done automation set Status. Mutually exclusive with promoting/waiting below, and does not
-    #     depend on the standing-approval record (that record only gates promotion, not closing).
+    # (5) no open child left → the epic is finished. Ordinarily that self-closes natively and lets the
+    #     board's native close→Done automation set Status — mutually exclusive with promoting/waiting
+    #     below, and independent of the standing-approval record (that record only gates promotion). A
+    #     *debt* epic (its body carries the tech-debt kind line) is the fail-closed exception: it holds for
+    #     an attended close until a valid ledger verdict comment is on record, so the close-time duty
+    #     (counting the ledger) can never be skipped by a same-tick self-close.
     open_children = [c for c in children if (c.get("state") or "").upper() == "OPEN"]
     if not open_children:
+        if _is_debt_epic(body) and not _has_ledger_verdict(comments):
+            already_held = any(
+                any(line.strip() == HOLD_MARKER for line in c.splitlines()) for c in comments
+            )
+            if not already_held:
+                _comment(gh, epic["repo"], epic["number"], _debt_hold_body())
+            if epic["reason"] != "Needs-info":
+                _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+            return [{"epic": epic["number"], "action": "hold"}]
         reason = _epic_close_reason(children)
         _close_issue(gh, epic["repo"], epic["number"], reason)
         return [{"epic": epic["number"], "action": "close", "reason": reason}]
@@ -448,6 +500,8 @@ def main(argv=None):
             print(f"epic-gate: promoted #{a['child']} under epic #{a['epic']}")
         elif a["action"] == "close":
             print(f"epic-gate: closed epic #{a['epic']} (reason={a['reason']})")
+        elif a["action"] == "hold":
+            print(f"epic-gate: held epic #{a['epic']} (debt epic awaiting a ledger verdict)")
         elif a["action"] == "raise" and "child" in a:
             print(f"epic-gate: raised stranded child #{a['child']} under epic #{a['epic']} "
                   f"(Reason={a['reason']})")
