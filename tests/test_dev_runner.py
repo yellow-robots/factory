@@ -378,6 +378,51 @@ def test_gate_type_check_can_be_disabled(tmp_path):
     assert json.loads(r.stdout)["ready"] is True
 
 
+# ============ opening self-identification line (issue #85) ============
+# A dispatched run's combined output is captured to a file the runner can't name in advance (it doesn't
+# know its own run dir until it computes RUN_DIR from $$); the runner instead self-identifies as its very
+# first line, so a captured log — or an attended terminal — always says which issue/repo/run dir it is.
+
+def test_opening_line_names_issue_repo_and_run_dir(tmp_path):
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp)
+    env["DEV_RUNNER_HOME"] = str(tmp_path / "drhome")
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    assert "7" in r.stderr and "test/repo" in r.stderr
+    assert str(tmp_path / "drhome" / "runs" / "7-") in r.stderr
+
+
+def test_opening_line_prints_before_any_dor_refusal(tmp_path):
+    # the self-id line must survive even when the run is refused outright (closed issue) — an operator
+    # (or a captured log) needs to know WHICH run this was even when it never gets past the gate.
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, state="CLOSED")
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode == 3
+    assert "7" in r.stderr and "test/repo" in r.stderr and "run dir" in r.stderr.lower()
+
+
+def test_opening_line_goes_to_stderr_not_stdout(tmp_path):
+    # unchanged convention (log() writes to fd 2): dry-run's machine-readable plan is the only thing on
+    # stdout, so a script parsing stdout as JSON is never polluted by the new line.
+    binp = tmp_path / "bin"; _stubs(binp)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    assert r.returncode == 0, r.stderr
+    assert "starting" not in r.stdout
+    json.loads(r.stdout)   # stdout stays pure JSON — attended callers parsing it are unaffected
+
+
+def test_attended_invocation_still_emits_to_the_terminal(tmp_path):
+    # no dispatch in the picture here (no log-file redirection at all) — a plain, attended invocation
+    # (an operator's terminal) must still see every "dev-runner: ..." line, including the new one.
+    binp = tmp_path / "bin"; _stubs(binp)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    assert r.returncode == 0, r.stderr
+    lines = [l for l in r.stderr.splitlines() if l.startswith("dev-runner:")]
+    assert any("starting" in l and "run dir" in l for l in lines)
+
+
 # ============ needs-info / dry-run ============
 
 def test_needs_info_on_empty_criteria(tmp_path):

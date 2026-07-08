@@ -97,6 +97,9 @@ Every `models.toml` entry names a `quota_pool` — the shared rate/spend ceiling
 - **No double-pickup:** the runner claims (`Ready → In Progress`) as its first act, dropping the task off the Ready query within seconds.
 - **Fail-closed:** any runner failure → `Reason=Blocked` + comment, no PR. A bad task can't run wild.
 - **Grooming stays human:** dispatch only *pulls* `Ready`; promoting Backlog → Ready is a human/Joam decision.
+- **Output survives the detach:** the runner is spawned with no terminal to write to, so dispatch captures
+  its combined stdout+stderr into `~/.cache/dev-runner/runs/dispatch-<issue>-<epoch ms>.log` — including
+  whatever it managed to print before a hard kill or a failure with no per-stage log of its own.
 
 ## Deploying the epic-gate sweep
 
