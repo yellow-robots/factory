@@ -2,6 +2,8 @@
 type: feature-rfc
 status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
 source_spec: "[[<product-spec note>]]"   # the spec this cites — resolvable wikilink, checked by check_links
+supersedes: []             # active designs this doc replaces; targets are quoted "[[wikilinks]]"; empty
+                            # is allowed but must be justified in the body; stamped superseded at accept
 created: "<YYYY-MM-DD>"
 updated: "<YYYY-MM-DD>"
 ---
@@ -12,6 +14,10 @@ updated: "<YYYY-MM-DD>"
 > and then task-Issues. Distinct from the factory's own *foundational* technical RFCs (0001–0005 in
 > `yellow-robots/factory/docs/rfcs/`), which design the factory itself. Gate: review the **outline** of this
 > feature RFC before it's fully written — the cheap checkpoint.
+
+**Supersedes:** nothing — <one-line justification of the empty claim>
+<!-- Keep this line, with a real justification, when the supersedes list above is empty. Once the
+     list is non-empty, replace it with prose naming what's replaced, or drop it entirely. -->
 
 ## Outline (for the pre-gate)
 <!-- 3-5 bullets: the approach in brief. The human approves THIS before you write the full RFC. -->

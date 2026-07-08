@@ -1,6 +1,8 @@
 ---
 type: product-spec
 status: draft              # doc lifecycle: draft | active | rejected | superseded (NOT the board's Status)
+supersedes: []             # active designs this doc replaces; targets are quoted "[[wikilinks]]"; empty
+                            # is allowed but must be justified in the body; stamped superseded at accept
 created: "<YYYY-MM-DD>"
 updated: "<YYYY-MM-DD>"
 ---
@@ -9,6 +11,10 @@ updated: "<YYYY-MM-DD>"
 
 > Spec discipline: **WHAT and WHY only — no tech stack, no file names, no "how".** Naming a module
 > belongs in the technical RFC, not here. Every acceptance criterion must be expressible as a test.
+
+**Supersedes:** nothing — <one-line justification of the empty claim>
+<!-- Keep this line, with a real justification, when the supersedes list above is empty. Once the
+     list is non-empty, replace it with prose naming what's replaced, or drop it entirely. -->
 
 ## Why
 <!-- The product reason this exists. One short paragraph: who is helped and how. -->

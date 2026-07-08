@@ -423,11 +423,14 @@ def test_skill_md_does_not_restate_supersession_declaration():
         "SKILL.md restates the accept act — it should defer to documentation-model.md/authoring.md instead"
 
 
-def test_templates_not_yet_carrying_supersedes():
-    """Out-of-scope guard: template changes are a later slice (constraints:
-    'No template changes')."""
+def test_templates_scope_handed_off_to_83():
+    """Historical note: #82 kept templates supersedes-free ('template changes
+    are a later slice'). #83 is that slice and lands the scaffold — pinned
+    authoritatively by tests/test_templates_declaration.py. This test only
+    confirms the handoff landed, so this file doesn't keep asserting a claim
+    #83 was explicitly scoped to make false."""
     for name in ("product-spec.md", "feature-rfc.md"):
         path = TEMPLATES / name
         if path.exists():
-            assert "supersedes" not in path.read_text(encoding="utf-8").lower(), \
-                f"templates/{name} already carries supersedes — template changes are out of scope for #82"
+            assert "supersedes" in path.read_text(encoding="utf-8").lower(), \
+                f"templates/{name} should carry supersedes now that #83 has landed it"
