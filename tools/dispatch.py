@@ -15,8 +15,19 @@ Config (env): DISPATCH_TOKEN (bearer, required to start the HTTP server), DISPAT
 127.0.0.1), DISPATCH_PORT (default 8770), DEV_RUNNER (default dev-runner.sh next to this file),
 DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock), EPIC_SWEEPER (default epic_gate.py next to
 this file), SWEEP_LOCK (default ~/.cache/dev-runner/epic-sweep.lock — distinct from DISPATCH_LOCK, so a
-sweep never blocks or is blocked by a build). Dispatch is fail-closed: every /build request must carry an
+sweep never blocks or is blocked by a build), DEV_RUNNER_HOME (default ~/.cache/dev-runner — same home the
+runner itself uses for its `runs/` dir). Dispatch is fail-closed: every /build request must carry an
 explicit repo (owner/name) — there is no default repo, so a missing/unroutable repo never builds.
+
+The runner is spawned detached (start_new_session, no parent to inherit a terminal from), so its
+stdout+stderr are captured into a per-run log file under DEV_RUNNER_HOME/runs/ (`dispatch-<issue>-<epoch
+ms>.log`) rather than a terminal — otherwise a failure outside a per-stage log file (e.g. the runner dying
+before it can write anything of its own) is untraceable. The file is opened by dispatch itself, before the
+spawn, so a hard-killed runner still leaves whatever it managed to write; the actual runs/ directory is
+never cleaned up by the runner's own teardown (tools/dev-runner.sh's cleanup_wt), so the log outlives any
+run-failure disposal. This capture is orthogonal to the runner's own stdio: an attended `dev-runner.sh`
+invocation (an operator's terminal, not dispatch) is never routed through this file and keeps printing to
+the terminal exactly as before.
 """
 import hmac
 import json
@@ -25,26 +36,39 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 SELF = pathlib.Path(__file__).resolve()
 DEV_RUNNER = os.environ.get("DEV_RUNNER", str(SELF.parent / "dev-runner.sh"))
+DEV_RUNNER_HOME = os.environ.get("DEV_RUNNER_HOME", str(pathlib.Path.home() / ".cache" / "dev-runner"))
 LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
 EPIC_SWEEPER = os.environ.get("EPIC_SWEEPER", str(SELF.parent / "epic_gate.py"))
 SWEEP_LOCK = os.environ.get("SWEEP_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "epic-sweep.lock"))
+RUNS_DIR = os.environ.get("RUNS_DIR", str(pathlib.Path(DEV_RUNNER_HOME) / "runs"))
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
 
-def _spawn_detached(cmd):
+def _spawn_detached(cmd, log_path=None):
     pathlib.Path(cmd[2]).parent.mkdir(parents=True, exist_ok=True)   # cmd = [flock, -n, <lock>, ...]
-    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True)
+    if log_path is None:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return
+    # opened by dispatch, handed to the child as its stdout/stderr fd: writes land on disk as the child
+    # makes them, so a SIGKILL (or any hard teardown) still leaves the log's prefix intact. Closing our
+    # end right after Popen is safe — the child holds its own dup of the fd.
+    log_path = pathlib.Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "ab") as log_f:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log_f,
+                         stderr=subprocess.STDOUT, start_new_session=True)
 
 
 _SPAWN = _spawn_detached   # tests override this
 
 
-def build_task(issue, repo=None, *, runner=None, lock=None, spawn=None):
+def build_task(issue, repo=None, *, runner=None, lock=None, spawn=None, runs_dir=None):
     """Reusable core: fire the dev-runner for one issue under a non-blocking flock, detached.
     Returns immediately (the build runs async). All externals injectable for tests; never waits."""
     issue = str(issue).strip()
@@ -58,8 +82,9 @@ def build_task(issue, repo=None, *, runner=None, lock=None, spawn=None):
     # all validation precedes the spawn — a bad input never launches a build.
     # flock -n: if a build already holds the lock, this invocation exits immediately (single-flight).
     cmd = ["flock", "-n", lock or LOCK, runner or DEV_RUNNER, issue, "--repo", repo]
-    (spawn or _SPAWN)(cmd)
-    return {"ok": True, "issue": int(issue), "repo": repo, "dispatched": True}
+    log_path = pathlib.Path(runs_dir or RUNS_DIR) / f"dispatch-{issue}-{int(time.time() * 1000)}.log"
+    (spawn or _SPAWN)(cmd, log_path)
+    return {"ok": True, "issue": int(issue), "repo": repo, "dispatched": True, "log": str(log_path)}
 
 
 def run_sweep(*, sweeper=None, lock=None, spawn=None):

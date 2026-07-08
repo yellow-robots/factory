@@ -89,6 +89,12 @@ if [ -z "$REPO" ]; then
     || die "could not resolve repo; pass --repo <owner/name>"
 fi
 OWNER="${REPO%/*}"
+# RUN_DIR (per-pid) is computed here, before any DoR/gate exit, purely so the opening line below can name
+# it — the directory itself is only created later (unchanged timing, issue #39) so dry-run stays read-only.
+# This is also the line that self-identifies the run when dispatch (tools/dispatch.py) has redirected this
+# process's stdout+stderr into a per-run log file: an attended invocation just prints it to the terminal.
+RUN_DIR="$DEV_RUNNER_HOME/runs/${ISSUE}-$$"
+log "run #$ISSUE ($REPO) starting — run dir: $RUN_DIR"
 
 # ---- resolve the target repo's checkout + its build manifest (all relative to the workspace) ----
 NAME="${REPO#*/}"
@@ -509,7 +515,7 @@ fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cl
 # worktree + run dir + markers are PRESERVED (env_hold) and a relaunch resumes at the first stage without
 # a .done marker; on success or a CODE/MACHINERY failure the state is cleared and the worktree torn down
 # (cleanup_wt). Markers + a self-describing run.json live under state/<branch-slug>.
-RUN_DIR="$DEV_RUNNER_HOME/runs/${ISSUE}-$$"; mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR"   # RUN_DIR itself was computed earlier (see the opening log line above)
 WT="$DEV_RUNNER_HOME/wt/${BRANCH//\//-}"
 MERGE_GIT_DIR="$WT"   # the shared terminal-decision helpers' git checkout, for a live build (see above)
 STATE_DIR="$DEV_RUNNER_HOME/state/${BRANCH//\//-}"
