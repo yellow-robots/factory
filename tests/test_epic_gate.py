@@ -88,8 +88,9 @@ def _child(number, *, itype="Task", state="OPEN", pi_id=None, project_number=1,
     }
 
 
-def _epic_detail(*, comments, children):
+def _epic_detail(*, comments, children, body=""):
     return {
+        "body": body,
         "comments": {"nodes": [{"body": b} for b in comments]},
         "subIssues": {"nodes": children},
     }
@@ -159,6 +160,7 @@ class FakeGh:
             f = _flags(argv)
             self.comments.append((f["--repo"], argv[2], f["--body"]))
             self.comment_argv.append(argv)
+            self._apply_comment(int(argv[2]), f["--body"])
             return ""
         if argv[:2] == ["issue", "close"]:
             f = _flags(argv)
@@ -187,6 +189,14 @@ class FakeGh:
         item = self._by_number.get(number)
         if item is not None:
             item["content"]["state"] = "CLOSED"
+
+    def _apply_comment(self, number, body):
+        """A posted comment is fed back onto that issue's own canned detail (when it has one), so a later
+        tick's per-issue comments read sees it — this is how the fake proves a comment-marker idempotency
+        check (e.g. the debt-epic hold comment) across ticks."""
+        detail = self.epic_details.get(number)
+        if detail is not None:
+            detail.setdefault("comments", {"nodes": []})["nodes"].append({"body": body})
 
 
 def _sweep(fake, *, now=None, build_lock_held=None, stranded_after_min=None):
@@ -697,6 +707,181 @@ def test_self_close_is_idempotent_across_ticks():
 
     _sweep(fake)                                             # identical second tick
     assert fake.closes == [(REPO, "100", "completed")]        # no duplicate close
+
+
+# ============================================================================
+# #89 — a debt epic (body carries `YR-ITERATION-KIND: tech-debt`) holds its close for a ledger verdict
+# ============================================================================
+
+DEBT_BODY = "Some epic description.\n\nYR-ITERATION-KIND: tech-debt\n\nMore prose."
+
+VALID_LEDGER = (
+    "YR-DEBT-LEDGER\n"
+    "items: 3\n"
+    "net-lines: -412\n"
+    "files-removed: 2\n"
+    "deps-removed: 1\n"
+    "pins-added: 0\n"
+    "suite-duration: 4m12s\n"
+    "incidents: none"
+)
+
+
+def _debt_epic_detail(*, comments, epic_reason=None):
+    """A finished epic (both children closed, one COMPLETED) with a debt-kind body — the shape every
+    hold/close-verdict test starts from."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", reason=epic_reason)]
+    epics = {100: _epic_detail(
+        comments=comments, body=DEBT_BODY,
+        children=[_child(101, state="CLOSED", pi_id="PI-101"),
+                  _child(102, state="CLOSED", pi_id="PI-102")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    epics[100]["subIssues"]["nodes"][1]["stateReason"] = "NOT_PLANNED"
+    return board, epics
+
+
+def test_finished_non_debt_epic_closes_byte_for_byte_as_today():
+    """No debt-kind line in the body -> today's close, unchanged."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD], body="",
+        children=[_child(101, state="CLOSED", pi_id="PI-101"),
+                  _child(102, state="CLOSED", pi_id="PI-102")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    epics[100]["subIssues"]["nodes"][1]["stateReason"] = "NOT_PLANNED"
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+    assert fake.comments == []
+    assert actions == [{"epic": 100, "action": "close", "reason": "completed"}]
+
+
+def test_body_mentioning_kind_sentinel_inline_is_not_a_debt_epic():
+    """A backticked/prose mention inside a longer line never matches the exact-line test -> closes as
+    a normal (non-debt) epic, not held."""
+    body = "See the `YR-ITERATION-KIND: tech-debt` sentinel grammar for details on debt epics."
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD], body=body,
+        children=[_child(101, state="CLOSED", pi_id="PI-101")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+    assert fake.comments == []
+
+
+def test_debt_epic_with_no_verdict_holds_instead_of_closing():
+    board, epics = _debt_epic_detail(comments=[])
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+
+    assert fake.closes == []                                # never closed
+    assert actions == [{"epic": 100, "action": "hold"}]
+    # hold comment posted on the epic, opening with the marker on its own line
+    assert len(fake.comments) == 1
+    repo, number, comment_body = fake.comments[0]
+    assert repo == REPO and number == "100"
+    lines = comment_body.splitlines()
+    assert lines[0] == "YR-DEBT-HOLD"
+    assert "YR-DEBT-LEDGER" in comment_body
+    for field in ("items", "net-lines", "files-removed", "deps-removed", "pins-added",
+                  "suite-duration", "incidents"):
+        assert field in comment_body
+    assert "items:" in comment_body and "net-lines:" in comment_body
+    low = comment_body.lower()
+    assert "next sweep" in low and "self-close" in low
+    assert "clear" in low and "reason" in low
+    # Reason set to Needs-info
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+
+
+def test_debt_epic_hold_comment_and_reason_set_exactly_once_across_two_ticks():
+    board, epics = _debt_epic_detail(comments=[])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    hold_comments_after_1 = [c for c in fake.comments if c[1] == "100"]
+    reason_edits_after_1 = _reason_edits(fake)
+    assert len(hold_comments_after_1) == 1
+    assert reason_edits_after_1 == [("EI-100", REASON_FIELD, "NeedsInfo")]
+
+    _sweep(fake)                                             # identical second tick
+    assert [c for c in fake.comments if c[1] == "100"] == hold_comments_after_1   # no duplicate
+    assert _reason_edits(fake) == reason_edits_after_1                           # no re-set
+    assert fake.closes == []                                                     # never closed
+
+
+def test_stale_needs_info_reason_does_not_suppress_the_hold_comment():
+    """The epic already carries Needs-info (e.g. left over from an earlier approval raise while children
+    were still open). Idempotency is judged by the HOLD marker comment, not the Reason -> the hold comment
+    still posts; the Reason edit is skipped only because it's already set to the right value."""
+    board, epics = _debt_epic_detail(comments=[], epic_reason="Needs-info")
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+    assert actions == [{"epic": 100, "action": "hold"}]
+    hold_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(hold_comments) == 1
+    assert "YR-DEBT-HOLD" in hold_comments[0][2]
+    assert fake.closes == []
+    # Reason was already Needs-info -> no edit needed/made
+    assert _reason_edits(fake) == []
+
+
+def test_ledger_marker_mentioned_midline_is_not_a_verdict():
+    body = "Per YR-DEBT-LEDGER items: 3 net-lines: -100 we're done here."
+    board, epics = _debt_epic_detail(comments=[body])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == []
+    assert any(c[1] == "100" and "YR-DEBT-HOLD" in c[2] for c in fake.comments)
+
+
+def test_ledger_marker_line_without_both_fields_is_not_a_verdict():
+    for comment in (
+        "YR-DEBT-LEDGER\nitems: 3\n",                    # missing net-lines
+        "YR-DEBT-LEDGER\nnet-lines: -50\n",              # missing items
+        "YR-DEBT-LEDGER\nitems:\nnet-lines: -50\n",      # empty items
+        "YR-DEBT-LEDGER\n",                              # marker alone
+    ):
+        board, epics = _debt_epic_detail(comments=[comment])
+        fake = FakeGh(board, epics)
+        _sweep(fake)
+        assert fake.closes == [], f"comment={comment!r} should not count as a verdict"
+
+
+def test_ledger_marker_and_fields_split_across_two_comments_is_not_a_verdict():
+    """The marker line and the two machine-checked fields must land in the SAME comment -- a marker-only
+    comment plus a separate comment that happens to carry `items:`/`net-lines:` text does not add up to a
+    verdict."""
+    marker_only = "YR-DEBT-LEDGER\n"
+    fields_elsewhere = "Unrelated note: items: 3, net-lines: -50"
+    board, epics = _debt_epic_detail(comments=[marker_only, fields_elsewhere])
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+    assert fake.closes == []
+    assert actions == [{"epic": 100, "action": "hold"}]
+
+
+def test_debt_epic_with_valid_verdict_closes_exactly_as_today():
+    board, epics = _debt_epic_detail(comments=[VALID_LEDGER])
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+    assert actions == [{"epic": 100, "action": "close", "reason": "completed"}]
+    # no hold comment, no Reason edit -- closes exactly like the non-debt path
+    assert not any(c[1] == "100" and "YR-DEBT-HOLD" in c[2] for c in fake.comments)
+    assert _reason_edits(fake) == []
+
+
+def test_hold_action_shape_and_main_print(capsys, monkeypatch):
+    board, epics = _debt_epic_detail(comments=[])
+    fake = FakeGh(board, epics)
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    rc = epic_gate.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "epic-gate: held epic #100" in out
+    assert "ledger" in out.lower()
 
 
 # ============================================================================
