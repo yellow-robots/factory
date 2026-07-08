@@ -400,6 +400,7 @@ def test_no_new_reference_file_added():
     expected = {
         "authoring.md", "closing.md", "documentation-model.md", "gates.md",
         "migrating.md", "onboarding.md", "pipeline.md", "reviewing.md",
+        "architect.md",
     }
     actual = {p.name for p in REFS.iterdir() if p.is_file()}
     assert actual == expected, \
@@ -408,8 +409,8 @@ def test_no_new_reference_file_added():
 
 def test_plugin_version_unchanged_no_bump_this_slice():
     data = json.loads(PLUGIN.read_text(encoding="utf-8"))
-    assert data["version"] == "0.7.2", \
-        f".claude-plugin/plugin.json version is {data['version']!r}, expected unchanged '0.7.2' (no bump in #82)"
+    assert data["version"] == "0.8.0", \
+        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.8.0' (bumped at the skill 0.8.0 release, #93)"
 
 
 def test_skill_md_does_not_restate_supersession_declaration():

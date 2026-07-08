@@ -55,6 +55,7 @@ chained work (author → review → close) phase-by-phase — routing the chain 
 | **Migrating** | Migrating a legacy doc onto the model | [`references/migrating.md`](references/migrating.md) |
 | **Onboarding** | Adding a new repo to the factory | [`references/onboarding.md`](references/onboarding.md) |
 | **Documentation model** | Any question about doc types, lifecycle, frontmatter, or the iteration model | [`references/documentation-model.md`](references/documentation-model.md) |
+| **Architect** | Spec-ready grounding + supersession disposition, authoring the crossing's technical-rfc, or the close's ship-walk | [`references/architect.md`](references/architect.md) |
 
 ## Invariants — never weaken
 
