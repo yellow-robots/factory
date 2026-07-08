@@ -22,7 +22,10 @@ no frontmatter) is an error too, never silently skipped. Any other draft type pa
 one draft. The governed space is enumerated by a pinned rule: every component directory directly under
 `--scope` (default `04 projects/yellow-robots`) that has an `iterations/` child contributes that subtree
 plus every non-hidden sibling directory (dot-dirs excluded, underscore dirs included — legacy zoos included
-whole, aggregated). Every doc in that space is classified: legacy (alien type, alien status, or no
+whole, aggregated). When `--scope` itself has an `iterations/` child — a component-rooted scope, e.g. a
+single-project root — the scope sweeps as that one component instead, named by the scope's own basename,
+picking up its root-level docs too (the parent-shaped case has none to pick up). Every doc in that space is
+classified: legacy (alien type, alien status, or no
 parseable frontmatter — aggregated per folder, never itemized) or conformant (alien frontmatter keys
 surfaced as one observation line per key, never blocking). Pair integrity runs both directions — forward
 from a `supersedes` declaration to its target, and backward from a `superseded` doc to its `superseded_by`
@@ -251,39 +254,58 @@ def check_draft(text, *, vault_root):
 
 # --- sweep mode -------------------------------------------------------------------------------------
 
+def _component_dirs(comp_dir):
+    """[dirs...] for one component root: its `iterations/` child plus every non-hidden sibling
+    directory (dot-dirs excluded, underscore dirs included)."""
+    dirs = [comp_dir / "iterations"]
+    for sib in sorted(p for p in comp_dir.iterdir()
+                       if p.is_dir() and not p.name.startswith(".") and p.name != "iterations"):
+        dirs.append(sib)
+    return dirs
+
+
 def _governed_components(vault_root, scope):
-    """[(component_name, [dirs...])] — every component under scope with an `iterations/` child."""
+    """[(component_name, [dirs...], [root_docs...])] — every component under scope with an
+    `iterations/` child. `root_docs` holds *.md files sitting directly in the component's own
+    root (only ever populated for a component-rooted scope; a parent-shaped scope's children
+    carry no loose root docs today, so this is always `[]` for them)."""
     scope_dir = vault_root / scope
-    components = []
     if not scope_dir.is_dir():
-        return components
+        return []
+
+    if (scope_dir / "iterations").is_dir():
+        root_docs = sorted(p for p in scope_dir.glob("*.md") if not p.name.startswith("."))
+        return [(scope_dir.name, _component_dirs(scope_dir), root_docs)]
+
+    components = []
     for comp in sorted(p for p in scope_dir.iterdir() if p.is_dir() and not p.name.startswith(".")):
-        iterations = comp / "iterations"
-        if not iterations.is_dir():
+        if not (comp / "iterations").is_dir():
             continue
-        dirs = [iterations]
-        for sib in sorted(p for p in comp.iterdir()
-                           if p.is_dir() and not p.name.startswith(".") and p.name != "iterations"):
-            dirs.append(sib)
-        components.append((comp.name, dirs))
+        components.append((comp.name, _component_dirs(comp), []))
     return components
 
 
 def _sweep_docs(vault_root, scope):
     """(docs, component_of, in_iterations) across the governed space, keyed by resolved absolute path."""
     docs, component_of, in_iterations = [], {}, {}
-    for name, dirs in _governed_components(vault_root, scope):
+
+    def _record(p, name, is_iter):
+        text = p.read_text(encoding="utf-8", errors="replace")
+        meta, body = split_frontmatter(text)
+        rec = DocRecord(path=p, rel=str(p.relative_to(vault_root)), meta=meta, body=body,
+                         legacy_reason=_legacy_reason(meta))
+        docs.append(rec)
+        resolved = p.resolve()
+        component_of[resolved] = name
+        in_iterations[resolved] = is_iter
+
+    for name, dirs, root_docs in _governed_components(vault_root, scope):
         for d in dirs:
             is_iter = d.name == "iterations"
             for p in _walk_md(d):
-                text = p.read_text(encoding="utf-8", errors="replace")
-                meta, body = split_frontmatter(text)
-                rec = DocRecord(path=p, rel=str(p.relative_to(vault_root)), meta=meta, body=body,
-                                 legacy_reason=_legacy_reason(meta))
-                docs.append(rec)
-                resolved = p.resolve()
-                component_of[resolved] = name
-                in_iterations[resolved] = is_iter
+                _record(p, name, is_iter)
+        for p in root_docs:
+            _record(p, name, False)
     return docs, component_of, in_iterations
 
 
