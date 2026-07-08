@@ -56,6 +56,7 @@ chained work (author → review → close) phase-by-phase — routing the chain 
 | **Onboarding** | Adding a new repo to the factory | [`references/onboarding.md`](references/onboarding.md) |
 | **Documentation model** | Any question about doc types, lifecycle, frontmatter, or the iteration model | [`references/documentation-model.md`](references/documentation-model.md) |
 | **Architect** | Spec-ready grounding + supersession disposition, authoring the crossing's technical-rfc, or the close's ship-walk | [`references/architect.md`](references/architect.md) |
+| **Debt rounds** | Running a tech-debt round, acting on a debt raise, or closing a debt epic | [`references/debt-rounds.md`](references/debt-rounds.md) |
 
 ## Invariants — never weaken
 

@@ -400,7 +400,7 @@ def test_no_new_reference_file_added():
     expected = {
         "authoring.md", "closing.md", "documentation-model.md", "gates.md",
         "migrating.md", "onboarding.md", "pipeline.md", "reviewing.md",
-        "architect.md",
+        "architect.md", "debt-rounds.md",
     }
     actual = {p.name for p in REFS.iterdir() if p.is_file()}
     assert actual == expected, \
