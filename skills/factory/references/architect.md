@@ -33,6 +33,11 @@ exist in the pipeline, never a fourth stage added on top of it.
    replaced research (never edit it), verify the stamps — the crossing stamp and every declared
    pair — and record the pilot observables with the iteration.
 
+The architect is also the **boundary custodian** — advisory only: when a spec or crossing moves a
+component boundary (a new top-level home, a seam between repos, a component split or merge), it
+names the boundary change explicitly as a WHAT-call on the for-the-human list — it never draws the
+boundary itself, and no machinery gates on it.
+
 ## Independence and ordering
 
 The architect runs as its **own independent cold session** — author ≠ fit-checker, the upper
@@ -51,6 +56,11 @@ the architect last means it judges what actually shipped, not an intermediate dr
 - A factual slip discovered in an **already-active** spec routes to the human, never a silent edit —
   an active spec is a frozen record (see [`documentation-model.md`](documentation-model.md) — *Two
   principles*); the architect flags what it found, it never rewrites history to match it.
+- Open WHAT-calls live on the design side — the only side with a structural human gate: at spec-ready
+  they land as callouts on the draft; at the crossing, an unresolved question pauses the crossing and
+  goes back into the governing design doc — never onto the epic, which past the airlock executes
+  mechanically with no human gate, by design. The epic's trail carries dispositions only — every item
+  closed in or before the `YR-EPIC-APPROVAL` record.
 
 ## The earn-test
 
