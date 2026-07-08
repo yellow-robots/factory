@@ -329,6 +329,60 @@ def test_sweep_sibling_subtree_walked_recursively(tmp_path):
 
 
 # =====================================================================================
+# sweep mode — a component-rooted scope (the scope itself has an `iterations/` child)
+# =====================================================================================
+
+def test_sweep_component_rooted_scope_sweeps_as_one_component(tmp_path):
+    # scope "proj/factory" has iterations/ directly under it — no parent-of-components shape
+    _vault_file(tmp_path, "proj/factory/iterations/spec1.md",
+                _doc(type_="product-spec", status="active"))
+    _vault_file(tmp_path, "proj/factory/iterations/legacy1.md", "no frontmatter here\n")
+    _vault_file(tmp_path, "proj/factory/_extra/doc.md", _doc(type_="task", status="active"))
+    _vault_file(tmp_path, "proj/factory/root-doc.md", _doc(type_="task", status="active"))
+
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj/factory")
+    census = lines[0]
+    assert failed is False
+    assert "4 docs" in census
+    assert "1 spine-active" in census
+    assert "factory 1" in census
+    assert "1 legacy" in census
+
+
+def test_sweep_component_rooted_scope_named_by_scope_basename(tmp_path):
+    _vault_file(tmp_path, "proj/widget/iterations/task1.md", _doc(type_="task", status="active"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj/widget")
+    assert "widget 1" in lines[0]
+
+
+def test_sweep_component_rooted_scope_pair_integrity_still_runs(tmp_path):
+    _vault_file(tmp_path, "proj/factory/iterations/new-doc.md",
+                _doc(status="active", supersedes=["[[ghost]]"]))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj/factory")
+    assert failed is True
+
+
+# =====================================================================================
+# sweep mode — the parent-shaped scope regression pin (default scope shape unchanged)
+# =====================================================================================
+
+def test_sweep_parent_shaped_scope_census_output_pinned(tmp_path):
+    # identical fixture to test_census_headline_arithmetic — pins the exact output line so a
+    # component-rooted-scope change can never alter the parent-shaped scope's byte-for-byte output
+    _vault_file(tmp_path, "proj/compA/iterations/spec1.md", _doc(type_="product-spec", status="active"))
+    _vault_file(tmp_path, "proj/compA/iterations/task1.md", _doc(type_="task", status="active"))
+    _vault_file(tmp_path, "proj/compA/iterations/note1.md", _doc(type_="research", status="active"))
+    _vault_file(tmp_path, "proj/compA/iterations/legacy1.md", "no frontmatter\n")
+    _vault_file(tmp_path, "proj/compA/_extra/spec2.md", _doc(type_="product-spec", status="active"))
+    _vault_file(tmp_path, "proj/compB/iterations/task2.md", _doc(type_="task", status="active"))
+    _vault_file(tmp_path, "proj/compC/plain/doc.md", _doc(type_="task", status="active"))
+
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert lines[0] == "census: 6 docs / 3 spine-active (compA 2, compB 1) / 1 legacy"
+    assert failed is False
+
+
+# =====================================================================================
 # sweep mode — pair integrity, forward (supersedes → target)
 # =====================================================================================
 
