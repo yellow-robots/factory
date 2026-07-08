@@ -2239,3 +2239,341 @@ def test_repair_prompt_templates_unchanged(tmp_path):
                                "(production code; only touch a test if the test itself is wrong).")
     for call in by_stage["REVIEWFIX"]:
         assert review_repair_fragment in call
+
+
+# ============ Issue #84: PR-stage remote writes (push / pr create) survive transients ============
+# `git push` and `gh pr create` each get PR_STAGE_ATTEMPTS (= PR_STAGE_RETRIES + 1) attempts with
+# exponential backoff before falling back to the SAME preserve+resume environmental hold as the check
+# gate / quota holds (env_hold_record) — never cleanup_wt. A custom GIT_BIN wrapper intercepts only the
+# `push` subcommand (forwarding everything else through to the real `git`), driven by STUB_PUSH_* env
+# vars so a transient vs. persistent failure is deterministic and needs no real network. A custom GH_BIN
+# stub adds controllable `pr list`/`pr create` behavior (STUB_PRCREATE_*) on top of the existing GH_STUB
+# shape, so the branch's existing-open-PR reuse path (find_open_pr) is exercised the same way. Backoff
+# delays are zeroed in most tests (a real `sleep 0` is instant) except the dedicated knob test, which
+# intercepts `sleep` itself via a PATH stub to assert the requested delays without ever really waiting.
+# `_state_dir`/`_wt_dir`/`_run_dirs` are the issue #39 section's helpers above, reused as-is.
+
+GIT_PUSH_WRAPPER = '''#!/usr/bin/env bash
+is_push=0
+for a in "$@"; do [ "$a" = "push" ] && is_push=1; done
+if [ "$is_push" = "1" ]; then
+  [ -n "${STUB_PUSH_ARGV_LOG:-}" ] && printf '%s\\n' "$*" >> "$STUB_PUSH_ARGV_LOG"
+  n=0
+  if [ -n "${STUB_PUSH_COUNTER:-}" ] && [ -f "$STUB_PUSH_COUNTER" ]; then n=$(cat "$STUB_PUSH_COUNTER"); fi
+  n=$((n + 1))
+  [ -n "${STUB_PUSH_COUNTER:-}" ] && printf '%s' "$n" > "$STUB_PUSH_COUNTER"
+  fail_count="${STUB_PUSH_FAIL_COUNT:-0}"
+  if [ "$fail_count" = "always" ] || [ "$n" -le "$fail_count" ]; then
+    echo "${STUB_PUSH_ERR:-stub push error: connection reset by peer}" >&2
+    exit 1
+  fi
+fi
+exec git "$@"
+'''
+
+# Extends the base GH_STUB with controllable `pr list` (find_open_pr) / `pr create` behavior. Everything
+# else (issue view/comment, project item-list/item-edit, pr comment/view) is identical to GH_STUB.
+GH_STUB_PR = '''#!/usr/bin/env bash
+case "$1" in
+  repo) echo "test/repo" ;;
+  issue)
+    case "$2" in
+      view)    cat "$STUB_ISSUE_JSON" ;;
+      comment) printf 'COMMENT %s\\n' "$*" >> "$STUB_TIMELINE" ;;
+      *)       echo "unhandled issue $2" >&2; exit 9 ;;
+    esac ;;
+  project)
+    case "$2" in
+      item-list) [ -n "${STUB_ITEMLIST_FAIL:-}" ] && exit 4 || cat "$STUB_ITEM_JSON" ;;
+      item-edit) printf 'EDIT %s\\n' "$*" >> "$STUB_TIMELINE" ;;
+      *)         echo "unhandled project $2" >&2; exit 9 ;;
+    esac ;;
+  pr)
+    case "$2" in
+      list)
+        if [ -n "${STUB_PR_EXISTS_FILE:-}" ] && [ -f "$STUB_PR_EXISTS_FILE" ]; then
+          printf '[{"url": "%s"}]' "$(cat "$STUB_PR_EXISTS_FILE")"
+        else
+          printf '[]'
+        fi ;;
+      create)
+        printf 'CALL\\n' >> "${STUB_PRCREATE_CALLS:-/dev/null}"
+        n=0
+        if [ -n "${STUB_PRCREATE_COUNTER:-}" ] && [ -f "$STUB_PRCREATE_COUNTER" ]; then n=$(cat "$STUB_PRCREATE_COUNTER"); fi
+        n=$((n + 1))
+        [ -n "${STUB_PRCREATE_COUNTER:-}" ] && printf '%s' "$n" > "$STUB_PRCREATE_COUNTER"
+        fail_count="${STUB_PRCREATE_FAIL_COUNT:-0}"
+        if [ "$fail_count" = "always" ] || [ "$n" -le "$fail_count" ]; then
+          if [ -n "${STUB_PRCREATE_MARKS_EXISTING:-}" ] && [ -n "${STUB_PR_EXISTS_FILE:-}" ]; then
+            echo "https://stub/pr/1" > "$STUB_PR_EXISTS_FILE"
+          fi
+          echo "${STUB_PRCREATE_ERR:-stub pr create error: timeout}" >&2
+          exit 1
+        fi
+        echo "https://stub/pr/1" ;;
+      comment) echo PRCOMMENT >> "$STUB_TIMELINE"
+               if [ -n "${STUB_PRCOMMENTS:-}" ]; then
+                 __p=""; __bf=""; __body=""
+                 for __a in "$@"; do
+                   [ "$__p" = "--body-file" ] && __bf="$__a"
+                   [ "$__p" = "--body" ] && __body="$__a"
+                   __p="$__a"
+                 done
+                 [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
+                 [ -n "$__body" ] && { echo "=== PRCOMMENT ==="; printf '%s\\n' "$__body"; } >> "$STUB_PRCOMMENTS"
+               fi ;;
+      view)    if [ -n "${STUB_ROLLUP_JSON:-}" ]; then cat "$STUB_ROLLUP_JSON"
+               else printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1"; fi ;;
+      *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
+    esac ;;
+  *)  echo "unhandled gh $*" >&2; exit 9 ;;
+esac
+'''
+
+SLEEP_STUB = '''#!/usr/bin/env bash
+[ -n "${STUB_SLEEP_LOG:-}" ] && printf '%s\\n' "$1" >> "$STUB_SLEEP_LOG"
+exit 0
+'''
+
+
+def _raw_timeline(tmp):
+    """The full timeline file, unsplit — the PR-stage hold's issue comment (unlike every earlier hold's)
+    embeds real newlines/backticks (the stderr tail), so a substring like the stderr text or the
+    ENVIRONMENTAL marker can land on a continuation line that `_comments()`'s line-prefix filter would
+    miss; a raw substring search over the whole file finds it regardless of which physical line it's on."""
+    p = tmp / "timeline"
+    return p.read_text() if p.exists() else ""
+
+
+def _pr_stage_env(tmp_path, binp, work, *, number=5, title="PR stage transient", fast=True):
+    """`_real`'s base env, plus the retrying-git wrapper as GIT_BIN and (if `fast`) zeroed backoff knobs
+    so these tests never wait for real — a bare `sleep 0` returns immediately."""
+    env = _real(tmp_path, _env(tmp_path, binp, number=number, title=title), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    git_wrapper = _exec(binp / "git-push-wrapper.sh", GIT_PUSH_WRAPPER)
+    env["GIT_BIN"] = str(git_wrapper)
+    if fast:
+        env["PR_STAGE_BACKOFF_BASE"] = "0"
+        env["PR_STAGE_BACKOFF_FACTOR"] = "1"
+        env["PR_STAGE_BACKOFF_MAX"] = "0"
+    return env
+
+
+def _fail_all_commits(work):
+    """Install a pre-commit hook that always refuses — standing in for a failure IN the commit step
+    itself (distinct from the empty-diff 'no changes produced' guard ahead of it), which the PR stage
+    leaves uncaught exactly as before issue #84: no `|| fail_blocked` wraps the commit call, only the
+    remote writes below it gained the retry/hold machinery."""
+    hook = work / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/usr/bin/env bash\necho 'stub: pre-commit hook refuses' >&2\nexit 1\n")
+    hook.chmod(hook.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def test_pr_stage_push_retries_then_succeeds_no_hold(tmp_path):
+    """Criterion 1: a push that fails twice then succeeds completes the PR stage normally — one PR opened,
+    the retry count visible in the run's log, never a force-push on any attempt — and records no
+    environmental hold (state cleared, worktree torn down, stage order and Reason unaffected)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="Push retries then succeeds")
+    env.update({
+        "STUB_PUSH_FAIL_COUNT": "2",
+        "STUB_PUSH_COUNTER": str(tmp_path / "push_counter"),
+        "STUB_PUSH_ARGV_LOG": str(tmp_path / "push_argv"),
+        "STUB_PUSH_ERR": "stub: connection reset by peer",
+    })
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    assert (tmp_path / "push_counter").read_text() == "3"            # 2 failures + 1 success
+    assert "attempt 1/4 failed" in r.stderr and "attempt 2/4 failed" in r.stderr
+    assert "succeeded on attempt 3/4 (2 retries)" in r.stderr         # retry count visible in the log
+    argv_lines = (tmp_path / "push_argv").read_text().splitlines()
+    assert len(argv_lines) == 3
+    assert all("force" not in l for l in argv_lines)                 # never a force-push, on any attempt
+    assert _state_dir(tmp_path) is None                               # no hold recorded
+    assert _wt_dir(tmp_path) is None                                  # torn down normally
+    tl = _timeline(tmp_path)
+    assert "Blocked" not in " ".join(_edits(tl))
+    assert tl.index("IMPL") < tl.index("TEST") < tl.index("CHECK") < tl.index("REVIEW")   # stage order intact
+    assert "Environmental hold" not in r.stderr                          # no PR-stage hold fired
+
+
+def test_pr_stage_default_retries_at_least_three_beyond_first_attempt(tmp_path):
+    """Criterion 2 (default floor): with PR_STAGE_RETRIES left at its default (unset), 3 straight failures
+    still leave one more attempt to succeed on — the default is at least 3 retries beyond the first."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="Default retry floor")
+    env.update({"STUB_PUSH_FAIL_COUNT": "3", "STUB_PUSH_COUNTER": str(tmp_path / "push_counter")})
+    assert "PR_STAGE_RETRIES" not in env
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    assert (tmp_path / "push_counter").read_text() == "4"            # 3 failures + 1 success, within the default
+
+
+def test_pr_stage_push_exhausts_retries_records_environmental_hold(tmp_path):
+    """Criterion 3: a persistently-failing push exhausts retries and falls back to the SAME preserve+
+    resume core as the check gate's env_hold — hold marker + resume manifest written, Reason=Blocked, a
+    comment carrying an ENVIRONMENTAL marker and the final attempt's captured stderr, worktree/branch/
+    state preserved (no teardown), non-zero exit."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="Push exhausts retries")
+    env.update({"STUB_PUSH_FAIL_COUNT": "always", "STUB_PUSH_ERR": "stub: DNS resolution failed for github.com"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "https://stub/pr/1" not in r.stdout                       # no PR ever opened
+    wt = _wt_dir(tmp_path); assert wt is not None and wt.exists()     # preserved, not torn down
+    sd = _state_dir(tmp_path); assert sd is not None
+    assert (sd / "env-hold").exists()
+    rj = json.loads((sd / "run.json").read_text())
+    assert rj["branch"] == "task/5-push-exhausts-retries"
+    assert (sd / "05-commit.done").exists()                          # commit stage completed before push failed
+    assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
+    raw = _raw_timeline(tmp_path)
+    assert "ENVIRONMENTAL" in raw
+    assert "stub: DNS resolution failed for github.com" in raw       # final attempt's stderr tail
+    assert "push" in raw.lower()
+
+
+def test_pr_stage_relaunch_after_push_hold_resumes_at_pr_stage(tmp_path):
+    """Criterion 4: a relaunch after a push-exhaustion hold reuses the preserved worktree/branch and
+    re-enters directly at the PR stage — implement/test/check/review are NOT re-run."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="Push hold then resume")
+    env["STUB_PUSH_FAIL_COUNT"] = "always"
+    r1 = _run(["5", "--repo", "test/repo"], env)
+    assert r1.returncode != 0
+    wt1 = _wt_dir(tmp_path); assert wt1 is not None
+
+    env2 = {**env, "STUB_TIMELINE": str(tmp_path / "timeline2")}
+    env2.pop("STUB_PUSH_FAIL_COUNT")                                  # the transient clears; push now succeeds
+    r2 = _run(["5", "--repo", "test/repo"], env2)
+    assert r2.returncode == 0, r2.stderr
+    assert "https://stub/pr/1" in r2.stdout
+    tl2 = (tmp_path / "timeline2").read_text().splitlines() if (tmp_path / "timeline2").exists() else []
+    assert "IMPL" not in tl2 and "TEST" not in tl2 and "CHECK" not in tl2 and "REVIEW" not in tl2
+    assert "reusing preserved env-hold worktree" in r2.stderr
+    assert str(wt1) in r2.stderr
+    assert "resume: skipping commit (05-commit.done present)" in r2.stderr
+    assert _state_dir(tmp_path) is None                               # successful resume clears state...
+    assert _wt_dir(tmp_path) is None                                  # ...and tears the worktree down again
+
+
+def test_pr_stage_pr_create_reuses_existing_pr_on_retry_no_duplicate(tmp_path):
+    """Criterion 5 (idempotent create): a `pr create` that fails to report back (as if the branch's PR
+    was created server-side but the acknowledgment was lost) is not retried into a duplicate — the next
+    attempt's existence check (`pr list --head`) finds it and reuses it instead of creating again."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="PR create reuse on retry")
+    _exec(binp / "gh", GH_STUB_PR)
+    env.update({
+        "STUB_PRCREATE_FAIL_COUNT": "1",
+        "STUB_PRCREATE_MARKS_EXISTING": "1",
+        "STUB_PR_EXISTS_FILE": str(tmp_path / "pr_exists"),
+        "STUB_PRCREATE_CALLS": str(tmp_path / "prcreate_calls"),
+        "STUB_PRCREATE_ERR": "stub: timeout waiting for GitHub API",
+    })
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    calls = (tmp_path / "prcreate_calls").read_text().splitlines()
+    assert len(calls) == 1                                           # `gh pr create` invoked exactly once
+    assert "pr create succeeded on attempt 2/4 (1 retry)" in r.stderr
+    assert _state_dir(tmp_path) is None                               # success, no hold
+
+
+def test_pr_stage_pr_create_exhausts_retries_records_environmental_hold(tmp_path):
+    """The pr-create branch of the same fallback: retries exhausted on `gh pr create` (push itself
+    succeeded first try, isolating this path) records the same environmental hold as the push branch —
+    preserved worktree/state, Reason=Blocked, an ENVIRONMENTAL comment naming the failed step and
+    carrying the captured stderr."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="PR create exhausts retries")
+    _exec(binp / "gh", GH_STUB_PR)
+    env.update({
+        "STUB_PRCREATE_FAIL_COUNT": "always",
+        "STUB_PRCREATE_ERR": "stub: 502 Bad Gateway",
+        "STUB_PRCREATE_CALLS": str(tmp_path / "prcreate_calls"),
+    })
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "https://stub/pr/1" not in r.stdout
+    wt = _wt_dir(tmp_path); assert wt is not None and wt.exists()
+    sd = _state_dir(tmp_path); assert sd is not None
+    assert (sd / "env-hold").exists()
+    assert (sd / "05-commit.done").exists()
+    assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
+    raw = _raw_timeline(tmp_path)
+    assert "ENVIRONMENTAL" in raw and "pr create" in raw.lower()
+    assert "stub: 502 Bad Gateway" in raw
+    calls = (tmp_path / "prcreate_calls").read_text().splitlines()
+    assert len(calls) == 4                                           # every attempt actually called create
+
+
+def test_pr_stage_no_changes_still_hard_blocks_with_teardown(tmp_path):
+    """Criterion 6 (non-remote failures unaffected): 'no changes produced' is still a hard Block through
+    fail_blocked — Reason=Blocked, teardown, no PR — even with the new stage-marker gate wrapping the
+    commit step, and never touches the retry/hold machinery (push is never even attempted)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="Produces nothing")
+    env.pop("STUB_CLAUDE_CHANGE")                                     # implementer writes nothing
+    env["STUB_PUSH_ARGV_LOG"] = str(tmp_path / "push_argv")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0 and "no changes" in r.stderr.lower()
+    assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
+    assert "https://stub/pr/1" not in r.stdout
+    assert _wt_dir(tmp_path) is None and _state_dir(tmp_path) is None  # torn down, not preserved
+    assert not (tmp_path / "push_argv").exists()                      # push never attempted
+    assert "environmental" not in r.stderr.lower()
+
+
+def test_pr_stage_commit_failure_is_unchanged_not_retried_or_held(tmp_path):
+    """Criterion 6 (non-remote failures unaffected): a failure IN the commit step itself (not the
+    empty-diff guard, and not a remote write) stays exactly as before issue #84 — it never reaches the
+    push/pr-create retry loop or the environmental-hold fallback, and never opens a PR."""
+    work, _ = _make_repo(tmp_path)
+    _fail_all_commits(work)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="Commit itself fails")
+    env["STUB_PUSH_ARGV_LOG"] = str(tmp_path / "push_argv")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "https://stub/pr/1" not in r.stdout
+    assert not (tmp_path / "push_argv").exists()                      # never reached the push retry loop
+    assert "environmental" not in r.stderr.lower() and "ENVIRONMENTAL" not in r.stderr
+    tl = _timeline(tmp_path)
+    assert "IMPL" in tl and "TEST" in tl and "CHECK" in tl and "REVIEW" in tl   # every LLM stage still ran
+    assert tl.index("IMPL") < tl.index("TEST") < tl.index("CHECK") < tl.index("REVIEW")   # in order
+
+
+def test_pr_stage_backoff_honors_env_knobs_and_caps_at_max(tmp_path):
+    """Criterion 2 (operator-tunable, bounded): PR_STAGE_RETRIES/BACKOFF_BASE/BACKOFF_FACTOR/BACKOFF_MAX
+    drive the retry loop's actual requested delays, capped at BACKOFF_MAX rather than growing unbounded —
+    verified via a `sleep` stub placed on PATH that records the requested delay and returns immediately
+    (no real waiting anywhere in this suite)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, title="Backoff knobs", fast=False)
+    env["STUB_PUSH_FAIL_COUNT"] = "always"
+    sleep_log = tmp_path / "sleep_log"
+    _exec(binp / "sleep", SLEEP_STUB)
+    env["STUB_SLEEP_LOG"] = str(sleep_log)
+    env["PATH"] = f"{binp}{os.pathsep}{os.environ.get('PATH', '')}"
+    env.update({
+        "PR_STAGE_RETRIES": "4", "PR_STAGE_BACKOFF_BASE": "3",
+        "PR_STAGE_BACKOFF_FACTOR": "2", "PR_STAGE_BACKOFF_MAX": "5",
+    })
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0                                          # retries exhausted -> hold
+    delays = [int(l) for l in sleep_log.read_text().splitlines()] if sleep_log.exists() else []
+    # 5 attempts (retries=4) -> 4 inter-attempt delays: base, then doubling, capped at BACKOFF_MAX
+    assert delays == [3, 5, 5, 5]
+    assert sum(delays) < 60                                           # cumulative delay stays bounded (minutes-scale)
+    sd = _state_dir(tmp_path); assert sd is not None and (sd / "env-hold").exists()

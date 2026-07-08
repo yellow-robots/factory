@@ -15,6 +15,9 @@
 #   any stage failure                                  -> Reason=Blocked + comment (failure stays visible).
 #   a claude -p stage killed by a quota/rate-limit signature -> environmental hold (preserve+resume,
 #     no LLM repair), same discipline as the check gate's environment failure.
+#   a PR-stage remote write (git push / gh pr create) failing transiently -> bounded exponential-backoff
+#     retries (PR_STAGE_* below), then the SAME environmental hold on exhaustion (issue #84) — never a
+#     teardown; a non-remote PR-stage failure (no changes produced, commit failure) stays a hard Block.
 #   merge closes the issue; Projects' close->Done sets Status=Done natively.
 # Dispatch: n8n polls Ready -> tools/dispatch.py -> this runner (RFC 0004). Operating model: AGENTS.md.
 #
@@ -25,6 +28,10 @@
 # Overridable for unit tests (no live LLM / no network): CLAUDE_BIN, GH_BIN, GIT_BIN.
 # Project config (defaults = yellow-robots project #1; ids hardcoded below):
 #   PROJECT_NUMBER, PROJECT_ID, STATUS_FIELD_ID, REASON_FIELD_ID, OPT_* option ids.
+# PR-stage remote-write retries (issue #84; conservative defaults, operator-tunable):
+#   PR_STAGE_RETRIES (default 3, beyond the first attempt), PR_STAGE_BACKOFF_BASE (default 5s),
+#   PR_STAGE_BACKOFF_FACTOR (default 2), PR_STAGE_BACKOFF_MAX (default 60s per-attempt cap) — see the
+#   PR stage below for the retry loop these drive.
 set -euo pipefail
 
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"; GH_BIN="${GH_BIN:-gh}"; GIT_BIN="${GIT_BIN:-git}"
@@ -555,6 +562,19 @@ branch_exists(){ "$GIT_BIN" -C "$BASE_REPO" show-ref --verify --quiet "refs/head
 if [ -f "$HOLD_MARKER" ] && [ -e "$WT" ] && branch_exists; then
   log "resume: reusing preserved env-hold worktree ($WT) + branch $BRANCH — skipping completed stages"
   "$GIT_BIN" -C "$BASE_REPO" fetch -q origin || true
+  # RUN_DIR is per-pid (a resume gets a FRESH one), but a skipped stage's supporting artifact (checks.log,
+  # review.md) lives only in the PRIOR run's dir — recover the ones later steps read unconditionally
+  # (the review-bundle assembly, the reviewer-verdict PR comment) from the preserved run.json, so a hold
+  # past the check/review stage (any of them — the PR stage included, issue #84) resumes cleanly instead
+  # of those steps finding a path that was never populated in the new run dir.
+  PRIOR_RUN_DIR="$(python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("run_dir") or "")
+except Exception: print("")' "$STATE_DIR/run.json" 2>/dev/null || true)"
+  if [ -n "$PRIOR_RUN_DIR" ] && [ "$PRIOR_RUN_DIR" != "$RUN_DIR" ]; then
+    for _f in checks.log review.md; do
+      [ -f "$PRIOR_RUN_DIR/$_f" ] && cp "$PRIOR_RUN_DIR/$_f" "$RUN_DIR/$_f"
+    done
+  fi
 else
   rm -rf "$STATE_DIR"                                       # no valid hold -> discard any stale markers
   "$GIT_BIN" -C "$BASE_REPO" fetch -q origin || fail_blocked "git fetch failed"
@@ -821,14 +841,104 @@ else
 fi
 
 # ---- commit / push / open PR ----
-"$GIT_BIN" -C "$WT" add -A
-if "$GIT_BIN" -C "$WT" diff --cached --quiet; then fail_blocked "no changes produced"; fi
-"$GIT_BIN" -C "$WT" commit -q -m "$(printf '%s\n\nImplements #%s (dev-runner, build %s). Tests by the independent tester stage.' "$TITLE" "$ISSUE" "$BUILD_ID")"
-PR_HEAD_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"   # the pushed PR head commit (for the shadow merge record)
-"$GIT_BIN" -C "$WT" push -q -u origin "$BRANCH" || fail_blocked "push failed"
+# The commit itself is gated behind a stage marker (unlike push/create below): a resumed run reuses the
+# SAME worktree with that commit already made, so re-running `add -A` + the empty-diff check would
+# misread "already committed" as "no changes produced". Non-remote failures here (no changes produced,
+# the commit itself failing) are UNCHANGED hard Blocks — only the remote writes below get retried.
+if stage_done 05-commit; then
+  log "resume: skipping commit (05-commit.done present)"
+  PR_HEAD_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
+else
+  "$GIT_BIN" -C "$WT" add -A
+  if "$GIT_BIN" -C "$WT" diff --cached --quiet; then fail_blocked "no changes produced"; fi
+  "$GIT_BIN" -C "$WT" commit -q -m "$(printf '%s\n\nImplements #%s (dev-runner, build %s). Tests by the independent tester stage.' "$TITLE" "$ISSUE" "$BUILD_ID")"
+  PR_HEAD_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"   # the pushed PR head commit (for the shadow merge record)
+  mark_stage 05-commit
+fi
+
+# PR-stage remote writes (issue #84): `git push` and `gh pr create` each get PR_STAGE_ATTEMPTS total
+# attempts (first try + PR_STAGE_RETRIES) with exponential backoff between them before falling back to
+# the SAME preserve+resume environmental hold as env_hold/llm_quota_hold above (never cleanup_wt) — a
+# one-shot transient GitHub/network failure must never cost a full rebuild (factory#81). Defaults are
+# conservative and documented in the file header; cumulative worst-case delay is bounded to minutes by
+# PR_STAGE_BACKOFF_MAX, never unbounded.
+PR_STAGE_RETRIES="${PR_STAGE_RETRIES:-3}"
+PR_STAGE_BACKOFF_BASE="${PR_STAGE_BACKOFF_BASE:-5}"
+PR_STAGE_BACKOFF_FACTOR="${PR_STAGE_BACKOFF_FACTOR:-2}"
+PR_STAGE_BACKOFF_MAX="${PR_STAGE_BACKOFF_MAX:-60}"
+PR_STAGE_ATTEMPTS=$((PR_STAGE_RETRIES + 1))
+
+# retry_with_backoff: call the function named $1 up to PR_STAGE_ATTEMPTS times with exponential backoff
+# between attempts (capped at PR_STAGE_BACKOFF_MAX/attempt). $1 must set RETRY_ERR (its captured stderr
+# tail) and return non-zero on failure; on exhaustion RETRY_ERR holds the LAST attempt's tail. $2 = a
+# label for the log lines (the retry count this way lands in the run's log output, per issue #84).
+retry_with_backoff(){
+  local fn="$1" label="$2" attempt=1 delay="$PR_STAGE_BACKOFF_BASE" rc=0
+  while :; do
+    rc=0; "$fn" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      [ "$attempt" -gt 1 ] && log "$label succeeded on attempt $attempt/$PR_STAGE_ATTEMPTS ($((attempt - 1)) retr$([ "$((attempt - 1))" -eq 1 ] && echo y || echo ies))"
+      return 0
+    fi
+    if [ "$attempt" -ge "$PR_STAGE_ATTEMPTS" ]; then
+      log "$label failed after $attempt attempt(s) — retries exhausted"
+      return 1
+    fi
+    log "$label attempt $attempt/$PR_STAGE_ATTEMPTS failed (rc=$rc) — retrying in ${delay}s"
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * PR_STAGE_BACKOFF_FACTOR))
+    [ "$delay" -gt "$PR_STAGE_BACKOFF_MAX" ] && delay="$PR_STAGE_BACKOFF_MAX"
+  done
+}
+
+# push_attempt: re-push the SAME ref, NEVER force — a push that lands server-side but fails to
+# acknowledge is naturally absorbed by the next identical attempt (idempotency note, issue #84).
+push_attempt(){
+  local errfile="$RUN_DIR/push-attempt.err" rc=0
+  "$GIT_BIN" -C "$WT" push -q -u origin "$BRANCH" 2>"$errfile" || rc=$?
+  RETRY_ERR="$(tail -n 20 "$errfile" 2>/dev/null || true)"
+  return "$rc"
+}
+
+# find_open_pr: the URL of an existing OPEN PR for $BRANCH, or empty (a lookup failure reads as "none
+# found", so the caller falls through to create — never a false reuse). Deliberately `pr list --head`,
+# NOT `pr view` — the latter is also how shadow_ci polls the CI rollup and how --re-evaluate reads a PR,
+# so reusing it here would tangle this existence check up with those unrelated reads.
+find_open_pr(){
+  local out
+  out="$("$GH_BIN" pr list --repo "$REPO" --head "$BRANCH" --state open --json url 2>/dev/null)" || { printf ''; return 0; }
+  printf '%s' "$out" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d=[]
+print((d[0].get("url") or "") if isinstance(d, list) and d else "")' 2>/dev/null || true
+}
+
+# pr_create_attempt: idempotent creation — `gh pr create` is NOT naturally idempotent, so an existing
+# open PR for the branch (e.g. one a prior attempt created server-side but failed to report) is REUSED,
+# never re-created as a duplicate (issue #84).
+pr_create_attempt(){
+  local errfile="$RUN_DIR/pr-create-attempt.err" rc=0 existing
+  existing="$(find_open_pr)"
+  if [ -n "$existing" ]; then PR_URL="$existing"; RETRY_ERR=""; return 0; fi
+  PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY" 2>"$errfile")" || rc=$?
+  RETRY_ERR="$(tail -n 20 "$errfile" 2>/dev/null || true)"
+  return "$rc"
+}
+
+# pr_stage_hold: retries exhausted on a PR-stage remote write -> the SAME preserve+resume core the check
+# gate and quota holds use (env_hold_record) — hold marker + resume manifest written, Reason=Blocked, a
+# comment carrying an ENVIRONMENTAL marker and the final attempt's captured stderr tail, and deliberately
+# no cleanup_wt so a relaunch resumes at this same PR stage (issue #84).
+pr_stage_hold(){   # $1 = which write ("push"/"pr create"), $2 = final attempt's captured stderr tail
+  local what="$1" errtail="${2:-<no stderr captured>}"
+  local msg="the $what step of the PR stage failed after $PR_STAGE_ATTEMPTS attempts with exponential backoff — an ENVIRONMENTAL failure (transient GitHub/network), not a code failure. Wait for it to clear, then set Ready again — do NOT send it to LLM repair. Final attempt's stderr: $errtail"
+  env_hold_record "$msg" "$(printf 'dev-runner: **Environmental hold (PR stage)** — the %s step failed after %s attempts with exponential backoff (ENVIRONMENTAL: transient GitHub/network, not a code failure). The worktree (%s) and completed-stage checkpoints are preserved; a relaunch resumes at the PR stage (green stages are not re-run).\n\nFinal attempt'"'"'s stderr:\n```\n%s\n```' "$what" "$PR_STAGE_ATTEMPTS" "$WT" "$errtail")"
+}
+
+retry_with_backoff push_attempt "push" || pr_stage_hold "push" "$RETRY_ERR"
 PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$BUILD_ID" "$REVIEW_ID")"
-PR_URL="$("$GH_BIN" pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")" \
-  || fail_blocked "pr create failed"
+retry_with_backoff pr_create_attempt "pr create" || pr_stage_hold "pr create" "$RETRY_ERR"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
 
 # staleness warning (issue #58): additive alongside the reviewer verdict + usage summary, and deliberately
