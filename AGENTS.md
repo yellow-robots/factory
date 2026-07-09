@@ -71,9 +71,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   no product holds a copy of the factory.
 - **The seam is a contract, not a calibration.** Every repo-shape assumption the pipeline makes is a
   declared `.yr/factory.toml` key with a fail-closed default, or a written invariant a repo must meet —
-  never an unstated inheritance from the factory's own repo shape. (Two known unstated assumptions — the
-  merge evaluator expects server CI; the tester boundary guard assumes a root `tests/` tree — are queued
-  for the seam-completion design pass, ruled 2026-07-09.)
+  never an unstated inheritance from the factory's own repo shape.
 - **Builds from git refs, not a mutable working tree.** Code and `.yr/factory.toml` read from
   `origin/main`, so a stale/dirty/live-dev checkout can't affect a build (falls back to the working tree
   only when unpushed).
