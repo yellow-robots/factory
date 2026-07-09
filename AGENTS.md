@@ -116,6 +116,12 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   (`BUILD_MODEL`/`REVIEW_MODEL`, replacing retired `MODEL`/`HARD_MODEL`). Selectors `model:` /
   `review_model:` live in the issue body/manifest; an unregistered or wrongly-ranked pair bounces to
   Needs-info, and only the override runs unranked, warned.
+- **Attended operator sessions** run under the human's standing grants (settled 2026-07-03, dogfooded
+  through it-6→10): cold design reviews with per-finding dispositions; the crossing's technical-rfc and
+  decomposition review as its gate; epic Ready flips under a design's standing approval and standalone
+  flips on explicit instruction — always record-before-flip on the trail. Never: set a design `active`,
+  arm a repo, or hand-merge a PR (an armed repo merges via the evaluator; everything else is the
+  human's click). Grants are per-agent and the human's to extend.
 - **Auth is human work** — orgs/repos/tokens/scopes, never an agent.
 
 ---
