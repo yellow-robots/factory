@@ -1617,3 +1617,211 @@ def test_main_prints_every_debt_action_kind(capsys, monkeypatch):
     assert "raised a tech-debt round" in out and repo_raise in out
     assert "repaired tech-debt raise #900" in out and repo_repair in out
     assert "debt-error" in out and repo_error in out
+
+
+# ============================================================================
+# #108 — org-wide board intake for registered repos
+#
+# Extends the stubbed-`gh` harness with intake's own reads/writes: `gh issue list --repo ... --state
+# open ...` per registered repo, and `project item-add` for each issue found missing from the board.
+# `FakeIntakeGh` subclasses `FakeGh` for the same reason `FakeDebtGh` does: an `item-add` is fed back
+# onto the SAME live `board_nodes` list the board query re-serializes on every call, so running intake
+# twice against one fake is a genuine two-tick idempotency proof, not two independently-seeded calls.
+# ============================================================================
+
+INTAKE_REPO_A = "yellow-robots/intake-a"
+INTAKE_REPO_B = "yellow-robots/intake-b"
+
+
+def _open_issue(number, repo=INTAKE_REPO_A):
+    """An open-issue node exactly as `gh issue list --json number,url` returns it."""
+    return {"number": number, "url": f"https://github.com/{repo}/issues/{number}"}
+
+
+class FakeIntakeGh(FakeGh):
+    """`open_issues`: repo -> list of `_open_issue` dicts (a repo absent from this dict makes its
+    `issue list` read raise, modelling an inaccessible repo — never asserted on here, since intake's
+    per-repo error isolation isn't part of the acceptance criteria)."""
+
+    def __init__(self, board_nodes, epic_details, open_prs=None, *, open_issues=None):
+        super().__init__(board_nodes, epic_details, open_prs)
+        self.open_issues = {r: list(v) for r, v in (open_issues or {}).items()}
+        self.issue_list_argv = []
+        self.item_add_argv = []
+        self._next_id = 7000
+
+    def __call__(self, argv):
+        argv = list(argv)
+        if argv[:2] == ["issue", "list"]:
+            self.issue_list_argv.append(argv)
+            f = _flags(argv)
+            repo = f["--repo"]
+            if repo not in self.open_issues:
+                raise RuntimeError(f"gh issue list --repo {repo} failed")
+            return json.dumps(self.open_issues[repo])
+        if argv[:2] == ["project", "item-add"]:
+            f = _flags(argv)
+            self.item_add_argv.append(argv)
+            self._next_id += 1
+            item_id = f"PI-INTAKE-{self._next_id}"
+            m = re.match(r"https://github\.com/([^/]+/[^/]+)/issues/(\d+)", f["--url"])
+            repo, number = m.group(1), int(m.group(2))
+            node = _item(number, item_id=item_id, itype="Task", repo=repo)
+            self.board_nodes.append(node)               # feeds a later board read / re-run
+            self._index[item_id] = node
+            self._by_number[number] = node
+            return {"id": item_id}
+        return super().__call__(argv)
+
+
+def _run_intake(fake, repos, *, project_number=1, org="yellow-robots"):
+    return epic_gate._sweep_intake(fake, repos, fake.board_nodes,
+                                    project_number=project_number, org=org)
+
+
+# ---- AC1 — a missing open issue gets exactly one native item-add ----------------------------------
+
+def test_intake_adds_every_missing_open_issue():
+    fake = FakeIntakeGh([], {}, open_issues={INTAKE_REPO_A: [_open_issue(10), _open_issue(11)]})
+    actions = _run_intake(fake, [INTAKE_REPO_A])
+
+    assert len(fake.item_add_argv) == 2
+    assert fake.item_add_argv[0] == ["project", "item-add", "1", "--owner", "yellow-robots",
+                                      "--url", f"https://github.com/{INTAKE_REPO_A}/issues/10"]
+    assert fake.item_add_argv[1] == ["project", "item-add", "1", "--owner", "yellow-robots",
+                                      "--url", f"https://github.com/{INTAKE_REPO_A}/issues/11"]
+    assert {(a["repo"], a["issue"]) for a in actions} == {(INTAKE_REPO_A, 10), (INTAKE_REPO_A, 11)}
+    assert all(a["action"] == "intake" for a in actions)
+
+
+def test_intake_sweeps_every_registered_repo():
+    fake = FakeIntakeGh([], {}, open_issues={INTAKE_REPO_A: [_open_issue(1, INTAKE_REPO_A)],
+                                              INTAKE_REPO_B: [_open_issue(2, INTAKE_REPO_B)]})
+    actions = _run_intake(fake, [INTAKE_REPO_A, INTAKE_REPO_B])
+    assert {(a["repo"], a["issue"]) for a in actions} == {(INTAKE_REPO_A, 1), (INTAKE_REPO_B, 2)}
+
+
+# ---- AC2 — idempotent: an issue already on the board is never re-added --------------------------------
+
+def test_intake_skips_an_issue_already_on_the_board():
+    board = [_item(10, item_id="PI-10", itype="Task", status="Backlog", repo=INTAKE_REPO_A)]
+    fake = FakeIntakeGh(board, {}, open_issues={INTAKE_REPO_A: [_open_issue(10), _open_issue(11)]})
+    actions = _run_intake(fake, [INTAKE_REPO_A])
+
+    assert len(fake.item_add_argv) == 1
+    assert fake.item_add_argv[0][-1] == f"https://github.com/{INTAKE_REPO_A}/issues/11"
+    assert actions == [{"action": "intake", "repo": INTAKE_REPO_A, "issue": 11}]
+
+
+def test_intake_already_on_board_issue_ignores_its_status():
+    """An issue on the board with ANY Status (or no Status at all) is still never re-added — the
+    idempotency check is presence-on-the-board, not any particular Status."""
+    board = [_item(10, item_id="PI-10", itype="Task", status=None, repo=INTAKE_REPO_A)]
+    fake = FakeIntakeGh(board, {}, open_issues={INTAKE_REPO_A: [_open_issue(10)]})
+    actions = _run_intake(fake, [INTAKE_REPO_A])
+    assert actions == []
+    assert fake.item_add_argv == []
+
+
+def test_intake_is_idempotent_across_two_ticks():
+    """A genuine two-tick proof: tick 1 adds the issue (through this same fake's item-add handler,
+    which feeds the new item straight back onto `board_nodes`); tick 2, run against the SAME fake,
+    sees it already on the board and adds nothing."""
+    fake = FakeIntakeGh([], {}, open_issues={INTAKE_REPO_A: [_open_issue(10)]})
+
+    first = _run_intake(fake, [INTAKE_REPO_A])
+    assert len(first) == 1
+    assert len(fake.item_add_argv) == 1
+
+    second = _run_intake(fake, [INTAKE_REPO_A])
+    assert second == []
+    assert len(fake.item_add_argv) == 1                 # no duplicate item-add on the re-run
+
+
+# ---- AC2 — closed issues and pull requests are never added --------------------------------------------
+
+def test_intake_reads_open_issues_only_never_prs():
+    fake = FakeIntakeGh([], {}, open_issues={INTAKE_REPO_A: [_open_issue(10)]})
+    _run_intake(fake, [INTAKE_REPO_A])
+
+    assert len(fake.issue_list_argv) == 1
+    f = _flags(fake.issue_list_argv[0])
+    assert f["--state"] == "open"                        # closed issues are never even read
+    assert fake.issue_list_argv[0][:2] == ["issue", "list"]   # never `gh pr list` -- PRs never surface
+    assert fake.pr_list_argv == []
+
+
+def test_intake_never_touches_status_or_reason():
+    """Intake adds exactly one write kind, `item-add` -- it never sets Status/Reason itself (the
+    board's own item-added workflow does that, out of the sweep's hands)."""
+    fake = FakeIntakeGh([], {}, open_issues={INTAKE_REPO_A: [_open_issue(10), _open_issue(11)]})
+    _run_intake(fake, [INTAKE_REPO_A])
+    assert fake.edits == []
+    assert fake.comments == []
+    assert fake.closes == []
+
+
+# ---- AC1/AC2 — wired into the org sweep itself, gated on the explicit `repos` seam ---------------------
+
+def test_sweep_epics_runs_intake_before_epic_processing():
+    board = []
+    fake = FakeIntakeGh(board, {}, open_issues={INTAKE_REPO_A: [_open_issue(50)]})
+    actions = epic_gate.sweep_epics(
+        gh=fake, org="yellow-robots", project_number=1,
+        status_field_id=STATUS_FIELD, reason_field_id=REASON_FIELD,
+        status_opt=STATUS_OPT, reason_opt=REASON_OPT, repos=[INTAKE_REPO_A],
+    )
+    assert {"action": "intake", "repo": INTAKE_REPO_A, "issue": 50} in actions
+
+
+def test_sweep_epics_default_repos_runs_no_intake():
+    """`repos` left unset (the promotion sweep's own tests never pass it) means no intake at all --
+    `sweep_epics` never touches `gh issue list` when no repo list is supplied."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)                          # the plain fake -- no `issue list` handler at all
+    actions = _sweep(fake)
+    assert not any(a["action"] == "intake" for a in actions)
+
+
+# ---- AC3 — each add prints one report line (repo, issue number) in the sweep's CLI output -------------
+
+def test_main_prints_one_report_line_per_intake_add(capsys, monkeypatch):
+    fake = FakeIntakeGh([], {}, open_issues={INTAKE_REPO_A: [_open_issue(10), _open_issue(11)],
+                                              INTAKE_REPO_B: [_open_issue(20)]})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [INTAKE_REPO_A, INTAKE_REPO_B])
+
+    rc = epic_gate.main()
+    assert rc == 0
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "added" in ln]
+    assert len(lines) == 3                                # exactly one line per add, no more
+    assert any(INTAKE_REPO_A in ln and "10" in ln for ln in lines)
+    assert any(INTAKE_REPO_A in ln and "11" in ln for ln in lines)
+    assert any(INTAKE_REPO_B in ln and "20" in ln for ln in lines)
+
+
+def test_main_prints_nothing_to_do_when_intake_finds_nothing_missing(capsys, monkeypatch):
+    board = [_item(10, item_id="PI-10", itype="Task", status="Backlog", repo=INTAKE_REPO_A)]
+    fake = FakeIntakeGh(board, {}, open_issues={INTAKE_REPO_A: [_open_issue(10)]})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [INTAKE_REPO_A])
+
+    rc = epic_gate.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "nothing to do" in out
+    assert "added" not in out
+
+
+def test_main_uses_registered_repos_for_intake(capsys, monkeypatch):
+    """`main()` sweeps exactly the repos `_registered_repos()` names -- never a repo outside that
+    list, and never skips one inside it."""
+    fake = FakeIntakeGh([], {}, open_issues={INTAKE_REPO_A: [_open_issue(1)]})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [INTAKE_REPO_A])
+
+    rc = epic_gate.main()
+    assert rc == 0
+    assert [_flags(a)["--repo"] for a in fake.issue_list_argv] == [INTAKE_REPO_A]
