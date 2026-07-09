@@ -2161,6 +2161,12 @@ def test_charter_appended_to_every_stage_and_states_required_clauses(tmp_path):
         "blocked run is a correct outcome",          # Blocked as a correct outcome
         "pull request only",                          # PRs only
         "deploy",                                     # never deploy or host work
+        "targeted tests",                             # in-stage verification is scoped, targeted
+        "full check suite",                            # the full suite belongs to the check gate/CI
+        "foreground",                                  # a stage works in the foreground only
+        "never poll",                                  # never polls/watches/sleeps on external state
+        "self-contained",                              # the task slice is self-contained by design
+        "standing documents",                          # standing documents are not context
     ]
     for stage, calls in by_stage.items():
         for call in calls:
@@ -2224,7 +2230,9 @@ def test_tester_production_code_ban_and_reviewer_verdict_protocol_pinned(tmp_pat
 def test_repair_prompt_templates_unchanged(tmp_path):
     """Acceptance: the repair prompt templates (check-repair, review-repair) are left untouched — their
     literals are load-bearing stub routing, unrelated to the charter dedupe (they're task prompts, not
-    the shared role/charter system prompt)."""
+    the shared role/charter system prompt). The check-repair prompt gained one appended sentence scoping
+    the repair to the failing tests and noting the runner re-runs the full check suite afterward; that
+    sentence must survive intact and the pinned routing fragment must stay contiguous around it."""
     binp = tmp_path / "bin"; _stubs(binp)
     env = _all_stages_env(tmp_path, binp, "Repair templates unchanged")
     r = _run(["5", "--repo", "test/repo"], env)
@@ -2232,13 +2240,64 @@ def test_repair_prompt_templates_unchanged(tmp_path):
     by_stage = _stage_calls(tmp_path)
 
     check_repair_fragment = "The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests."
+    check_repair_scoping = "Reproduce with the failing tests only; the runner re-runs the full check suite after this stage."
     for call in by_stage["REPAIR"]:
         assert check_repair_fragment in call
+        assert check_repair_scoping in call
 
     review_repair_fragment = ("A reviewer REQUESTED CHANGES. Fix the blocking findings "
                                "(production code; only touch a test if the test itself is wrong).")
     for call in by_stage["REVIEWFIX"]:
         assert review_repair_fragment in call
+
+
+# ============ Issue #116: build-pipeline (implement -> review) gate-pass-count pins ============
+# The check command (CHECK_STUB, timestamped "CHECK" on the shared timeline) is the repo's full check
+# suite — the same one the deterministic check gate and server CI run. Repair choreography must not
+# silently multiply how often it fires: a clean build runs it once; a check-repair round adds exactly
+# one re-run; a review-repair round (tools/dev-runner.sh:837) adds exactly one re-run of its own; both
+# rounds together add both. These are the build pipeline's own gate passes — the armed merge path's
+# freshness re-green (rebase, then one more gate pass, tools/dev-runner.sh:1012-1029) is a separate,
+# out-of-scope concern and is not exercised or asserted against here.
+
+def test_gate_pass_count_clean_build_invokes_check_once(tmp_path):
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Clean build gate pass count"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _timeline(tmp_path).count("CHECK") == 1
+
+
+def test_gate_pass_count_check_repair_round_invokes_check_twice(tmp_path):
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Check repair round gate pass count"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _timeline(tmp_path).count("CHECK") == 2
+
+
+def test_gate_pass_count_review_repair_round_invokes_check_twice(tmp_path):
+    """A review-repair round adds its own re-check (tools/dev-runner.sh:837) even though the check gate
+    itself passed clean the first time — so this scenario's count is 2, not 1."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Review repair round gate pass count"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_BLOCK": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _timeline(tmp_path).count("CHECK") == 2
+
+
+def test_gate_pass_count_both_repair_rounds_invokes_check_three_times(tmp_path):
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Both repair rounds gate pass count")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _timeline(tmp_path).count("CHECK") == 3
 
 
 # ============ Issue #84: PR-stage remote writes (push / pr create) survive transients ============
