@@ -114,6 +114,11 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   (`BUILD_MODEL`/`REVIEW_MODEL`, replacing retired `MODEL`/`HARD_MODEL`). Selectors `model:` /
   `review_model:` live in the issue body/manifest; an unregistered or wrongly-ranked pair bounces to
   Needs-info, and only the override runs unranked, warned.
+- **Usage artifacts price in fresh-input equivalents.** Each stage files `usage-<stage>.json`; the census
+  weights (`stage_usage.py`, epic #47 — input 1 · output 5 · cache-write 1.25 · cache-read 0.1) are
+  exactly the Claude API price ratios, so weighted-total × the model's input $/Mtok = the build's shadow
+  cost at API rates. Builds run on the host's Claude subscription — no per-token invoice exists; the
+  shadow price is the decision metric (model choice, capacity headroom, cross-provider comparison).
 - **Attended operator sessions** run under the human's standing grants (settled 2026-07-03, dogfooded
   through it-6→10): cold design reviews with per-finding dispositions; the crossing's technical-rfc and
   decomposition review as its gate; epic Ready flips under a design's standing approval and standalone
