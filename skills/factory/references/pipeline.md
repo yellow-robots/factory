@@ -47,6 +47,26 @@ are preserved under `DEV_RUNNER_HOME/state` so a relaunch **resumes from the las
 instead of re-paying it. A code failure gets its one repair; a machinery contradiction resets the
 shadow streak.
 
+## Stage conduct
+
+Every stage prompt carries one confinement contract — the **stage charter** (`tools/dev-runner.sh:695`),
+appended by `run_stage` to each stage's role prompt so a stage building a foreign repo gets it too, not
+just the factory's own. It is the enforcing surface; this reference states its intent, not its text.
+Three of its rules bear directly on how a stage's own behavior should be read against the rest of this
+document:
+
+- **Verification is scoped; the gate owns the suite.** A stage's own verification exercises only the
+  change it just made. The repo's full check suite is the **check gate**'s job (above) — one clean pass,
+  exactly one more per repair round, the armed merge path's freshness re-green (rebase, then one more
+  gate pass, above) excepted — and past that, server CI's (`ci_green`, above). A stage re-running the
+  whole suite as its own inner loop is doing the gate's job, not its own.
+- **Foreground only.** A stage never polls, watches, or sleeps on state outside its own run; when it
+  can't proceed, it stops rather than wait. A `Blocked` run is that stop's correct shape, not a failure
+  to route around — see *environmental vs code failure*, above.
+- **The task slice is the whole context.** A stage reasons from the acceptance criteria in front of it;
+  standing documents — this reference included — inform the human and the pipeline's own code, never a
+  stage's working context.
+
 ## The legal test tree
 
 The tester's boundary guard is structural, not a prompt: the runner diffs the tester's stage against

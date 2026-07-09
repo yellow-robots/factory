@@ -246,6 +246,64 @@ def test_pipeline_md_has_lower_pipeline_content():
         "pipeline.md missing Status=Ready dispatch reference"
 
 
+def test_pipeline_md_has_stage_conduct_section():
+    """pipeline.md must state the stage-conduct contract the stage charter enforces.
+
+    Issue #117: the reference states, in one additive section, the same three
+    rules the stage charter (tools/dev-runner.sh) appends to every stage prompt —
+    scoped in-stage verification vs. the gate/CI owning the full suite,
+    foreground-only conduct (stop rather than wait, Blocked is a correct
+    outcome), and the task slice being the stage's whole context. The section
+    must cite the charter as the enforcing surface rather than copy its text.
+    """
+    text = (REFS / "pipeline.md").read_text(encoding="utf-8")
+    lower = text.lower()
+
+    assert "stage charter" in lower, \
+        "pipeline.md missing a citation of the stage charter as the enforcing surface"
+    assert "dev-runner.sh" in text, \
+        "pipeline.md stage-conduct section does not cite tools/dev-runner.sh"
+
+    # Rule 1: in-stage verification is scoped; the full suite belongs to the check
+    # gate (one clean pass, one more per repair round) and server CI.
+    assert "scoped" in lower or "scope" in lower, \
+        "pipeline.md missing the scoped-verification rule"
+    assert "check gate" in lower, \
+        "pipeline.md stage-conduct section does not tie the full suite to the check gate"
+    assert re.search(r"one\s+more\s+per\s+repair\s+round", lower), \
+        "pipeline.md missing the one-clean-pass / one-more-per-repair-round gate count"
+
+    # Rule 2: foreground only — stop rather than wait; Blocked is a correct outcome.
+    assert "foreground" in lower, \
+        "pipeline.md missing the foreground-only rule"
+    assert "blocked" in lower and (
+        "correct outcome" in lower or "correct shape" in lower
+    ), "pipeline.md missing the Blocked-is-a-correct-outcome statement"
+
+    # Rule 3: the task slice is the stage's whole context; standing documents stay out.
+    assert "whole context" in lower, \
+        "pipeline.md missing the task-slice-is-the-whole-context rule"
+    assert "standing document" in lower, \
+        "pipeline.md missing the standing-documents-stay-out rule"
+
+
+def test_pipeline_md_stage_conduct_does_not_copy_charter_verbatim():
+    """The stage-conduct section must cite the charter, not restate its sentences verbatim."""
+    dev_runner = (ROOT / "tools" / "dev-runner.sh").read_text(encoding="utf-8")
+    match = re.search(r'STAGE_CHARTER="(.*)"\n', dev_runner)
+    assert match, "could not locate STAGE_CHARTER in tools/dev-runner.sh"
+    charter_text = match.group(1)
+
+    # Pull a couple of the charter's own distinguishing sentences and confirm pipeline.md
+    # doesn't reproduce them verbatim (it should paraphrase/cite instead).
+    charter_sentences = [s.strip() for s in charter_text.split(". ") if len(s.strip()) > 40]
+    pipeline_text = (REFS / "pipeline.md").read_text(encoding="utf-8")
+
+    verbatim_hits = [s for s in charter_sentences if s and s in pipeline_text]
+    assert not verbatim_hits, \
+        f"pipeline.md copies stage-charter sentences verbatim: {verbatim_hits}"
+
+
 def test_closing_md_has_promote_and_merge():
     """closing.md must cover promote-to-Ready prep and merge → Done."""
     text = (REFS / "closing.md").read_text(encoding="utf-8")
