@@ -31,12 +31,23 @@ Stranded-claim detection (extends the same per-epic busy check): `tools/dev-runn
 leaving Status=In Progress with no Reason forever — neither in flight nor off-track, so the epic would
 wait on it forever. The sweep raises such a claim (`Reason=Blocked` + an explanatory comment) once it has
 stood past a staleness bound with no open PR and no live build holding `dispatch.py`'s build lock.
+
+Board intake (a third, independent pass over the same sweep): GitHub's Projects auto-add workflow is
+one-per-project with a single repository/filter on this org's plan, so it can't serve a board spanning
+every registered repo — an issue with no project item has no Status, invisible to the whole state
+machine until someone manually adds it. `_sweep_intake` closes that gap: for each registered repo, every
+OPEN issue (never a PR — `gh issue list` only returns issues) missing an item on our board gets one
+native `item-add`; the board's own item-added workflow then sets Status=Backlog, so intake never writes
+Status itself. `sweep_epics(repos=...)` takes the repo list as an explicit input (never filesystem-
+discovered inside the pure core, mirroring `_sweep_debt_counters`'s own explicit `repos` param) — `main()`
+supplies the real, workspace-discovered list via `_registered_repos()`.
 """
 import datetime
 import fcntl
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tomllib
@@ -409,6 +420,91 @@ def _pi_node(subissue, project_number):
     return None
 
 
+# --- org-wide board intake: every OPEN issue in a registered repo gets a board item, idempotently -------
+_REMOTE_RE = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$")
+
+
+def _repo_from_git_remote(path):
+    """`owner/name` parsed from `path`'s `origin` remote URL (any of the git/ssh/https forms), or None on
+    any failure (no `.git`, no `origin`, an unparseable URL) — never fatal to the rest of discovery."""
+    try:
+        proc = subprocess.run(["git", "-C", str(path), "remote", "get-url", "origin"],
+                               capture_output=True, text=True)
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    m = _REMOTE_RE.search(proc.stdout.strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def _registered_repos(workspace=None):
+    """Registered repos = subdirectories of `$YR_WORKSPACE` holding a `.yr/factory.toml` manifest — the
+    same checkout convention `dev-runner.sh` resolves `BASE_REPO` from (`$YR_WORKSPACE/<name>`, see
+    AGENTS.md), rather than a separately-maintained registry list: a repo is "registered" the moment it's
+    onboarded (cloned + manifest added, onboarding steps 1-2), with no second place to remember to update.
+    The tradeoff is that this requires every registered repo to be checked out on the host running the
+    sweep — already true today, since onboarding clones to the workspace before anything else can run.
+    Each directory's own git `origin` remote (not the directory name) gives the canonical `owner/name`; a
+    directory with no manifest, no `.git`, or an unparseable remote is skipped, never fatal."""
+    root = pathlib.Path(workspace) if workspace else pathlib.Path(
+        os.environ.get("YR_WORKSPACE") or pathlib.Path(__file__).resolve().parent.parent.parent)
+    if not root.is_dir():
+        return []
+    repos = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or not (child / ".yr" / "factory.toml").is_file():
+            continue
+        repo = _repo_from_git_remote(child)
+        if repo:
+            repos.append(repo)
+    return repos
+
+
+def _board_issue_keys(nodes):
+    """`(repo, number)` for every Issue already present as an item on our board, in any state or Status —
+    intake's idempotency check: an issue already on the board is never re-added, closed or open."""
+    keys = set()
+    for item in nodes:
+        content = item.get("content") or {}
+        number = content.get("number")
+        if number is None:
+            continue
+        repo = (content.get("repository") or {}).get("nameWithOwner") or ""
+        keys.add((repo, number))
+    return keys
+
+
+def _list_open_issues(gh, repo):
+    """Every OPEN issue in `repo` — never a PR (`gh issue list` only ever returns issues, unlike `gh pr
+    list`) and never closed (`--state open`), so both exclusions intake needs come from the read itself."""
+    out = gh(["issue", "list", "--repo", repo, "--state", "open", "--json", "number,url", "--limit", "500"])
+    return out if isinstance(out, list) else json.loads(out)
+
+
+def _sweep_intake(gh, repos, board_nodes, *, project_number, org):
+    """For each of `repos`: every OPEN issue missing an item on our board gets one native `item-add`. Sets
+    no Status — the board's own item-added workflow does that (item-scoped, so it already covers every
+    repo); intake only ever adds the item. A read failure on one repo (deleted repo, no access, …) is
+    isolated as an `intake-error` action, never fatal to any other repo's intake."""
+    on_board = _board_issue_keys(board_nodes)
+    actions = []
+    for repo in sorted(repos):
+        try:
+            issues = _list_open_issues(gh, repo)
+        except Exception as exc:
+            actions.append({"action": "intake-error", "repo": repo, "error": str(exc)})
+            continue
+        for issue in issues:
+            number = issue.get("number")
+            url = issue.get("url")
+            if number is None or url is None or (repo, number) in on_board:
+                continue
+            gh(["project", "item-add", str(project_number), "--owner", org, "--url", url])
+            actions.append({"action": "intake", "repo": repo, "issue": number})
+    return actions
+
+
 # --- the per-repo debt counter: closed-as-completed feature epics since the most recent closed debt epic
 #     (the anchor), raising the need for a round exactly once at the threshold ------------------------
 def _debt_repo_set(nodes):
@@ -675,33 +771,38 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
 def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
                 status_field_id=STATUS_FIELD_ID, reason_field_id=REASON_FIELD_ID,
                 status_opt=None, reason_opt=None,
-                now=None, build_lock_held=None, stranded_after_min=None):
-    """Run one sweep of the org board. For each OPEN, `Type=Feature`, `Status=Ready` epic (candidates,
-    interleaved with no prioritization), apply the per-epic algorithm. Then run the per-repo debt counter
-    over the distinct repositories holding any Type=Feature issue on the board (any state, any Status).
-    Returns the list of actions taken.
+                now=None, build_lock_held=None, stranded_after_min=None,
+                repos=None):
+    """Run one sweep of the org board. First, board intake over `repos` (see `_sweep_intake`). Then, for
+    each OPEN, `Type=Feature`, `Status=Ready` epic (candidates, interleaved with no prioritization), apply
+    the per-epic algorithm. Then run the per-repo debt counter over the distinct repositories holding any
+    Type=Feature issue on the board (any state, any Status). Returns the list of actions taken.
 
     The sweep only ever *sets* Status/Reason and posts comments — it never clears a Reason (clearing is
     the human's explicit resume act), never builds, and never sets any Status but `Ready` (promotion).
     Standalone tasks and children of non-Ready epics are never visited, so never touched (cord-pull). The
     debt counter adds exactly three write kinds on top — create the raise issue, add it to the board, set
     its Status to Backlog — and still never sets Ready, never promotes, never closes, never clears a
-    Reason.
+    Reason. Intake adds exactly one write kind — `item-add` — and never touches Status/Reason at all.
 
     `now` (a `() -> datetime.datetime` clock), `build_lock_held` (a `() -> bool` probe), and
-    `stranded_after_min` are injectable for the stranded-claim check — each defaults to a real read."""
+    `stranded_after_min` are injectable for the stranded-claim check — each defaults to a real read.
+    `repos` is the explicit list of registered repos to sweep for intake (never filesystem-discovered
+    inside this core, mirroring the debt counter's own explicit `repos` param) — defaults to `()` (no
+    intake) when omitted; `main()` supplies the real, workspace-discovered list."""
     gh = gh or _gh
     status_opt = status_opt or STATUS_OPT
     reason_opt = reason_opt or REASON_OPT
     now = now or _utcnow
     build_lock_held = build_lock_held or _default_build_lock_held
     stranded_after_min = STRANDED_AFTER_MIN if stranded_after_min is None else stranded_after_min
+    repos = () if repos is None else repos
 
     board = _query(gh, ["api", "graphql", "-f", "query=" + BOARD_QUERY,
                         "-F", f"org={org}", "-F", f"project={project_number}"])
     nodes = (((board.get("organization") or {}).get("projectV2") or {}).get("items") or {}).get("nodes") or []
 
-    actions = []
+    actions = _sweep_intake(gh, repos, nodes, project_number=project_number, org=org)
     for item in nodes:
         content = item.get("content") or {}
         if not content:                                                   # non-issue / draft item
@@ -728,12 +829,17 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
 
 
 def main(argv=None):
-    """CLI entrypoint: run one real sweep with the default `gh` runner and print what it did."""
-    actions = sweep_epics()
+    """CLI entrypoint: run one real sweep with the default `gh` runner over the workspace-discovered
+    registered repos, and print what it did."""
+    actions = sweep_epics(repos=_registered_repos())
     if not actions:
         print("epic-gate: nothing to do")
     for a in actions:
-        if a["action"] == "promote":
+        if a["action"] == "intake":
+            print(f"epic-gate: added {a['repo']}#{a['issue']} to the board")
+        elif a["action"] == "intake-error":
+            print(f"epic-gate: intake-error on {a['repo']}: {a.get('error', '')}")
+        elif a["action"] == "promote":
             print(f"epic-gate: promoted #{a['child']} under epic #{a['epic']}")
         elif a["action"] == "close":
             print(f"epic-gate: closed epic #{a['epic']} (reason={a['reason']})")
