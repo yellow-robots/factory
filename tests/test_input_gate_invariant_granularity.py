@@ -420,8 +420,8 @@ def test_other_invariants_still_present_and_unweakened():
 # ---------------------------------------------------------------------------
 
 def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.9.1", \
-        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.9.1'"
+    assert _plugin_data()["version"] == "0.9.2", \
+        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.9.2'"
 
 
 def test_skill_md_and_plugin_description_agree():
