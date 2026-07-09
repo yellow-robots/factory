@@ -61,8 +61,19 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   labels.
 - **Deterministic gates dispose.** The LLM proposes; the machine-checked gate (CI / `check_cmd` / the
   verdict) disposes — nothing reaches `main` unchecked.
+- **Legible failure, derivable recovery.** A failure surface (a merge record, a `Blocked` comment, a
+  bounce) states the observed fact and the rule that judged it — never step-by-step cures. Recovery is
+  not enumerated: failure modes are unbounded, and a cure catalogue dwarfs the docs while still missing
+  the unforeseen. The docs teach the *model* — each gate's meaning, its record vocabulary, its design
+  intent — so any agent, human or AI, derives recovery from the message plus the shipped docs alone: no
+  session memory, no source archaeology.
 - **Repo-agnostic.** Builds any registered repo via its manifest; the factory holds no product knowledge,
   no product holds a copy of the factory.
+- **The seam is a contract, not a calibration.** Every repo-shape assumption the pipeline makes is a
+  declared `.yr/factory.toml` key with a fail-closed default, or a written invariant a repo must meet —
+  never an unstated inheritance from the factory's own repo shape. (Two known unstated assumptions — the
+  merge evaluator expects server CI; the tester boundary guard assumes a root `tests/` tree — are queued
+  for the seam-completion design pass, ruled 2026-07-09.)
 - **Builds from git refs, not a mutable working tree.** Code and `.yr/factory.toml` read from
   `origin/main`, so a stale/dirty/live-dev checkout can't affect a build (falls back to the working tree
   only when unpushed).
@@ -105,6 +116,12 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   (`BUILD_MODEL`/`REVIEW_MODEL`, replacing retired `MODEL`/`HARD_MODEL`). Selectors `model:` /
   `review_model:` live in the issue body/manifest; an unregistered or wrongly-ranked pair bounces to
   Needs-info, and only the override runs unranked, warned.
+- **Attended operator sessions** run under the human's standing grants (settled 2026-07-03, dogfooded
+  through it-6→10): cold design reviews with per-finding dispositions; the crossing's technical-rfc and
+  decomposition review as its gate; epic Ready flips under a design's standing approval and standalone
+  flips on explicit instruction — always record-before-flip on the trail. Never: set a design `active`,
+  arm a repo, or hand-merge a PR (an armed repo merges via the evaluator; everything else is the
+  human's click). Grants are per-agent and the human's to extend.
 - **Auth is human work** — orgs/repos/tokens/scopes, never an agent.
 
 ---
