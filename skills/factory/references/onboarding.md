@@ -48,6 +48,12 @@ File a minimal test task (DoR form), set `Status=Ready`, and confirm the runner:
 2. Passes the DoR gate.
 3. Builds without error.
 4. Opens a PR.
+5. Records a merge-evaluator verdict on the PR (see [`pipeline.md`](pipeline.md#the-ci_green-model) for
+   the full model). On a repo whose CI is wired up and green, expect `YR-MERGE-SHADOW: WOULD-MERGE` (or
+   `YR-MERGE: MERGED` if the repo is already armed). On a repo with **no server CI configured yet**,
+   expect `YR-MERGE-SHADOW: WOULD-BLOCK — ci_green` with `check_rollup: empty_after_grace` — that record
+   states the fact that the repo has no server CI wired up, not that a check failed. Either record is a
+   correct, expected result of the smoke test, not a bug to chase.
 
 Check that `check_cmd` passes in the worktree — this is the gate that will block every future build if
 it's broken.
@@ -56,6 +62,28 @@ it's broken.
 
 The check gate is per-repo and grows with the repo. Adding a new check to `check_cmd` is a normal PR on
 that repo. The gate must be green in the worktree before considering a build passing.
+
+## Current assumptions
+
+The factory currently **assumes**, rather than declares, several things about a registered repo — met
+today by convention, not by a manifest key the runner checks:
+
+- **Built deps exist** (step 3) — `.venv` or `node_modules` present so `check_cmd` runs offline in a
+  fresh worktree.
+- **`check_cmd` is defined** (step 2) — the in-build check gate the runner actually runs.
+- **Server CI is configured** — the merge evaluator's `ci_green` condition polls the PR's GitHub check
+  rollup, not `check_cmd`; a repo with no server CI wired up (no workflow at all) cannot pass it, ever
+  — see [`pipeline.md`](pipeline.md#the-ci_green-model).
+- **Tests live under the repo-root `tests/` tree** — the tester stage's boundary guard treats
+  `tests/**` as the only legal place for tester changes; a repo whose test suite lives elsewhere (e.g.
+  `app/tests/`) will see every tester stage blocked as a boundary violation — see
+  [`pipeline.md`](pipeline.md#the-legal-test-tree).
+
+These are today's unstated shape assumptions, not a repo-declared contract — the seam-contract
+invariant (see `SKILL.md`) calls for turning each into an explicit `.yr/factory.toml` key with a
+fail-closed default. That work is a queued seam-completion design, not yet built: onboard a repo that
+doesn't meet these assumptions today and expect the corresponding stage to block until the design ships
+or the repo's shape changes to match.
 
 ## Judgment points
 

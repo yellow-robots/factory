@@ -33,7 +33,7 @@ below).
 | **Claim** | Sets `Status=In Progress` (single-flight lock — drops the task from the Ready poll). | — |
 | **Worktree** | Fresh `git worktree` off `origin/main` of the target repo. Reads code *and* `.yr/factory.toml` from the base ref — never a mutable working tree. Resume-aware: an environmental hold from a prior run reuses its preserved worktree and completed-stage checkpoints instead of tearing them down. | — |
 | **Implement** | Build-role model writes the minimal change against the acceptance criteria. `--permission-mode bypassPermissions` (the worktree + scoped creds are the walls). | `Blocked` |
-| **Test** | Independent cold process derives tests from the **acceptance criteria** (not the implementation). Boundary guard: any change outside the repo's test tree → `Blocked`, offending diff saved, no auto-revert. Build artifacts (`__pycache__/`, `*.pyc`) are excluded — they can't smuggle an implementation change. | `Blocked` |
+| **Test** | Independent cold process derives tests from the **acceptance criteria** (not the implementation). Boundary guard: any change outside the legal test tree (below) → `Blocked`, offending diff saved, no auto-revert. | `Blocked` |
 | **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`. One repair attempt on a code failure (at the registry's `check_repair` stage tier when set, else the build model); no repair on an environment failure (exit 126/127). | `Blocked` |
 | **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
 | **PR** | Commit, push `task/<id>-<slug>`, open PR, post the review. | — |
@@ -46,6 +46,59 @@ never an LLM repair, never a shadow-streak reset, and the run's completed-stage 
 are preserved under `DEV_RUNNER_HOME/state` so a relaunch **resumes from the last completed stage**
 instead of re-paying it. A code failure gets its one repair; a machinery contradiction resets the
 shadow streak.
+
+## The legal test tree
+
+The tester's boundary guard is structural, not a prompt: the runner diffs the tester's stage against
+the implementer's tree and computes offenders as that diff **minus** two exclusions —
+
+1. anything under the repo-root `tests/` directory (path prefix `tests/`) — the tester's actual
+   working tree, and
+2. build artifacts anywhere in the tree — `__pycache__/` directories and `*.pyc` files, compiled from
+   source the tester cannot itself change, so they can't smuggle an implementation change past
+   builder ≠ verifier. A repo's `.gitignore` is the first line of defense against these showing up at
+   all; the exclusion is the backstop for a repo that forgets it.
+
+Anything left after both exclusions is a boundary violation: the stage fails `Blocked`, the offending
+diff is saved (`boundary-violation.diff`) for diagnosis, and there is no auto-revert. This is why a
+legitimate tester file under, say, `app/src/` or `app/tests/` (not the repo-root `tests/` tree) blocks
+— the guard has no concept of "looks like a test file," only "is it under `tests/`."
+
+## The ci_green model
+
+The merge evaluator's `ci_green` condition requires **every configured check on the PR head to
+conclude successfully** — not a check_cmd run in the worktree (that's the separate, in-build check
+gate), but the PR's actual GitHub check rollup. The evaluation is a bounded poll with one extra wrinkle
+for a rollup that reads empty:
+
+- A rollup that reads **zero total checks** is ambiguous the moment a PR opens — a real repo's checks
+  can still be registering (GitHub Actions registers check runs asynchronously) rather than the repo
+  having no CI at all — so an empty read gets its own short, bounded **registration grace**
+  (`MERGE_CI_REG_POLL_INTERVAL` / `MERGE_CI_REG_GRACE`) before the evaluator concludes anything. If a
+  check registers during the grace, evaluation falls through to the normal bounded wait below.
+- If the rollup is **still empty when the grace expires**, the evaluator fails fast, without paying
+  the (much longer) in-flight wait — a repo with genuinely no CI would otherwise stall every PR for
+  the full `MERGE_CI_TIMEOUT`.
+- Once a rollup carries checks (whether registered immediately or after the grace), the evaluator polls
+  (`MERGE_CI_POLL_INTERVAL`) until nothing is in-flight, bounded by `MERGE_CI_TIMEOUT`.
+
+The record's `check_rollup` field carries the terminal state as one of:
+
+| `check_rollup` | Meaning |
+|---|---|
+| `success` | nothing in-flight, no failures — every configured check concluded successfully. |
+| `failure` | nothing in-flight, at least one check failed. |
+| `timed_out` | checks were still in-flight when the bounded wait (`MERGE_CI_TIMEOUT`) expired. |
+| `empty` | a transient read, not a persisted value — zero total checks on a poll, the condition that starts the registration grace. Never itself the value recorded on a PR; superseded by whichever state the grace resolves to. |
+| `empty_after_grace` | the rollup was still zero total checks when the registration grace expired — recorded as a `ci_green` failure. |
+
+**A repo with no server CI configured at all cannot pass `ci_green`.** Every PR on such a repo reads a
+zero-total rollup, pays the registration grace (nothing ever registers), and fails with
+`empty_after_grace` — so every PR records `YR-MERGE-SHADOW: WOULD-BLOCK — ci_green` /
+`YR-MERGE: BLOCKED — ci_green` with `check_rollup: empty_after_grace` and an empty `checks` list. That
+record states a **fact about the repo** — it has no server CI wired up — not a CI run that failed.
+Diagnosing it means adding server CI (a GitHub Actions workflow or equivalent) to the repo, not
+debugging a broken check.
 
 ## To run by hand
 
