@@ -257,13 +257,13 @@ def test_onboarding_md_merge_verdict_step_cites_pipeline_ci_green_model():
 
 
 # ---------------------------------------------------------------------------
-# Version bump — plugin.json is 0.9.1, and no 0.9.0 pin remains anywhere
+# Version bump — plugin.json is current, and no 0.9.0 pin remains anywhere
 # ---------------------------------------------------------------------------
 
-def test_plugin_version_is_0_9_1():
+def test_plugin_version_is_current():
     data = _plugin_data()
-    assert data["version"] == "0.9.1", \
-        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.1'"
+    assert data["version"] == "0.9.2", \
+        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.2'"
 
 
 THIS_FILE = pathlib.Path(__file__).resolve()
