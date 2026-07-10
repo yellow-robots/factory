@@ -47,7 +47,11 @@ def _read_bundle(tmp_path, issue, drhome="drhome"):
 # than deriving it itself.
 # ---------------------------------------------------------------------------
 SNAPSHOT_CLAUDE_STUB = r'''#!/usr/bin/env bash
-args="$*"
+stdin_content="$(cat)"
+[ -n "${STUB_CLAUDE_STDIN:-}" ] && printf '%s' "$stdin_content" > "$STUB_CLAUDE_STDIN"
+# issue #121: the reviewer's bundle path (and every other stage's task prompt) travels on stdin now, not
+# argv — combine both channels for classification and for the bundle-path grep below.
+args="$*"$'\n'"$stdin_content"
 case "$args" in
   *REVIEWER*)
     bpath="$(printf '%s' "$args" | grep -oE '[^[:space:]]*review-bundle\.json' | head -n1)"
@@ -184,10 +188,11 @@ def test_reviewer_prompt_contains_the_bundle_path(tmp_path):
     r = base._run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
     bundle_path = _bundle_paths(tmp_path, 5)[0]
-    # the happy path's LAST claude invocation is the reviewer (implement -> test -> check -> review),
-    # so claude_argv (overwritten per call) holds the reviewer's argv here.
-    argv_text = (tmp_path / "claude_argv").read_text()
-    assert str(bundle_path) in argv_text
+    # the happy path's LAST claude invocation is the reviewer (implement -> test -> check -> review), so
+    # claude_stdin (overwritten per call) holds the reviewer's stdin here — the bundle path travels in
+    # the task prompt (issue #121: stdin, never argv).
+    stdin_text = (tmp_path / "claude_stdin").read_text()
+    assert str(bundle_path) in stdin_text
 
 
 def test_reviewer_receives_bundle_before_any_verdict_recorded(tmp_path):

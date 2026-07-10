@@ -657,11 +657,29 @@ capture_stage_usage(){   # $1 = stage log file, $2 = model id used for this stag
     >/dev/null 2>&1 || true
 }
 
+# reap_pgid: kill every process still alive in a just-finished stage's process group — TERM first, then
+# a bounded escalation to KILL — so a stray child a stage forgot to stop (the class that motivated the
+# fatal pkill in gilda#9 run 9-4131516: a leftover Playwright run from an EARLIER attempt) is dead
+# before the next stage starts, never surviving to contaminate it (issue #121).
+reap_pgid(){   # $1 = the stage's pgid (== its pid; see run_stage)
+  local pgid="$1" i
+  kill -TERM -- "-$pgid" 2>/dev/null || return 0   # ESRCH: no group left, nothing to reap
+  for i in 1 2 3 4 5; do
+    kill -0 -- "-$pgid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+}
+
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
 run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set), $5=model id (default: build)
-  local model="${5:-$BUILD_ID}" cred rc=0 fmt_overridden=0
+  local model="${5:-$BUILD_ID}" cred rc=0 fmt_overridden=0 pid
   local sys_prompt; sys_prompt="$(printf '%s\n\n%s' "$1" "$STAGE_CHARTER")"
-  local args=( -p "$2" --model "$model" --effort "$EFFORT"
+  # the task prompt travels on stdin, never argv (issue #121): a task whose acceptance criteria quote a
+  # runnable string (e.g. `pkill -f "bash qa/qa-gate.sh"`) must not be able to pattern-match the stage's
+  # OWN command line and self-kill the harness — exactly what happened in gilda#9 run 9-4131516. `-p`
+  # with no positional value reads the prompt from stdin instead.
+  local args=( -p --model "$model" --effort "$EFFORT"
                --permission-mode bypassPermissions --append-system-prompt "$sys_prompt"
                --allowedTools ${4:-Read Edit Write Bash}
                --setting-sources "${STAGE_SETTING_SOURCES:-project}" --strict-mcp-config )
@@ -677,21 +695,47 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
     args+=( --output-format json )
   fi
   cred="$(pool_credential "$(pool_for_model_id "$model")")"
+  # run the CLI as the leader of its OWN process group (setsid) so it — and anything it spawns — can be
+  # reaped as a unit once the stage exits (issue #121), instead of a stray child surviving into the next
+  # stage. Backgrounding a pipeline in a non-interactive script (no job control) does not itself create a
+  # new process group, so `exec setsid` succeeds in-place (no extra fork): `$!` IS the CLI's pid, and
+  # that pid IS the new group's pgid. The task prompt is piped in via `printf '%s'` (no here-string) so
+  # no trailing newline is added — byte-identical to what argv used to carry.
   if [ -n "$cred" ]; then
-    ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 || rc=$?
+    printf '%s' "$2" | ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
   else
-    ( cd "$WT" && "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 || rc=$?
+    printf '%s' "$2" | ( cd "$WT" && exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
   fi
+  pid=$!
+  wait "$pid" || rc=$?
+  reap_pgid "$pid"
   if [ "$rc" -eq 0 ] && [ "$fmt_overridden" -eq 0 ]; then capture_stage_usage "$3" "$model"; fi
   return "$rc"
+}
+
+# stage_fail_msg: a diagnosable Blocked message for a run_stage failure — always states the exit code;
+# when the log is EMPTY (the CLI died before writing its output envelope, e.g. a pattern-matching pkill
+# from inside the stage self-hitting its own process group, or any other external kill), name signal
+# termination as the likely class (bash reports a signal-killed child as 128+N — 144 = 128+16 — never
+# invent a signal name from the number) and point at the preserved session transcript instead of leaving
+# the record naming only a zero-byte file (issue #121; gilda#9 run 9-4131516).
+stage_fail_msg(){   # $1 = stage label, $2 = log file, $3 = exit code
+  local label="$1" log="$2" rc="$3"
+  if [ -s "$log" ]; then
+    printf '%s stage failed (exit %s; log: %s)' "$label" "$rc" "$log"
+  else
+    printf '%s stage failed: signal-terminated (exit %s) — the log is empty (log: %s), so the CLI likely died before writing anything; check the preserved session transcript under %s for what happened before the kill' \
+      "$label" "$rc" "$log" "$HOME/.claude/projects/$(printf '%s' "$WT" | tr '/.' '-')"
+  fi
 }
 SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 
 # ---- stage charter (issue #50): the confinement contract every stage runs under, in every target repo —
 # appended (by run_stage) to each stage's role prompt so a stage building a foreign repo still gets it, not
 # just the factory's own. Kept free of the stage-aware test stub's four routed literals (its case-sensitive
-# `case` match on argv: TESTER, REVIEWER, "tests FAIL", "REQUESTED CHANGES") — a leaked literal here would
-# misroute every stage, not just its own.
+# `case` match on the combined argv+stdin capture: TESTER, REVIEWER — still argv, in the role system-prompt
+# — and "tests FAIL", "REQUESTED CHANGES" — on stdin since issue #121, in the task prompt) — a leaked
+# literal here would misroute every stage, not just its own.
 STAGE_CHARTER="You are one stage of an automated pipeline, running in one fresh worktree cut from the base ref. The pipeline holds builder ≠ verifier: the implementer writes production code and never authors the committed test suite; the tester writes tests only, derived from the acceptance criteria and never from the implementation's internals; the reviewer changes nothing. Write only inside this worktree — never the host. Make no git or board writes; the runner owns them (the reviewer's read-only git, e.g. diffing staged changes, is the one carve-out). Never weaken a gate: do not edit checks, CI configuration, .yr/factory.toml, or any test you were told not to touch. If the task cannot be done within these rules, stop and say so — a Blocked run is a correct outcome, not a failure to route around. This pipeline produces a pull request only; deploy and host work are never a stage's. In-stage verification exercises only the scope this stage's change touches, with targeted tests; the repo's full check suite belongs to the deterministic check gate and server CI, never an in-stage inner loop. A stage works in the foreground only: it never polls, watches, or sleeps on external state, and when it cannot proceed it stops and says so. The task in front of it is self-contained by design; standing documents are not this stage's context."
 
 # implementer — production code only
@@ -707,7 +751,7 @@ else
   run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" || IMPL_RC=$?
   if [ "$IMPL_RC" -ne 0 ]; then
     is_quota_failure "$RUN_DIR/implement.log" && llm_quota_hold "implement" "$RUN_DIR/implement.log"
-    fail_blocked "implement stage failed (log: $RUN_DIR/implement.log)"
+    fail_blocked "$(stage_fail_msg "implement" "$RUN_DIR/implement.log" "$IMPL_RC")"
   fi
 
   # checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
@@ -728,7 +772,7 @@ else
   run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" || TEST_RC=$?
   if [ "$TEST_RC" -ne 0 ]; then
     is_quota_failure "$RUN_DIR/test.log" && llm_quota_hold "test" "$RUN_DIR/test.log"
-    fail_blocked "tester stage failed (log: $RUN_DIR/test.log)"
+    fail_blocked "$(stage_fail_msg "tester" "$RUN_DIR/test.log" "$TEST_RC")"
   fi
 
   # tester boundary guard: block if tester modified anything outside tests/**
