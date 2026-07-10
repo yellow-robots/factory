@@ -536,16 +536,22 @@ log "claimed #$ISSUE -> In Progress, branch $BRANCH, build=$BUILD_ID review=$REV
 # from here, any failure flags Reason=Blocked (and comments) before exiting — failures are visible
 fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cleanup_wt; die "$1"; }
 
-# ---- run dir (per-pid), worktree (branch-keyed, stable), per-branch stage-completion state (issue #39) --
-# The worktree + state dir are branch-keyed (stable across runs); the run dir is per-pid. As each stage
-# completes it drops a durable per-branch marker (NN-<stage>.done). On an ENVIRONMENTAL failure the
-# worktree + run dir + markers are PRESERVED (env_hold) and a relaunch resumes at the first stage without
-# a .done marker; on success or a CODE/MACHINERY failure the state is cleared and the worktree torn down
-# (cleanup_wt). Markers + a self-describing run.json live under state/<branch-slug>.
+# ---- run dir (per-pid), worktree (repo+branch-keyed, stable), per-repo-branch stage-completion state
+#      (issue #39; repo-keyed epic #126) --------------------------------------------------------------
+# The worktree + state dir are keyed on repo + branch (stable across runs); the run dir is per-pid. Since
+# branches embed only the per-repo issue number (task/<issue>-<slug>), two DIFFERENT repos' same-numbered
+# tasks would otherwise collide on one worktree and on each other's resume markers now that builds run
+# concurrently across repos (epic #126 — per-repo locks + a global cap) — so both paths are prefixed with
+# the target repo's own slug (<owner>--<name>). As each stage completes it drops a durable marker
+# (NN-<stage>.done). On an ENVIRONMENTAL failure the worktree + run dir + markers are PRESERVED (env_hold)
+# and a relaunch resumes at the first stage without a .done marker; on success or a CODE/MACHINERY failure
+# the state is cleared and the worktree torn down (cleanup_wt). Markers + a self-describing run.json live
+# under state/<repo-slug>--<branch-slug>.
 mkdir -p "$RUN_DIR"   # RUN_DIR itself was computed earlier (see the opening log line above)
-WT="$DEV_RUNNER_HOME/wt/${BRANCH//\//-}"
+REPO_SLUG="$(printf '%s--%s' "$OWNER" "$NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')"
+WT="$DEV_RUNNER_HOME/wt/${REPO_SLUG}--${BRANCH//\//-}"
 MERGE_GIT_DIR="$WT"   # the shared terminal-decision helpers' git checkout, for a live build (see above)
-STATE_DIR="$DEV_RUNNER_HOME/state/${BRANCH//\//-}"
+STATE_DIR="$DEV_RUNNER_HOME/state/${REPO_SLUG}--${BRANCH//\//-}"
 HOLD_MARKER="$STATE_DIR/env-hold"
 stage_done(){ [ -f "$STATE_DIR/$1.done" ]; }               # has stage $1 already completed in a prior run?
 mark_stage(){ mkdir -p "$STATE_DIR"; : > "$STATE_DIR/$1.done"; }

@@ -1425,6 +1425,93 @@ def _run_dirs(tmp, number=5):
     return list((tmp / "drhome" / "runs").glob(f"{number}-*"))
 
 
+def _state_dir_names(tmp):
+    return sorted(d.name for d in (tmp / "drhome" / "state").glob("*") if d.is_dir())
+
+
+def _wt_dir_names(tmp):
+    return sorted(d.name for d in (tmp / "drhome" / "wt").glob("*") if d.is_dir())
+
+
+# ---- epic #126: the worktree + state dirs are repo-keyed, not branch-keyed alone ----
+# Two DIFFERENT repos' same-numbered tasks embed the identical branch (task/<issue>-<slug>) — now that
+# builds run concurrently across repos, that would collide on one worktree and on each other's resume
+# markers unless both paths also carry the target repo's own slug.
+
+def test_worktree_and_state_dirs_are_repo_keyed_for_same_numbered_tasks_across_repos(tmp_path):
+    # two DIFFERENT repos' own checkouts (a shared BASE_REPO would collide on the branch name itself,
+    # independent of worktree/state keying — the collision under test lives one layer up, in dev-runner's
+    # own worktree/state paths, not in git's "branch already checked out" refusal).
+    (tmp_path / "repo-a").mkdir(); (tmp_path / "repo-b").mkdir()
+    work_a, _ = _make_repo(tmp_path / "repo-a")
+    work_b, _ = _make_repo(tmp_path / "repo-b")
+    binp = tmp_path / "bin"; _stubs(binp)
+
+    env_a = _real(tmp_path, _env(tmp_path, binp, number=5, title="Same task", repo="owner-a/repo"), work_a)
+    env_a.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})   # preserve state for inspection
+    r_a = _run(["5", "--repo", "owner-a/repo"], env_a)
+    assert r_a.returncode != 0
+
+    env_b = _real(tmp_path, _env(tmp_path, binp, number=5, title="Same task", repo="owner-b/repo"), work_b)
+    env_b.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126",
+                  "STUB_TIMELINE": str(tmp_path / "timeline-b")})
+    r_b = _run(["5", "--repo", "owner-b/repo"], env_b)
+    assert r_b.returncode != 0
+
+    wts, states = _wt_dir_names(tmp_path), _state_dir_names(tmp_path)
+    assert len(wts) == 2, f"expected two distinct worktree dirs (one per repo), got {wts}"
+    assert len(states) == 2, f"expected two distinct state dirs (one per repo), got {states}"
+    # same branch slug (identical issue# + title -> identical BRANCH) in both, distinguished only by the
+    # repo prefix — proving the repo slug, not the branch, is what keeps them apart.
+    assert all(name.endswith("--task-5-same-task") for name in wts)
+    assert all(name.endswith("--task-5-same-task") for name in states)
+    assert any(name.startswith("owner-a--repo--") for name in wts)
+    assert any(name.startswith("owner-b--repo--") for name in wts)
+    assert any(name.startswith("owner-a--repo--") for name in states)
+    assert any(name.startswith("owner-b--repo--") for name in states)
+
+
+def test_fresh_run_completes_under_the_repo_keyed_paths(tmp_path):
+    """Criterion: resume paths keep working across the keying change for fresh runs — an ordinary
+    successful build (no resume involved) still runs every stage and reaches a PR under the new,
+    repo-prefixed worktree/state naming."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=9, title="Fresh under new keying", repo="acme/widgets"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["9", "--repo", "acme/widgets"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    tl = _timeline(tmp_path)
+    assert "IMPL" in tl and "TEST" in tl and "CHECK" in tl and "REVIEW" in tl   # every stage ran
+    # torn down on success exactly as today (repo-keying doesn't change the success teardown contract)
+    assert _wt_dir(tmp_path) is None and _state_dir(tmp_path) is None
+
+
+def test_relaunch_resumes_under_the_repo_keyed_worktree_and_state_paths(tmp_path):
+    """Criterion: resume paths keep working across the keying change — a relaunch of a preserved
+    env-hold still finds and reuses the SAME repo-keyed worktree/state dir it left behind, resuming at
+    the first incomplete stage exactly as the pre-existing (branch-only-keyed) resume behavior did."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Broken toolchain", repo="acme/widgets"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})
+    r1 = _run(["5", "--repo", "acme/widgets"], env)
+    assert r1.returncode != 0
+    wt1 = _wt_dir(tmp_path)
+    assert wt1 is not None and wt1.name.startswith("acme--widgets--")
+
+    env2 = {**env, "STUB_TIMELINE": str(tmp_path / "timeline2")}
+    del env2["STUB_CHECK_ENVFAIL"]
+    r2 = _run(["5", "--repo", "acme/widgets"], env2)
+    assert r2.returncode == 0, r2.stderr
+    assert "reusing preserved env-hold worktree" in r2.stderr
+    assert str(wt1) in r2.stderr                                     # the SAME repo-keyed worktree reused
+    tl2 = (tmp_path / "timeline2").read_text().splitlines()
+    assert "IMPL" not in tl2 and "TEST" not in tl2                    # already-.done stages skipped
+    assert "CHECK" in tl2 and "REVIEW" in tl2
+
+
 def test_env_failure_preserves_worktree_markers_and_run_dir(tmp_path):
     """Criteria 1 & 2: each completed stage drops a durable per-branch `.done` marker, and an
     environmental check failure PRESERVES the worktree, the run dir, and those markers (env_hold does NOT
