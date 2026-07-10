@@ -2330,6 +2330,10 @@ def test_charter_appended_to_every_stage_and_states_required_clauses(tmp_path):
         "never poll",                                  # never polls/watches/sleeps on external state
         "self-contained",                              # the task slice is self-contained by design
         "standing documents",                          # standing documents are not context
+        "by pid only",                                 # process management is by PID only (issue #122)
+        "pkill -f",                                    # pattern-kills named and forbidden
+        "pgrep -f",                                    # pattern-kills named and forbidden
+        "own command environment can contain the task text",  # why: argv/env can echo the task text
     ]
     for stage, calls in by_stage.items():
         for call in calls:
@@ -2379,6 +2383,11 @@ def test_tester_production_code_ban_and_reviewer_verdict_protocol_pinned(tmp_pat
     for call in by_stage["TEST"]:
         prompt = _extract_append_system_prompt(call)
         assert "Do NOT modify production code — only add or extend tests." in prompt
+        # issue #122: the tester's only legal write surface is named as repo-root tests/ — and the
+        # prompt calls out that a same-named directory nested inside a deliverable (e.g. qa/tests/) is
+        # NOT that surface, since the boundary guard (not this prompt) is what actually disposes.
+        assert "repo-root tests/" in prompt, "tester prompt must name repo-root tests/ as its write surface"
+        assert "qa/tests/" in prompt, "tester prompt must call out a nested same-named dir as out of bounds"
 
     verdict_protocol = (
         "Tag each finding 'blocker' or 'nit'. Do NOT modify any files. "
