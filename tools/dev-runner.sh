@@ -11,7 +11,8 @@
 #   Status=In Review. Each stage's token/cache usage is captured to usage-<stage>.json (tools/stage_usage.py)
 #   and rolled up into one PR comment + usage-summary.json in the run dir (issue #48).
 #   empty acceptance criteria / a model (build or review) not in the registry / an inverted or
-#     cross-provider ranked build/review pair -> Status=Backlog + Reason=Needs-info (no LLM).
+#     cross-provider ranked build/review pair / no `.yr/factory.toml` anywhere (repo never onboarded,
+#     the epic-gate's own admission wall's backstop) -> Status=Backlog + Reason=Needs-info (no LLM).
 #   any stage failure                                  -> Reason=Blocked + comment (failure stays visible).
 #   a claude -p stage killed by a quota/rate-limit signature -> environmental hold (preserve+resume,
 #     no LLM repair), same discipline as the check gate's environment failure.
@@ -333,6 +334,13 @@ MANIFEST="$BASE_REPO/.yr/factory.toml"
 MANIFEST_REF="${MANIFEST_REF:-origin/main}"
 MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_REF:.yr/factory.toml" 2>/dev/null || true)"
 [ -z "$MF_RAW" ] && [ -f "$MANIFEST" ] && MF_RAW="$(cat "$MANIFEST")"
+# The admission wall: raw still empty after BOTH reads above means this repo carries no manifest
+# anywhere — never onboarded, as opposed to one whose manifest exists but is merely sparse (individual
+# keys absent keep their documented per-key defaults below, unchanged — that path is untouched by this).
+# Folded into the NEEDS_INFO bounce below (the runner's existing Backlog+Needs-info shape) rather than a
+# separate exit, so it fires after the DoR/Type gate above but before claim/worktree either way.
+MF_ONBOARD_MSG=""
+[ -z "$MF_RAW" ] && MF_ONBOARD_MSG="this repo is not onboarded — no \`.yr/factory.toml\` found at the base ref ($MANIFEST_REF) or in the working tree ($MANIFEST). Onboarding (auth, onboarding the repo, arming) is attended, design-side work — never a slice the factory can pick up itself. Onboard the repo, then set Status back to Ready to resume."
 MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""; MF_AUTO_MERGE="false"
 if [ -n "$MF_RAW" ]; then
   # auto_merge (issue #38) is parsed here alongside the rest, but the MERGE DECISION never trusts this
@@ -398,8 +406,9 @@ AC="$(printf '%s\n' "$BODY" | awk '
   grab { print }
 ')"
 # real criteria need actual content (the Issue Form default "- [ ]" has no alphanumerics).
-NEEDS_INFO=""
-[ -n "$(printf '%s' "$AC" | tr -dc '[:alnum:]')" ] || NEEDS_INFO="the acceptance-criteria section is empty"
+NEEDS_INFO="$MF_ONBOARD_MSG"
+[ -n "$(printf '%s' "$AC" | tr -dc '[:alnum:]')" ] \
+  || NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }the acceptance-criteria section is empty"
 
 # ---- slug + branch ----
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \

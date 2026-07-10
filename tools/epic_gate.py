@@ -376,6 +376,15 @@ def _not_a_task_body(child_number):
     )
 
 
+def _not_onboarded_body():
+    return (
+        "YR-EPIC-GATE: this repo is not onboarded — no `.yr/factory.toml` found at the base ref, so no "
+        "build could ever run here. Onboarding (auth, onboarding the repo, arming) is attended, "
+        "design-side work — never a slice the factory can pick up itself. Onboard the repo, then "
+        "re-promote it (a standalone item) or clear the Reason (an epic) to resume."
+    )
+
+
 def _debt_hold_body():
     # The grammar sample deliberately never spells a field as a bare `key: value` line — that would
     # itself satisfy `_has_ledger_verdict` on the next tick (the hold comment "counting" as its own
@@ -562,6 +571,30 @@ def _debt_anchor_and_countable(closed_epics):
     return anchor_node, countable
 
 
+# --- the onboarding admission wall: a repo with no `.yr/factory.toml` at the base ref can never build
+#     (the runner's own config read would find nothing too, tools/dev-runner.sh:326-350) — the sweep
+#     refuses to promote or leave dispatchable any Ready work headed for such a repo, fail-closed ---------
+def _repo_has_manifest(gh, owner, name):
+    """True iff `owner/name` carries a `.yr/factory.toml` at its base ref (the default branch), read via
+    the same contents-API pattern `_read_manifest_threshold` uses below. Any read failure — 404, no
+    access, a network hiccup — is treated as missing: the wall never guesses a repo is onboarded."""
+    try:
+        gh(["api", f"repos/{owner}/{name}/contents/.yr/factory.toml",
+            "-H", "Accept: application/vnd.github.raw"])
+        return True
+    except Exception:
+        return False
+
+
+def _repo_onboarded(gh, repo, cache):
+    """`_repo_has_manifest`, cached per `repo` in the sweep-local `cache` dict — so a board carrying many
+    Ready items/epics on the same repo costs exactly one contents read for it per sweep."""
+    if repo not in cache:
+        owner, _, name = repo.partition("/")
+        cache[repo] = _repo_has_manifest(gh, owner, name)
+    return cache[repo]
+
+
 def _read_manifest_threshold(gh, repo):
     """`debt_round_every` from `repo`'s `.yr/factory.toml`, read via the gh contents API and parsed with
     stdlib `tomllib`. Raises on any missing/unreadable/unparseable/non-int/<1 value — the caller folds
@@ -684,7 +717,7 @@ def _sweep_debt_counters(gh, repos, *, project_number, status_field_id, status_o
 
 
 def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, status_opt, reason_opt,
-                   now, build_lock_held, stranded_after_min):
+                   now, build_lock_held, stranded_after_min, manifest_cache):
     """Run the per-epic algorithm for one Ready epic; return a list of the actions taken."""
     owner, _, name = (epic["repo"] or "").partition("/")
     detail = _query(gh, ["api", "graphql", "-f", "query=" + EPIC_QUERY,
@@ -763,6 +796,17 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
     if not pi or not pi.get("id"):
         return []   # child not on the board yet → no item to edit; nothing to do this tick
     child_repo = (first.get("repository") or {}).get("nameWithOwner") or epic["repo"]
+
+    # the admission wall: a child about to be promoted into an un-onboarded repo is a doomed build —
+    # refuse before the Ready write. Bounces the EPIC (Needs-info + comment), never the child itself;
+    # idempotent as in (1)/(4) above (never re-raise once the epic already carries this Reason).
+    if not _repo_onboarded(gh, child_repo, manifest_cache):
+        if epic["reason"] != "Needs-info":
+            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+            _comment(gh, epic["repo"], epic["number"], _not_onboarded_body())
+            return [{"epic": epic["number"], "action": "raise", "reason": "Needs-info"}]
+        return []
+
     _set_field(gh, pi["id"], status_field_id, status_opt["Ready"])
     _comment(gh, child_repo, first["number"], _promoted_body(epic["number"]))
     return [{"epic": epic["number"], "action": "promote", "child": first["number"]}]
@@ -774,16 +818,27 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
                 now=None, build_lock_held=None, stranded_after_min=None,
                 repos=None):
     """Run one sweep of the org board. First, board intake over `repos` (see `_sweep_intake`). Then, for
-    each OPEN, `Type=Feature`, `Status=Ready` epic (candidates, interleaved with no prioritization), apply
-    the per-epic algorithm. Then run the per-repo debt counter over the distinct repositories holding any
-    Type=Feature issue on the board (any state, any Status). Returns the list of actions taken.
+    each OPEN, `Status=Ready` item: a `Type=Feature` epic (candidates, interleaved with no prioritization)
+    gets the per-epic algorithm; any other OPEN Ready item — a standalone task, or an epic child already
+    Ready — gets the admission wall directly (see below). Then run the per-repo debt counter over the
+    distinct repositories holding any Type=Feature issue on the board (any state, any Status). Returns the
+    list of actions taken.
 
     The sweep only ever *sets* Status/Reason and posts comments — it never clears a Reason (clearing is
-    the human's explicit resume act), never builds, and never sets any Status but `Ready` (promotion).
-    Standalone tasks and children of non-Ready epics are never visited, so never touched (cord-pull). The
-    debt counter adds exactly three write kinds on top — create the raise issue, add it to the board, set
-    its Status to Backlog — and still never sets Ready, never promotes, never closes, never clears a
-    Reason. Intake adds exactly one write kind — `item-add` — and never touches Status/Reason at all.
+    the human's explicit resume act), never builds, and never sets any Status but `Ready` (promotion) or,
+    for the admission-wall bounce below, `Backlog`. Children of non-Ready epics are never visited, so
+    never touched (cord-pull). The debt counter adds exactly three write kinds on top — create the raise
+    issue, add it to the board, set its Status to Backlog — and still never sets Ready, never promotes,
+    never closes, never clears a Reason. Intake adds exactly one write kind — `item-add` — and never
+    touches Status/Reason at all.
+
+    The admission wall (this task): un-onboarded work — a repo with no `.yr/factory.toml` at its base ref
+    — is refused fail-closed instead of sailing to a doomed build. An epic child about to be promoted is
+    probed BEFORE the Ready write; on a miss the EPIC bounces (Reason=Needs-info + a comment), the child
+    is never promoted. An already-Ready standalone item bounces itself, off the Ready poll (the poll reads
+    Status only): Status=Backlog + Reason=Needs-info + the same comment — the runner's own DoR bounce
+    shape (`tools/dev-runner.sh:493`). Both are idempotent via the existing Reason-guard pattern, and the
+    manifest probe is cached per repo within one sweep (`_repo_onboarded`).
 
     `now` (a `() -> datetime.datetime` clock), `build_lock_held` (a `() -> bool` probe), and
     `stranded_after_min` are injectable for the stranded-claim check — each defaults to a real read.
@@ -802,25 +857,40 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
                         "-F", f"org={org}", "-F", f"project={project_number}"])
     nodes = (((board.get("organization") or {}).get("projectV2") or {}).get("items") or {}).get("nodes") or []
 
+    manifest_cache = {}
     actions = _sweep_intake(gh, repos, nodes, project_number=project_number, org=org)
     for item in nodes:
         content = item.get("content") or {}
         if not content:                                                   # non-issue / draft item
             continue
-        if (content.get("state") or "").upper() != "OPEN":                # epic not Ready-and-open → skip
+        if (content.get("state") or "").upper() != "OPEN":                # not open → skip
             continue
-        if ((content.get("issueType") or {}).get("name") or "").lower() != "feature":
+        if _fv_name(item.get("status")) != "Ready":                       # cord-pull: only Ready items
             continue
-        if _fv_name(item.get("status")) != "Ready":                       # cord-pull: only Ready epics
+        repo = (content.get("repository") or {}).get("nameWithOwner") or ""
+        if ((content.get("issueType") or {}).get("name") or "").lower() == "feature":
+            epic = {
+                "number": content["number"],
+                "repo": repo,
+                "item_id": item.get("id"),
+                "reason": _fv_name(item.get("reason")),
+            }
+            actions += _process_epic(gh, epic, project_number, status_field_id, reason_field_id,
+                                     status_opt, reason_opt, now, build_lock_held, stranded_after_min,
+                                     manifest_cache)
             continue
-        epic = {
-            "number": content["number"],
-            "repo": (content.get("repository") or {}).get("nameWithOwner") or "",
-            "item_id": item.get("id"),
-            "reason": _fv_name(item.get("reason")),
-        }
-        actions += _process_epic(gh, epic, project_number, status_field_id, reason_field_id,
-                                 status_opt, reason_opt, now, build_lock_held, stranded_after_min)
+
+        # a standalone Ready item (not an epic): the admission wall applies directly, off the Ready poll
+        # (deploy/ready-query.graphql reads Status only — a Reason-only bounce would leave it re-posted
+        # and re-commented on every poll tick). Idempotent: once bounced its Status is no longer Ready,
+        # so it drops out of this filter on the next sweep and is never re-commented.
+        item_id = item.get("id")
+        if not item_id or _repo_onboarded(gh, repo, manifest_cache):
+            continue
+        _set_field(gh, item_id, status_field_id, status_opt["Backlog"])
+        _set_field(gh, item_id, reason_field_id, reason_opt["Needs-info"])
+        _comment(gh, repo, content["number"], _not_onboarded_body())
+        actions.append({"item": content["number"], "action": "bounce-standalone", "reason": "Needs-info"})
 
     debt_repos = _debt_repo_set(nodes)
     actions += _sweep_debt_counters(gh, debt_repos, project_number=project_number,
@@ -845,6 +915,8 @@ def main(argv=None):
             print(f"epic-gate: closed epic #{a['epic']} (reason={a['reason']})")
         elif a["action"] == "hold":
             print(f"epic-gate: held epic #{a['epic']} (debt epic awaiting a ledger verdict)")
+        elif a["action"] == "bounce-standalone":
+            print(f"epic-gate: bounced #{a['item']} to Backlog/Needs-info (repo not onboarded)")
         elif a["action"] == "raise" and "child" in a:
             print(f"epic-gate: raised stranded child #{a['child']} under epic #{a['epic']} "
                   f"(Reason={a['reason']})")

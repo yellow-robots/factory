@@ -114,12 +114,21 @@ class FakeGh:
 
     `open_prs` is a flat list of open PRs' `headRefName` (across all repos — tests use a single repo, so
     no per-repo bucketing is needed) — served for `gh pr list --repo … --state open …`, the stranded-claim
-    check's "no open task/<n>-… PR" read."""
+    check's "no open task/<n>-… PR" read.
 
-    def __init__(self, board_nodes, epic_details, open_prs=None):
+    `manifest_repos` (repo -> raw `.yr/factory.toml` text) backs the admission wall's `_repo_has_manifest`
+    probe (issue #125) — the SAME contents-API argv shape `_read_manifest_threshold` already reads
+    (`FakeDebtGh` below shares this exact stub). `None` (the default) means every repo is onboarded — the
+    wall never engages, so every test written before #125 keeps promoting/closing/raising exactly as
+    before with no per-test change. A dict makes ONLY its keys onboarded; any other repo's read raises
+    (missing = fail-closed), same as a real 404."""
+
+    def __init__(self, board_nodes, epic_details, open_prs=None, *, manifest_repos=None):
         self.board_nodes = board_nodes
         self.epic_details = epic_details
         self.open_prs = list(open_prs or [])
+        self.manifest_repos = manifest_repos
+        self.manifest_argv = []
         self.edits = []       # (item_id, field_id, opt)
         self.comments = []    # (repo, number, body)
         self.closes = []      # (repo, number, reason)
@@ -152,6 +161,15 @@ class FakeGh:
                 detail = self.epic_details.get(number, {})
                 return json.dumps({"data": {"repository": {"issue": detail}}})
             return json.dumps({"data": {"organization": {"projectV2": {"items": {"nodes": self.board_nodes}}}}})
+        if argv[0] == "api" and len(argv) > 1 and "contents/.yr/factory.toml" in argv[1]:
+            self.manifest_argv.append(argv)
+            m = re.match(r"repos/([^/]+)/([^/]+)/contents/", argv[1])
+            repo = f"{m.group(1)}/{m.group(2)}"
+            if self.manifest_repos is None:
+                return "# onboarded (default fixture)\n"
+            if repo not in self.manifest_repos:
+                raise RuntimeError(f"gh api {argv[1]} failed (404): Not Found")
+            return self.manifest_repos[repo]
         if argv[:2] == ["project", "item-edit"]:
             f = _flags(argv)
             self.edits.append((f["--id"], f["--field-id"], f["--single-select-option-id"]))
@@ -1519,7 +1537,7 @@ def test_debt_error_does_not_affect_epic_processing():
                                 children=[_child(101, pi_id="PI-101", status="Backlog", repo=DEBT_REPO_A)])}
     fake = FakeDebtGh(board, epics,
                        closed_epic_pages={DEBT_REPO_B: [[_closed_epic(201, closed_at="2026-01-01T00:00:00Z")]]},
-                       manifest_repos={DEBT_REPO_B: "debt_round_every = 5\n"},
+                       manifest_repos={DEBT_REPO_A: "# onboarded\n", DEBT_REPO_B: "debt_round_every = 5\n"},
                        search_raises={DEBT_REPO_A})
     actions = epic_gate.sweep_epics(
         gh=fake, org="yellow-robots", project_number=1,
@@ -1813,6 +1831,186 @@ def test_main_prints_nothing_to_do_when_intake_finds_nothing_missing(capsys, mon
     out = capsys.readouterr().out
     assert "nothing to do" in out
     assert "added" not in out
+
+
+# ============================================================================
+# Issue #125 — the admission wall: a Ready item headed for a repo with no `.yr/factory.toml` at the
+# base ref is refused fail-closed (Needs-info naming onboarding) instead of promoted/left dispatchable.
+# ============================================================================
+
+NOT_ONBOARDED_REPO = "yellow-robots/not-onboarded"
+
+
+def _onboarding_body_asserts(body):
+    """The comment must state the repo isn't onboarded, name the non-delegable acts, and state the
+    resume — the acceptance criteria's letter, not any particular wording."""
+    low = body.lower()
+    assert "onboard" in low
+    assert "auth" in low and "arming" in low
+    assert "factory.toml" in low
+
+
+# ---- the manifest probe itself: contents-API read, any failure = missing, cached per sweep -------------
+
+def test_repo_has_manifest_true_on_a_successful_contents_read():
+    seen = []
+
+    def gh(argv):
+        seen.append(argv)
+        return 'check_cmd = "pytest"\n'
+
+    assert epic_gate._repo_has_manifest(gh, "yellow-robots", "widget") is True
+    assert seen[0][:2] == ["api", "repos/yellow-robots/widget/contents/.yr/factory.toml"]
+
+
+def test_repo_has_manifest_false_on_any_read_failure():
+    def gh(argv):
+        raise RuntimeError("gh api ... failed (404): Not Found")
+
+    assert epic_gate._repo_has_manifest(gh, "yellow-robots", "widget") is False
+
+
+def test_repo_onboarded_caches_per_repo_within_one_sweep():
+    calls = []
+
+    def gh(argv):
+        calls.append(argv)
+        return "onboarded\n"
+
+    cache = {}
+    assert epic_gate._repo_onboarded(gh, "yellow-robots/widget", cache) is True
+    assert epic_gate._repo_onboarded(gh, "yellow-robots/widget", cache) is True
+    assert len(calls) == 1                                 # one contents read for the repo, not two
+
+
+# ---- probe hit: no bounce, promotion proceeds exactly as today -----------------------------------------
+
+def test_admission_wall_probe_hit_promotes_as_today():
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics, manifest_repos={REPO: 'check_cmd = "pytest"\n'})
+    _sweep(fake)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert len(fake.comments) == 1 and "YR-AUTO-PROMOTED" in fake.comments[0][2]
+
+
+def test_admission_wall_leaves_an_onboarded_standalone_ready_item_untouched():
+    """A standalone Ready item on an ONBOARDED repo is inspected by the wall (probe hit) and then simply
+    left alone — cord-pull for standalone work stays intact; the wall adds a refusal, never a new touch."""
+    board = [_item(300, item_id="EI-300", itype="Task", status="Ready", repo=REPO)]
+    fake = FakeGh(board, {}, manifest_repos={REPO: 'check_cmd = "pytest"\n'})
+    actions = _sweep(fake)
+    assert fake.edits == [] and fake.comments == []
+    assert not any(a.get("item") == 300 for a in actions)
+
+
+# ---- probe miss on an epic child about to be promoted: the EPIC bounces, the child never promotes ------
+
+def test_admission_wall_probe_miss_bounces_epic_not_child():
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", repo=NOT_ONBOARDED_REPO)]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog",
+                                                 repo=NOT_ONBOARDED_REPO)])}
+    fake = FakeGh(board, epics, manifest_repos={})          # NOT_ONBOARDED_REPO carries no manifest
+    actions = _sweep(fake)
+
+    assert _status_ready_edits(fake) == []                  # the child is never promoted
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    _onboarding_body_asserts(epic_comments[0][2])
+    assert {"epic": 100, "action": "raise", "reason": "Needs-info"} in actions
+
+
+def test_admission_wall_epic_bounce_is_idempotent_across_ticks():
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", repo=NOT_ONBOARDED_REPO)]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog",
+                                                 repo=NOT_ONBOARDED_REPO)])}
+    fake = FakeGh(board, epics, manifest_repos={})
+    _sweep(fake)
+    assert len(fake.comments) == 1
+    second_actions = _sweep(fake)                           # a genuine second tick on the same fake
+    assert len(fake.comments) == 1                          # no duplicate comment
+    # the epic itself is never re-raised (a "debt-count" action for the repo's Feature item still runs
+    # every tick — an unrelated, pre-existing mechanism this task leaves untouched).
+    assert not any(a.get("action") == "raise" for a in second_actions)
+
+
+# ---- probe miss on an already-Ready standalone item: it bounces itself, off the Ready poll --------------
+
+def test_admission_wall_standalone_probe_miss_bounces_both_fields():
+    board = [_item(300, item_id="EI-300", itype="Task", status="Ready", repo=NOT_ONBOARDED_REPO)]
+    fake = FakeGh(board, {}, manifest_repos={})
+    actions = _sweep(fake)
+
+    assert ("EI-300", STATUS_FIELD, "Backlog") in fake.edits
+    assert ("EI-300", REASON_FIELD, "NeedsInfo") in fake.edits
+    comments = [c for c in fake.comments if c[1] == "300"]
+    assert len(comments) == 1
+    _onboarding_body_asserts(comments[0][2])
+    assert {"item": 300, "action": "bounce-standalone", "reason": "Needs-info"} in actions
+    # it leaves the Ready poll: the board item's own Status field is no longer Ready
+    assert fake.board_nodes[0]["status"] == {"name": "Backlog"}
+
+
+def test_admission_wall_standalone_bounce_is_idempotent_across_ticks():
+    board = [_item(300, item_id="EI-300", itype="Task", status="Ready", repo=NOT_ONBOARDED_REPO)]
+    fake = FakeGh(board, {}, manifest_repos={})
+    _sweep(fake)
+    assert len(fake.comments) == 1
+    second_actions = _sweep(fake)                           # Status is now Backlog -- no longer a candidate
+    assert len(fake.comments) == 1                          # no duplicate comment
+    assert second_actions == []
+
+
+def test_admission_wall_never_silently_skips_a_ready_standalone_item():
+    """A Ready item whose repo fails the probe always leaves a board write behind — silent skip (a Ready
+    item left untouched, un-bounced) is the starvation shape the acceptance criteria forbids."""
+    board = [_item(300, item_id="EI-300", itype="Task", status="Ready", repo=NOT_ONBOARDED_REPO)]
+    fake = FakeGh(board, {}, manifest_repos={})
+    actions = _sweep(fake)
+    assert fake.edits or fake.comments                      # some write happened
+    assert any(a.get("action") == "bounce-standalone" for a in actions)
+
+
+# ---- other Ready work on other (onboarded) repos is unaffected in the very same sweep -------------------
+
+def test_admission_wall_bounce_on_one_repo_does_not_affect_another_repos_promotion():
+    board = [
+        _item(100, item_id="EI-100", itype="Feature", status="Ready", repo=REPO),
+        _item(400, item_id="EI-400", itype="Feature", status="Ready", repo=NOT_ONBOARDED_REPO),
+    ]
+    epics = {
+        100: _epic_detail(comments=[VALID_RECORD],
+                          children=[_child(101, pi_id="PI-101", status="Backlog", repo=REPO)]),
+        400: _epic_detail(comments=[VALID_RECORD],
+                          children=[_child(401, pi_id="PI-401", status="Backlog", repo=NOT_ONBOARDED_REPO)]),
+    }
+    fake = FakeGh(board, epics, manifest_repos={REPO: 'check_cmd = "pytest"\n'})
+    actions = _sweep(fake)
+    assert ("PI-101", STATUS_FIELD, "Ready") in fake.edits          # #100's child still promotes
+    assert not any(e[0] == "PI-401" for e in fake.edits)            # #400's child never promotes
+    assert ("EI-400", REASON_FIELD, "NeedsInfo") in fake.edits
+    kinds = {a["action"] for a in actions}
+    assert "promote" in kinds and "raise" in kinds
+
+
+# ---- the probe is cached per repo within one sweep: two Ready candidates, one contents read ------------
+
+def test_admission_wall_probe_cached_across_two_candidates_on_the_same_repo():
+    """Two standalone (non-Feature) Ready candidates on the same repo — kept off the debt counter's own,
+    unrelated per-repo contents read (issue #47, Feature-only) so this pins ONLY the admission wall's
+    own cache."""
+    board = [
+        _item(300, item_id="EI-300", itype="Task", status="Ready", repo=NOT_ONBOARDED_REPO),
+        _item(301, item_id="EI-301", itype="Task", status="Ready", repo=NOT_ONBOARDED_REPO),
+    ]
+    fake = FakeGh(board, {}, manifest_repos={})
+    _sweep(fake)
+    manifest_calls = [a for a in fake.manifest_argv if NOT_ONBOARDED_REPO in a[1]]
+    assert len(manifest_calls) == 1                         # one contents read for the repo, not two
 
 
 def test_main_uses_registered_repos_for_intake(capsys, monkeypatch):

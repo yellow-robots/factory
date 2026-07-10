@@ -90,12 +90,24 @@ def _stage_models(tmp):
 
 def _write_manifest(tmp, name="mrepo", **fields):
     """A minimal repo dir carrying a .yr/factory.toml (dry-run/bounce never touches git, so no
-    git init is needed — the runner falls back to catting the working-tree manifest)."""
+    git init is needed — the runner falls back to catting the working-tree manifest). A leading
+    comment line is always present: with no fields at all, a bare "\\n" reads back as an EMPTY string
+    through `$(cat ...)`, which the admission wall (issue #125) can't tell apart from no manifest."""
     repo = tmp / name
-    (repo / ".yr").mkdir(parents=True)
-    body = "\n".join(f'{k} = "{v}"' for k, v in fields.items()) + "\n"
+    (repo / ".yr").mkdir(parents=True, exist_ok=True)
+    body = "\n".join(["# seeded by the test harness"] + [f'{k} = "{v}"' for k, v in fields.items()]) + "\n"
     (repo / ".yr" / "factory.toml").write_text(body)
     return repo
+
+
+def _env(tmp, binp, **kw):
+    """Wraps `base._env`, defaulting BASE_REPO to a shared onboarded-but-key-less manifest dir (issue
+    #125's admission wall bounces any repo with no `.yr/factory.toml` at all) — a no-op for any caller
+    that sets its own BASE_REPO (explicitly, or via `base._real`) right after, since that simply
+    overwrites this default."""
+    env = base._env(tmp, binp, **kw)
+    env.setdefault("BASE_REPO", str(_write_manifest(tmp, name="mrepo-default")))
+    return env
 
 
 def _registry_file(tmp, text, name="reg.toml"):
@@ -166,7 +178,7 @@ def test_dryrun_json_is_additive_build_and_review_objects(tmp_path):
     """The dry-run JSON keeps `model` = the resolved BUILD id (back-compat) and ADDS `build` and
     `review` objects, each carrying name/id/provider/rank from the registry."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    r = base._run(["7", "--repo", "test/repo", "--dry-run"], base._env(tmp_path, binp))
+    r = base._run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
     # additive `model` remains = the resolved build id
@@ -183,7 +195,7 @@ def test_dryrun_default_roles_are_registry_defaults(tmp_path):
     """With no task/manifest/env selection, both roles fall back to the registry's per-role default
     (build=sonnet, review=opus)."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    r = base._run(["7", "--repo", "test/repo", "--dry-run"], base._env(tmp_path, binp))
+    r = base._run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
     d = json.loads(r.stdout)
     assert d["build"]["name"] == "sonnet" and d["review"]["name"] == "opus"
 
@@ -196,7 +208,7 @@ def test_dryrun_review_model_body_selects_review_role(tmp_path):
     """`review_model:` in the body selects the review role (here sonnet, distinct from the default
     opus), using the same bare-line parser as `model:`. The build role is untouched (default sonnet)."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nreview_model: sonnet\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nreview_model: sonnet\n")
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
@@ -209,7 +221,7 @@ def test_dryrun_body_model_is_the_build_selector(tmp_path):
     """`model:` in the body selects the BUILD role (opus here). review stays at the default opus,
     an equal-rank pair that still builds."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\n")
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     d = json.loads(r.stdout)
     assert d["build"]["name"] == "opus" and d["model"] == "claude-opus-4-8"
@@ -219,7 +231,7 @@ def test_dryrun_body_model_is_the_build_selector(tmp_path):
 def test_dryrun_build_selector_case_insensitive(tmp_path):
     """`MODEL:` (uppercase) is parsed the same as `model:` — case-insensitive."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nMODEL: opus\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nMODEL: opus\n")
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["build"]["name"] == "opus"
@@ -229,7 +241,7 @@ def test_dryrun_review_selector_case_insensitive(tmp_path):
     """`Review_Model:` (mixed case) is parsed the same as `review_model:` — case-insensitive,
     same parser as the build selector."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nReview_Model: sonnet\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nReview_Model: sonnet\n")
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["review"]["name"] == "sonnet"
@@ -244,7 +256,7 @@ def test_dryrun_manifest_review_model_selects_review_role(tmp_path):
     default opus) when nothing per-task overrides it."""
     repo = _write_manifest(tmp_path, review_model="sonnet")
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
@@ -256,7 +268,7 @@ def test_dryrun_manifest_model_selects_build_role(tmp_path):
     """The repo manifest's `model` sets the build role (opus here)."""
     repo = _write_manifest(tmp_path, model="opus")
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert json.loads(r.stdout)["build"]["name"] == "opus"
 
@@ -269,7 +281,7 @@ def test_dryrun_task_review_beats_manifest_review(tmp_path):
     """Per-task `review_model:` (opus) wins over the manifest `review_model` (sonnet)."""
     repo = _write_manifest(tmp_path, review_model="sonnet")
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nreview_model: opus\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nreview_model: opus\n")
     env["BASE_REPO"] = str(repo)
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert json.loads(r.stdout)["review"]["name"] == "opus"
@@ -279,7 +291,7 @@ def test_dryrun_env_build_override_beats_task(tmp_path):
     """The operator env override BUILD_MODEL sits ATOP the per-task selector: body `model: sonnet`
     but BUILD_MODEL=opus resolves the build role to opus."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: sonnet\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: sonnet\n")
     env["BUILD_MODEL"] = "opus"
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     d = json.loads(r.stdout)
@@ -290,7 +302,7 @@ def test_dryrun_env_review_override_beats_task(tmp_path):
     """The operator env override REVIEW_MODEL sits ATOP the per-task selector: body
     `review_model: sonnet` but REVIEW_MODEL=opus resolves the review role to opus."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nreview_model: sonnet\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nreview_model: sonnet\n")
     env["REVIEW_MODEL"] = "opus"
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert json.loads(r.stdout)["review"]["name"] == "opus"
@@ -305,7 +317,7 @@ def test_dryrun_equal_rank_pair_builds(tmp_path):
     only that the reviewer is never weaker, so it builds (ready True); the strict review>build bar is
     the later merge gate, not intake."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\n")
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
@@ -322,7 +334,7 @@ def test_inverted_ranked_pair_bounces_needs_info(tmp_path):
     is an inversion — bounced to Needs-info before claiming, naming the pair."""
     binp = tmp_path / "bin"; base._stubs(binp)
     # dry-run: the intake gate still fires (read-only), so no git/state is touched.
-    env = base._env(tmp_path, binp,
+    env = _env(tmp_path, binp,
                     body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\nreview_model: sonnet\n")
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 3
@@ -335,7 +347,7 @@ def test_inverted_ranked_pair_bounces_and_runs_no_stage(tmp_path):
     """Non-dry-run: an inverted ranked pair sets Backlog + Needs-info with a comment, before
     claiming — no implement/test/review stage runs, no PR."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp,
+    env = _env(tmp_path, binp,
                     body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\nreview_model: sonnet\n")
     r = base._run(["7", "--repo", "test/repo"], env)
     assert r.returncode == 3
@@ -351,7 +363,7 @@ def test_cross_provider_ranked_pair_bounces_needs_info(tmp_path):
     comparable — bounced to Needs-info, naming the pair."""
     reg = _registry_file(tmp_path, TWO_PROVIDER_REGISTRY)
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp,
+    env = _env(tmp_path, binp,
                     body="### Acceptance criteria\n- [ ] x\n\nmodel: sonnet\nreview_model: gptx\n")
     env["MODELS_REGISTRY"] = str(reg)
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
@@ -369,7 +381,7 @@ def test_unknown_review_model_body_bounces_needs_info(tmp_path):
     """A `review_model:` naming a model absent from the registry bounces to Backlog + Needs-info
     before claiming — comment posted, no stage, no PR."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp,
+    env = _env(tmp_path, binp,
                     body="### Acceptance criteria\n- [ ] x\n\nreview_model: nonesuch\n")
     r = base._run(["7", "--repo", "test/repo"], env)
     assert r.returncode == 3
@@ -385,7 +397,7 @@ def test_unknown_manifest_model_bounces_needs_info(tmp_path):
     tightening (a bad manifest model no longer merely warns). No stage runs, no PR."""
     repo = _write_manifest(tmp_path, model="bogus-manifest-model")
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
     r = base._run(["7", "--repo", "test/repo"], env)
     assert r.returncode == 3
     tl = base._timeline(tmp_path)
@@ -399,7 +411,7 @@ def test_unknown_manifest_review_model_bounces_needs_info(tmp_path):
     """An unknown REVIEW model in the manifest (`review_model`) also bounces to Needs-info."""
     repo = _write_manifest(tmp_path, review_model="bogus-review-model")
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
     r = base._run(["7", "--repo", "test/repo"], env)
     assert r.returncode == 3
     tl = base._timeline(tmp_path)
@@ -412,7 +424,7 @@ def test_unknown_model_bounce_is_read_only_under_dry_run(tmp_path):
     """Under --dry-run the unknown-name intake still refuses (exit 3) but writes nothing — a
     read-only preflight."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: nonesuch\n")
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: nonesuch\n")
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 3
     tl = base._timeline(tmp_path)
@@ -427,7 +439,7 @@ def test_raw_build_env_override_runs_unranked_without_bounce(tmp_path):
     """A raw unregistered id supplied ONLY through the BUILD_MODEL operator override runs UNRANKED
     (rank None) with a loud warning and is NOT bounced at intake."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp); env["BUILD_MODEL"] = "some-raw-model-id"
+    env = _env(tmp_path, binp); env["BUILD_MODEL"] = "some-raw-model-id"
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr                  # NOT bounced
     d = json.loads(r.stdout)
@@ -441,7 +453,7 @@ def test_raw_build_env_override_runs_unranked_without_bounce(tmp_path):
 def test_raw_review_env_override_runs_unranked_without_bounce(tmp_path):
     """A raw unregistered id through REVIEW_MODEL also runs unranked without a bounce."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp); env["REVIEW_MODEL"] = "raw-reviewer-id"
+    env = _env(tmp_path, binp); env["REVIEW_MODEL"] = "raw-reviewer-id"
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
@@ -456,11 +468,11 @@ def test_unknown_body_model_bounces_but_raw_env_override_does_not(tmp_path):
     binp = tmp_path / "bin"; base._stubs(binp)
     raw = "definitely-not-registered"
     # from the body: bounce
-    env_body = base._env(tmp_path, binp, body=f"### Acceptance criteria\n- [ ] x\n\nmodel: {raw}\n")
+    env_body = _env(tmp_path, binp, body=f"### Acceptance criteria\n- [ ] x\n\nmodel: {raw}\n")
     r_body = base._run(["7", "--repo", "test/repo", "--dry-run"], env_body)
     assert r_body.returncode == 3
     # from the env override: runs
-    env_env = base._env(tmp_path, binp); env_env["BUILD_MODEL"] = raw
+    env_env = _env(tmp_path, binp); env_env["BUILD_MODEL"] = raw
     r_env = base._run(["7", "--repo", "test/repo", "--dry-run"], env_env)
     assert r_env.returncode == 0
     assert json.loads(r_env.stdout)["model"] == raw
@@ -474,7 +486,7 @@ def test_legacy_model_env_tier_is_retired(tmp_path):
     """The retired MODEL env tier no longer selects the build model: MODEL=claude-opus-4-8 is ignored
     and the build role stays at the registry default (sonnet). BUILD_MODEL is its replacement."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp)
+    env = _env(tmp_path, binp)
     env["MODEL"] = "claude-opus-4-8"; env["HARD_MODEL"] = "claude-opus-4-8"
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
@@ -487,7 +499,7 @@ def test_legacy_hard_model_env_does_not_select_review(tmp_path):
     """HARD_MODEL (the retired 'hard' tier) does not select the review role either — review stays the
     registry default (opus) regardless of HARD_MODEL."""
     binp = tmp_path / "bin"; base._stubs(binp)
-    env = base._env(tmp_path, binp); env["HARD_MODEL"] = "claude-sonnet-5"
+    env = _env(tmp_path, binp); env["HARD_MODEL"] = "claude-sonnet-5"
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert json.loads(r.stdout)["review"]["name"] == "opus"
 
@@ -502,7 +514,7 @@ def test_build_role_runs_impl_and_test_review_role_runs_reviewer(tmp_path):
     reviewer runs at the REVIEW id (opus) — the review rank, never below it."""
     work, _ = base._make_repo(tmp_path)
     binp = tmp_path / "bin"; _rec_stubs(binp)
-    env = base._real(tmp_path, base._env(tmp_path, binp, number=5, title="Role split happy path"), work)
+    env = base._real(tmp_path, _env(tmp_path, binp, number=5, title="Role split happy path"), work)
     env["STUB_CLAUDE_CHANGE"] = "1"
     env["STUB_STAGE_MODELS"] = str(tmp_path / "stage_models")
     r = base._run(["5", "--repo", "test/repo"], env)
@@ -522,7 +534,7 @@ def test_check_repair_runs_at_its_stage_tier(tmp_path):
     reg = _registry_file(tmp_path, STAGE_TIER_REGISTRY)
     work, _ = base._make_repo(tmp_path)
     binp = tmp_path / "bin"; _rec_stubs(binp)
-    env = base._real(tmp_path, base._env(tmp_path, binp, number=5, title="Stage tier repair"), work)
+    env = base._real(tmp_path, _env(tmp_path, binp, number=5, title="Stage tier repair"), work)
     env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1",   # check fails until the repair marker
                 "STUB_STAGE_MODELS": str(tmp_path / "stage_models"),
                 "MODELS_REGISTRY": str(reg)})
@@ -542,7 +554,7 @@ def test_review_repair_falls_back_to_build_id_without_a_tier(tmp_path):
     review rank."""
     work, _ = base._make_repo(tmp_path)
     binp = tmp_path / "bin"; _rec_stubs(binp)
-    env = base._real(tmp_path, base._env(tmp_path, binp, number=5, title="Review repair fallback"), work)
+    env = base._real(tmp_path, _env(tmp_path, binp, number=5, title="Review repair fallback"), work)
     env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_BLOCK": "1",   # reviewer blocks until one repair
                 "STUB_STAGE_MODELS": str(tmp_path / "stage_models")})
     r = base._run(["5", "--repo", "test/repo"], env)
@@ -558,7 +570,7 @@ def test_reviewer_never_runs_below_the_review_rank_even_with_lower_build(tmp_pat
     reg = _registry_file(tmp_path, STAGE_TIER_REGISTRY)
     work, _ = base._make_repo(tmp_path)
     binp = tmp_path / "bin"; _rec_stubs(binp)
-    env = base._real(tmp_path, base._env(tmp_path, binp, number=5, title="Reviewer rank floor"), work)
+    env = base._real(tmp_path, _env(tmp_path, binp, number=5, title="Reviewer rank floor"), work)
     env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_STAGE_MODELS": str(tmp_path / "stage_models"),
                 "MODELS_REGISTRY": str(reg)})
     r = base._run(["5", "--repo", "test/repo"], env)
@@ -577,7 +589,7 @@ def test_pr_body_names_both_build_and_review_ids(tmp_path):
     roles are surfaced, not a single collapsed model."""
     work, _ = base._make_repo(tmp_path)
     binp = tmp_path / "bin"; _rec_stubs(binp)
-    env = base._real(tmp_path, base._env(tmp_path, binp, number=5, title="Both ids in PR"), work)
+    env = base._real(tmp_path, _env(tmp_path, binp, number=5, title="Both ids in PR"), work)
     env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_STAGE_MODELS": str(tmp_path / "stage_models")})
     r = base._run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
