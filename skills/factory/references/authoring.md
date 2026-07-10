@@ -82,6 +82,11 @@ is product-spec → task, and the task cites `source_spec:`; skip to step 4.)
   `repo/path.py:NN`. A task derived from this must be self-contained — an implementer must never need
   to open `AGENTS.md` to proceed.
 
+**First iteration for a new repo:** if the crossing targets a repo the factory has never built (no
+`.yr/factory.toml` at its base ref), the technical-rfc names the attended onboarding prerequisites —
+manifest, runnable scaffold — as design-side work and routes them to the human, never a slice; see
+[`onboarding.md`](onboarding.md).
+
 **Before filing:** run `check_links` on the draft (see [`gates.md`](gates.md)). File as **clean prose**
 — never raw frontmatter (GitHub renders frontmatter as noise).
 

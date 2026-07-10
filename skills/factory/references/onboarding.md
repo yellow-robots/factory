@@ -6,6 +6,21 @@
 
 ---
 
+## The bootstrap invariant
+
+The pipeline reads a repo's build contract — `.yr/factory.toml` — from the **base ref**, at the worktree
+stage, before any LLM call runs. A repo with nothing there has nothing to read: **onboarding cannot ride
+a build.** The manifest and the runnable scaffold it depends on (built deps present, `check_cmd` green in
+a fresh worktree) are **attended prerequisites on the design side** — set by a human before the repo ever
+reaches the board — **never a slice** the factory produces or promotes for itself. The **admission wall**
+(`tools/epic_gate.py`'s sweep, and `dev-runner.sh`'s own read as the backstop) is the mechanical check
+that catches a repo that skipped this: it bounces the work to `Backlog` + `Reason=Needs-info`, naming
+onboarding, rather than sailing an un-onboarded repo into a doomed build.
+
+The **non-delegable acts** — **auth · onboarding · arming** — are attended, human work, stated once,
+plainly: no agent ever creates an org/repo/token, writes a repo's first manifest, or sets
+`auto_merge = true`.
+
 ## Steps
 
 ### 1. Clone to the workspace
