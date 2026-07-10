@@ -28,7 +28,10 @@ exist in the pipeline, never a fourth stage added on top of it.
    moment the epic exists (see [`documentation-model.md`](documentation-model.md) — *Identity &
    navigation*). Run a final citation-drift pass against the tip at filing: the base can move
    mid-session, and a crossing that skips re-checking its own citations against that moved tip ships
-   stale ones.
+   stale ones. **First iteration for a new repo:** when the crossing targets a repo the factory has
+   never built (no `.yr/factory.toml` at its base ref), the technical-rfc names the attended
+   onboarding prerequisites as design-side work and routes them to the human, never a slice — see
+   [`onboarding.md`](onboarding.md).
 3. **The ship-walk.** Walk the grounding list: update the living reference in place, supersede
    replaced research (never edit it), verify the stamps — the crossing stamp and every declared
    pair — and record the pilot observables with the iteration.

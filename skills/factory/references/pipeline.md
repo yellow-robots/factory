@@ -17,10 +17,18 @@ epics), on its own lock so a sweep never blocks a build. The tick cadence is con
 prose: the live number is whatever `deploy/n8n-dispatch.json` / `deploy/n8n-epic-sweep.json` say —
 cite the file, never state a figure.
 
-**Dispatch (`tools/dispatch.py`):** bearer-auth, `flock`-guarded (single build in flight), detached
-fire-and-forget (it answers n8n before the runner runs — a refused or dying runner is invisible to
-n8n), fail-closed — a request that cannot name its `owner/repo` is refused and logged, never guessed.
-There is no default repo.
+**Dispatch (`tools/dispatch.py`):** bearer-auth, detached fire-and-forget (it answers n8n before the
+runner runs — a refused or dying runner is invisible to n8n), fail-closed — a request that cannot name
+its `owner/repo` is refused and logged, never guessed. There is no default repo. Concurrency is
+**per-repo locks + a global cap**, not one flock: each target repo gets its own non-blocking lock,
+acquired outermost, so a repo already building never starts a second build for itself; inside that, the
+build claims one of `DISPATCH_MAX_BUILDS` (default 2, operator-adjustable) capacity slots — the cap on
+concurrent builds across every repo. A busy repo or a full cap exits politely, unclaimed, for the next
+poll tick — never dropped, never queue-jumped (see `deploy/DISPATCH.md`). Ahead of concurrency, the
+**admission wall** refuses a repo carrying no `.yr/factory.toml` at its base ref — never onboarded —
+bouncing to `Backlog` + `Reason=Needs-info` naming onboarding, both at the epic-gate sweep (a child
+about to be promoted) and as `dev-runner.sh`'s own read as the backstop (a standalone item already
+Ready) — see [`onboarding.md`](onboarding.md) — *The bootstrap invariant*.
 
 **`dev-runner.sh <issue#> --repo <owner/name>`** runs the staged pipeline; each LLM stage is a separate
 cold `claude -p` process (builder ≠ verifier, structural). The **build role** runs implement / test /
@@ -187,9 +195,12 @@ concept of "a build is currently running." That makes the human side of the chor
   don't use Issue Types yet.
 - The tester boundary guard is structural (the runner diffs the test tree), not a prompt — do not
   weaken it or paper over violations.
-- **Status is the single-flight lock:** claiming sets `Status=In Progress`, which removes the task from
-  the Ready poll. A task in flight cannot be double-dispatched. Cross-epic and standalone Ready items
-  interleave unprioritized, in board order — the dispatch `flock` serializes them.
+- **Status is the per-task lock; the fleet's concurrency is per-repo locks + a cap, not one flock:**
+  claiming sets `Status=In Progress`, which removes the task from the Ready poll — a task in flight
+  cannot be double-dispatched. Cross-epic and standalone Ready items interleave unprioritized, in board
+  order; dispatch serializes only within a repo (its own non-blocking lock) and across the fleet (the
+  `DISPATCH_MAX_BUILDS` cap) — see *per-repo locks + a global cap*, above, and the admission wall that
+  refuses an un-onboarded repo ahead of either.
 - **Shadow completion is mechanical:** a rolling window over the repo's last 5 merge-record-bearing
   PRs — complete iff ≥ 3 landed unreverted successes and zero resets (an overridden `WOULD-BLOCK`, a
   reverted merge, a malformed record, or a machinery error resets). Completion only *permits* arming;

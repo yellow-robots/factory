@@ -715,3 +715,185 @@ def test_authoring_check_gate_parity_rule_not_duplicated_elsewhere():
     assert text.count("check_cmd") == 1, \
         "authoring.md states check_cmd more than once — the check-gate parity rule should live " \
         "once, at the task-authoring step"
+
+
+# ---------------------------------------------------------------------------
+# Issue #127 — the bootstrap invariant and non-delegable acts on the
+# planning surfaces.
+#
+# Derived from the Issue #127 acceptance criteria (the spec) and its Test
+# expectations section, not from the reference files' own prose.
+# ---------------------------------------------------------------------------
+
+def _normalized(text):
+    """Fold whitespace (incl. markdown line wraps) to a single space so a phrase
+    wrapped across a line break still matches a plain substring check."""
+    return re.sub(r"\s+", " ", text.lower())
+
+
+def _onboarding_text():
+    return (REFS / "onboarding.md").read_text(encoding="utf-8")
+
+
+def test_onboarding_md_states_the_bootstrap_invariant_load_bearing_phrases():
+    """onboarding.md must state the load-bearing invariant: the pipeline reads a repo's build
+    contract from the base ref, so onboarding cannot ride a build — manifest and runnable
+    scaffold are attended prerequisites on the design side, never slices."""
+    lower = _normalized(_onboarding_text())
+    assert "base ref" in lower, \
+        "onboarding.md missing the 'base ref' phrase in the bootstrap invariant"
+    assert "onboarding cannot ride a build" in lower, \
+        "onboarding.md missing the load-bearing 'onboarding cannot ride a build' statement"
+    assert "attended prerequisites" in lower, \
+        "onboarding.md missing the 'attended prerequisites on the design side' framing"
+    assert "never a slice" in lower or "never slices" in lower, \
+        "onboarding.md missing the never-a-slice framing for the manifest/scaffold prerequisites"
+
+
+def test_onboarding_md_names_the_non_delegable_acts_once_plainly():
+    """onboarding.md must name the non-delegable acts (auth · onboarding · arming) once, plainly."""
+    text = _onboarding_text()
+    lower = text.lower()
+    assert "non-delegable act" in lower, \
+        "onboarding.md missing the 'non-delegable acts' framing"
+
+    # The three acts, in the middle-dot-separated form the spec names them in.
+    triple = "auth · onboarding · arming"
+    count = lower.count(triple)
+    assert count == 1, (
+        f"onboarding.md must name the non-delegable acts 'auth · onboarding · arming' "
+        f"exactly once (stated once, plainly); found {count} occurrence(s)"
+    )
+
+
+def test_onboarding_md_non_delegable_acts_are_attended_human_work():
+    """The non-delegable acts must be stated as attended, human-only work — no agent performs them."""
+    lower = _normalized(_onboarding_text())
+    assert "attended, human work" in lower or "attended human work" in lower, \
+        "onboarding.md does not state the non-delegable acts are attended, human work"
+    assert "no agent" in lower, \
+        "onboarding.md does not state that no agent performs the non-delegable acts"
+
+
+def test_authoring_md_names_first_iteration_for_new_repo_case():
+    """authoring.md must name the first-iteration-for-a-new-repo case: a crossing targeting a
+    never-built repo lists the attended onboarding prerequisites on the design side and routes
+    them to the human, with a pointer to onboarding.md."""
+    text = _authoring_text()
+    lower = _normalized(text)
+    assert "first iteration for a new repo" in lower, \
+        "authoring.md missing the 'first iteration for a new repo' case"
+    assert "never built" in lower, \
+        "authoring.md missing the never-built-repo condition for the new-repo case"
+    assert "onboarding prerequisites" in lower, \
+        "authoring.md missing the onboarding-prerequisites framing for the new-repo case"
+    assert "the human" in lower, \
+        "authoring.md missing the routes-to-the-human framing for the new-repo case"
+    assert "never a slice" in lower, \
+        "authoring.md missing the never-a-slice framing for the new-repo case"
+    assert "onboarding.md" in text, \
+        "authoring.md missing the pointer to onboarding.md for the new-repo case"
+
+
+def test_architect_md_names_first_iteration_for_new_repo_case():
+    """architect.md must name the first-iteration-for-a-new-repo case in the crossing moment,
+    with a pointer to onboarding.md."""
+    text = _architect_text()
+    lower = _architect_text_normalized()
+    assert "first iteration for a new repo" in lower, \
+        "architect.md missing the 'first iteration for a new repo' case"
+    assert "never built" in lower, \
+        "architect.md missing the never-built-repo condition for the new-repo case"
+    assert "onboarding prerequisites" in lower, \
+        "architect.md missing the onboarding-prerequisites framing for the new-repo case"
+    assert "the human" in lower, \
+        "architect.md missing the routes-to-the-human framing for the new-repo case"
+    assert "never a slice" in lower, \
+        "architect.md missing the never-a-slice framing for the new-repo case"
+    assert "onboarding.md" in text, \
+        "architect.md missing the pointer to onboarding.md for the new-repo case"
+
+
+def _skill_onboarding_row():
+    """Return the SKILL.md router table row for the Onboarding operation."""
+    text = _skill_text()
+    match = re.search(r"\|\s*\*\*Onboarding\*\*\s*\|.*\|", text)
+    assert match, "SKILL.md missing the **Onboarding** router row"
+    return match.group(0)
+
+
+def test_skill_md_onboarding_row_has_planning_time_trigger():
+    """The SKILL.md router's onboarding row must gain the planning-time trigger — planning a
+    first iteration for a new repo — so the reference loads when it matters, not only when
+    physically adding a new repo."""
+    row = _skill_onboarding_row().lower()
+    assert "planning" in row, \
+        "SKILL.md Onboarding row missing the planning-time trigger"
+    assert "first iteration" in row, \
+        "SKILL.md Onboarding row missing 'first iteration' in its planning-time trigger"
+    assert "new repo" in row, \
+        "SKILL.md Onboarding row missing 'new repo' in its planning-time trigger"
+
+
+def _pipeline_text():
+    return (REFS / "pipeline.md").read_text(encoding="utf-8")
+
+
+def _pipeline_dispatch_section():
+    """The trigger-path text describing dispatch.py's concurrency model (near the top of
+    pipeline.md, historically around line 20)."""
+    text = _pipeline_text()
+    start = text.find("Dispatch (")
+    assert start != -1, "pipeline.md missing the 'Dispatch (`tools/dispatch.py`):' section"
+    end = text.find("`dev-runner.sh <issue#>", start)
+    if end == -1:
+        end = start + 2000
+    return text[start:end]
+
+
+def _pipeline_judgment_points_section():
+    """The dispatch-serialization sentence in the Judgment points section (historically
+    around lines 190-192)."""
+    text = _pipeline_text()
+    start = text.rfind("## Judgment points")
+    assert start != -1, "pipeline.md missing the '## Judgment points' section"
+    return text[start:]
+
+
+def test_pipeline_md_trigger_path_matches_shipped_concurrency_shape():
+    """pipeline.md's dispatch-trigger text must describe per-repo locks + a cap + the
+    admission wall — the shipped concurrency shape — not a single flock."""
+    section = _normalized(_pipeline_dispatch_section())
+    assert "per-repo lock" in section, \
+        "pipeline.md dispatch-trigger text missing 'per-repo locks'"
+    assert "cap" in section, \
+        "pipeline.md dispatch-trigger text missing the concurrency cap"
+    assert "admission wall" in section, \
+        "pipeline.md dispatch-trigger text missing 'the admission wall'"
+    assert "not one flock" in section or "not a single flock" in section, \
+        "pipeline.md dispatch-trigger text does not disclaim the old single-flock model"
+
+
+def test_pipeline_md_dispatch_serialization_sentence_matches_shipped_shape():
+    """pipeline.md's dispatch-serialization sentence (Judgment points) must describe the same
+    per-repo-locks + cap + admission-wall shape as the trigger-path text — no drift twin."""
+    section = _normalized(_pipeline_judgment_points_section())
+    assert "per-repo lock" in section, \
+        "pipeline.md Judgment points missing 'per-repo locks' in the dispatch-serialization sentence"
+    assert "cap" in section, \
+        "pipeline.md Judgment points missing the concurrency cap in the dispatch-serialization sentence"
+    assert "admission wall" in section, \
+        "pipeline.md Judgment points missing 'the admission wall' in the dispatch-serialization sentence"
+    assert "not one flock" in section or "not a single flock" in section, \
+        "pipeline.md Judgment points does not disclaim the old single-flock model"
+
+
+def test_pipeline_md_status_as_claim_line_untouched():
+    """The Status-as-claim line (historically pipeline.md:33) stays true and untouched:
+    Status is the per-task lock — claiming sets Status=In Progress, dropping the task from
+    the Ready poll — distinct from the fleet's per-repo-locks + cap concurrency shape."""
+    section = _normalized(_pipeline_judgment_points_section())
+    assert "status=in progress" in section, \
+        "pipeline.md Judgment points missing the Status=In Progress claim statement"
+    assert "per-task lock" in section, \
+        "pipeline.md Judgment points missing the 'Status is the per-task lock' framing"
