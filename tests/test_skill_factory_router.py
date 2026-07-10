@@ -642,3 +642,76 @@ def test_debt_rounds_has_net_lines_marker():
     bodies, aggregation into the ledger verdict is an attended round-close duty, not a sweep one."""
     assert "YR-DEBT-NET-LINES" in _debt_rounds_text(), \
         "debt-rounds.md missing the YR-DEBT-NET-LINES marker"
+
+
+# ---------------------------------------------------------------------------
+# authoring.md — check-gate parity rule at the task-authoring step (#123)
+#
+# Issue #123: a slice that evolves the check gate (check_cmd or its
+# prerequisites — toolchain, provisioning, new gate scripts) must list the
+# server-CI workflow change among its deliverables, so an epic author
+# inherits the rule instead of rediscovering it one WOULD-BLOCK later.
+# ---------------------------------------------------------------------------
+
+def _authoring_text():
+    return (REFS / "authoring.md").read_text(encoding="utf-8")
+
+
+def _authoring_task_step_text():
+    """Return the text of authoring.md's step 4 (task authoring) section only,
+    from its '### 4.' heading up to the next '### ' heading or end of file."""
+    text = _authoring_text()
+    start = text.find("### 4.")
+    assert start != -1, "authoring.md is missing a '### 4.' task-authoring step heading"
+    rest = text[start + len("### 4."):]
+    next_heading = rest.find("### ")
+    end = start + len("### 4.") + (next_heading if next_heading != -1 else len(rest))
+    return text[start:end]
+
+
+def test_authoring_task_step_states_check_gate_parity_rule():
+    """The task-authoring step must state the check-gate-parity rule: a slice touching
+    check_cmd or its prerequisites must ship the server-CI workflow change too."""
+    section = _authoring_task_step_text()
+    lower = section.lower()
+    assert "check_cmd" in section, \
+        "authoring.md step 4 does not name check_cmd in the check-gate parity rule"
+    assert "server-ci" in lower or "server ci" in lower, \
+        "authoring.md step 4 does not name the server-CI workflow in the check-gate parity rule"
+    assert "deliverable" in lower, \
+        "authoring.md step 4 does not state the rule as a deliverables requirement"
+
+
+def test_authoring_task_step_check_gate_parity_names_prerequisites():
+    """The rule must cover not just check_cmd itself but what it needs to run — the
+    toolchain/provisioning/new-gate-script prerequisites named in the issue's acceptance criteria."""
+    section = _authoring_task_step_text()
+    lower = section.lower()
+    assert "toolchain" in lower, \
+        "authoring.md step 4 check-gate parity rule does not name toolchain as a prerequisite"
+    assert "provisioning" in lower, \
+        "authoring.md step 4 check-gate parity rule does not name provisioning as a prerequisite"
+    assert "gate script" in lower, \
+        "authoring.md step 4 check-gate parity rule does not name new gate scripts as a prerequisite"
+
+
+def test_authoring_task_step_check_gate_parity_states_same_contract_two_hosts():
+    """The rule must state the reason, not just the mechanic: the in-build check gate and
+    server CI are the same contract on two hosts — otherwise the rule reads as arbitrary."""
+    section = _authoring_task_step_text()
+    # Fold whitespace (including markdown line wraps) so a phrase wrapped across a line
+    # break still matches a plain substring check.
+    normalized = re.sub(r"\s+", " ", section.lower())
+    assert "same contract" in normalized, \
+        "authoring.md step 4 check-gate parity rule does not state the same-contract rationale"
+    assert "two hosts" in normalized, \
+        "authoring.md step 4 check-gate parity rule does not name the two-hosts framing"
+
+
+def test_authoring_check_gate_parity_rule_not_duplicated_elsewhere():
+    """The rule belongs once, at the task-authoring step — not restated at the crossing step
+    (step 3), which only carries a one-line pointer via the technical-rfc template checklist."""
+    text = _authoring_text()
+    assert text.count("check_cmd") == 1, \
+        "authoring.md states check_cmd more than once — the check-gate parity rule should live " \
+        "once, at the task-authoring step"

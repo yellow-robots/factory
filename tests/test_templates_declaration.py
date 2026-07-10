@@ -685,3 +685,77 @@ def test_readme_template_does_not_reference_debt_round_ledger_grammar():
     assert "YR-DEBT-LEDGER" not in _text(readme), (
         "templates/README.md carries the debt-round ledger grammar — out of scope for #92"
     )
+
+
+# ---------------------------------------------------------------------------
+# technical-rfc.md — check-gate parity one-liner in the authoring-scaffold
+# checklist (#123): the crossing step must carry the same rule as
+# authoring.md's task-authoring step, as a one-line reminder where slices
+# are decomposed. This is the natural checklist home the issue names — the
+# scaffold section, not the filed ISSUE BODY.
+# ---------------------------------------------------------------------------
+
+def _technical_rfc_checklist_section():
+    """Return the authoring-scaffold checklist portion of technical-rfc.md — the
+    text after the filed-body end marker, where the per-task decomposition
+    checklist lives."""
+    text = _text(TECHNICAL_RFC)
+    marker = "END ISSUE BODY"
+    idx = text.find(marker)
+    assert idx != -1, "templates/technical-rfc.md is missing the 'END ISSUE BODY' marker"
+    return text[idx:]
+
+
+def test_technical_rfc_checklist_states_check_gate_parity_reminder():
+    section = _technical_rfc_checklist_section()
+    lower = section.lower()
+    assert "check_cmd" in section, (
+        "templates/technical-rfc.md checklist does not name check_cmd in the check-gate parity reminder"
+    )
+    assert "server-ci" in lower or "server ci" in lower, (
+        "templates/technical-rfc.md checklist does not name the server-CI workflow in the check-gate "
+        "parity reminder"
+    )
+    assert "deliverable" in lower, (
+        "templates/technical-rfc.md checklist does not state the check-gate parity reminder as a "
+        "deliverables requirement"
+    )
+
+
+def test_technical_rfc_checklist_check_gate_parity_is_one_line_item():
+    """The reminder must be a single checklist bullet (`- [ ] ...`), not a new multi-paragraph
+    section — the issue calls for a one-line reminder where slices are decomposed."""
+    section = _technical_rfc_checklist_section()
+    lines = section.splitlines()
+    bullet_idx = next(
+        (i for i, line in enumerate(lines) if line.strip().startswith("- [ ]") and "check_cmd" in line),
+        None,
+    )
+    assert bullet_idx is not None, (
+        "templates/technical-rfc.md check-gate parity reminder is not a checklist bullet item"
+    )
+
+
+def test_technical_rfc_check_gate_parity_reminder_not_in_filed_issue_body():
+    """The reminder is authoring scaffold (a self-reminder while decomposing slices), not
+    filed content — it must not land inside the ISSUE BODY markers that get pasted to GitHub."""
+    text = _text(TECHNICAL_RFC)
+    start = text.find("ISSUE BODY · file from here")
+    end = text.find("END ISSUE BODY")
+    assert start != -1 and end != -1 and start < end, (
+        "templates/technical-rfc.md is missing its ISSUE BODY markers"
+    )
+    issue_body = text[start:end]
+    assert "check_cmd" not in issue_body, (
+        "templates/technical-rfc.md check-gate parity reminder leaked into the filed ISSUE BODY section"
+    )
+
+
+def test_technical_rfc_check_gate_parity_reminder_not_duplicated():
+    """The rule should appear once in technical-rfc.md — as the crossing-step pointer — not
+    restated multiple times."""
+    text = _text(TECHNICAL_RFC)
+    assert text.count("check_cmd") == 1, (
+        "templates/technical-rfc.md states check_cmd more than once — the check-gate parity "
+        "reminder should appear once, in the authoring-scaffold checklist"
+    )
