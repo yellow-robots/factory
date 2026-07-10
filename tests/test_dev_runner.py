@@ -206,6 +206,14 @@ def _git(args, cwd):
     subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)
 
 
+def _seed_manifest(work):
+    """Every repo this harness builds is onboarded by default (issue #125's admission wall bounces any
+    repo with NO `.yr/factory.toml` at the base ref before claim) — a bare, key-less manifest so its mere
+    PRESENCE satisfies the wall while every per-key default this suite already exercises stays untouched."""
+    (work / ".yr").mkdir(parents=True, exist_ok=True)
+    (work / ".yr" / "factory.toml").write_text("# seeded by the test harness — no keys, per-key defaults apply\n")
+
+
 def _make_repo(tmp):
     origin = tmp / "origin.git"; origin.mkdir()
     _git(["init", "--bare", "-b", "main", "."], origin)
@@ -213,6 +221,7 @@ def _make_repo(tmp):
     _git(["init", "-b", "main", "."], work)
     _git(["config", "user.email", "t@t"], work); _git(["config", "user.name", "tester"], work)
     (work / "README.md").write_text("seed\n")
+    _seed_manifest(work)
     _git(["add", "-A"], work); _git(["commit", "-q", "-m", "seed"], work)
     _git(["remote", "add", "origin", str(origin)], work)
     _git(["push", "-q", "origin", "main"], work)
@@ -230,6 +239,7 @@ def _make_repo_no_local_identity(tmp):
     work = tmp / "work"; work.mkdir()
     _git(["init", "-b", "main", "."], work)
     (work / "README.md").write_text("seed\n")
+    _seed_manifest(work)
     _git(["add", "-A"], work)
     subprocess.run(["git", "-c", "user.email=seed@seed", "-c", "user.name=seed", "commit", "-q", "-m", "seed"],
                    cwd=str(work), check=True, capture_output=True, text=True)
@@ -384,6 +394,7 @@ def test_gate_type_check_can_be_disabled(tmp_path):
     escape hatch). A Feature then clears the gate — shown read-only via --dry-run."""
     binp = tmp_path / "bin"; _stubs(binp)
     env = _env(tmp_path, binp, issue_type="Feature"); env["REQUIRE_ISSUE_TYPE"] = ""
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["ready"] is True
@@ -398,6 +409,7 @@ def test_opening_line_names_issue_repo_and_run_dir(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
     env = _env(tmp_path, binp)
     env["DEV_RUNNER_HOME"] = str(tmp_path / "drhome")
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert "7" in r.stderr and "test/repo" in r.stderr
@@ -418,7 +430,8 @@ def test_opening_line_goes_to_stderr_not_stdout(tmp_path):
     # unchanged convention (log() writes to fd 2): dry-run's machine-readable plan is the only thing on
     # stdout, so a script parsing stdout as JSON is never polluted by the new line.
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert "starting" not in r.stdout
     json.loads(r.stdout)   # stdout stays pure JSON — attended callers parsing it are unaffected
@@ -428,7 +441,8 @@ def test_attended_invocation_still_emits_to_the_terminal(tmp_path):
     # no dispatch in the picture here (no log-file redirection at all) — a plain, attended invocation
     # (an operator's terminal) must still see every "dev-runner: ..." line, including the new one.
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     lines = [l for l in r.stderr.splitlines() if l.startswith("dev-runner:")]
     assert any("starting" in l and "run dir" in l for l in lines)
@@ -438,16 +452,20 @@ def test_attended_invocation_still_emits_to_the_terminal(tmp_path):
 
 def test_needs_info_on_empty_criteria(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, body="### Goal\njust do it\n"))
+    env = _env(tmp_path, binp, body="### Goal\njust do it\n")
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))  # onboarded: isolates the empty-AC bounce specifically
+    r = _run(["7", "--repo", "test/repo"], env)
     assert r.returncode == 3
     tl = _timeline(tmp_path); assert not _ran(tl)
     edit = " ".join(_edits(tl))
     assert "Backlog" in edit and "NeedsInfo" in edit and _comments(tl)
+    assert "acceptance-criteria section is empty" in r.stderr
 
 
 def test_dryrun_runs_no_stages_and_writes_nothing(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0
     tl = _timeline(tmp_path)
     assert not _ran(tl) and "CHECK" not in tl and not _edits(tl) and not _comments(tl)
@@ -455,18 +473,21 @@ def test_dryrun_runs_no_stages_and_writes_nothing(tmp_path):
 
 def test_dryrun_model_override_opus(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo", "--dry-run"],
-             _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\n"))
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: opus\n")
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert json.loads(r.stdout)["model"] == "claude-opus-4-8"
 
 
 def test_unknown_model_override_real_bounces_needs_info(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo"],
-             _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: gpt-4\n"))
+    env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: gpt-4\n")
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))  # onboarded: isolates the unknown-model bounce
+    r = _run(["7", "--repo", "test/repo"], env)
     assert r.returncode == 3
     tl = _timeline(tmp_path); assert not _ran(tl)
     assert "NeedsInfo" in " ".join(_edits(tl)) and _comments(tl)
+    assert "unknown build model" in r.stderr
 
 
 # ============ full pass: claim -> implement -> tester -> check -> In Review ============
@@ -875,10 +896,13 @@ def test_tester_boundary_guard_checkpoint_is_after_implementer(tmp_path):
 # before any git op — so no real repo is ever touched.
 
 def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, name="repo"):
-    """A minimal repo dir carrying a .yr/factory.toml (no git needed — dry-run never touches git)."""
+    """A minimal repo dir carrying a .yr/factory.toml (no git needed — dry-run never touches git). A
+    leading comment line is always present — with no keys at all, `"\\n".join([]) + "\\n"` is just a
+    newline, and `$(cat ...)` strips an all-whitespace read down to an EMPTY string, which the admission
+    wall (issue #125) can't tell apart from no manifest at all."""
     repo = tmp / name
     (repo / ".yr").mkdir(parents=True)
-    lines = []
+    lines = ["# seeded by the test harness"]
     if check_cmd is not None: lines.append(f'check_cmd = "{check_cmd}"')
     if model is not None:     lines.append(f'model = "{model}"')
     if base_ref is not None:  lines.append(f'base_ref = "{base_ref}"')
@@ -887,17 +911,24 @@ def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, name="repo
 
 
 def test_dryrun_reports_workspace_default(tmp_path):
-    """With no YR_WORKSPACE, the workspace is discovered relative to the script (factory/../..)."""
+    """With no YR_WORKSPACE, the workspace is discovered relative to the script (factory/../..). BASE_REPO
+    is pinned to a manifest-bearing dir (independent of the workspace default under test) purely so the
+    admission wall doesn't bounce the run before it reaches the JSON report."""
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["workspace"] == str(ROOT.parent)
 
 
 def test_dryrun_resolves_base_repo_from_workspace(tmp_path):
-    """The target repo's checkout is resolved as $YR_WORKSPACE/<name> when BASE_REPO is unset."""
+    """The target repo's checkout is resolved as $YR_WORKSPACE/<name> when BASE_REPO is unset. A manifest
+    is seeded at that exact resolved path (not via a BASE_REPO override, which would defeat the point)
+    purely so the admission wall doesn't bounce the run before it reaches the JSON report."""
     ws = tmp_path / "ws"; ws.mkdir()
     binp = tmp_path / "bin"; _stubs(binp)
+    (ws / "repo" / ".yr").mkdir(parents=True)
+    (ws / "repo" / ".yr" / "factory.toml").write_text("# seeded by the test harness\n")
     env = _env(tmp_path, binp); env["YR_WORKSPACE"] = str(ws)
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
@@ -947,6 +978,7 @@ def test_dryrun_default_model_no_overrides(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
     env = _env(tmp_path, binp)
     env["MODEL"] = ""  # empty string triggers :- in the runner, so the built-in default is used
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))  # onboarded but key-less: a sparse-manifest default
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["model"] == "claude-sonnet-5"
@@ -957,6 +989,7 @@ def test_dryrun_body_model_sonnet_resolves_to_sonnet_5(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
     env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: sonnet\n")
     env["MODEL"] = ""  # isolate from any ambient MODEL env var so only the body override and built-in default apply
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))  # onboarded but key-less: a sparse-manifest default
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["model"] == "claude-sonnet-5"
@@ -971,6 +1004,87 @@ def test_dryrun_base_ref_from_manifest(tmp_path):
     assert json.loads(r.stdout)["base_ref"] == "origin/develop"
 
 
+# ============ the admission wall's runner-side backstop (issue #125) ============
+# The epic-gate's sweep is the earliest machine moment un-onboarded work is refused, but the runner's OWN
+# config read is the backstop: raw manifest text empty after BOTH the base-ref read and the working-tree
+# fallback means the repo carries no `.yr/factory.toml` anywhere -- never onboarded. That bounces exactly
+# like the DoR content gate (Status=Backlog + Reason=Needs-info, a comment, exit before claim/worktree),
+# distinct from a manifest that EXISTS but is merely sparse (individual keys absent keep their documented
+# per-key defaults, already pinned throughout this file's other manifest tests).
+
+def _make_repo_no_manifest(tmp):
+    """A real git repo carrying NO `.yr/factory.toml` anywhere — at the base ref or in the working tree —
+    the un-onboarded case (issue #125). `_make_repo` itself always seeds one (every other test in this
+    suite is an onboarded repo by default), so this is the one fixture that deliberately withholds it."""
+    origin = tmp / "origin.git"; origin.mkdir()
+    _git(["init", "--bare", "-b", "main", "."], origin)
+    work = tmp / "work"; work.mkdir()
+    _git(["init", "-b", "main", "."], work)
+    _git(["config", "user.email", "t@t"], work); _git(["config", "user.name", "tester"], work)
+    (work / "README.md").write_text("seed\n")
+    _git(["add", "-A"], work); _git(["commit", "-q", "-m", "seed"], work)
+    _git(["remote", "add", "origin", str(origin)], work)
+    _git(["push", "-q", "origin", "main"], work)
+    return work, origin
+
+
+def test_missing_manifest_anywhere_bounces_before_claim_and_worktree(tmp_path):
+    work, _ = _make_repo_no_manifest(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Un-onboarded repo"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 3
+
+    tl = _timeline(tmp_path)
+    assert not _ran(tl)                                        # no stage ever launched — refused pre-claim
+    edit = " ".join(_edits(tl))
+    assert "Backlog" in edit and "NeedsInfo" in edit            # the runner's existing bounce shape
+    comments = " ".join(_comments(tl)).lower()
+    assert "not onboarded" in comments and "factory.toml" in comments
+    assert "auth" in comments and "arming" in comments          # names the non-delegable acts
+
+    assert _wt_dir(tmp_path) is None                            # never got as far as a worktree
+
+
+def test_missing_manifest_bounce_names_the_repo_not_the_criteria(tmp_path):
+    """A GOOD acceptance-criteria body still bounces on an un-onboarded repo — the reason named is
+    onboarding, not empty criteria (the two bounces are independent, folded into the same NEEDS_INFO)."""
+    work, _ = _make_repo_no_manifest(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Un-onboarded, good criteria"), work)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 3
+    assert "not onboarded" in r.stderr.lower()
+    assert "acceptance-criteria section is empty" not in r.stderr
+
+
+def test_missing_manifest_bounce_is_not_rescued_by_an_env_override(tmp_path):
+    """An explicit CHECK_CMD env override doesn't rescue an un-onboarded repo from the bounce — onboarding
+    is a repo-level gate, independent of any single config key's precedence."""
+    work, _ = _make_repo_no_manifest(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Un-onboarded, env override"), work)
+    env["CHECK_CMD"] = "pytest -q"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 3
+    assert "not onboarded" in r.stderr.lower()
+
+
+def test_sparse_manifest_present_but_key_less_proceeds_on_defaults(tmp_path):
+    """The OTHER branch of the same fork: a manifest that EXISTS (even with no keys at all) is NOT the
+    un-onboarded case — the run proceeds exactly as today, on the documented built-in defaults."""
+    work, _ = _make_repo(tmp_path)                             # _make_repo's own seeded manifest: key-less
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Sparse manifest"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "CHECK" in tl and _ran(tl)                           # the run proceeded through every stage
+    assert not any("not onboarded" in c.lower() for c in _comments(tl))
+
+
 def test_check_runs_with_base_repo_venv_on_path(tmp_path):
     """The check runs with the base repo's .venv/bin on PATH, so a manifest can name bare tools
     (`pytest`) instead of a relative .venv path the ephemeral worktree doesn't contain."""
@@ -980,7 +1094,9 @@ def test_check_runs_with_base_repo_venv_on_path(tmp_path):
     venvbin = work / ".venv" / "bin"; venvbin.mkdir(parents=True)
     marker = tmp_path / "base_pytest_ran"
     _exec(venvbin / "pytest", f'#!/usr/bin/env bash\n: > "{marker}"\nexit 0\n')
-    (work / ".yr").mkdir(); (work / ".yr" / "factory.toml").write_text('check_cmd = "pytest tests/ -q"\n')
+    (work / ".yr" / "factory.toml").write_text('check_cmd = "pytest tests/ -q"\n')
+    _git(["add", "-A"], work); _git(["commit", "-q", "-m", "manifest"], work)
+    _git(["push", "-q", "origin", "main"], work)
     env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Base venv on PATH"), work)
     del env["CHECK_CMD"]                 # fall back to the manifest's bare `pytest`
     env["STUB_CLAUDE_CHANGE"] = "1"
@@ -994,11 +1110,13 @@ def test_manifest_read_from_base_ref_not_stale_working_tree(tmp_path):
     tree — so a checkout that has drifted behind origin (e.g. a shared/live dev workspace that never
     pulled the manifest merge) still builds with the right check_cmd, read from the ref."""
     work, _ = _make_repo(tmp_path)
-    (work / ".yr").mkdir(); (work / ".yr" / "factory.toml").write_text('check_cmd = "echo MANIFEST_FROM_REF"\n')
+    (work / ".yr" / "factory.toml").write_text('check_cmd = "echo MANIFEST_FROM_REF"\n')
     _git(["add", "-A"], work); _git(["commit", "-q", "-m", "add manifest"], work)
     _git(["push", "-q", "origin", "main"], work)
     _git(["reset", "--hard", "HEAD~1"], work)            # working tree drifts behind origin/main
-    assert not (work / ".yr" / "factory.toml").exists()  # present only on the ref now
+    # the seed's bare (key-less) manifest is what's left locally — present (the wall stays satisfied
+    # either way), but it is NOT the ref's check_cmd: proves the ref, not the stale working tree, wins.
+    assert "MANIFEST_FROM_REF" not in (work / ".yr" / "factory.toml").read_text()
     binp = tmp_path / "bin"; _stubs(binp)
     env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Manifest from ref"), work)
     del env["CHECK_CMD"]                                  # fall back to the manifest's check_cmd
@@ -1835,7 +1953,8 @@ def test_dryrun_json_contract_unchanged_by_usage_capture(tmp_path):
     key set the dry-run has always emitted (tools/registry.py-resolved build/review roles, etc.) —
     no usage-related key must appear."""
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp))
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
     assert set(d) == {"repo", "issue", "branch", "model", "workspace", "base_repo", "base_ref",
