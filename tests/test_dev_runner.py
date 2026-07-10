@@ -54,9 +54,18 @@ esac
 # implementer's STUB_CLAUDE_CHANGE, and the happy-path tests don't inadvertently violate
 # the boundary by writing a prod file from the tester stage.
 CLAUDE_STUB = '''#!/usr/bin/env bash
-args="$*"
+# Capture stdin byte-exactly: `$(cat)` strips ALL trailing newlines, so append a sentinel before the
+# command substitution and strip it after — the byte-exact stdin pin (issue #121) must be able to see a
+# stray trailing newline the transport might add, which a naive `$(cat)` would silently swallow.
+stdin_content="$(cat; printf x)"; stdin_content="${stdin_content%x}"
 [ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
 [ -n "${STUB_CLAUDE_ARGV_LOG:-}" ] && { printf '===STUB-CALL===\\n'; printf '%s\\n' "$@"; } >> "$STUB_CLAUDE_ARGV_LOG"
+[ -n "${STUB_CLAUDE_STDIN:-}" ] && printf '%s' "$stdin_content" > "$STUB_CLAUDE_STDIN"
+[ -n "${STUB_CLAUDE_STDIN_LOG:-}" ] && { printf '===STUB-STDIN-BEGIN===\\n'; printf '%s' "$stdin_content"; printf '\\n===STUB-STDIN-END===\\n'; } >> "$STUB_CLAUDE_STDIN_LOG"
+# issue #121: the task prompt travels on stdin now, never argv — so stage classification (below) must
+# match against the combined argv+stdin text, not argv alone, or every stage whose routing literal lived
+# in its task prompt (check-repair's "tests FAIL", review-repair's "REQUESTED CHANGES") misclassifies.
+args="$*"$'\\n'"$stdin_content"
 [ -n "${STUB_CLAUDE_ENV_FILE:-}" ] && printf 'CLAUDE_CONFIG_DIR=%s\\n' "${CLAUDE_CONFIG_DIR:-}" >> "$STUB_CLAUDE_ENV_FILE"
 [ -n "${STUB_CLAUDE_GITENV_FILE:-}" ] && printf 'GIT_CONFIG_GLOBAL=%s GIT_CONFIG_SYSTEM=%s\\n' "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_SYSTEM:-unset}" >> "$STUB_CLAUDE_GITENV_FILE"
 case "$args" in
@@ -159,6 +168,8 @@ def _base_env(tmp, issue_json, item_json, binp):
         "STUB_TIMELINE": str(tmp / "timeline"), "STUB_GH_CALLS": str(tmp / "gh_calls"),
         "STUB_CLAUDE_ARGV": str(tmp / "claude_argv"),
         "STUB_CLAUDE_ARGV_LOG": str(tmp / "claude_argv_log"),
+        "STUB_CLAUDE_STDIN": str(tmp / "claude_stdin"),
+        "STUB_CLAUDE_STDIN_LOG": str(tmp / "claude_stdin_log"),
         "STUB_PRCOMMENTS": str(tmp / "prcomments"),
     }
 
@@ -1607,7 +1618,8 @@ def test_pool_seam_documented_in_dispatch_md_and_env_example():
 # instead of plain text — proving extraction, the rewrite, and the summary end-to-end.
 
 CLAUDE_STUB_JSON = '''#!/usr/bin/env bash
-args="$*"
+stdin_content="$(cat)"
+args="$*"$'\\n'"$stdin_content"   # issue #121: classification must see stdin too (the task prompt lives there)
 [ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
 emit_json() {  # $1=result-text $2=input $3=output $4=cache_write $5=cache_read $6=duration_ms
   printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$2" "$3" "$4" "$5"
@@ -2082,12 +2094,44 @@ def _extract_append_system_prompt(raw_call):
     return m.group(1)
 
 
+def _stdin_raw_calls(tmp):
+    """Every `claude` invocation's raw STDIN content, in call order — issue #121's task-prompt channel
+    (role instruction + SPEC), byte-exact. Parsed off explicit BEGIN/END markers (rather than the
+    ===STUB-CALL=== boundary the argv log uses) since the content itself is free-form and may contain
+    embedded blank lines right up against a call boundary."""
+    p = tmp / "claude_stdin_log"
+    if not p.exists():
+        return []
+    return re.findall(r'===STUB-STDIN-BEGIN===\n(.*?)\n===STUB-STDIN-END===\n', p.read_text(), re.S)
+
+
 def _stage_calls(tmp):
     """Every recorded `claude` call, grouped by which stage fired it — paired positionally with the
     timeline's stage markers (IMPL/TEST/REPAIR/REVIEW/REVIEWFIX), which fire in the same order as the
-    claude invocations they came from (one timeline entry per claude call, every stub branch here)."""
+    claude invocations they came from (one timeline entry per claude call, every stub branch here).
+    Each call's text is argv + stdin combined (issue #121 moved the task prompt off argv onto stdin, so
+    a literal that only ever lived in the task prompt — e.g. check-repair's "tests FAIL" — is only found
+    by searching both channels together)."""
     tl = [l for l in _timeline(tmp) if l in ("IMPL", "TEST", "REPAIR", "REVIEW", "REVIEWFIX")]
-    calls = _argv_raw_calls(tmp)
+    argv_calls = _argv_raw_calls(tmp)
+    assert len(tl) == len(argv_calls), (tl, len(argv_calls))
+    stdin_calls = _stdin_raw_calls(tmp)
+    if stdin_calls:
+        assert len(stdin_calls) == len(argv_calls), (len(stdin_calls), len(argv_calls))
+        calls = [f"{a}\n{s}" for a, s in zip(argv_calls, stdin_calls)]
+    else:
+        calls = argv_calls
+    out = {}
+    for stage, call in zip(tl, calls):
+        out.setdefault(stage, []).append(call)
+    return out
+
+
+def _stdin_stage_calls(tmp):
+    """Like `_stage_calls`, but each call is its raw STDIN content ALONE (no argv folded in) — for
+    assertions that care specifically about what did/didn't travel on which channel."""
+    tl = [l for l in _timeline(tmp) if l in ("IMPL", "TEST", "REPAIR", "REVIEW", "REVIEWFIX")]
+    calls = _stdin_raw_calls(tmp)
     assert len(tl) == len(calls), (tl, len(calls))
     out = {}
     for stage, call in zip(tl, calls):
@@ -2249,6 +2293,148 @@ def test_repair_prompt_templates_unchanged(tmp_path):
                                "(production code; only touch a test if the test itself is wrong).")
     for call in by_stage["REVIEWFIX"]:
         assert review_repair_fragment in call
+
+
+# ============ Issue #121: SPEC via stdin, per-stage process-group reap, signal-terminated legibility ==
+# `run_stage` used to pass the whole task prompt as a `claude -p "$SPEC"` argv value — a task whose body
+# quotes a runnable string could pattern-match the stage's own command line (gilda#9 run 9-4131516: a
+# `pkill -f "bash qa/qa-gate.sh"` self-hit its own argv, signal-terminating the harness with a zero-byte
+# implement.log). Three independent repairs: (1) the task prompt now travels on stdin, never argv; (2)
+# each stage runs as the leader of its own process group and that group is reaped before the next stage
+# starts, so a stray child never survives into the next attempt; (3) a signal-terminated stage (empty
+# log) gets a Blocked record naming the exit code and pointing at the preserved session transcript,
+# rather than only the empty log file.
+
+def test_task_prompt_delivered_via_stdin_byte_exact(tmp_path):
+    """Acceptance: the task prompt (role instruction + full issue SPEC) is delivered to the stage CLI
+    over stdin, byte-for-byte — the same text that used to travel as the `-p` positional argv value, with
+    no added/stripped whitespace (a stray trailing newline from the delivery mechanism would break this
+    exact comparison, same rebuild-note class as the charter's byte-exact append)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Byte exact stdin delivery")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+
+    # The delivered SPEC carries no trailing newline: `run_stage`'s SPEC is built with a command
+    # substitution (`SPEC="$(printf ... "$BODY")"`), which strips trailing newlines — so the byte-exact
+    # task prompt ends at the last acceptance-criterion character, exactly as the argv `-p` value did.
+    spec = "GitHub issue #5: Byte exact stdin delivery\n\n### Acceptance criteria\n- [ ] it works"
+    expected = {
+        "IMPL": f"Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n{spec}",
+        "TEST": f"Write tests that verify the acceptance criteria below.\n\n{spec}",
+    }
+    stdin_calls = _stdin_stage_calls(tmp_path)
+    for stage, text in expected.items():
+        assert stdin_calls[stage][0] == text, f"stage {stage}: stdin task prompt is not byte-exact"
+
+
+def test_task_prompt_absent_from_own_command_line(tmp_path):
+    """Acceptance: a task whose body quotes a runnable string — here the exact
+    `pkill -f "bash qa/qa-gate.sh"` string that self-matched the harness's own argv in gilda#9 run
+    9-4131516 — must never appear on any stage's own command line (argv); it must still reach the stage,
+    but only over stdin."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    body = ('### Acceptance criteria\n'
+            '- [ ] kill any stray process with `pkill -f "bash qa/qa-gate.sh"`\n')
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Argv self-match trap", body=body), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+
+    argv_calls = _argv_raw_calls(tmp_path)
+    assert argv_calls, "expected at least one recorded claude call"
+    for call in argv_calls:
+        assert "pkill -f" not in call, "the task text leaked onto a stage's own command line (argv)"
+
+    stdin_calls = _stdin_raw_calls(tmp_path)
+    assert any("pkill -f" in call for call in stdin_calls), \
+        "the task text must still reach the stage — on stdin, never on argv"
+
+
+REAP_CLAUDE_STUB = r'''#!/usr/bin/env bash
+stdin_content="$(cat)"
+args="$*"$'\n'"$stdin_content"
+case "$args" in
+  *TESTER*)
+    echo TEST >> "$STUB_TIMELINE"
+    child_pid="$(cat "$STUB_LINGER_PIDFILE" 2>/dev/null)"
+    if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
+      echo LINGERING >> "$STUB_TIMELINE"
+    fi ;;
+  *REVIEWER*)
+    # The reviewer must approve so the run reaches rc=0 and the reap assertion (no LINGERING) can gate;
+    # without this branch a REVIEWER call falls to the IMPL default, never emits a verdict, and the run
+    # blocks independent of the reap fix under test.
+    echo REVIEW >> "$STUB_TIMELINE"
+    echo "VERDICT: APPROVE" ;;
+  *)
+    echo IMPL >> "$STUB_TIMELINE"
+    [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\n' > feature.txt
+    ( exec sleep 5 ) &
+    echo $! > "$STUB_LINGER_PIDFILE" ;;
+esac
+exit 0
+'''
+
+
+def test_process_group_reap_kills_lingering_child_before_next_stage(tmp_path):
+    """Acceptance: a stage's stray background child (the class that motivated the fatal `pkill` cleanup
+    in gilda#9 run 9-4131516 — a leftover Playwright run from an EARLIER attempt) must be dead before the
+    NEXT stage starts. The implement stub backgrounds a `sleep`, exits immediately without waiting on it,
+    and records its pid; the tester stub — the very next stage to run — checks that pid the moment IT
+    starts and would mark the timeline LINGERING if it were still alive."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"
+    binp.mkdir(parents=True, exist_ok=True)
+    _exec(binp / "gh", GH_STUB)
+    _exec(binp / "claude", REAP_CLAUDE_STUB)
+    _exec(binp / "check.sh", CHECK_STUB)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Reap lingering child"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_LINGER_PIDFILE"] = str(tmp_path / "linger.pid")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert tl.index("IMPL") < tl.index("TEST")
+    assert "LINGERING" not in tl, "the implementer's stray child was still alive when the tester stage started"
+
+
+SIGNAL_CLAUDE_STUB = '''#!/usr/bin/env bash
+cat >/dev/null
+kill -KILL $$
+'''
+
+
+def test_signal_terminated_stage_blocked_record_names_exit_code_and_transcript(tmp_path):
+    """Acceptance: a stage terminated by a signal before it writes anything (an empty log — the exact
+    shape of gilda#9 run 9-4131516's zero-byte implement.log) must produce a Blocked record that states
+    the numeric exit code, names signal termination as the likely class, and points at the preserved
+    session transcript — never a record naming only the empty log file."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"
+    binp.mkdir(parents=True, exist_ok=True)
+    _exec(binp / "gh", GH_STUB)
+    _exec(binp / "claude", SIGNAL_CLAUDE_STUB)
+    _exec(binp / "check.sh", CHECK_STUB)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Signal terminated implementer"), work)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+
+    rundirs = list((tmp_path / "drhome" / "runs").glob("5-*"))
+    assert len(rundirs) == 1
+    log = rundirs[0] / "implement.log"
+    assert log.exists() and log.stat().st_size == 0            # the zero-byte mystery this record closes
+
+    assert "137" in r.stderr                                    # 128+9 (SIGKILL): the exit code, stated
+    assert "signal-terminated" in r.stderr.lower()
+    assert "transcript" in r.stderr.lower()
+
+    tl = _timeline(tmp_path)
+    edits = " ".join(_edits(tl))
+    assert "REASONFIELD" in edits and "Blocked" in edits
+    comments = " ".join(_comments(tl))
+    assert "137" in comments and "signal-terminated" in comments.lower()
 
 
 # ============ Issue #116: build-pipeline (implement -> review) gate-pass-count pins ============

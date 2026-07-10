@@ -45,7 +45,11 @@ for a in "$@"; do
   [ "$prev" = "--model" ] && model="$a"
   prev="$a"
 done
-args="$*"
+stdin_content="$(cat)"
+# issue #121: the task prompt travels on stdin now, not argv — classify from both channels combined, or
+# the repair/review-fix routing literals ("tests FAIL", "REQUESTED CHANGES"), which live in the task
+# prompt, are never seen.
+args="$*"$'\n'"$stdin_content"
 case "$args" in
   *REVIEWER*)            stage=REVIEW ;;
   *"REQUESTED CHANGES"*) stage=REVIEWFIX ;;
