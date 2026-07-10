@@ -374,19 +374,63 @@ def test_foreign_item_present_but_target_absent_still_gates_not_in_project(tmp_p
 
 def test_gate_rejects_non_task_type(tmp_path):
     """A non-Task issue (e.g. a Feature/epic accidentally set Ready) is refused at the gate — the
-    runner builds Tasks only; epics are tracked as native sub-issue parents, never built (footgun F3)."""
+    runner builds Tasks only; epics are tracked as native sub-issue parents, never built (footgun F3).
+    This stays the polite no-write refusal (issue #132): a typed epic must stay Ready for the
+    epic-gate sweeper, so the gate makes zero board writes and posts no comment."""
     binp = tmp_path / "bin"; _stubs(binp)
     r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, issue_type="Feature"))
     assert r.returncode == 3 and "task" in r.stderr.lower()
-    tl = _timeline(tmp_path); assert not _ran(tl) and not _edits(tl)   # no stages, no state writes
+    tl = _timeline(tmp_path)
+    assert not _ran(tl) and not _edits(tl) and not _comments(tl)   # no stages, no state writes, no comment
 
 
-def test_gate_rejects_untyped_issue(tmp_path):
-    """An issue with no Issue Type at all is also refused (fail closed: build only explicit Tasks)."""
+def test_untyped_ready_issue_bounces_to_needs_info(tmp_path):
+    """An issue with NO Issue Type at all is not an epic (issue #132) — left as a bare no-write gate it
+    would win the dispatch flock every tick with no state change, permanently starving the rest of the
+    board (the live incident this task fixes). So it leaves Ready through the existing Needs-info bounce
+    instead: Status=Backlog + Reason=Needs-info + a comment naming the Type requirement and the recovery
+    act, same shape as the admission wall and the empty-criteria bounce."""
     binp = tmp_path / "bin"; _stubs(binp)
-    r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, issue_type=None))
-    assert r.returncode == 3 and "task" in r.stderr.lower()
-    assert not _ran(_timeline(tmp_path)) and not _edits(_timeline(tmp_path))
+    env = _env(tmp_path, binp, issue_type=None)
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))  # onboarded: isolates the Type bounce specifically
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode == 3   # stays in the gate family, but now via the bounce, not a bare refusal
+    tl = _timeline(tmp_path)
+    assert not _ran(tl)   # still no LLM stages on a DoR refusal
+    edit = " ".join(_edits(tl))
+    assert "Backlog" in edit and "NeedsInfo" in edit
+    comments = _comments(tl)
+    assert comments
+    comment_text = " ".join(comments)
+    # names the Type requirement and the recovery act (set Issue Type, then Status back to Ready) —
+    # assert by substring on the rule, not exact bytes, since wording is the implementer's to phrase.
+    assert "Type" in comment_text
+    assert "Ready" in comment_text
+
+
+def test_untyped_ready_issue_dry_run_is_read_only(tmp_path):
+    """--dry-run over an untyped Ready issue stays read-only, exactly like every other NEEDS_INFO
+    condition — the bounce is reported (still exit 3), never written to the board."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, issue_type=None)
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 3
+    tl = _timeline(tmp_path)
+    assert not _ran(tl) and not _edits(tl) and not _comments(tl)
+
+
+def test_untyped_issue_require_issue_type_optout_unaffected(tmp_path):
+    """REQUIRE_ISSUE_TYPE='' (the opt-out for repos without Issue Types) behaves exactly as today for an
+    untyped issue too — no Type check at all, so it clears the gate rather than bouncing."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, issue_type=None); env["REQUIRE_ISSUE_TYPE"] = ""
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["ready"] is True
+    tl = _timeline(tmp_path)
+    assert not _edits(tl) and not _comments(tl)   # dry-run: read-only regardless
 
 
 def test_gate_type_check_can_be_disabled(tmp_path):
