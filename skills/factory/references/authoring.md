@@ -105,6 +105,11 @@ One GitHub Issue via the Task DoR form, from `templates/task.md`.
 **Required sections:** Goal · Acceptance (EARS criteria as `- [ ]`) · Context & links (paste the
 technical-RFC slice — self-contained) · Test expectations · Constraints / out of scope · Size.
 
+**Check-gate parity:** WHEN a slice changes the repo's `check_cmd` or what it needs to run (toolchain,
+provisioning, new gate scripts), the slice's deliverables SHALL include the server-CI workflow change
+that lets CI execute the same gate — the in-build check gate and server CI are the same contract on two
+hosts.
+
 **Run `check_task`** (see [`gates.md`](gates.md)) before promoting. **One task = one PR**; if a task
 would need two PRs, split it into sub-issues.
 

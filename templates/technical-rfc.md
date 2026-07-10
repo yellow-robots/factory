@@ -74,6 +74,9 @@ and get the shape approved (human). Then flesh out the body above. *Gates review
 - [ ] Flag **hidden contracts / anti-patterns**.
 - [ ] Write one **self-contained slice per task**, citing exact files — re-read each as if you were the
       dev with no other context. If it needs Obsidian, it's not done.
+- [ ] **Check-gate parity:** a slice that changes `check_cmd` or its prerequisites (toolchain,
+      provisioning, new gate scripts) must list the server-CI workflow change among its deliverables —
+      the in-build check gate and server CI are the same contract on two hosts.
 - [ ] Run **`check_links`** on this draft (its `source_feature_rfc` must resolve) before filing.
 
 *Next stage:* **task decomposition** (`task.md`) turns each slice into a Ready Issue.
