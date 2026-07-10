@@ -4,10 +4,16 @@ This turns the factory **autonomous**: n8n polls the project for `Status=Ready` 
 
 ```
 n8n (Docker, schedule)  --GraphQL-->  GitHub: Ready items
-        |  POST /build {issue}  (bearer token)
+        |  POST /build {issue, repo}  (bearer token)
         v
-host dispatch.service  --flock(single-flight)-->  dev-runner.sh <issue>  -->  PR
+host dispatch.service  --repo-lock + capacity-slot flock-->  dev-runner.sh <issue> --repo <repo>  -->  PR
 ```
+
+Concurrency (epic #126): each target repo gets its OWN non-blocking lock, acquired outermost — a repo
+already building never starts a second build for itself. Inside that, the build claims the first free
+slot out of `DISPATCH_MAX_BUILDS` (default 2) numbered slot-lock files — the operator-adjustable global
+cap on total concurrent builds across every repo. A busy repo consumes no slot; if every slot is busy the
+dispatch exits politely and the task waits for the next poll tick — never dropped, never queue-jumped.
 
 ## 1. Host service
 
@@ -93,7 +99,16 @@ Every `models.toml` entry names a `quota_pool` — the shared rate/spend ceiling
 
 ## Safety properties (already built)
 
-- **Single-flight:** the host `flock` serializes to one build at a time; a duplicate dispatch exits immediately.
+- **Per-repo locks + a global cap (epic #126):** each repo gets its own non-blocking `flock`
+  (`dispatch-<owner>--<name>.lock` in the lock home — the directory holding `DISPATCH_LOCK`), acquired
+  OUTERMOST, so a repo already building never starts a second build for itself and a busy repo consumes
+  no capacity slot. Total concurrent builds across every repo are bounded by `DISPATCH_MAX_BUILDS` (env,
+  default 2; any unset/invalid value falls back to the default, never an error), implemented as
+  `capslot-<i>.lock` files beside the repo locks. A duplicate dispatch for a repo already building, or a
+  dispatch that finds every slot busy, exits immediately and politely — the task simply waits for the
+  next poll tick, never dropped. Lock-busy is distinguished from a real runner failure by a reserved
+  flock exit code (`-E 200`; a runner that happens to exit exactly 200 is remapped to 201 so it's never
+  misread as busy) — a runner failure propagates and is never retried on another slot.
 - **No double-pickup:** the runner claims (`Ready → In Progress`) as its first act, dropping the task off the Ready query within seconds.
 - **Fail-closed:** any runner failure → `Reason=Blocked` + comment, no PR. A bad task can't run wild.
 - **Grooming stays human:** dispatch only *pulls* `Ready`; promoting Backlog → Ready is a human/Joam decision.
@@ -106,8 +121,9 @@ Every `models.toml` entry names a `quota_pool` — the shared rate/spend ceiling
 The same host service also exposes `POST /sweep`, which fires `tools/epic_gate.py` — the org-wide sweep
 that promotes the next pre-approved slice under a standing approval, self-closes a finished Ready epic,
 and raises stranded claims. It takes no issue/repo (the board is org-wide) and runs under its **own**
-lock (`SWEEP_LOCK`, default `~/.cache/dev-runner/epic-sweep.lock`), separate from the build lock
-(`DISPATCH_LOCK`) — a running build never blocks a sweep, and vice versa. No code change or restart is
+lock (`SWEEP_LOCK`, default `~/.cache/dev-runner/epic-sweep.lock`), separate from every build lock (the
+per-repo + capacity-slot locks living beside `DISPATCH_LOCK`) — a running build never blocks a sweep, and
+vice versa. No code change or restart is
 needed if the service is already running `/build`; `/sweep` is live on the same process.
 
 1. **Import the workflow.** Import `deploy/n8n-epic-sweep.json`, then wire the **POST /sweep** node:

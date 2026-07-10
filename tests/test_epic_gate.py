@@ -18,13 +18,50 @@ import inspect
 import json
 import pathlib
 import re
+import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import epic_gate  # noqa: E402
 
 REPO = "yellow-robots/yellow-robots"
+
+
+# ============================================================================
+# execution-context import (epic #126): production runs epic_gate.py as a bare script
+# (tools/dispatch.py spawns `tools/epic_gate.py` directly, stderr routed to DEVNULL) — Python puts the
+# script's OWN directory (tools/) at sys.path[0] in that mode, regardless of cwd. `import dispatch`
+# (sibling, unprefixed) resolves there; a `tools.`-prefixed import resolves only under pytest's own
+# sys.path setup (this file's `sys.path.insert(0, .../tools)` above, plus whatever pytest's rootdir
+# insertion adds) and would crash the sweeper silently in production. This test runs in a FRESH
+# subprocess (so no module already cached in this process's sys.modules can mask a real failure) with
+# cwd deliberately NOT the repo root, and drives the module the same way `python3 tools/epic_gate.py`
+# would: script-path execution, main() never invoked (run_name != "__main__", so no real GitHub I/O).
+# ============================================================================
+
+def test_epic_gate_resolves_the_sibling_dispatch_import_in_script_execution_context():
+    # Faithfully reproduces `python3 tools/epic_gate.py`'s ONE relevant mechanic — sys.path[0] set to the
+    # script's own directory, not the repo root — without ever invoking main() (which does real GitHub
+    # I/O against the live board): __name__ is set to something other than "__main__", so the
+    # `if __name__ == "__main__":` guard at the bottom of the file never fires. Only the module-level
+    # `import dispatch` (and everything above it) actually executes.
+    target = ROOT / "tools" / "epic_gate.py"
+    probe = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(target.parent)!r})\n"
+        f"ns = {{'__name__': 'epic_gate_under_test', '__file__': {str(target)!r}}}\n"
+        f"exec(compile(open({str(target)!r}).read(), {str(target)!r}, 'exec'), ns)\n"
+        "print('OK:' + ns['dispatch'].repo_lock_path('o/r', lock_home='/x'))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=tempfile.gettempdir(),   # deliberately not the repo root — proves cwd-independence
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert result.stdout.strip() == "OK:/x/dispatch-o--r.lock"
 
 # readable ids injected into the sweep, so assertions read like English
 STATUS_FIELD = "STATUSFIELD"
@@ -953,12 +990,20 @@ def _iso(minutes_ago):
     return (FIXED_NOW - datetime.timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _lock_free():
+def _lock_free(repo=None):
     return False
 
 
-def _lock_held():
+def _lock_held(repo=None):
     return True
+
+
+def _lock_state(held_for):
+    """A `build_lock_held` probe (`(repo) -> bool`, epic #126 — per-repo, never a host-global lock) that
+    reports busy only for repos in `held_for` (a set of `owner/name` strings)."""
+    def probe(repo):
+        return repo in held_for
+    return probe
 
 
 def _run_stranded_candidate(*, age_min, reason=None, open_prs=None, build_lock_held=_lock_free,
@@ -998,6 +1043,35 @@ def test_no_raise_while_build_lock_held():
     """A build is live (lock held) -> the sweep defers, even though the claim looks stale."""
     fake = _run_stranded_candidate(age_min=60, build_lock_held=_lock_held)
     assert fake.edits == [] and fake.comments == []
+
+
+def test_stranded_probe_is_called_with_the_claimed_childs_own_repo():
+    """epic #126: the liveness probe is per-repo — it must be invoked with the STRANDED CHILD's own
+    repo (never a host-global lock), so a false-positive/negative can't hide behind a stub that ignores
+    the argument."""
+    seen = []
+
+    def probe(repo):
+        seen.append(repo)
+        return False
+
+    _run_stranded_candidate(age_min=60, build_lock_held=probe)
+    assert seen == [REPO]
+
+
+def test_no_raise_while_the_claimed_repos_own_lock_is_held():
+    """The claimed child's OWN repo has a live build (per-repo lock held) -> defer, don't raise."""
+    fake = _run_stranded_candidate(age_min=60, build_lock_held=_lock_state({REPO}))
+    assert fake.edits == [] and fake.comments == []
+
+
+def test_another_repos_held_lock_does_not_defer_the_raise():
+    """A DIFFERENT repo's build lock being held must never defer a raise against this claim — the
+    retired host-global lock would have (wrongly) deferred every raise org-wide while any one repo had a
+    healthy long build in flight; the per-repo probe must not reintroduce that false-stranded suppression
+    (or its mirror: a healthy long build on another repo silently masking a genuinely stranded claim)."""
+    fake = _run_stranded_candidate(age_min=60, build_lock_held=_lock_state({"other-org/other-repo"}))
+    assert ("PI-101", REASON_FIELD, "Blocked") in fake.edits
 
 
 def test_no_raise_under_staleness_bound():

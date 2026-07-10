@@ -30,7 +30,8 @@ Stranded-claim detection (extends the same per-epic busy check): `tools/dev-runn
 `fail_blocked` (-> `Reason=Blocked`). A hard death (signal/kill) between those two runs no handler,
 leaving Status=In Progress with no Reason forever — neither in flight nor off-track, so the epic would
 wait on it forever. The sweep raises such a claim (`Reason=Blocked` + an explanatory comment) once it has
-stood past a staleness bound with no open PR and no live build holding `dispatch.py`'s build lock.
+stood past a staleness bound with no open PR and no live build holding `dispatch.py`'s lock for THIS
+CLAIM'S OWN REPO (`dispatch.repo_lock_path`, imported as the sibling module — never a host-global lock).
 
 Board intake (a third, independent pass over the same sweep): GitHub's Projects auto-add workflow is
 one-per-project with a single repository/filter on this org's plan, so it can't serve a board spanning
@@ -51,6 +52,11 @@ import re
 import subprocess
 import sys
 import tomllib
+
+# sibling-module import (never `tools.dispatch`): production runs this file as a bare script
+# (`tools/dispatch.py` spawns `tools/epic_gate.py` directly), which puts `tools/` at `sys.path[0]` — a
+# `tools.`-prefixed import would only resolve under pytest's repo-root cwd and would crash the sweeper.
+import dispatch
 
 # --- Projects field config (reused from the runner; env-overridable, same live defaults) ---------------
 ORG = os.environ.get("YR_ORG", "yellow-robots")
@@ -74,10 +80,11 @@ REASON_OPT = {
 BUSY_STATUS = {"Ready", "In Progress", "In Review"}
 BUSY_REASON = {"Blocked", "Needs-info"}
 
-# --- stranded-claim config: how long an unstable In-Progress claim is given before it's suspect, and
-#     where dispatch.py's build-lock lives (the same default/env name it uses) ---------------------
+# --- stranded-claim config: how long an unstable In-Progress claim is given before it's suspect. The
+#     liveness probe reads dispatch.py's own per-repo lock (dispatch.repo_lock_path) — never a
+#     host-global lock, whose retirement (epic #126 — per-repo locks + a global cap) would otherwise
+#     make the probe never defer, raising false stranded claims against healthy long builds. -------------
 STRANDED_AFTER_MIN = int(os.environ.get("STRANDED_AFTER_MIN", "45"))
-DISPATCH_LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
 
 # --- debt-round counter config: how many closed-as-completed feature epics (since the last closed debt
 #     epic) it takes to raise the need for a round; per-repo override lives in the manifest (see
@@ -225,10 +232,12 @@ def _utcnow():
     return datetime.datetime.utcnow()
 
 
-def _default_build_lock_held():
-    """Default `build_lock_held` probe — a non-blocking `flock` test on dispatch.py's build lock (same
-    default path/env as `dispatch.py`). Held (can't acquire) => a build is live. Absent/free => not."""
-    path = pathlib.Path(DISPATCH_LOCK)
+def _default_build_lock_held(repo):
+    """Default `build_lock_held` probe — a non-blocking `flock` test on `repo`'s OWN build lock
+    (`dispatch.repo_lock_path`, the sibling module). Held (can't acquire) => a build for that repo is
+    live. Absent/free => not. Never probes any other repo's lock, so a healthy long build on one repo
+    never defers a stranded-claim raise on a different repo."""
+    path = pathlib.Path(dispatch.repo_lock_path(repo))
     if not path.exists():
         return False
     try:
@@ -256,17 +265,19 @@ def _has_open_pr(gh, repo, child_number):
 
 def _is_stranded(gh, child, pi, now, build_lock_held, stranded_after_min):
     """True iff an In-Progress, Reason-less child's claim looks dead: its Status has stood unchanged
-    past the staleness bound, no build currently holds the build-lock, and no open PR exists for it.
-    Returns `(is_stranded, age_minutes)` — the age is reported even when not (yet) stranded is False."""
+    past the staleness bound, no build currently holds THIS CHILD'S OWN REPO's build-lock, and no open
+    PR exists for it. Returns `(is_stranded, age_minutes)` — the age is reported even when not (yet)
+    stranded is False. `build_lock_held` is called with the claimed child's repo — never a host-global
+    lock — so a healthy long build on one repo never defers a raise against a different repo's claim."""
     updated_at = ((pi or {}).get("status") or {}).get("updatedAt")
     if not updated_at:
         return False, 0
     age_min = (now() - _parse_dt(updated_at)).total_seconds() / 60.0
     if age_min <= stranded_after_min:
         return False, age_min
-    if build_lock_held():                              # a build is live — defer, don't raise
-        return False, age_min
     repo = (child.get("repository") or {}).get("nameWithOwner") or ""
+    if build_lock_held(repo):                           # a build for THIS repo is live — defer, don't raise
+        return False, age_min
     if _has_open_pr(gh, repo, child["number"]):
         return False, age_min
     return True, age_min
@@ -840,7 +851,7 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
     shape (`tools/dev-runner.sh:493`). Both are idempotent via the existing Reason-guard pattern, and the
     manifest probe is cached per repo within one sweep (`_repo_onboarded`).
 
-    `now` (a `() -> datetime.datetime` clock), `build_lock_held` (a `() -> bool` probe), and
+    `now` (a `() -> datetime.datetime` clock), `build_lock_held` (a `(repo) -> bool` probe), and
     `stranded_after_min` are injectable for the stranded-claim check — each defaults to a real read.
     `repos` is the explicit list of registered repos to sweep for intake (never filesystem-discovered
     inside this core, mirroring the debt counter's own explicit `repos` param) — defaults to `()` (no
