@@ -393,9 +393,19 @@ comment(){ "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$1" >/dev/nul
 [ "$ITEM_STATUS" = "Ready" ] || gate "issue #$ISSUE is not Ready (Status: ${ITEM_STATUS:-none})"
 # Type gate: build Tasks only. A Feature/epic accidentally set Ready must NOT be built — epics are native
 # sub-issue parents, not build units. Case-insensitive; REQUIRE_ISSUE_TYPE='' opts out (repos w/o types).
-if [ -n "$REQUIRE_ISSUE_TYPE" ]; then
-  [ "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$REQUIRE_ISSUE_TYPE" | tr '[:upper:]' '[:lower:]')" ] \
-    || gate "issue #$ISSUE is not Type=$REQUIRE_ISSUE_TYPE (Type: ${ITYPE:-none}) — the runner builds Tasks only; track epics/Features as sub-issue parents, not build units."
+# An UNTYPED Ready item is not an epic — left as a bare gate() (no-write refusal) it wins the dispatch
+# flock every tick with no state change, permanently starving the rest of the board. So it folds into the
+# NEEDS_INFO bounce below (Status=Backlog + Reason=Needs-info) instead, same as the admission wall above.
+# A typed-but-wrong Type (e.g. Feature) keeps the polite no-write gate() unchanged — it must stay Ready
+# for the epic-gate sweeper.
+TYPE_NEEDS_INFO=""
+if [ -n "$REQUIRE_ISSUE_TYPE" ] \
+   && [ "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$REQUIRE_ISSUE_TYPE" | tr '[:upper:]' '[:lower:]')" ]; then
+  if [ -z "$ITYPE" ]; then
+    TYPE_NEEDS_INFO="issue #$ISSUE has no Issue Type set — the runner builds Type=$REQUIRE_ISSUE_TYPE only. Set the Issue Type to $REQUIRE_ISSUE_TYPE, then set Status back to Ready to resume."
+  else
+    gate "issue #$ISSUE is not Type=$REQUIRE_ISSUE_TYPE (Type: ${ITYPE:-none}) — the runner builds Tasks only; track epics/Features as sub-issue parents, not build units."
+  fi
 fi
 
 # acceptance-criteria block: from its heading to the next heading of equal-or-higher level (#, ##, ###).
@@ -409,6 +419,7 @@ AC="$(printf '%s\n' "$BODY" | awk '
 NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$(printf '%s' "$AC" | tr -dc '[:alnum:]')" ] \
   || NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }the acceptance-criteria section is empty"
+[ -n "$TYPE_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$TYPE_NEEDS_INFO"
 
 # ---- slug + branch ----
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
