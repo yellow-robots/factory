@@ -409,8 +409,8 @@ def test_no_new_reference_file_added():
 
 def test_plugin_version_unchanged_no_bump_this_slice():
     data = json.loads(PLUGIN.read_text(encoding="utf-8"))
-    assert data["version"] == "0.9.2", \
-        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.2' (bumped at the skill 0.9.2 release)"
+    assert data["version"] == "0.9.3", \
+        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.3' (bumped at the skill 0.9.3 release)"
 
 
 def test_skill_md_does_not_restate_supersession_declaration():
