@@ -7,7 +7,7 @@ CHECK_CMD is a stub script — both append to the timeline, so tests can prove t
 claim → IMPL → TEST → CHECK → (REPAIR → CHECK) → In Review, and that the check gate is deterministic.
 Field/option ids are overridden to readable strings (STATUSFIELD, InProgress, …) for legible assertions.
 """
-import json, os, re, stat, subprocess, pathlib
+import json, os, re, signal, stat, subprocess, pathlib, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "dev-runner.sh"
@@ -68,6 +68,10 @@ stdin_content="$(cat; printf x)"; stdin_content="${stdin_content%x}"
 args="$*"$'\\n'"$stdin_content"
 [ -n "${STUB_CLAUDE_ENV_FILE:-}" ] && printf 'CLAUDE_CONFIG_DIR=%s\\n' "${CLAUDE_CONFIG_DIR:-}" >> "$STUB_CLAUDE_ENV_FILE"
 [ -n "${STUB_CLAUDE_GITENV_FILE:-}" ] && printf 'GIT_CONFIG_GLOBAL=%s GIT_CONFIG_SYSTEM=%s\\n' "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_SYSTEM:-unset}" >> "$STUB_CLAUDE_GITENV_FILE"
+# issue #142: an optional observation hook (a no-op unless a test opts in) recording the TMPDIR this
+# stage subprocess actually inherited, and whether that directory existed AT CALL TIME — one line pair
+# appended per invocation, so a multi-stage build's whole sequence of TMPDIR values can be checked.
+[ -n "${STUB_CLAUDE_TMPDIR_FILE:-}" ] && { printf 'TMPDIR=%s\\n' "${TMPDIR:-unset}"; { [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; } && echo DIR_EXISTS=1 || echo DIR_EXISTS=0; } >> "$STUB_CLAUDE_TMPDIR_FILE"
 case "$args" in
   *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
                         if [ -n "${STUB_REVIEW_QUOTA:-}" ]; then echo "${STUB_REVIEW_QUOTA}" >&2; exit 1; fi
@@ -96,9 +100,22 @@ exit 0
 CHECK_STUB = '''#!/usr/bin/env bash
 echo CHECK >> "$STUB_TIMELINE"
 [ -n "${STUB_CHECK_GITENV_FILE:-}" ] && printf 'GIT_CONFIG_GLOBAL=%s GIT_CONFIG_SYSTEM=%s\\n' "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_SYSTEM:-unset}" >> "$STUB_CHECK_GITENV_FILE"
+# issue #142: same observation hook as the claude stub, for the check-gate subprocess itself — plus the
+# argument count the runner invoked it with, proving no flags (pytest-specific or otherwise) got injected
+# into check_cmd's own invocation on the way to routing its temp residue.
+[ -n "${STUB_CHECK_TMPDIR_FILE:-}" ] && { printf 'TMPDIR=%s\\n' "${TMPDIR:-unset}"; { [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; } && echo DIR_EXISTS=1 || echo DIR_EXISTS=0; printf 'ARGC=%s\\n' "$#"; } >> "$STUB_CHECK_TMPDIR_FILE"
 [ -n "${STUB_CHECK_ENVFAIL:-}" ] && exit "${STUB_CHECK_ENVFAIL}"
 if [ -n "${STUB_CHECK_FAIL:-}" ] && [ ! -f repaired ]; then exit 1; fi
 exit 0
+'''
+# a hanging variant of CHECK_STUB, for the hard-kill test: signals it was reached, records TMPDIR, then
+# sleeps well past the test's own kill — the test SIGKILLs the whole process group once it sees the
+# reached-marker, so no teardown path in the runner ever executes for that run.
+CHECK_STUB_HANG = '''#!/usr/bin/env bash
+echo CHECK >> "$STUB_TIMELINE"
+printf 'TMPDIR=%s\\n' "${TMPDIR:-unset}" > "$STUB_CHECK_TMPDIR_FILE"
+: > "$STUB_CHECK_REACHED"
+sleep 300
 '''
 
 READABLE_IDS = {
@@ -3100,3 +3117,196 @@ def test_pr_stage_backoff_honors_env_knobs_and_caps_at_max(tmp_path):
     assert delays == [3, 5, 5, 5]
     assert sum(delays) < 60                                           # cumulative delay stays bounded (minutes-scale)
     sd = _state_dir(tmp_path); assert sd is not None and (sd / "env-hold").exists()
+
+
+# ============ Issue #142: run-scoped TMPDIR for stage and gate residue ============
+# The runner owns its check-gate residue: every stage/gate subprocess (implement/test/check/review, and
+# the check re-runs) must see a TMPDIR the runner created under its OWN run dir, so any tool that honors
+# TMPDIR (pytest's /tmp/pytest-of-* among them) routes its temp files there instead of onto the shared
+# /tmp. That per-run tmp dir is removed on every one of today's teardown paths (success, the one-repair
+# code failure, review-repair) — but NOT on the env-hold path, which deliberately preserves everything for
+# a resumable relaunch — and a hard-killed run (no teardown at all) must still have bounded its own
+# residue to its own tmp dir, never touching a later run's.
+
+def _tmpdir_captures(path):
+    """Parse a STUB_*_TMPDIR_FILE into a list of (tmpdir, dir_existed) pairs, one per subprocess call."""
+    if not path.exists():
+        return []
+    lines = path.read_text().splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        assert lines[i].startswith("TMPDIR=")
+        tmpdir = lines[i][len("TMPDIR="):]
+        assert lines[i + 1] in ("DIR_EXISTS=1", "DIR_EXISTS=0")
+        out.append((tmpdir, lines[i + 1] == "DIR_EXISTS=1"))
+        i += 2
+        if i < len(lines) and lines[i].startswith("ARGC="):
+            i += 1
+    return out
+
+
+def test_tmpdir_exported_under_run_dir_for_every_stage_and_gate_subprocess(tmp_path):
+    """Criterion 1: implement/test/check/review (and the repair stages, since STUB_CHECK_FAIL forces one
+    check re-run) all see the SAME TMPDIR, it lives under this run's own run dir (not /tmp, not the
+    worktree), the directory already exists at the moment each subprocess runs, and the check gate itself
+    receives no extra arguments — the seam is TMPDIR alone, no injected flags."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="TMPDIR export"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_CHECK_FAIL"] = "1"           # forces one check-repair round -> an extra check + claude call
+    env["STUB_CLAUDE_TMPDIR_FILE"] = str(tmp_path / "claude_tmpdir")
+    env["STUB_CHECK_TMPDIR_FILE"] = str(tmp_path / "check_tmpdir")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+
+    rd = _run_dir(tmp_path, 5)
+    expected = str(rd / "tmp")
+
+    claude_calls = _tmpdir_captures(tmp_path / "claude_tmpdir")
+    check_calls = _tmpdir_captures(tmp_path / "check_tmpdir")
+    assert len(claude_calls) >= 3   # implement, test, review at minimum (repair adds a 4th)
+    assert len(check_calls) >= 2    # the initial check + the post-repair re-run
+
+    for tmpdir, existed in claude_calls + check_calls:
+        assert tmpdir == expected, f"expected every subprocess TMPDIR == {expected}, got {tmpdir}"
+        assert existed, f"TMPDIR {tmpdir} did not exist when the subprocess ran"
+
+    # no pytest-specific (or any other) flags injected into the check_cmd invocation itself
+    argc_lines = [l for l in (tmp_path / "check_tmpdir").read_text().splitlines() if l.startswith("ARGC=")]
+    assert argc_lines and all(l == "ARGC=0" for l in argc_lines)
+
+
+def test_tmpdir_removed_on_success_teardown_logs_and_usage_survive(tmp_path):
+    """Criterion 2 (success branch): once a build reaches cleanup_wt, its per-run tmp dir is gone, but
+    the run dir itself, its stage logs, and its usage artifacts (RUN_DIR is never touched by cleanup_wt,
+    only STATE_DIR/WT/its own tmp subdir are) are all still there."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Success teardown"), work)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+    rd = _run_dir(tmp_path, 5)
+    assert rd.exists()                                    # the run dir itself is never torn down
+    assert not (rd / "tmp").exists()                       # its tmp subdir IS torn down
+    assert (rd / "checks.log").exists()
+    assert (rd / "implement.log").exists()
+    assert (rd / "test.log").exists()
+    assert (rd / "review.md").exists()
+    assert (rd / "usage-implement.json").exists()          # usage artifacts untouched
+    assert (rd / "usage-summary.json").exists()
+
+
+def test_tmpdir_removed_on_blocked_code_failure_teardown(tmp_path):
+    """Criterion 2 (the other cleanup_wt-calling branch): an unrepairable code failure still tears down
+    the per-run tmp dir even though the build itself never reaches success, while the run dir's own logs
+    (which named the failure) stay in place."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Cannot fix"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1", "STUB_REPAIR_NOFIX": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
+
+    rd = _run_dir(tmp_path, 5)
+    assert rd.exists()
+    assert not (rd / "tmp").exists()
+    assert (rd / "checks.log").exists()
+
+
+def test_tmpdir_preserved_on_env_hold_and_a_relaunch_gets_its_own_fresh_one(tmp_path):
+    """Criterion 3, exercised via the one teardown-skipping path the runner already has (env_hold —
+    tools/dev-runner.sh's own comment says cleanup_wt is deliberately not called there): the held run's
+    tmp dir is NOT removed (no teardown ran for it), and a later relaunch of the SAME issue gets a
+    different, fresh run dir/tmp dir of its own — the first run's leftover never leaks into or blocks the
+    second run, which still tears its own tmp dir down normally on its own success."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Broken toolchain"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})
+    r1 = _run(["5", "--repo", "test/repo"], env)
+    assert r1.returncode != 0
+
+    rd1 = _run_dir(tmp_path, 5)
+    assert (rd1 / "tmp").exists()          # no teardown ran for the held run -> its tmp dir survives
+
+    env2 = {**env, "STUB_TIMELINE": str(tmp_path / "timeline2")}
+    del env2["STUB_CHECK_ENVFAIL"]
+    r2 = _run(["5", "--repo", "test/repo"], env2)
+    assert r2.returncode == 0, r2.stderr
+    assert "reusing preserved env-hold worktree" in r2.stderr
+
+    rundirs = _run_dirs(tmp_path, 5)
+    assert len(rundirs) == 2                                     # the resume got a FRESH run dir
+    rd2 = next(d for d in rundirs if d != rd1)
+    assert not (rd2 / "tmp").exists()       # the successful resume tore its OWN tmp dir down normally
+    assert (rd1 / "tmp").exists()           # the first run's leftover is untouched by the second run
+
+
+def _run_bg(args, env_extra, cwd=None):
+    base_env = {k: v for k, v in os.environ.items() if k not in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")}
+    env = {**base_env, **READABLE_IDS, **env_extra}
+    return subprocess.Popen(["bash", str(RUNNER), *args], env=env, cwd=str(cwd or ROOT),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+
+
+def test_hard_kill_bounds_residue_to_its_own_run_dir_and_a_later_run_is_unaffected(tmp_path):
+    """Criterion 3 (the hard-kill case itself): a run SIGKILLed mid check-gate — the whole process group,
+    so nothing gets a chance to run any teardown path — never wrote its check subprocess's TMPDIR outside
+    that run's own tmp dir in the first place (the export happens before the subprocess is ever spawned),
+    so whatever residue it left is bounded there. A later, independent run is completely unaffected: it
+    gets its own fresh run dir/tmp dir and completes/tears down normally regardless of the killed run's
+    leftovers."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"
+    binp.mkdir(parents=True, exist_ok=True)
+    _exec(binp / "gh", GH_STUB)
+    _exec(binp / "claude", CLAUDE_STUB)
+    _exec(binp / "check.sh", CHECK_STUB_HANG)
+
+    reached = tmp_path / "check_reached"
+    check_tmpdir_file = tmp_path / "check_tmpdir_hang"
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Hard killed run"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_CHECK_REACHED"] = str(reached)
+    env["STUB_CHECK_TMPDIR_FILE"] = str(check_tmpdir_file)
+
+    proc = _run_bg(["5", "--repo", "test/repo"], env)
+    try:
+        deadline = time.monotonic() + 20
+        while not reached.exists():
+            assert proc.poll() is None, f"runner exited early (rc={proc.poll()}) before reaching the check gate"
+            assert time.monotonic() < deadline, "check gate was never reached within the timeout"
+            time.sleep(0.05)
+
+        rundirs = _run_dirs(tmp_path, 5)
+        assert len(rundirs) == 1
+        rd = rundirs[0]
+
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait(timeout=10)
+
+    captured = check_tmpdir_file.read_text().strip()
+    assert captured == f"TMPDIR={rd / 'tmp'}"           # the killed subprocess's own TMPDIR, bounded here
+    assert (rd / "tmp").exists()                        # nothing tore it down (no teardown path ran)
+
+    # a later, independent run is unaffected: fresh run dir, own tmp dir, normal success + teardown
+    binp2 = tmp_path / "bin2"; _stubs(binp2)
+    env2 = _real(tmp_path, _env(tmp_path, binp2, number=6, title="Unaffected later run"), work)
+    env2["STUB_CLAUDE_CHANGE"] = "1"
+    env2["STUB_TIMELINE"] = str(tmp_path / "timeline6")
+    r2 = _run(["6", "--repo", "test/repo"], env2)
+    assert r2.returncode == 0, r2.stderr
+
+    rd2 = _run_dir(tmp_path, 6)
+    assert rd2 != rd
+    assert not (rd2 / "tmp").exists()                   # its own tmp dir was torn down normally
+    assert (rd / "tmp").exists()                         # the killed run's leftover is still just sitting there, untouched
