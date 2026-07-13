@@ -1,5 +1,5 @@
 """Unit tests for tools/dispatch.py — the spawn is stubbed, so no real build is ever launched."""
-import contextlib, fcntl, importlib, json, os, pathlib, re, signal, subprocess, sys, threading, time
+import contextlib, errno, fcntl, importlib, json, os, pathlib, re, signal, subprocess, sys, threading, time
 import urllib.error, urllib.request
 from http.server import HTTPServer
 
@@ -531,3 +531,94 @@ def test_http_build_answers_before_the_runner_finishes_and_still_persists_its_ou
     finally:
         srv.shutdown()
         dispatch.DEV_RUNNER, dispatch.RUNS_DIR, dispatch.LOCK = orig_runner, orig_runs, orig_lock
+
+
+# ---- SIGCHLD reap of detached children (issue #138) ----
+# dispatch keeps no Popen and has no in-process waiter anywhere, so main() installs
+# signal.signal(SIGCHLD, SIG_IGN) before serve_forever() and lets the kernel auto-reap every detached
+# flock child instead of leaving it <defunct> until the next Popen call happens to reap it lazily.
+
+def test_main_installs_sigchld_ignore_before_serve_forever(monkeypatch):
+    order = []
+
+    def fake_signal(sig, handler):
+        order.append(("signal", sig, handler))
+
+    class FakeServer:
+        def __init__(self, *a, **kw):
+            pass
+
+        def serve_forever(self):
+            order.append(("serve_forever",))
+
+    monkeypatch.setenv("DISPATCH_TOKEN", "secret")
+    monkeypatch.setattr(dispatch.signal, "signal", fake_signal)
+    monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
+
+    rc = dispatch.main()
+
+    assert rc == 0
+    assert ("signal", signal.SIGCHLD, signal.SIG_IGN) in order   # the exact disposition required
+    sigchld_calls = [c for c in order if c[0] == "signal" and c[1] == signal.SIGCHLD]
+    assert len(sigchld_calls) == 1                                # installed exactly once, not re-armed per request
+    assert order.index(("signal", signal.SIGCHLD, signal.SIG_IGN)) < order.index(("serve_forever",))
+
+
+def test_main_without_token_never_touches_sigchld_or_serves(monkeypatch):
+    # the early refusal (no DISPATCH_TOKEN) must not install the disposition or start serving
+    order = []
+    monkeypatch.delenv("DISPATCH_TOKEN", raising=False)
+    monkeypatch.setattr(dispatch.signal, "signal", lambda *a: order.append(("signal", *a)))
+    monkeypatch.setattr(dispatch, "HTTPServer", lambda *a, **kw: (_ for _ in ()).throw(
+        AssertionError("HTTPServer must not be constructed without a token")))
+
+    rc = dispatch.main()
+
+    assert rc == 2
+    assert order == []
+
+
+def test_sigchld_ignore_reaps_detached_flock_children_without_defunct(tmp_path):
+    # end-to-end: the actual behavior the acceptance criteria require — a detached child (the composed
+    # `flock ... bash -c ...` build_task spawns for real, via the unstubbed _spawn_detached seam) leaves
+    # no <defunct> entry parented to this process once it exits, under the disposition main() installs.
+    old_handler = signal.getsignal(signal.SIGCHLD)
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    real_popen = dispatch.subprocess.Popen
+    captured = []
+
+    def spy_popen(*a, **kw):
+        p = real_popen(*a, **kw)
+        captured.append(p.pid)
+        return p
+
+    dispatch.subprocess.Popen = spy_popen
+    try:
+        runner = _script(tmp_path / "runner.sh", "exit 0\n")
+        dispatch.build_task("1", "o/r", runner=str(runner), lock=str(tmp_path / "lock"),
+                             runs_dir=str(tmp_path / "runs"))
+        assert _wait_for(lambda: len(captured) == 1), "the detached flock child was never spawned"
+        pid = captured[0]
+
+        def not_a_zombie():
+            try:
+                stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
+            except FileNotFoundError:
+                return True                                        # gone entirely — reaped, no zombie left
+            state = stat.rsplit(")", 1)[1].split()[0]
+            return state != "Z"
+
+        assert _wait_for(not_a_zombie, timeout=5), \
+            "the detached child stayed <defunct> — SIGCHLD=SIG_IGN did not reap it"
+
+        # a lingering zombie would still be reapable by an explicit waitpid; the kernel having already
+        # auto-reaped it under SIG_IGN means there is nothing left to wait on: ECHILD, not a status.
+        try:
+            os.waitpid(pid, 0)
+        except OSError as exc:
+            assert exc.errno == errno.ECHILD
+        else:
+            raise AssertionError("waitpid succeeded — the child was still there to be reaped, i.e. it was <defunct>")
+    finally:
+        dispatch.subprocess.Popen = real_popen
+        signal.signal(signal.SIGCHLD, old_handler)
