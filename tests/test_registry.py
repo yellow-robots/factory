@@ -45,8 +45,19 @@ def test_header_precedence_clause_names_the_real_three_layers():
     assert "per-repo manifest" in header
     assert "per-role" in header and "default" in header
     assert "process env" not in header.lower()
-    # line 5's retired-overrides parenthetical (slice D's) is untouched by this item
-    assert "MODEL" in header and "HARD_MODEL" in header
+
+
+def test_header_retired_overrides_parenthetical_names_the_runners_current_env():
+    # issue #148: line 5's parenthetical must name the runner's CURRENT env layering
+    # (BUILD_MODEL/REVIEW_MODEL), not the retired MODEL/HARD_MODEL tiers it once described.
+    text = (ROOT / "models.toml").read_text(encoding="utf-8")
+    header = "\n".join(
+        line for line in text.splitlines() if line.lstrip().startswith("#")
+    )
+    assert "BUILD_MODEL" in header
+    assert "REVIEW_MODEL" in header
+    assert "MODEL/HARD_MODEL" not in header
+    assert "HARD_MODEL" not in header
 
 
 def test_loader_reads_shipped_registry_beside_itself_by_default():
