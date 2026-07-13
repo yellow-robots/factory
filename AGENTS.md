@@ -88,11 +88,22 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/dev-runner.sh` | the staged build pipeline |
 | `tools/merge_shadow.py` | merge-decision evaluator + shadow-completion |
 | `tools/dispatch.py` | n8n's build-trigger endpoint (RFC 0004) |
+| `tools/epic_gate.py` | the standing-approval sweep: promotes/self-closes epics, flags stranded claims |
+| `tools/review_bundle.py` | the canonical, hashed per-run review bundle |
+| `tools/check_task.py` | the DoR self-containedness gate for a Ready task |
+| `tools/check_links.py` | the crossing-link (`source_*`) resolver/gate |
+| `tools/check_model_refs.py` | the stale vault-doc-reference guard |
+| `tools/check_supersession.py` | the supersession declaration/pair guard |
+| `tools/promote.sh` | operator: promote a standalone task to Ready |
+| `tools/watch_build.sh` | operator: poll a build to a terminal state |
+| `tools/board.sh` | operator: one-shot org-wide board TSV |
 | `tools/stage_usage.py`, `tools/textutil.py` | PR usage-summary comment; shared text helpers |
 | `models.toml` + `tools/registry.py` | the model registry + loader/CLI |
 | `tests/` | the pytest suite |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |
 | `docs/rfcs/` | canonical RFCs |
+| `skills/` | the factory skill (router + references) |
+| `templates/` | upper-pipeline stage templates (spec, feature-rfc, technical-rfc, task, debt-census) |
 
 ---
 

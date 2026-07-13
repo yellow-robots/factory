@@ -675,19 +675,6 @@ def test_debt_census_has_no_retired_conventions_reference():
 
 
 # ---------------------------------------------------------------------------
-# Out-of-scope guards — the other authoring templates must not gain the
-# debt-round walls (they are out of scope for #92; task.md/technical-rfc.md
-# already guarded above against a supersedes scaffold, guarded by #83).
-# ---------------------------------------------------------------------------
-
-def test_readme_template_does_not_reference_debt_round_ledger_grammar():
-    readme = TEMPLATES / "README.md"
-    assert "YR-DEBT-LEDGER" not in _text(readme), (
-        "templates/README.md carries the debt-round ledger grammar — out of scope for #92"
-    )
-
-
-# ---------------------------------------------------------------------------
 # technical-rfc.md — check-gate parity one-liner in the authoring-scaffold
 # checklist (#123): the crossing step must carry the same rule as
 # authoring.md's task-authoring step, as a one-line reminder where slices

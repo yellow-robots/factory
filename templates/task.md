@@ -51,4 +51,5 @@ Definition of Ready) · **Source:** the technical-RFC slice — or, on a floor i
 
 ---
 *Next stage:* the **factory** builds it (implement → independent test → check → independent review → PR).
-Gate before then: **promote to Ready** (human, sets Status → Ready). Final gate: **merge** (human).
+Gate before then: **promote to Ready** (human, sets Status → Ready). Final gate: **merge** — factory-executed
+for an armed repo under fail-closed conditions, human otherwise.

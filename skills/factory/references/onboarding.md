@@ -46,9 +46,10 @@ no venv prefix. Precedence: explicit env > manifest > built-in default.
 
 ### 3. Ensure built deps exist
 
-`.venv` (Python) or `node_modules` (JS) must be present in the repo so `check_cmd` runs in a fresh
-worktree without internet access. The worktree shares the repo's built deps via the normal Git worktree
-mechanism.
+`.venv` (Python) or `node_modules` (JS) must be present in the **base checkout** so `check_cmd` runs
+offline in a fresh worktree without internet access. The worktree itself is ephemeral and carries
+neither (both are gitignored) — the runner puts the base checkout's `.venv/bin` / `node_modules/.bin`
+on `PATH` for the check-command child (step 2).
 
 ### 4. Register on the board
 
