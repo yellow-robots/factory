@@ -1,6 +1,6 @@
 # RFC 0002 — The dev-AI runner
 
-**Status:** Accepted (2026-06-17) · **Decision-makers:** Jose + Claude · **Builds on:** [0001-ticket-driven-dev-workflow](0001-ticket-driven-dev-workflow.md)
+**Status:** Accepted (2026-06-17) · **Amended 2026-07-14:** the single `claude -p` internally-orchestrated-subagents design is superseded by the shipped per-stage cold-process runner (`tools/dev-runner.sh`; builder ≠ verifier as separate processes) · **Decision-makers:** Jose + Claude · **Builds on:** [0001-ticket-driven-dev-workflow](0001-ticket-driven-dev-workflow.md)
 
 ## Context
 
