@@ -18,14 +18,21 @@ body — an undispositioned child is an error, and a child this check cannot cla
 no frontmatter) is an error too, never silently skipped. Any other draft type passes outright, with
 `supersedes`/`superseded_by` grammar-checked only if present (no presence/resolution requirement).
 
-**Sweep mode** (`--sweep [--vault-root DIR] [--scope REL]`) audits the governed vault space instead of
-one draft. The governed space is enumerated by a pinned rule: every component directory directly under
-`--scope` (default `04 projects/yellow-robots`) that has an `iterations/` child contributes that subtree
-plus every non-hidden sibling directory (dot-dirs excluded, underscore dirs included — legacy zoos included
-whole, aggregated). When `--scope` itself has an `iterations/` child — a component-rooted scope, e.g. a
-single-project root — the scope sweeps as that one component instead, named by the scope's own basename,
-picking up its root-level docs too (the parent-shaped case has none to pick up). Every doc in that space is
-classified: legacy (alien type, alien status, or no
+**Sweep mode** (`--sweep --scope REL [--vault-root DIR]`) audits the governed vault space instead of
+one draft. `--scope` is required — a scope-less `--sweep` exits 1 naming every component root (a directory
+with its own `iterations/` child) visible anywhere under `--vault-root`, instead of silently falling back
+to some pinned default; a sweep can no longer green-light space it did not scan. The governed space is
+enumerated by a pinned rule: every component directory directly under `--scope` that has an `iterations/`
+child contributes that subtree plus every non-hidden sibling directory (dot-dirs excluded, underscore dirs
+included — legacy zoos included whole, aggregated). When `--scope` itself has an `iterations/` child — a
+component-rooted scope, e.g. a single-project root — the scope sweeps as that one component instead, named
+by the scope's own basename, picking up its root-level docs too (the parent-shaped case has none to pick
+up). When `--scope` is parent-shaped instead (no `iterations/` child of its own), the sweep prints what it
+structurally skips rather than staying silent: the non-component subtrees it excludes (`archive/`-style, no
+`iterations/` child) and the parent root's own loose docs (the org tier's `brand/`/`strategy/`/loose root
+notes) that `_governed_components` does not enumerate — reported, never scanned; widening the scan is a
+design decision outside this check. Every doc in the scanned space is classified: legacy (alien type, alien
+status, or no
 parseable frontmatter — aggregated per folder, never itemized) or conformant (alien frontmatter keys
 surfaced as one observation line per key, never blocking). Pair integrity runs both directions — forward
 from a `supersedes` declaration to its target, and backward from a `superseded` doc to its `superseded_by`
@@ -36,14 +43,14 @@ down-flow incompleteness under a doc that itself declares `supersedes`) plus any
 `supersedes` key at all (a pre-grammar pairing, predating this convention), a superseded doc with no
 `superseded_by`, down-flow gaps under such a pre-grammar replacer, a spine-typed doc sitting inside a
 governed cross-cutting home instead of an iteration, and every active doc whose any `source_*` resolves
-to a superseded doc (the pair-adjacent signal). A census headline — total docs, spine-active per
-component (the four spine types, status exactly `active`, counted inside `iterations/` subtrees), legacy
-count — always prints, computed under the same pinned rule the sweep scopes by.
+to a superseded doc (the pair-adjacent signal). A census headline — the scope scanned, total docs,
+spine-active per component (the four spine types, status exactly `active`, counted inside `iterations/`
+subtrees), legacy count — always prints, computed under the same pinned rule the sweep scopes by.
 
 This is an attended-session check like its siblings: advisory-first, wired into nothing.
 
 Usage: check_supersession.py <draft.md> [--vault-root DIR]
-       check_supersession.py --sweep [--vault-root DIR] [--scope REL]
+       check_supersession.py --sweep --scope REL [--vault-root DIR]
 Exit 0 clean; 1 (with `<file>: <message>` lines) on any hard finding.
 """
 import argparse
@@ -58,7 +65,6 @@ from tools.check_links import _resolve_wikilink
 from tools.textutil import split_frontmatter
 
 DEFAULT_VAULT = os.environ.get("OBSIDIAN_VAULT", "/srv/obsidian/vaults/obsidian")
-DEFAULT_SCOPE = "04 projects/yellow-robots"
 
 SPINE_TYPES = ("product-spec", "feature-rfc", "technical-rfc", "task")
 SUPPORTING_TYPES = ("research", "note", "runbook")
@@ -285,6 +291,42 @@ def _governed_components(vault_root, scope):
     return components
 
 
+def _parent_skip_lines(scope_dir, scope):
+    """Skip-report lines for a parent-shaped scope — named, never scanned: the non-component subtrees
+    `_governed_components` excludes (no `iterations/` child of their own, `archive/`-style) and the
+    parent root's own loose docs (the org tier's `brand/`/`strategy/`/loose notes) it never enumerates."""
+    excluded = sorted(p.name for p in scope_dir.iterdir()
+                       if p.is_dir() and not p.name.startswith(".") and not (p / "iterations").is_dir())
+    loose = sorted(p.name for p in scope_dir.glob("*.md") if not p.name.startswith("."))
+    lines = []
+    if excluded:
+        lines.append(f"skip: {scope} — non-component subtree(s) with no iterations/, excluded: "
+                     + ", ".join(excluded))
+    if loose:
+        lines.append(f"skip: {scope} — root-level loose doc(s) not enumerated: " + ", ".join(loose))
+    return lines
+
+
+def _visible_component_roots(vault_root):
+    """Every directory anywhere under vault_root (dot-dirs excluded) that itself has an `iterations/`
+    child — every scope a sweep could be pointed at directly. Used only to name what's visible when
+    `--sweep` is invoked without `--scope`; a sweep itself never walks the whole vault."""
+    roots = []
+
+    def _walk(d):
+        for p in sorted(d.iterdir()):
+            if not p.is_dir() or p.name.startswith("."):
+                continue
+            if (p / "iterations").is_dir():
+                roots.append(str(p.relative_to(vault_root)))
+            else:
+                _walk(p)
+
+    if vault_root.is_dir():
+        _walk(vault_root)
+    return sorted(roots)
+
+
 def _sweep_docs(vault_root, scope):
     """(docs, component_of, in_iterations) across the governed space, keyed by resolved absolute path."""
     docs, component_of, in_iterations = [], {}, {}
@@ -323,10 +365,11 @@ def _census(docs, component_of, in_iterations):
     return total, spine_active, legacy
 
 
-def _format_census(total, spine_active, legacy):
+def _format_census(scope, total, spine_active, legacy):
     comp_str = ", ".join(f"{k} {v}" for k, v in sorted(spine_active.items()))
     spine_total = sum(spine_active.values())
-    return f"census: {total} docs / {spine_total} spine-active ({comp_str}) / {legacy} legacy"
+    return (f"census [{scope}]: {total} docs / {spine_total} spine-active ({comp_str}) / "
+            f"{legacy} legacy")
 
 
 def _lookup(index, resolved_path):
@@ -483,7 +526,7 @@ def _alien_key_observations(docs):
             for k, n in sorted(counts.items())]
 
 
-def check_sweep(*, vault_root, scope=DEFAULT_SCOPE):
+def check_sweep(*, vault_root, scope):
     """(lines, failed) — lines to print (census headline first), failed ⇒ any hard finding."""
     docs, component_of, in_iterations = _sweep_docs(vault_root, scope)
     index = {d.path.resolve(): d for d in docs}
@@ -520,7 +563,10 @@ def check_sweep(*, vault_root, scope=DEFAULT_SCOPE):
     observations = _alien_key_observations(docs)
     total, spine_active, legacy = _census(docs, component_of, in_iterations)
 
-    lines = [_format_census(total, spine_active, legacy)]
+    lines = [_format_census(scope, total, spine_active, legacy)]
+    scope_dir = vault_root / scope
+    if scope_dir.is_dir() and not (scope_dir / "iterations").is_dir():
+        lines += _parent_skip_lines(scope_dir, scope)
     lines += legacy_lines
     lines += observations
     lines += [f"advisory: {a}" for a in advisory]
@@ -535,12 +581,21 @@ def main(argv=None):
     ap.add_argument("--vault-root", default=DEFAULT_VAULT, help="Obsidian vault root")
     ap.add_argument("--sweep", action="store_true",
                     help="sweep the governed vault space instead of checking one draft")
-    ap.add_argument("--scope", default=DEFAULT_SCOPE,
-                    help="sweep scope, vault-relative (default: %(default)r)")
+    ap.add_argument("--scope", default=None,
+                    help="sweep scope, vault-relative — required for --sweep, no implicit default")
     args = ap.parse_args(argv)
     vault_root = pathlib.Path(args.vault_root)
 
     if args.sweep:
+        if not args.scope:
+            roots = _visible_component_roots(vault_root)
+            if roots:
+                print("error: --sweep requires --scope — component roots visible under "
+                      f"{vault_root}: " + ", ".join(roots))
+            else:
+                print(f"error: --sweep requires --scope — no component roots (iterations/ child) "
+                      f"found under {vault_root}")
+            return 1
         lines, failed = check_sweep(vault_root=vault_root, scope=args.scope)
         for line in lines:
             print(line)
