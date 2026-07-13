@@ -58,7 +58,7 @@ When the PR merges, the iteration's Obsidian docs become immutable records:
   (see [`documentation-model.md`](documentation-model.md) — *Identity & navigation*). Stamp any doc
   found missing one: epics self-close, so this checklist is the backstop, not the act.
 - Tombstones land at accept, not here (`status: superseded` + `superseded_by`, stamped in the same
-  session — see [`documentation-model.md`](documentation-model.md) — *Lifecycle*). This checklist verifies every supersession pair the iteration's declarations created: run `check_supersession.py --sweep`
+  session — see [`documentation-model.md`](documentation-model.md) — *Lifecycle*). This checklist verifies every supersession pair the iteration's declarations created: run `check_supersession.py --sweep --scope <component>`
   and stamp only what's found missing — the accept session is the act, this checklist is the backstop,
   exactly like the `crossed_to` bullet above. If the shipped change instead **migrated** a doc (moved,
   decision unchanged), retire it by kind per [`migrating.md`](migrating.md) step 4.

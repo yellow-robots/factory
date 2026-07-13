@@ -378,7 +378,7 @@ def test_sweep_parent_shaped_scope_census_output_pinned(tmp_path):
     _vault_file(tmp_path, "proj/compC/plain/doc.md", _doc(type_="task", status="active"))
 
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
-    assert lines[0] == "census: 6 docs / 3 spine-active (compA 2, compB 1) / 1 legacy"
+    assert lines[0] == "census [proj]: 6 docs / 3 spine-active (compA 2, compB 1) / 1 legacy"
     assert failed is False
 
 
@@ -646,15 +646,95 @@ def test_census_headline_arithmetic(tmp_path):
 def test_census_headline_always_printed_even_when_clean(tmp_path):
     _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
-    assert lines[0].startswith("census:")
+    assert lines[0].startswith("census ")
     assert failed is False
 
 
 def test_census_headline_printed_on_empty_governed_space(tmp_path):
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
-    assert lines[0].startswith("census:")
+    assert lines[0].startswith("census ")
     assert "0 docs" in lines[0]
     assert failed is False
+
+
+# =====================================================================================
+# sweep mode — the verdict line always names the scope it scanned (issue #141)
+# =====================================================================================
+
+def test_sweep_verdict_names_the_scanned_scope_parent_shaped(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert "[proj]" in lines[0]
+
+
+def test_sweep_verdict_names_the_scanned_scope_component_rooted(tmp_path):
+    _vault_file(tmp_path, "proj/widget/iterations/task1.md", _doc(type_="task", status="active"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj/widget")
+    assert "[proj/widget]" in lines[0]
+
+
+def test_sweep_verdict_names_scope_even_on_a_hard_finding(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/new-doc.md",
+                _doc(status="active", supersedes=["[[ghost]]"]))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert "[proj]" in lines[0]
+
+
+def test_sweep_verdict_names_scope_on_empty_governed_space(tmp_path):
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert "[proj]" in lines[0]
+
+
+# =====================================================================================
+# sweep mode — a parent-shaped scope reports what it structurally skips (issue #141)
+# =====================================================================================
+
+def test_sweep_parent_shaped_reports_excluded_non_component_subtree(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "proj/archive/old-doc.md", _doc(status="active"))  # no iterations/ child
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    skip_lines = [l for l in lines if l.startswith("skip:")]
+    assert any("archive" in l for l in skip_lines)
+    # a named skip-report line, not a widened scan -- archive/ contents are never counted
+    assert "1 docs" in lines[0]
+    assert failed is False
+
+
+def test_sweep_parent_shaped_reports_loose_root_docs(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "proj/strategy.md", _doc(status="active"))  # org-tier loose root doc
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    skip_lines = [l for l in lines if l.startswith("skip:")]
+    assert any("strategy.md" in l for l in skip_lines)
+    assert "1 docs" in lines[0]
+    assert failed is False
+
+
+def test_sweep_parent_shaped_two_skip_lines_for_two_skip_classes(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "proj/archive/old.md", _doc(status="active"))
+    _vault_file(tmp_path, "proj/brand.md", _doc(status="active"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    skip_lines = [l for l in lines if l.startswith("skip:")]
+    assert len(skip_lines) == 2
+    assert any("archive" in l for l in skip_lines)
+    assert any("brand.md" in l for l in skip_lines)
+
+
+def test_sweep_parent_shaped_no_skip_lines_when_nothing_to_skip(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert not any(l.startswith("skip:") for l in lines)
+
+
+def test_sweep_component_rooted_scope_has_no_skip_lines(tmp_path):
+    # a component-rooted scope already picks up its own root docs directly -- nothing
+    # structurally excluded the way a parent-shaped scope excludes archive/-style subtrees
+    _vault_file(tmp_path, "proj/factory/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "proj/factory/root-doc.md", _doc(type_="task", status="active"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj/factory")
+    assert not any(l.startswith("skip:") for l in lines)
 
 
 # =====================================================================================
@@ -720,4 +800,67 @@ def test_cli_requires_file_unless_sweep(tmp_path):
         capture_output=True, text=True,
     )
     assert r.returncode != 0
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+# =====================================================================================
+# CLI — a scope-less --sweep fails loud, naming what's visible (issue #141)
+# =====================================================================================
+
+def test_cli_sweep_without_scope_fails_loud_naming_component_roots(tmp_path):
+    _vault_file(tmp_path, "04 projects/factory/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "04 projects/yellow-robots/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "04 projects/gilda/iterations/doc.md", _doc(status="active"))
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--sweep", "--vault-root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "04 projects/factory" in r.stdout
+    assert "04 projects/yellow-robots" in r.stdout
+    assert "04 projects/gilda" in r.stdout
+    # it never silently sweeps some pinned default -- no census/verdict is ever produced
+    assert "census" not in r.stdout.lower()
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_sweep_without_scope_and_no_component_roots_still_fails_loud(tmp_path):
+    # an empty/unrecognized vault must not be silently treated as a clean sweep
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--sweep", "--vault-root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert r.stdout.strip() != ""
+    assert "census" not in r.stdout.lower()
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_sweep_with_explicit_scope_still_works_after_scope_less_form_retired(tmp_path):
+    # explicit --scope sweeps pass/fail exactly as before, scope named on the verdict line
+    _vault_file(tmp_path, "04 projects/factory/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "04 projects/yellow-robots/iterations/doc.md", _doc(status="active"))
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--sweep", "--vault-root", str(tmp_path), "--scope", "04 projects/factory"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert "1 docs" in r.stdout
+    assert "[04 projects/factory]" in r.stdout
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_draft_mode_needs_no_scope_and_is_unaffected(tmp_path):
+    # draft mode's defaults are untouched by the sweep-mode scope requirement
+    artifact = tmp_path / "draft.md"
+    artifact.write_text(_doc(type_="task"), encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         str(artifact), "--vault-root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
     assert "Traceback" not in (r.stdout + r.stderr)
