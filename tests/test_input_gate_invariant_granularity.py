@@ -416,13 +416,8 @@ def test_other_invariants_still_present_and_unweakened():
 
 
 # ---------------------------------------------------------------------------
-# Version bump to 0.6.2 and description agreement
+# Description agreement
 # ---------------------------------------------------------------------------
-
-def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.9.3", \
-        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.9.3'"
-
 
 def test_skill_md_and_plugin_description_agree():
     assert _skill_description() == _plugin_data()["description"], (

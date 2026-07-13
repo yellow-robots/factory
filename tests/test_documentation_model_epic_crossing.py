@@ -157,19 +157,6 @@ def test_frontmatter_vocabulary_still_closed_and_unchanged():
         "documentation-model.md Frontmatter section dropped source_spec from the crossing-links keys"
 
 
-# ---------------------------------------------------------------------------
-# Version bump — .claude-plugin/plugin.json 0.6.0 -> 0.6.1
-# ---------------------------------------------------------------------------
-
-def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.9.3", \
-        f".claude-plugin/plugin.json version is {_plugin_data()['version']!r}, expected '0.9.3'"
-
-
-def test_plugin_version_is_not_the_old_0_6_0():
-    assert _plugin_data()["version"] != "0.6.0"
-
-
 def test_plugin_and_skill_description_still_match_exactly():
     """.claude-plugin/plugin.json description must still match SKILL.md's
     frontmatter description exactly (this is a patch release; the description

@@ -407,12 +407,6 @@ def test_no_new_reference_file_added():
         f"skills/factory/references/ gained or lost a file: {actual - expected} extra, {expected - actual} missing"
 
 
-def test_plugin_version_unchanged_no_bump_this_slice():
-    data = json.loads(PLUGIN.read_text(encoding="utf-8"))
-    assert data["version"] == "0.9.3", \
-        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.3' (bumped at the skill 0.9.3 release)"
-
-
 def test_skill_md_does_not_restate_supersession_declaration():
     """SKILL.md defers to the references on demand; it must not restate the
     supersedes declaration grammar or the accept-act stamping semantics

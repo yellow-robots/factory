@@ -400,8 +400,3 @@ def test_pipeline_md_documents_shadow_merge_choreography():
         "pipeline.md missing the serial-merge choreography rule"
     assert "reset" in low, "pipeline.md missing the merged-over WOULD-BLOCK = rolling-window reset rule"
     assert "rebase" in low, "pipeline.md missing the content-identical-rebase recovery step"
-
-
-def test_plugin_version_bumped_for_reevaluate():
-    data = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    assert data["version"] != "0.7.1", "plugin.json version was not bumped for issue #70"

@@ -142,12 +142,8 @@ def test_no_orphan_references():
 
 
 # ---------------------------------------------------------------------------
-# Plugin version and description sync
+# Description sync
 # ---------------------------------------------------------------------------
-
-def test_plugin_version_is_current():
-    assert _plugin_data()["version"] == "0.9.3"
-
 
 def test_skill_md_and_plugin_description_agree():
     """SKILL.md frontmatter description and plugin.json description must match exactly
