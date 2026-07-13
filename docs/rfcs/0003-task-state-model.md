@@ -1,6 +1,6 @@
 # RFC 0003 — Task state model
 
-**Status:** Accepted — implemented (native Status/Reason fields live on Project #1) · **rev 2** (2026-06-18, native primitives) · **Amends** [0001-ticket-driven-dev-workflow](0001-ticket-driven-dev-workflow.md) · **Informs** 2026-06-17-dev-runner-v1
+**Status:** Accepted — implemented (native Status/Reason fields live on Project #1) · **rev 2** (2026-06-18, native primitives) · **Amends** [0001-ticket-driven-dev-workflow](0001-ticket-driven-dev-workflow.md) · **Informs** 2026-06-17-dev-runner-v1 · **Amended 2026-07-14:** "Promotion to `Ready` is always a human/Joam decision" is superseded for epic children by the epic-gate's standing-approval promotion (standalone tasks keep human promotion) — see `AGENTS.md`'s input-gate paragraph
 
 ## Principle
 

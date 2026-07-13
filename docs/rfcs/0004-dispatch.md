@@ -1,6 +1,6 @@
 # RFC 0004 — Dispatch (n8n → dev-runner)
 
-**Status:** Accepted — implemented & live (n8n workflow polls Ready → dev-runner) · **Amended 2026-07-10:** single-flight is superseded by per-repo locks + an operator-adjustable global concurrency cap (epic #126) — see `deploy/DISPATCH.md` · **Builds on** [0001-ticket-driven-dev-workflow](0001-ticket-driven-dev-workflow.md), [0002-dev-ai-runner](0002-dev-ai-runner.md), [0003-task-state-model](0003-task-state-model.md)
+**Status:** Accepted — implemented & live (n8n workflow polls Ready → dev-runner) · **Amended 2026-07-10:** single-flight is superseded by per-repo locks + an operator-adjustable global concurrency cap (epic #126) — see `deploy/DISPATCH.md` · **Amended 2026-07-14:** "Grooming (Backlog → Ready) stays a human/Joam judgment" is superseded for epic children by the epic-gate's standing-approval promotion (standalone tasks keep human promotion) — see `AGENTS.md`'s input-gate paragraph · **Builds on** [0001-ticket-driven-dev-workflow](0001-ticket-driven-dev-workflow.md), [0002-dev-ai-runner](0002-dev-ai-runner.md), [0003-task-state-model](0003-task-state-model.md)
 
 ## Context
 
