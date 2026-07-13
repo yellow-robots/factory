@@ -102,7 +102,7 @@ the new content or its previous home is demoted.
    - `SKILL.md` is < 500 lines.
    - The `description` in `SKILL.md` frontmatter and in `plugin.json` agree exactly.
    - **The consumer scan is green:** nothing in the repo or org docs still cites a superseded content
-     home as the *living* copy (`tools/check_model_refs.py`, fail-closed; a manual grep until it ships).
+     home as the *living* copy (`tools/check_model_refs.py`, fail-closed).
 
 3. **Ship before demote** — the release (merge to `main`) ships the new content **before** any
    dependent consumer is repointed and before the superseded source is demoted: the living content must
