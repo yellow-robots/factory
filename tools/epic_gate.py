@@ -51,6 +51,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 import tomllib
 
 # sibling-module import (never `tools.dispatch`): production runs this file as a bare script
@@ -585,21 +586,47 @@ def _debt_anchor_and_countable(closed_epics):
 # --- the onboarding admission wall: a repo with no `.yr/factory.toml` at the base ref can never build
 #     (the runner's own config read would find nothing too, tools/dev-runner.sh:326-350) — the sweep
 #     refuses to promote or leave dispatchable any Ready work headed for such a repo, fail-closed ---------
+class ManifestProbeError(Exception):
+    """Raised by `_repo_has_manifest` when every attempt at the contents-API probe fails for a reason
+    other than a confirmed 404 (network error, 5xx, rate limit, timeout). Distinct from a plain `bool`
+    result: the wall must not read this as either "onboarded" or "not onboarded" — the caller skips the
+    item for this tick instead of guessing (issue #140)."""
+
+
+# a couple of attempts, bounded backoff — the sweep must not stall on a dead network
+_MANIFEST_PROBE_ATTEMPTS = 2
+_MANIFEST_PROBE_BACKOFF_S = 2
+_HTTP_404_RE = re.compile(r"\b404\b")
+
+
 def _repo_has_manifest(gh, owner, name):
-    """True iff `owner/name` carries a `.yr/factory.toml` at its base ref (the default branch), read via
-    the same contents-API pattern `_read_manifest_threshold` uses below. Any read failure — 404, no
-    access, a network hiccup — is treated as missing: the wall never guesses a repo is onboarded."""
-    try:
-        gh(["api", f"repos/{owner}/{name}/contents/.yr/factory.toml",
-            "-H", "Accept: application/vnd.github.raw"])
-        return True
-    except Exception:
-        return False
+    """True/False iff `owner/name` definitively carries or lacks a `.yr/factory.toml` at its base ref (the
+    default branch), read via the same contents-API pattern `_read_manifest_threshold` uses below. A
+    confirmed HTTP 404 (the `gh` failure names the status in its message/stderr) is a real "absent" —
+    False, same as always. Any other failure — network error, 5xx, rate limit, timeout — is transient: it
+    is retried once with a short bounded backoff, and if it still fails, raises `ManifestProbeError`
+    rather than guessing "missing". The wall never guesses a repo is onboarded, and now it never guesses a
+    repo is NOT onboarded off a probe error either."""
+    last_exc = None
+    for attempt in range(_MANIFEST_PROBE_ATTEMPTS):
+        try:
+            gh(["api", f"repos/{owner}/{name}/contents/.yr/factory.toml",
+                "-H", "Accept: application/vnd.github.raw"])
+            return True
+        except Exception as exc:
+            if _HTTP_404_RE.search(str(exc)):
+                return False
+            last_exc = exc
+            if attempt + 1 < _MANIFEST_PROBE_ATTEMPTS:
+                time.sleep(_MANIFEST_PROBE_BACKOFF_S)
+    raise ManifestProbeError(f"manifest probe failed for {owner}/{name}: {last_exc}") from last_exc
 
 
 def _repo_onboarded(gh, repo, cache):
     """`_repo_has_manifest`, cached per `repo` in the sweep-local `cache` dict — so a board carrying many
-    Ready items/epics on the same repo costs exactly one contents read for it per sweep."""
+    Ready items/epics on the same repo costs exactly one contents read for it per sweep. A confirmed
+    answer (True/False) caches; a `ManifestProbeError` propagates uncached, so the next same-repo read
+    this sweep (or the next sweep entirely) probes again instead of the failure freezing in as "absent"."""
     if repo not in cache:
         owner, _, name = repo.partition("/")
         cache[repo] = _repo_has_manifest(gh, owner, name)
@@ -810,8 +837,15 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
 
     # the admission wall: a child about to be promoted into an un-onboarded repo is a doomed build —
     # refuse before the Ready write. Bounces the EPIC (Needs-info + comment), never the child itself;
-    # idempotent as in (1)/(4) above (never re-raise once the epic already carries this Reason).
-    if not _repo_onboarded(gh, child_repo, manifest_cache):
+    # idempotent as in (1)/(4) above (never re-raise once the epic already carries this Reason). A probe
+    # failure (non-404 — network/5xx/timeout, not a confirmed absence) is neither: skip this tick writing
+    # nothing, so the next sweep re-probes instead of a false bounce (issue #140).
+    try:
+        onboarded = _repo_onboarded(gh, child_repo, manifest_cache)
+    except ManifestProbeError as exc:
+        return [{"epic": epic["number"], "action": "probe-error", "child": first["number"],
+                 "error": str(exc)}]
+    if not onboarded:
         if epic["reason"] != "Needs-info":
             _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
             _comment(gh, epic["repo"], epic["number"], _not_onboarded_body())
@@ -896,7 +930,14 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
         # and re-commented on every poll tick). Idempotent: once bounced its Status is no longer Ready,
         # so it drops out of this filter on the next sweep and is never re-commented.
         item_id = item.get("id")
-        if not item_id or _repo_onboarded(gh, repo, manifest_cache):
+        if not item_id:
+            continue
+        try:
+            onboarded = _repo_onboarded(gh, repo, manifest_cache)
+        except ManifestProbeError as exc:
+            actions.append({"item": content["number"], "action": "probe-error", "error": str(exc)})
+            continue
+        if onboarded:
             continue
         _set_field(gh, item_id, status_field_id, status_opt["Backlog"])
         _set_field(gh, item_id, reason_field_id, reason_opt["Needs-info"])
@@ -928,6 +969,12 @@ def main(argv=None):
             print(f"epic-gate: held epic #{a['epic']} (debt epic awaiting a ledger verdict)")
         elif a["action"] == "bounce-standalone":
             print(f"epic-gate: bounced #{a['item']} to Backlog/Needs-info (repo not onboarded)")
+        elif a["action"] == "probe-error" and "child" in a:
+            print(f"epic-gate: probe failure under epic #{a['epic']} on child #{a['child']} — "
+                  f"skipped, will re-probe next sweep: {a.get('error', '')}")
+        elif a["action"] == "probe-error":
+            print(f"epic-gate: probe failure on #{a['item']} — "
+                  f"skipped, will re-probe next sweep: {a.get('error', '')}")
         elif a["action"] == "raise" and "child" in a:
             print(f"epic-gate: raised stranded child #{a['child']} under epic #{a['epic']} "
                   f"(Reason={a['reason']})")
