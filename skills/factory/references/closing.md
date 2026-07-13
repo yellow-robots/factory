@@ -13,11 +13,19 @@
 setting a product-spec or feature-rfc `active`; no agent ever sets `active`. Below that standing approval,
 flipping a governed epic to Ready, promoting its next pre-approved slice, and closing a finished epic are
 **mechanical**, fail-closed back to the human on any doubt. A standalone task with no governing design
-above it has no standing approval to run on, so it keeps the original per-task human promotion.
+above it has no standing approval to run on, so it keeps the original per-task human promotion — and its
+**body inherits the design gates** (ruled 2026-07-13): governed work's WHAT was adversarially reviewed and
+fit-checked upstream before anything crossed; a standalone task's body is that design, so the same cold
+gates run on the body itself before the human promote. The pipeline verifies the code *against* the
+acceptance criteria — unreviewed criteria make a flawed build pass green, which is why saving this gate
+buys brittleness, not time (the org-level twin is `AGENTS.md`'s *hands-on is not unreviewed*: who authors
+is orthogonal to whether it is independently verified).
 
 **Checklist before promoting:**
 - [ ] `check_links` is green on the technical-rfc (see [`gates.md`](gates.md)).
 - [ ] `check_task` is green on the task (see [`gates.md`](gates.md)).
+- [ ] **Standalone task only:** the body's design gates ran cold — an independent adversarial review and
+  an architect fit check — and their verdicts are recorded on the issue trail (record-before-flip).
 - [ ] The task is self-contained: an implementer can produce a correct PR from the Issue alone.
 - [ ] Size is declared; if the task would need two PRs, it is already split into sub-issues.
 
