@@ -47,7 +47,6 @@ MARKER_ARMED = "YR-MERGE"
 SCHEMA = "yr-merge-record/1"
 # Order is the contract: the FIRST failed condition names the WOULD-BLOCK reason (shadow mode).
 SHADOW_ORDER = ("ci_green", "freshness", "terminal_approval", "rank_gate")
-CONDITION_ORDER = SHADOW_ORDER  # back-compat alias
 
 # Shadow-completion window defaults (the epic's pinned N/K).
 DEFAULT_WINDOW = 5
