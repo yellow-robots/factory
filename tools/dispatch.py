@@ -44,6 +44,7 @@ import os
 import pathlib
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -222,6 +223,13 @@ def main():
     bind = os.environ.get("DISPATCH_BIND", "127.0.0.1")
     port = int(os.environ.get("DISPATCH_PORT", "8770"))
     print(f"dispatch: listening on {bind}:{port}", file=sys.stderr)
+    # Safe because dispatch keeps no Popen and has no in-process waiter anywhere:
+    # every child is fire-and-forget (_spawn_detached), so kernel auto-reap under
+    # SIG_IGN just cleans up exited children without dispatch ever calling wait().
+    # If dispatch ever grows an in-process subprocess.run()/.wait(), replace this
+    # with a localized double-fork in _spawn_detached (reparenting the child to
+    # the user-manager subreaper) — a waiter under SIG_IGN hits ECHILD.
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
     HTTPServer((bind, port), Handler).serve_forever()
     return 0
 
