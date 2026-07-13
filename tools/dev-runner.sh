@@ -548,6 +548,13 @@ fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cl
 # the state is cleared and the worktree torn down (cleanup_wt). Markers + a self-describing run.json live
 # under state/<repo-slug>--<branch-slug>.
 mkdir -p "$RUN_DIR"   # RUN_DIR itself was computed earlier (see the opening log line above)
+# run-scoped TMPDIR (issue #142): every stage/gate subprocess (claude -p, check_cmd, its repair re-runs)
+# inherits this exported TMPDIR, so tool temp roots that honor it (pytest's /tmp/pytest-of-* included)
+# land under the run dir instead of piling up on /tmp — repo-agnostic, no check_cmd flags involved.
+# Bounded even on a hard kill (no teardown runs): the residue sits under THIS run's own dir, never /tmp.
+RUN_TMPDIR="$RUN_DIR/tmp"
+mkdir -p "$RUN_TMPDIR"
+export TMPDIR="$RUN_TMPDIR"
 REPO_SLUG="$(printf '%s--%s' "$OWNER" "$NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')"
 WT="$DEV_RUNNER_HOME/wt/${REPO_SLUG}--${BRANCH//\//-}"
 MERGE_GIT_DIR="$WT"   # the shared terminal-decision helpers' git checkout, for a live build (see above)
@@ -555,11 +562,13 @@ STATE_DIR="$DEV_RUNNER_HOME/state/${REPO_SLUG}--${BRANCH//\//-}"
 HOLD_MARKER="$STATE_DIR/env-hold"
 stage_done(){ [ -f "$STATE_DIR/$1.done" ]; }               # has stage $1 already completed in a prior run?
 mark_stage(){ mkdir -p "$STATE_DIR"; : > "$STATE_DIR/$1.done"; }
-# cleanup_wt tears the worktree + branch down AND clears the stage-completion state — the success and
-# code/machinery-failure disposal. The environmental-hold path (env_hold) deliberately does NOT call it.
+# cleanup_wt tears the worktree + branch down, clears the stage-completion state, AND removes this run's
+# tmp dir (run logs, markers, run.json, usage artifacts are untouched) — the success and code/machinery-
+# failure disposal. The environmental-hold path (env_hold) deliberately does NOT call it (preserved for resume).
 cleanup_wt(){ "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/null || true
               "$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true
-              rm -rf "$STATE_DIR"; }
+              rm -rf "$STATE_DIR"
+              rm -rf "$RUN_TMPDIR"; }
 # run.json: the resume manifest (branch, base ref, resolved models, worktree path), written when a hold
 # is recorded so the preserved state is self-describing.
 write_run_json(){ mkdir -p "$STATE_DIR"
