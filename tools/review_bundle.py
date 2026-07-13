@@ -49,8 +49,13 @@ def build_bundle(*, base_sha, head_sha, diff, acceptance_criteria, check_cmd, ch
 
 
 def append_round(bundle, verdict_text):
-    """Append one review round's verdict (its last `VERDICT:` line) plus the full transcript."""
-    verdict_lines = [line.strip() for line in verdict_text.splitlines() if line.strip().upper().startswith("VERDICT:")]
+    """Append one review round's verdict (its last `VERDICT:` line) plus the full transcript.
+
+    Grammar (issue #151): the same exact-match rule as tools/dev-runner.sh's verdict_line() —
+    line-anchored `VERDICT:` (no leading whitespace, case-sensitive), last line wins, trailing
+    whitespace stripped.
+    """
+    verdict_lines = [line.rstrip() for line in verdict_text.splitlines() if line.startswith("VERDICT:")]
     rounds = bundle.setdefault("rounds", [])
     rounds.append({
         "index": len(rounds) + 1,

@@ -180,10 +180,15 @@ shadow_freshness(){   # sets FRESH_RESULT (pass|fail) + MAIN_TIP; returns 2 on a
   [ -n "$MAIN_TIP" ] || { FRESH_RESULT=fail; return 0; }                                    # indeterminate -> fail
   [ "$BASE_SHA" = "$MAIN_TIP" ] && FRESH_RESULT=pass || FRESH_RESULT=fail
 }
+# The kept VERDICT grammar (issue #151; also cited by review_bundle.py's append_round): line-anchored
+# `VERDICT:` (a prose or quoted mention never counts) — the LAST such line wins — trailing whitespace
+# stripped. Shared by the review gate below and (3) terminal_approval, since both read the same file
+# under the same fail-closed rule: pass requires EXACTLY "VERDICT: APPROVE".
+verdict_line(){ grep -E '^VERDICT:' "$1" 2>/dev/null | tail -n1 | sed -E 's/[[:space:]]+$//'; }
 # (3) terminal_approval — the LAST review round must be a clean 'VERDICT: APPROVE' (re-approval of a
 #     revised diff counts; the first pass need not have been clean). Same exact-match rule as the gate.
 shadow_terminal_approval(){
-  if [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" 2>/dev/null | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]
+  if [ "$(verdict_line "$RUN_DIR/review.md")" = "VERDICT: APPROVE" ]
   then APPROVE_RESULT=pass; else APPROVE_RESULT=fail; fi
 }
 # (4) rank_gate — the resolved pair must satisfy review-rank >= build-rank on ONE provider, both ranked
@@ -903,7 +908,8 @@ review_stage(){ "$GIT_BIN" -C "$WT" add -A
                   || fail_blocked "review bundle record-verdict failed"
                 # fail-closed: the LAST verdict line must be exactly "VERDICT: APPROVE" (only trailing whitespace
                 # trimmed) — a hedge ("APPROVE" then "REQUEST_CHANGES"), trailing junk, or a mangled token does NOT pass.
-                [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]; }
+                # Shared grammar: verdict_line() above.
+                [ "$(verdict_line "$RUN_DIR/review.md")" = "VERDICT: APPROVE" ]; }
 log "review: independent reviewer stage"
 if stage_done 04-review; then
   log "resume: skipping review (04-review.done present)"
