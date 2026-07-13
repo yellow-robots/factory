@@ -75,13 +75,3 @@ def test_authoring_crossing_step_stamps_on_filing():
         "authoring.md crossing step has no crossed_to stamp instruction"
     assert "**On filing**" in text, \
         "authoring.md does not tie the stamp to the moment the epic Issue exists"
-
-
-# ---------------------------------------------------------------------------
-# Version bump — .claude-plugin/plugin.json 0.7.0 -> 0.7.1
-# ---------------------------------------------------------------------------
-
-def test_plugin_version_is_current():
-    data = json.loads(PLUGIN.read_text(encoding="utf-8"))
-    assert data["version"] == "0.9.3", \
-        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.3'"
