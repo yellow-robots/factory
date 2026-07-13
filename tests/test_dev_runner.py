@@ -1038,7 +1038,6 @@ def test_dryrun_default_model_no_overrides(tmp_path):
     """With no MODEL env, no manifest model, and no body model: line, the resolved model is claude-sonnet-5."""
     binp = tmp_path / "bin"; _stubs(binp)
     env = _env(tmp_path, binp)
-    env["MODEL"] = ""  # empty string triggers :- in the runner, so the built-in default is used
     env["BASE_REPO"] = str(_manifest_repo(tmp_path))  # onboarded but key-less: a sparse-manifest default
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
@@ -1049,11 +1048,21 @@ def test_dryrun_body_model_sonnet_resolves_to_sonnet_5(tmp_path):
     """A bare `model: sonnet` body override (with no manifest model) resolves to claude-sonnet-5."""
     binp = tmp_path / "bin"; _stubs(binp)
     env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nmodel: sonnet\n")
-    env["MODEL"] = ""  # isolate from any ambient MODEL env var so only the body override and built-in default apply
     env["BASE_REPO"] = str(_manifest_repo(tmp_path))  # onboarded but key-less: a sparse-manifest default
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["model"] == "claude-sonnet-5"
+
+
+def test_no_op_model_env_isolation_scaffolding_is_gone():
+    """issue #148: the two no-op retired-env-var isolation lines (and their comments) that used to sit
+    in test_dryrun_default_model_no_overrides / test_dryrun_body_model_sonnet_resolves_to_sonnet_5 are
+    deleted — the runner reads BUILD_MODEL/REVIEW_MODEL only, so setting that retired var never isolated
+    anything. The needle is assembled by concatenation (and never written out literally, including here
+    in the docstring) so this guard can't match its own source and become tautological."""
+    text = pathlib.Path(__file__).read_text(encoding="utf-8")
+    needle = "".join(['env[', '"', 'MOD', 'EL', '"', ']', ' = ', '""'])
+    assert needle not in text
 
 
 def test_dryrun_base_ref_from_manifest(tmp_path):
