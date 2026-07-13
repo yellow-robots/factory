@@ -57,19 +57,19 @@ def rank_check(build_entry, review_entry):
     return r_rank >= b_rank
 
 
-def resolve_name(data, role, task_value=None, manifest_value=None, env_value=None):
+def resolve_name(data, role, task_value=None, manifest_value=None):
     """Resolve a role ('build'/'review') to an entry name. Precedence: per-task override > per-repo
-    manifest value > process env value > the registry's per-role default."""
-    for value in (task_value, manifest_value, env_value):
+    manifest value > the registry's per-role default."""
+    for value in (task_value, manifest_value):
         if value:
             return value
     return _roles(data).get(role)
 
 
-def resolve(data, role, task_value=None, manifest_value=None, env_value=None):
+def resolve(data, role, task_value=None, manifest_value=None):
     """Resolve a role to its full entry (plus its resolved 'name'). Raises KeyError if the
     resolved name has no matching registry entry."""
-    name = resolve_name(data, role, task_value, manifest_value, env_value)
+    name = resolve_name(data, role, task_value, manifest_value)
     entry = _entries(data).get(name)
     if entry is None:
         raise KeyError(f"unknown model '{name}' for role '{role}'")
@@ -134,7 +134,7 @@ def validate(data):
 def _cli_resolve(args):
     data = load(args.registry)
     try:
-        entry = resolve(data, args.role, args.task or None, args.manifest or None, args.env or None)
+        entry = resolve(data, args.role, args.task or None, args.manifest or None)
     except KeyError as e:
         print(json.dumps({"error": str(e)}))
         return 1
@@ -192,7 +192,6 @@ def main(argv=None):
     p_resolve.add_argument("--role", required=True, help="role name, e.g. build or review")
     p_resolve.add_argument("--task", default="", help="per-task override value")
     p_resolve.add_argument("--manifest", default="", help="per-repo manifest value")
-    p_resolve.add_argument("--env", default="", help="process env value")
     p_resolve.set_defaults(func=_cli_resolve)
 
     p_stage = sub.add_parser("stage-tier", help="resolve a stage's tier entry if the registry sets one (JSON; {} if none)")

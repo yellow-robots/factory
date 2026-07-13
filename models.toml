@@ -1,8 +1,8 @@
 # models.toml — the factory's model registry: every selectable model lives here, in one
 # operator-maintained place (data, not code). tools/registry.py is the stdlib loader: it validates
 # this file's self-consistency and resolves a role (build/review) from layered sources at runner
-# time — precedence per-task override > per-repo manifest > process env > this file's per-role
-# default (the same layering tools/dev-runner.sh already applies for MODEL/HARD_MODEL).
+# time — precedence per-task override > per-repo manifest > this file's per-role default (the same
+# layering tools/dev-runner.sh already applies for MODEL/HARD_MODEL).
 #
 # Upper-pipeline convention: strategy, product definition, and RFC/spec authoring run on the
 # strongest available class (today: opus); execution — the lower pipeline's implement/test/check/

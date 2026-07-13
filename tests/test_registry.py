@@ -34,6 +34,21 @@ def test_registry_header_records_upper_pipeline_convention():
     assert "opus" in header or "strongest" in header
 
 
+def test_header_precedence_clause_names_the_real_three_layers():
+    # issue #147: the never-invoked env layer is gone, so the header's precedence clause must
+    # describe per-task > per-repo manifest > per-role default only — no fourth "process env" layer.
+    text = (ROOT / "models.toml").read_text(encoding="utf-8")
+    header = "\n".join(
+        line for line in text.splitlines() if line.lstrip().startswith("#")
+    )
+    assert "per-task" in header
+    assert "per-repo manifest" in header
+    assert "per-role" in header and "default" in header
+    assert "process env" not in header.lower()
+    # line 5's retired-overrides parenthetical (slice D's) is untouched by this item
+    assert "MODEL" in header and "HARD_MODEL" in header
+
+
 def test_loader_reads_shipped_registry_beside_itself_by_default():
     # REGISTRY_PATH must resolve next to tools/registry.py, not some git-ref checkout.
     assert registry.REGISTRY_PATH == ROOT / "models.toml"
@@ -109,21 +124,14 @@ def test_resolve_falls_back_to_registry_default_when_nothing_else_given():
     assert resolve_name(data, "review") == "opus"
 
 
-def test_resolve_env_value_overrides_default():
+def test_resolve_manifest_value_overrides_default():
     data = load()
-    assert resolve_name(data, "build", env_value="opus") == "opus"
+    assert resolve_name(data, "build", manifest_value="opus") == "opus"
 
 
-def test_resolve_manifest_value_overrides_env_and_default():
+def test_resolve_task_value_overrides_manifest():
     data = load()
-    assert resolve_name(data, "build", manifest_value="opus", env_value="sonnet") == "opus"
-
-
-def test_resolve_task_value_overrides_manifest_and_env():
-    data = load()
-    name = resolve_name(
-        data, "review", task_value="sonnet", manifest_value="opus", env_value="opus"
-    )
+    name = resolve_name(data, "review", task_value="sonnet", manifest_value="opus")
     assert name == "sonnet"
 
 
