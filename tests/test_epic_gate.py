@@ -17,6 +17,7 @@ import importlib
 import inspect
 import json
 import pathlib
+import pytest
 import re
 import subprocess
 import sys
@@ -158,13 +159,21 @@ class FakeGh:
     (`FakeDebtGh` below shares this exact stub). `None` (the default) means every repo is onboarded — the
     wall never engages, so every test written before #125 keeps promoting/closing/raising exactly as
     before with no per-test change. A dict makes ONLY its keys onboarded; any other repo's read raises
-    (missing = fail-closed), same as a real 404."""
+    (missing = fail-closed), same as a real 404.
 
-    def __init__(self, board_nodes, epic_details, open_prs=None, *, manifest_repos=None):
+    `manifest_errors` (issue #140): repo -> a list of outcomes consumed one per contents-API call to that
+    repo, in order — a list entry that's an `Exception` instance is raised, anything else is returned as
+    the raw response text. Once only one entry remains, it repeats forever (so a one-element list models a
+    persistent failure/success, and a longer list models "fails N times then recovers"). Checked BEFORE
+    `manifest_repos`, so a repo can appear in both/either without conflict."""
+
+    def __init__(self, board_nodes, epic_details, open_prs=None, *, manifest_repos=None,
+                 manifest_errors=None):
         self.board_nodes = board_nodes
         self.epic_details = epic_details
         self.open_prs = list(open_prs or [])
         self.manifest_repos = manifest_repos
+        self.manifest_errors = {k: list(v) for k, v in (manifest_errors or {}).items()}
         self.manifest_argv = []
         self.edits = []       # (item_id, field_id, opt)
         self.comments = []    # (repo, number, body)
@@ -202,6 +211,12 @@ class FakeGh:
             self.manifest_argv.append(argv)
             m = re.match(r"repos/([^/]+)/([^/]+)/contents/", argv[1])
             repo = f"{m.group(1)}/{m.group(2)}"
+            if repo in self.manifest_errors:
+                queue = self.manifest_errors[repo]
+                outcome = queue.pop(0) if len(queue) > 1 else queue[0]
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
             if self.manifest_repos is None:
                 return "# onboarded (default fixture)\n"
             if repo not in self.manifest_repos:
@@ -2085,6 +2100,230 @@ def test_admission_wall_probe_cached_across_two_candidates_on_the_same_repo():
     _sweep(fake)
     manifest_calls = [a for a in fake.manifest_argv if NOT_ONBOARDED_REPO in a[1]]
     assert len(manifest_calls) == 1                         # one contents read for the repo, not two
+
+
+# ============================================================================
+# Issue #140 — the probe distinguishes a confirmed 404 (definitively absent) from a transient failure
+# (network error, 5xx, rate limit, timeout): only the confirmed case reads as not-onboarded. A transient
+# failure retries with a short bounded backoff; if it still fails, the caller must not treat the repo as
+# not-onboarded — no bounce, no comment, no board write, and no caching of the failure as "absent".
+# ============================================================================
+
+def test_repo_has_manifest_retries_a_transient_failure_then_succeeds(monkeypatch):
+    """A non-404 failure (network/5xx/timeout) on the first attempt is retried; success on retry reads
+    exactly like a first-try hit -- True, no different treatment."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    calls = []
+
+    def gh(argv):
+        calls.append(argv)
+        if len(calls) == 1:
+            raise RuntimeError("gh: connection reset by peer")
+        return 'check_cmd = "pytest"\n'
+
+    assert epic_gate._repo_has_manifest(gh, "yellow-robots", "widget") is True
+    assert len(calls) == 2
+
+
+def test_repo_has_manifest_confirmed_404_returns_false_without_retrying(monkeypatch):
+    """A confirmed 404 is definitive -- no retry/backoff is burned on it, unlike a transient failure."""
+    sleeps = []
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: sleeps.append(s))
+    calls = []
+
+    def gh(argv):
+        calls.append(argv)
+        raise RuntimeError("gh api ... failed (HTTP 404): Not Found")
+
+    assert epic_gate._repo_has_manifest(gh, "yellow-robots", "widget") is False
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_repo_has_manifest_persistent_non_404_failure_raises_probe_error(monkeypatch):
+    """A non-404 failure that survives every attempt raises `ManifestProbeError` -- never `False`: the
+    caller must not be able to read this as a confirmed absence."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+
+    def gh(argv):
+        raise RuntimeError("gh: 503 Service Unavailable")
+
+    with pytest.raises(epic_gate.ManifestProbeError):
+        epic_gate._repo_has_manifest(gh, "yellow-robots", "widget")
+
+
+def test_repo_onboarded_does_not_cache_a_probe_failure(monkeypatch):
+    """A `ManifestProbeError` propagates through `_repo_onboarded` uncached -- unlike a confirmed
+    True/False it is never stored in the sweep-local cache, so the next read for the same repo probes
+    again instead of the failure freezing in as 'absent' for the rest of the sweep."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    calls = []
+
+    def gh(argv):
+        calls.append(argv)
+        raise RuntimeError("gh: 500 Internal Server Error")
+
+    cache = {}
+    with pytest.raises(epic_gate.ManifestProbeError):
+        epic_gate._repo_onboarded(gh, "yellow-robots/widget", cache)
+    assert cache == {}
+    first_call_count = len(calls)
+
+    with pytest.raises(epic_gate.ManifestProbeError):
+        epic_gate._repo_onboarded(gh, "yellow-robots/widget", cache)
+    assert len(calls) > first_call_count            # re-probed, not short-circuited by a cached failure
+
+
+TRANSIENT_REPO = "yellow-robots/transient"
+
+
+def test_admission_wall_epic_child_probe_retries_transient_then_promotes(monkeypatch):
+    """The onboarded-but-flaky case: the probe fails once (transient) then succeeds on retry -- the repo
+    reads as onboarded, exactly like a first-try hit; no bounce, no probe-error action."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", repo=TRANSIENT_REPO)]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog",
+                                                 repo=TRANSIENT_REPO)])}
+    fake = FakeGh(board, epics,
+                  manifest_errors={TRANSIENT_REPO: [RuntimeError("gh: timeout"), 'check_cmd = "pytest"\n']})
+    actions = _sweep(fake)
+
+    assert ("PI-101", STATUS_FIELD, "Ready") in fake.edits
+    assert not any(a.get("action") in ("raise", "probe-error") for a in actions)
+    assert not any(e[1] == REASON_FIELD for e in fake.edits)          # epic never bounced
+
+
+def test_admission_wall_epic_child_probe_persistent_failure_skips_without_bounce(monkeypatch):
+    """A probe failure that survives every retry is NOT read as not-onboarded: the epic is left exactly
+    where it is -- no Reason edit, no comment, no promotion -- and the skip surfaces as its own
+    'probe-error' action naming the epic and the child."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", repo=TRANSIENT_REPO)]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog",
+                                                 repo=TRANSIENT_REPO)])}
+    fake = FakeGh(board, epics,
+                  manifest_errors={TRANSIENT_REPO: [RuntimeError("gh: 503 Service Unavailable")]})
+    actions = _sweep(fake)
+
+    assert fake.edits == []                          # nothing promoted, epic never bounced
+    assert fake.comments == []                        # no onboarding comment, no promotion comment
+    probe_actions = [a for a in actions if a.get("action") == "probe-error"]
+    assert len(probe_actions) == 1
+    assert probe_actions[0]["epic"] == 100 and probe_actions[0]["child"] == 101
+    assert "error" in probe_actions[0]
+
+
+def test_admission_wall_never_posts_the_onboarding_comment_on_a_probe_error_path(monkeypatch):
+    """`_not_onboarded_body()`'s onboarding message stays exclusive to the confirmed-404 case -- neither
+    a probe-error on an epic child nor on a standalone item posts any comment."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [
+        _item(100, item_id="EI-100", itype="Feature", status="Ready", repo=TRANSIENT_REPO),
+        _item(300, item_id="EI-300", itype="Task", status="Ready", repo=TRANSIENT_REPO),
+    ]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog",
+                                                 repo=TRANSIENT_REPO)])}
+    fake = FakeGh(board, epics,
+                  manifest_errors={TRANSIENT_REPO: [RuntimeError("gh: 503 Service Unavailable")]})
+    _sweep(fake)
+    assert fake.comments == []
+
+
+def test_admission_wall_standalone_probe_persistent_failure_skips_writing_nothing(monkeypatch):
+    """A standalone Ready item on a repo whose probe persistently fails (non-404) is left exactly where
+    it is -- no Status/Reason edit, no comment -- and the skip surfaces as a 'probe-error' action naming
+    the item, distinct from a 'bounce-standalone'."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [_item(300, item_id="EI-300", itype="Task", status="Ready", repo=TRANSIENT_REPO)]
+    fake = FakeGh(board, {},
+                  manifest_errors={TRANSIENT_REPO: [RuntimeError("gh: 500 Internal Server Error")]})
+    actions = _sweep(fake)
+
+    assert fake.edits == [] and fake.comments == []
+    assert fake.board_nodes[0]["status"] == {"name": "Ready"}   # untouched -- stays put for the next sweep
+    probe_actions = [a for a in actions if a.get("action") == "probe-error"]
+    assert len(probe_actions) == 1
+    assert probe_actions[0]["item"] == 300
+    assert "child" not in probe_actions[0]
+    assert not any(a.get("action") == "bounce-standalone" for a in actions)
+
+
+def test_admission_wall_probe_failure_on_one_candidate_does_not_poison_a_later_read_same_sweep(monkeypatch):
+    """Two standalone Ready candidates share a repo whose probe fails on the first candidate's own two
+    attempts then recovers: the second candidate's read is NOT short-circuited by a cached 'absent' from
+    the first's failure -- it re-probes and (network recovered) reads onboarded, left untouched."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [
+        _item(300, item_id="EI-300", itype="Task", status="Ready", repo=TRANSIENT_REPO),
+        _item(301, item_id="EI-301", itype="Task", status="Ready", repo=TRANSIENT_REPO),
+    ]
+    fake = FakeGh(board, {}, manifest_errors={
+        TRANSIENT_REPO: [RuntimeError("gh: timeout"), RuntimeError("gh: timeout"),
+                         'check_cmd = "pytest"\n'],
+    })
+    actions = _sweep(fake)
+
+    probe_actions = [a for a in actions if a.get("action") == "probe-error"]
+    assert len(probe_actions) == 1 and probe_actions[0]["item"] == 300
+    # #301 was never bounced NOR probe-errored -- its own (later, uncached) read simply succeeded
+    assert not any(a.get("item") == 301 for a in actions)
+    assert not any(c[1] == "301" for c in fake.comments)
+    assert not any(e[0] == "EI-301" for e in fake.edits)
+
+
+def test_admission_wall_probe_failure_for_persistent_repo_reprobes_across_two_candidates(monkeypatch):
+    """When the repo's probe fails persistently (never recovers within the sweep), EVERY candidate on it
+    gets its own fresh probe attempts and its own 'probe-error' action -- proving the earlier failure was
+    never cached as a confirmed absence for the repo."""
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [
+        _item(300, item_id="EI-300", itype="Task", status="Ready", repo=TRANSIENT_REPO),
+        _item(301, item_id="EI-301", itype="Task", status="Ready", repo=TRANSIENT_REPO),
+    ]
+    fake = FakeGh(board, {},
+                  manifest_errors={TRANSIENT_REPO: [RuntimeError("gh: 500 Internal Server Error")]})
+    actions = _sweep(fake)
+
+    probe_items = {a["item"] for a in actions if a.get("action") == "probe-error"}
+    assert probe_items == {300, 301}
+    assert fake.edits == [] and fake.comments == []
+    manifest_calls = [a for a in fake.manifest_argv if TRANSIENT_REPO in a[1]]
+    assert len(manifest_calls) == 4                  # 2 candidates x 2 attempts each -- no cached failure
+
+
+def test_main_prints_probe_failure_for_a_standalone_item(monkeypatch, capsys):
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [_item(300, item_id="EI-300", itype="Task", status="Ready", repo=TRANSIENT_REPO)]
+    fake = FakeGh(board, {},
+                  manifest_errors={TRANSIENT_REPO: [RuntimeError("gh: 500 Internal Server Error")]})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+
+    rc = epic_gate.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "probe" in out.lower() and "300" in out
+    assert "not onboarded" not in out.lower()
+
+
+def test_main_prints_probe_failure_for_an_epic_child(monkeypatch, capsys):
+    monkeypatch.setattr(epic_gate.time, "sleep", lambda s: None)
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", repo=TRANSIENT_REPO)]
+    epics = {100: _epic_detail(comments=[VALID_RECORD],
+                               children=[_child(101, pi_id="PI-101", status="Backlog",
+                                                 repo=TRANSIENT_REPO)])}
+    fake = FakeGh(board, epics,
+                  manifest_errors={TRANSIENT_REPO: [RuntimeError("gh: 503 Service Unavailable")]})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+
+    rc = epic_gate.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "probe" in out.lower() and "100" in out and "101" in out
 
 
 def test_main_uses_registered_repos_for_intake(capsys, monkeypatch):
