@@ -30,7 +30,8 @@ human promote but fails DoR is set `Needs-info`.
 
 **Who:** the **factory itself, for an armed repo** — otherwise a human. The runner's deterministic
 merge evaluator (see [`pipeline.md`](pipeline.md)) checks CI-green, freshness against `main`'s tip, a
-terminal clean `APPROVE`, and the strict review-rank > build-rank gate; an **armed** repo (manifest
+terminal clean `APPROVE`, and the review-rank >= build-rank gate (the reviewer is never weaker); an
+**armed** repo (manifest
 `auto_merge = true`, shadow phase complete, host sentinel not thrown) that passes them all is
 squash-merged by the factory with a durable `YR-MERGE: MERGED` record. Every other repo stays in
 **shadow**: a loud `YR-MERGE-SHADOW` would-merge/would-block record, then a human reviews and merges.

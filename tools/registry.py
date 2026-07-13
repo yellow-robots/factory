@@ -43,8 +43,8 @@ def _stage_tiers(data):
 
 
 def rank_check(build_entry, review_entry):
-    """True iff review strictly outranks build: both entries ranked, same provider, and
-    review.rank > build.rank. Missing entries or ranks, or a cross-provider pair, fail closed."""
+    """True iff the reviewer is never weaker than the build: both entries ranked, same provider,
+    and review.rank >= build.rank. Missing entries or ranks, or a cross-provider pair, fail closed."""
     if not build_entry or not review_entry:
         return False
     b_rank, r_rank = build_entry.get("rank"), review_entry.get("rank")
@@ -54,7 +54,7 @@ def rank_check(build_entry, review_entry):
         return False
     if build_entry.get("provider") != review_entry.get("provider"):
         return False
-    return r_rank > b_rank
+    return r_rank >= b_rank
 
 
 def resolve_name(data, role, task_value=None, manifest_value=None, env_value=None):

@@ -145,7 +145,9 @@ def test_resolve_unknown_name_raises_key_error():
 
 
 # ---------------------------------------------------------------------------
-# rank_check(): strict review > build, same provider, both ranked
+# rank_check(): the reviewer is never weaker — review >= build, same provider, both ranked
+# (issue #139: relaxed from strict review > build so an equal-rank pair, e.g. two independent
+# instances of the top-ranked model, can pass; a weaker reviewer still fails closed)
 # ---------------------------------------------------------------------------
 
 def test_rank_check_true_when_review_strictly_outranks_build_same_provider():
@@ -154,13 +156,15 @@ def test_rank_check_true_when_review_strictly_outranks_build_same_provider():
     assert rank_check(build, review) is True
 
 
-def test_rank_check_false_when_ranks_equal():
+def test_rank_check_true_when_ranks_equal_same_provider():
+    """An equal-rank same-provider pair passes — the bar is 'never weaker', not 'strictly stronger'."""
     build = {"provider": "anthropic", "rank": 30}
     review = {"provider": "anthropic", "rank": 30}
-    assert rank_check(build, review) is False
+    assert rank_check(build, review) is True
 
 
 def test_rank_check_false_when_inverted():
+    """review rank strictly below build rank still fails, exactly as before the relaxation."""
     build = {"provider": "anthropic", "rank": 40}
     review = {"provider": "anthropic", "rank": 30}
     assert rank_check(build, review) is False
@@ -169,6 +173,13 @@ def test_rank_check_false_when_inverted():
 def test_rank_check_false_when_cross_provider():
     build = {"provider": "anthropic", "rank": 30}
     review = {"provider": "other", "rank": 40}
+    assert rank_check(build, review) is False
+
+
+def test_rank_check_false_when_cross_provider_and_ranks_equal():
+    """Equal ranks across different providers are still not comparable — fails closed."""
+    build = {"provider": "anthropic", "rank": 30}
+    review = {"provider": "other", "rank": 30}
     assert rank_check(build, review) is False
 
 
@@ -188,6 +199,32 @@ def test_rank_check_false_when_either_entry_missing():
     review = {"provider": "anthropic", "rank": 40}
     assert rank_check(None, review) is False
     assert rank_check({"provider": "anthropic", "rank": 30}, None) is False
+
+
+def test_rank_check_false_when_rank_is_bool_typed():
+    """bool is a subclass of int in Python — a bool-typed rank must still fail closed, even where the
+    raw comparison would otherwise pass (e.g. True >= True)."""
+    build = {"provider": "anthropic", "rank": True}
+    review = {"provider": "anthropic", "rank": True}
+    assert rank_check(build, review) is False
+    build = {"provider": "anthropic", "rank": True}
+    review = {"provider": "anthropic", "rank": 30}
+    assert rank_check(build, review) is False
+    build = {"provider": "anthropic", "rank": 30}
+    review = {"provider": "anthropic", "rank": True}
+    assert rank_check(build, review) is False
+
+
+# ---------------------------------------------------------------------------
+# rank_check() docstring: every surface stating the contract must state the NEW one (issue #139)
+# ---------------------------------------------------------------------------
+
+def test_rank_check_docstring_states_the_never_weaker_contract():
+    doc = rank_check.__doc__ or ""
+    assert "review.rank >= build.rank" in doc or ">= build.rank" in doc
+    assert "never weaker" in doc.lower()
+    assert "strictly" not in doc.lower()
+    assert "review.rank > build.rank" not in doc
 
 
 # ---------------------------------------------------------------------------

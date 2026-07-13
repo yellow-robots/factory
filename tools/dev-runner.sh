@@ -186,12 +186,12 @@ shadow_terminal_approval(){
   if [ "$(grep -E '^VERDICT:' "$RUN_DIR/review.md" 2>/dev/null | tail -n1 | sed -E 's/[[:space:]]+$//')" = "VERDICT: APPROVE" ]
   then APPROVE_RESULT=pass; else APPROVE_RESULT=fail; fi
 }
-# (4) rank_gate — the resolved pair must satisfy STRICT review-rank > build-rank on ONE provider, both
-#     ranked (an unranked emergency override fails here -> shadow-only by construction; an equal-rank pair
-#     that cleared intake also fails here — strict > is the merge bar, not the intake bar).
+# (4) rank_gate — the resolved pair must satisfy review-rank >= build-rank on ONE provider, both ranked
+#     (the reviewer is never weaker) — an unranked emergency override fails here -> shadow-only by
+#     construction.
 shadow_rank_gate(){
   if [ "$BUILD_RANKED" = 1 ] && [ "$REVIEW_RANKED" = 1 ] \
-     && [ "$BUILD_PROVIDER" = "$REVIEW_PROVIDER" ] && [ "$REVIEW_RANK" -gt "$BUILD_RANK" ]
+     && [ "$BUILD_PROVIDER" = "$REVIEW_PROVIDER" ] && [ "$REVIEW_RANK" -ge "$BUILD_RANK" ]
   then RANK_RESULT=pass; else RANK_RESULT=fail; fi
 }
 # (5a) auto_merge — read at DECISION time from the base ref's CURRENT tip (NEVER the start-of-run parse

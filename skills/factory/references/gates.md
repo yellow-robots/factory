@@ -15,7 +15,7 @@
 | `check_supersession` | Declaration grammar and empty-justification on a `product-spec`/`feature-rfc` draft; pair integrity both directions (`supersedes` ↔ `superseded_by`); down-flow disposition of every active spine doc under a superseded target. | Draft mode: `python3 tools/check_supersession.py <draft.md> [--vault-root DIR]`. Sweep: `python3 tools/check_supersession.py --sweep [--vault-root DIR] [--scope REL]` |
 | `check_cmd` | The repo's own check (from `.yr/factory.toml`) — runs in the worktree with `.venv/bin` + `node_modules/.bin` on PATH. | The runner runs it. One repair attempt on a code failure; **no repair** on an environment failure (exit 126/127). |
 | Review verdict | An independent reviewer emits `VERDICT: APPROVE` or `REQUEST_CHANGES`. | The runner gates the PR on a clean `APPROVE`. Fail-closed: anything but a clean `APPROVE` blocks. |
-| Merge evaluator | Deterministic terminal step (no LLM): CI-green · freshness vs `main`'s tip · terminal clean `APPROVE` · strict review>build rank, in order, indeterminate = failed. | The runner runs it after the PR opens. Armed repo: all-pass squash-merges, any fail posts `YR-MERGE: BLOCKED`; otherwise a `YR-MERGE-SHADOW` record and the human merges. |
+| Merge evaluator | Deterministic terminal step (no LLM): CI-green · freshness vs `main`'s tip · terminal clean `APPROVE` · review-rank >= build-rank (the reviewer is never weaker), in order, indeterminate = failed. | The runner runs it after the PR opens. Armed repo: all-pass squash-merges, any fail posts `YR-MERGE: BLOCKED`; otherwise a `YR-MERGE-SHADOW` record and the human merges. |
 
 ## Advisory vs. blocking
 

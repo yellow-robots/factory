@@ -45,7 +45,7 @@ below).
 | **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`. One repair attempt on a code failure (at the registry's `check_repair` stage tier when set, else the build model); no repair on an environment failure (exit 126/127). | `Blocked` |
 | **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
 | **PR** | Commit, push `task/<id>-<slug>`, open PR, post the review. | — |
-| **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · strict rank gate (review > build, one provider, both ranked) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block |
+| **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · rank gate (review >= build, one provider, both ranked, the reviewer is never weaker) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block |
 
 **Environmental vs code failure, everywhere:** a stage or step that *cannot run* — quota exhaustion on
 an LLM stage, a broken toolchain (exit 126/127), a gh/network blip in the evaluator — is classified
@@ -154,8 +154,8 @@ Model choice is **operator-maintained data** (`models.toml` at the factory root;
   before any claim. The **only** non-registry escape is the env override with a raw model id: it runs
   unranked, loudly warned, and can never satisfy the merge rank gate (shadow-only by construction).
 - **Rank gate, fail-closed twice:** at intake, an inverted or cross-provider ranked pair bounces
-  `Needs-info`; at the merge evaluator, the bar is *strict* review-rank > build-rank on one provider —
-  an equal-rank pair that cleared intake still never auto-merges.
+  `Needs-info`; at the merge evaluator, the bar is review-rank >= build-rank on one provider (the
+  reviewer is never weaker) — an equal-rank pair that cleared intake also auto-merges cleanly.
 - Optional per-stage repair tiers (`[roles.stage_tiers]`) let `check_repair` / `review_repair` run
   cheaper than the build role, never above it.
 

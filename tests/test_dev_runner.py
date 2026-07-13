@@ -1329,13 +1329,32 @@ def test_shadow_would_block_freshness(tmp_path):
     _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
 
 
-def test_shadow_would_block_rank_gate(tmp_path):
-    """An equal-rank pair (build==review) clears intake but fails the STRICT review>build merge gate ->
-    WOULD-BLOCK rank_gate (criterion 5). CI green + fresh, so rank_gate is the first failing condition."""
+def test_shadow_would_merge_equal_rank_pair(tmp_path):
+    """issue #139: an equal-rank pair (build==review, same provider, both ranked) clears intake AND now
+    clears the merge gate too (review-rank >= build-rank — the reviewer is never weaker) -> WOULD-MERGE,
+    not WOULD-BLOCK rank_gate. This used to be the strict-> failure case; the relaxation to >= means the
+    top-ranked model (nothing outranks it) can now be commissioned as a builder."""
     body_md = "### Acceptance criteria\n- [ ] x\n\nmodel: opus\nreview_model: opus\n"
     env = _shadow_env(tmp_path, title="Shadow equal rank", checks=[CR_OK], body=body_md)
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr                                       # intake did NOT bounce the equal pair
+    body = _shadow_body(tmp_path)
+    assert body.splitlines()[0] == WOULD_MERGE
+    rec = _shadow_block(body)
+    assert rec["decision"] == "WOULD-MERGE" and rec["failed_condition"] is None
+    assert rec["build"]["rank"] == rec["review"]["rank"] == 40
+    _assert_not_blocked_and_in_review(_timeline(tmp_path), r)
+
+
+def test_shadow_would_block_rank_gate_unranked_override(tmp_path):
+    """A raw, unregistered build id via the operator env override clears intake (the only non-registry
+    escape) but runs UNRANKED — it can never satisfy the rank gate (review-rank >= build-rank requires
+    both entries ranked), so it still WOULD-BLOCK rank_gate (criterion 5) exactly as before issue #139:
+    the relaxation widened WHICH ranked pairs pass, not whether an unranked pair can."""
+    env = _shadow_env(tmp_path, title="Shadow unranked override", checks=[CR_OK],
+                      extra={"BUILD_MODEL": "some-unregistered-model-x"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
     body = _shadow_body(tmp_path)
     assert body.splitlines()[0] == _would_block("rank_gate")
     assert _shadow_block(body)["failed_condition"] == "rank_gate"
@@ -1344,9 +1363,9 @@ def test_shadow_would_block_rank_gate(tmp_path):
 
 def test_shadow_first_failed_condition_is_earliest_in_order(tmp_path):
     """Conditions are evaluated IN ORDER (criterion 1): with BOTH ci_green (zero checks) and rank_gate
-    (equal pair) failing, the record names ci_green — the earliest — not rank_gate."""
-    body_md = "### Acceptance criteria\n- [ ] x\n\nmodel: opus\nreview_model: opus\n"
-    env = _shadow_env(tmp_path, title="Shadow ordering", checks=[], body=body_md)
+    (unranked build override) failing, the record names ci_green — the earliest — not rank_gate."""
+    env = _shadow_env(tmp_path, title="Shadow ordering", checks=[],
+                      extra={"BUILD_MODEL": "some-unregistered-model-x"})
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
     body = _shadow_body(tmp_path)
