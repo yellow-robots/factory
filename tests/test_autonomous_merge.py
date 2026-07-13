@@ -354,8 +354,9 @@ def test_armed_failed_condition_blocks_and_sets_reason_blocked(tmp_path):
 
 def test_armed_unranked_env_override_never_auto_merges(tmp_path):
     """An operator env override that names a raw, unregistered build id runs UNRANKED — it clears intake
-    but can never satisfy the strict review>build rank gate, so an armed repo with it never auto-merges
-    (it BLOCKS on rank_gate instead of merging)."""
+    but can never satisfy the rank gate (review-rank >= build-rank requires both entries ranked; issue
+    #139's relaxation to >= only widens which RANKED pairs pass), so an armed repo with it never
+    auto-merges (it BLOCKS on rank_gate instead of merging)."""
     work, origin = td._make_repo(tmp_path)
     binp = tmp_path / "bin"; _stubs(binp)
     env = _armed_env(tmp_path, binp, work, origin, prs=_complete_prs(),

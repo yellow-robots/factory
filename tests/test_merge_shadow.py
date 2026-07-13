@@ -184,11 +184,27 @@ def test_record_would_block_terminal_approval():
 
 
 def test_record_would_block_rank_gate():
-    """criterion 5: the rank gate (strict review>build) failing blocks and is named."""
+    """criterion 5: the rank gate (review-rank >= build-rank, the reviewer is never weaker; issue #139
+    relaxed this from strict review>build) failing blocks and is named."""
     r = _all_pass()
     r["rank_gate"] = "fail"
     rec = _record(r)
     assert merge_shadow.render_comment(rec).splitlines()[0] == f"YR-MERGE-SHADOW: WOULD-BLOCK {EMDASH} rank_gate"
+
+
+def test_record_would_merge_when_rank_gate_pass_from_an_equal_rank_pair():
+    """criterion 5 (issue #139): an equal-rank pair resolves rank_gate to 'pass' upstream (see
+    tools/registry.rank_check and dev-runner.sh's shadow_rank_gate) — fed here as results['rank_gate']
+    = 'pass' with build/review both at rank 40, the record still reaches WOULD-MERGE, not a block."""
+    r = _all_pass()
+    bundle = _bundle()
+    bundle["build"] = {"name": "opus", "id": "claude-opus-4-8", "provider": "anthropic", "rank": 40, "ranked": True}
+    bundle["review"] = {"name": "opus", "id": "claude-opus-4-8", "provider": "anthropic", "rank": 40, "ranked": True}
+    rec = _record(r, bundle=bundle)
+    assert rec["decision"] == "WOULD-MERGE"
+    assert rec["failed_condition"] is None
+    assert rec["build"]["rank"] == rec["review"]["rank"] == 40
+    assert merge_shadow.render_comment(rec).splitlines()[0] == "YR-MERGE-SHADOW: WOULD-MERGE"
 
 
 def test_record_schema_and_fixed_fields():

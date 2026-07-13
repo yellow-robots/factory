@@ -15,7 +15,8 @@ The four base conditions, in evaluation order (their ids are the WOULD-BLOCK / B
                        grace — see shadow_ci's own env pair — is a failure).
   freshness          — the reviewed base SHA equals main's tip at decision time.
   terminal_approval  — the final review round is a clean `VERDICT: APPROVE`.
-  rank_gate          — the resolved pair satisfies strict review-rank > build-rank on one provider.
+  rank_gate          — the resolved pair satisfies review-rank >= build-rank on one provider (the
+                       reviewer is never weaker).
 For an armed repo two more gate the merge: `sentinel` (the host kill switch is not thrown) and shadow
 completion (below). A moved main (freshness fail) on an otherwise-armed pass is REMEDIATED by the runner
 (rebase + re-green), not blocked.
