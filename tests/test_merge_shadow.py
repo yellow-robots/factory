@@ -136,7 +136,6 @@ def test_first_failed_none_when_all_pass():
 
 def test_first_failed_respects_order():
     order = ["ci_green", "freshness", "terminal_approval", "rank_gate"]
-    assert merge_shadow.CONDITION_ORDER == tuple(order)
     for i, cond in enumerate(order):
         results = _all_pass()
         results[cond] = "fail"
@@ -269,3 +268,27 @@ def test_record_cli_roundtrip(tmp_path):
     assert rec["schema"] == "yr-merge-record/1"
     assert rec["decision"] == "WOULD-BLOCK" and rec["failed_condition"] == "freshness"
     assert REQUIRED_FIELDS <= set(rec)
+
+
+# ============ issue #146: the back-compat alias for the condition order is gone ============
+# NB: the retired name is built via concatenation, never spelled out literally, so this file
+# itself doesn't trip its own "nothing left in the tree" scan below.
+_RETIRED_ALIAS = "CONDITION" + "_ORDER"
+
+
+def test_condition_order_alias_removed_from_module():
+    """SHADOW_ORDER is the one name for the evaluator's condition order — no back-compat alias."""
+    assert not hasattr(merge_shadow, _RETIRED_ALIAS)
+
+
+def test_condition_order_absent_from_source_tree():
+    """grep -rn '<the retired alias>' tools/ tests/ returns nothing (issue #146 test expectation)."""
+    for base in (ROOT / "tools", ROOT / "tests"):
+        for path in base.rglob("*.py"):
+            text = path.read_text()
+            assert _RETIRED_ALIAS not in text, f"found the retired alias in {path}"
+
+
+def test_shadow_order_is_the_condition_order():
+    """SHADOW_ORDER itself is untouched: the four conditions, in the fixed evaluation order."""
+    assert merge_shadow.SHADOW_ORDER == ("ci_green", "freshness", "terminal_approval", "rank_gate")
