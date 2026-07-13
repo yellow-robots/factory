@@ -4,6 +4,10 @@ check_cmd = "pytest tests/ -q"
 model = "sonnet"
 base_ref = "origin/main"
 
+# Held-out test globs for tools/bench_corpus.py (issue #162): which PR files count as this repo's
+# held-out test set when a merged task/* PR is extracted into the replayable bench corpus.
+bench_test_globs = ["tests/**"]
+
 # Armed 2026-07-07, shadow window complete (5/5 clean unreverted merges): the factory itself
 # squash-merges a green, fresh, approved, rank-holding PR. The merge decision re-reads this key
 # from origin/main's tip — un-arm by removing it, or throw the host sentinel
