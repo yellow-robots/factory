@@ -99,15 +99,22 @@ def _gh_json(gh, argv):
     return out if isinstance(out, (dict, list)) else json.loads(out)
 
 
+def _contents_argv(owner, name, path, *, ref=None):
+    """argv for a `gh api` contents-endpoint read, GET-safe by construction: `-X GET` accompanies any
+    `-f ref=` field, since `gh api` otherwise silently switches a fielded call to POST."""
+    argv = ["api", f"repos/{owner}/{name}/contents/{path}",
+            "-H", "Accept: application/vnd.github.raw"]
+    if ref:
+        argv += ["-X", "GET", "-f", f"ref={ref}"]
+    return argv
+
+
 def _manifest_at(gh, owner, name, ref=None):
     """Parsed `.yr/factory.toml` at `ref` (the default branch when `ref` is None), or None on a
     confirmed 404 — the same discipline as `tools/epic_gate.py`'s `_repo_has_manifest`: a 404 is real
     data (no manifest there); any other failure retries with backoff, then raises `ManifestProbeError`
     rather than ever guessing "absent"."""
-    argv = ["api", f"repos/{owner}/{name}/contents/.yr/factory.toml",
-            "-H", "Accept: application/vnd.github.raw"]
-    if ref:
-        argv += ["-f", f"ref={ref}"]
+    argv = _contents_argv(owner, name, ".yr/factory.toml", ref=ref)
     last_exc = None
     for attempt in range(_PROBE_ATTEMPTS):
         try:
@@ -160,8 +167,7 @@ def _pre_solution_ref(gh, owner, name, merge_sha):
 
 
 def _file_content_at(gh, owner, name, path, ref):
-    raw = _read_with_retry(gh, ["api", f"repos/{owner}/{name}/contents/{path}",
-                                "-f", f"ref={ref}", "-H", "Accept: application/vnd.github.raw"])
+    raw = _read_with_retry(gh, _contents_argv(owner, name, path, ref=ref))
     return raw if isinstance(raw, str) else json.dumps(raw)
 
 

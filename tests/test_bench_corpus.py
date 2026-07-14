@@ -205,6 +205,22 @@ def test_prompt_is_the_issue_body_verbatim_never_authored(monkeypatch, tmp_path)
     assert record["prompt"]["read_at"] == NOW
 
 
+def test_fielded_api_reads_pin_explicit_get(monkeypatch, tmp_path):
+    """`gh api` silently switches to POST whenever a `-f`/`-F` field is present without an explicit
+    `-X GET` -- every fielded REST read this tool issues must pin it. This invariant self-extends to
+    any future read added to this file, even though a mocked gh cannot observe HTTP semantics."""
+    monkeypatch.setattr(bench_corpus.time, "sleep", lambda s: None)
+    gh = _eligible_gh()
+
+    result = bench_corpus.extract_corpus(REPO, gh=gh, now=_now, out_dir=tmp_path)
+
+    assert result["excluded"] == []
+    assert len(result["written"]) == 1
+    for call in gh.calls:
+        if "-f" in call or "-F" in call:
+            assert "-X" in call and call[call.index("-X") + 1] == "GET", call
+
+
 def test_pre_solution_ref_is_the_merge_commits_first_parent(monkeypatch, tmp_path):
     monkeypatch.setattr(bench_corpus.time, "sleep", lambda s: None)
     gh = _eligible_gh(
