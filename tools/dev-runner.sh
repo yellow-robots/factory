@@ -43,6 +43,12 @@ EFFORT="${EFFORT:-high}"
 # ranked) OR a raw unregistered id (the ONLY place a non-registry id runs — unranked + loudly warned,
 # never bounced). MODELS_REGISTRY overrides the registry file (default: the factory's own models.toml).
 BUILD_MODEL="${BUILD_MODEL:-}"; REVIEW_MODEL="${REVIEW_MODEL:-}"
+# Shadow review seat (issue #165): a non-gating SECOND verdict on every gating review round, dark by
+# default. BOTH keys must be set — YR_SHADOW_MODEL (the model id to run the shadow reviewer under) and
+# YR_SHADOW_BASE_URL (an ANTHROPIC_BASE_URL override applied to that ONE shadow subprocess only) — or the
+# whole feature is inert: no shadow subprocess, no shadow artifact, no shadow comment. Never wired into
+# the review gate, terminal_approval, or the merge evaluator (see shadow_review_round below).
+YR_SHADOW_MODEL="${YR_SHADOW_MODEL:-}"; YR_SHADOW_BASE_URL="${YR_SHADOW_BASE_URL:-}"
 DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
 # DoR Type gate: build only this native Issue Type. Empty disables it (repos without Issue Types).
 # Use the no-colon form so an explicit REQUIRE_ISSUE_TYPE='' stays empty (a true opt-out), not defaulted.
@@ -716,8 +722,10 @@ reap_pgid(){   # $1 = the stage's pgid (== its pid; see run_stage)
 }
 
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
-run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set), $5=model id (default: build)
-  local model="${5:-$BUILD_ID}" cred rc=0 fmt_overridden=0 pid
+run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set),
+              # $5=model id (default: build), $6=ANTHROPIC_BASE_URL override for THIS subprocess only (default: unset;
+              # the shadow review seat, issue #165, is the one caller that passes it — every other call is untouched)
+  local model="${5:-$BUILD_ID}" base_url="${6:-}" cred rc=0 fmt_overridden=0 pid
   local sys_prompt; sys_prompt="$(printf '%s\n\n%s' "$1" "$STAGE_CHARTER")"
   # the task prompt travels on stdin, never argv (issue #121): a task whose acceptance criteria quote a
   # runnable string (e.g. `pkill -f "bash qa/qa-gate.sh"`) must not be able to pattern-match the stage's
@@ -745,7 +753,11 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
   # new process group, so `exec setsid` succeeds in-place (no extra fork): `$!` IS the CLI's pid, and
   # that pid IS the new group's pgid. The task prompt is piped in via `printf '%s'` (no here-string) so
   # no trailing newline is added — byte-identical to what argv used to carry.
-  if [ -n "$cred" ]; then
+  if [ -n "$cred" ] && [ -n "$base_url" ]; then
+    printf '%s' "$2" | ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" ANTHROPIC_BASE_URL="$base_url" exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
+  elif [ -n "$base_url" ]; then
+    printf '%s' "$2" | ( cd "$WT" && ANTHROPIC_BASE_URL="$base_url" exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
+  elif [ -n "$cred" ]; then
     printf '%s' "$2" | ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
   else
     printf '%s' "$2" | ( cd "$WT" && exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
@@ -904,12 +916,33 @@ python3 "$SELF_DIR/review_bundle.py" init --bundle "$BUNDLE" \
 # Review is a judgment, so the gate is the reviewer's own verdict — but a separate cold process with
 # no stake, and fail-closed (anything but a clear APPROVE blocks). The verdict is attached to the PR.
 REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Tag each finding 'blocker' or 'nit'. Do NOT modify any files. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
+
+# ---- shadow review seat (issue #165): a non-gating SECOND verdict on the SAME review bundle every
+# gating round produces. Dark unless BOTH YR_SHADOW_MODEL and YR_SHADOW_BASE_URL are set — then a pure
+# no-op: no subprocess, no artifact, no comment (byte-identical to before this feature existed). Any
+# failure here is best-effort logged and NEVER escalated — this must not touch the review gate below,
+# terminal_approval, or the merge evaluator. Artifact naming mirrors the capture_stage_usage suffix
+# pattern (:683-698 above): round 1 -> shadow-review.md, round 2 -> shadow-review-2.md.
+SHADOW_ROUNDS=()
+shadow_review_round(){
+  [ -n "$YR_SHADOW_MODEL" ] && [ -n "$YR_SHADOW_BASE_URL" ] || return 0
+  local out="$RUN_DIR/shadow-review.md" n=2
+  while [ -e "$out" ]; do out="$RUN_DIR/shadow-review-$n.md"; n=$((n + 1)); done
+  local rc=0
+  run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" \
+    "$out" "Read Bash" "$YR_SHADOW_MODEL" "$YR_SHADOW_BASE_URL" || rc=$?
+  [ "$rc" -ne 0 ] && log "shadow review stage failed (exit $rc; log: $out) — non-gating, build proceeds unchanged"
+  SHADOW_ROUNDS+=("$out")
+  return 0
+}
+
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
                 local rc=0
                 run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID" || rc=$?
                 if [ "$rc" -ne 0 ] && is_quota_failure "$RUN_DIR/review.md"; then llm_quota_hold "review" "$RUN_DIR/review.md"; fi
                 python3 "$SELF_DIR/review_bundle.py" record-verdict --bundle "$BUNDLE" --file "$RUN_DIR/review.md" \
                   || fail_blocked "review bundle record-verdict failed"
+                shadow_review_round   # non-gating second opinion (issue #165) — never affects the verdict below
                 # fail-closed: the LAST verdict line must be exactly "VERDICT: APPROVE" (only trailing whitespace
                 # trimmed) — a hedge ("APPROVE" then "REQUEST_CHANGES"), trailing junk, or a mangled token does NOT pass.
                 # Shared grammar: verdict_line() above.
@@ -1038,6 +1071,21 @@ retry_with_backoff push_attempt "push" || pr_stage_hold "push" "$RETRY_ERR"
 PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$BUILD_ID" "$REVIEW_ID")"
 retry_with_backoff pr_create_attempt "pr create" || pr_stage_hold "pr create" "$RETRY_ERR"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
+
+# ---- shadow review comments (issue #165): one inert comment per shadow round recorded above. Never
+# posted at all when the feature is dark (SHADOW_ROUNDS stays empty). The transcript is blockquoted so no
+# line can match the line-anchored gating token (`^VERDICT:`) — the first line names the extracted verdict
+# (same last-line exact-match rule as verdict_line()) under a marker that is never the gating grammar.
+shadow_verdict_token(){   # $1 = a shadow-review file -> its bare verdict token, or NONE if no VERDICT: line landed
+  local line; line="$(verdict_line "$1")"
+  [ -n "$line" ] && printf '%s' "${line#VERDICT: }" || printf 'NONE'
+}
+for shadow_file in "${SHADOW_ROUNDS[@]}"; do
+  shadow_comment="${shadow_file%.md}-comment.md"
+  { printf 'YR-SHADOW-REVIEW: %s\n\n' "$(shadow_verdict_token "$shadow_file")"
+    sed 's/^/> /' "$shadow_file"; } > "$shadow_comment"
+  "$GH_BIN" pr comment "$PR_URL" --body-file "$shadow_comment" >/dev/null 2>&1 || true
+done
 
 # staleness warning (issue #58): additive alongside the reviewer verdict + usage summary, and deliberately
 # clear of every parsed comment grammar (no `YR-` marker line, no `YR-MERGE` anywhere) — visibility only,
