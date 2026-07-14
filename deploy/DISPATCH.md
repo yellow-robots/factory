@@ -97,6 +97,16 @@ Every `models.toml` entry names a `quota_pool` — the shared rate/spend ceiling
 - **This iteration only names the seam.** Both shipping registry entries (`sonnet`, `opus`) share `quota_pool = "anthropic-main"`, so no `YR_POOL_*` variable needs to be set until a second pool/account is actually provisioned (a separate, deliberate operator action — never automatic).
 - Set it in `~/.config/dev-runner/dispatch.env` alongside `DISPATCH_TOKEN` (see `deploy/dispatch.env.example`).
 
+### The shadow review seat (`YR_SHADOW_MODEL` / `YR_SHADOW_BASE_URL`)
+
+The non-gating second review verdict (see AGENTS.md → "Bench evidence and the shadow review seat";
+depth: `skills/factory/references/pipeline.md` → "The shadow review seat") rides the same dispatch
+service environment as every other stage key above — dark by default. Set **both**
+`YR_SHADOW_MODEL` and `YR_SHADOW_BASE_URL` in `~/.config/dev-runner/dispatch.env` (alongside
+`DISPATCH_TOKEN`) to light it; leave either unset to keep it dark — there is no partial-on state. Like
+every credential/config decision in this service, turning it on is **operator-set**: auth is human work,
+never an agent's to arm.
+
 ## Safety properties (already built)
 
 - **Per-repo locks + a global cap (epic #126):** each repo gets its own non-blocking `flock`
