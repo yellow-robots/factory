@@ -1087,6 +1087,21 @@ for shadow_file in "${SHADOW_ROUNDS[@]}"; do
   "$GH_BIN" pr comment "$PR_URL" --body-file "$shadow_comment" >/dev/null 2>&1 || true
 done
 
+# ---- verdict-diff records (issue #166): pairs each gating round (tools/review_bundle.py's `rounds`
+# list — the only per-round store, since review.md itself is overwritten each round) with its OWN
+# shadow round from SHADOW_ROUNDS above, and lands one inert `YR-VERDICT-DIFF` PR comment + one
+# yr-verdict-diff/1 record file per pair. A round with no shadow record is skipped by
+# tools/verdict_diff.py itself — never a synthesized disagreement. Best-effort like the shadow seat
+# above: never touches the gate, terminal_approval, or the merge evaluator, and never blocks the
+# build. Merge outcome is NOT written here (slice F backfills it at aggregation time). A complete
+# no-op when the shadow seat is dark (SHADOW_ROUNDS empty) — no subprocess, no artifact, no comment.
+if [ "${#SHADOW_ROUNDS[@]}" -gt 0 ]; then
+  while IFS= read -r vdiff_comment; do
+    [ -n "$vdiff_comment" ] || continue
+    "$GH_BIN" pr comment "$PR_URL" --body-file "$vdiff_comment" >/dev/null 2>&1 || true
+  done < <(python3 "$SELF_DIR/verdict_diff.py" run --run-dir "$RUN_DIR" --bundle "$BUNDLE" 2>/dev/null || true)
+fi
+
 # staleness warning (issue #58): additive alongside the reviewer verdict + usage summary, and deliberately
 # clear of every parsed comment grammar (no `YR-` marker line, no `YR-MERGE` anywhere) — visibility only,
 # never a gate.
