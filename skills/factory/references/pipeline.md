@@ -189,6 +189,64 @@ concept of "a build is currently running." That makes the human side of the chor
   named issue, or an originating run whose artifacts are missing all refuse fail-closed, before any
   write.
 
+## The shadow review seat
+
+A second, non-gating verdict on the same review bundle every gating round produces (issue #165) — not
+to be confused with *shadow merge choreography* above, which is about the merge evaluator's WOULD-MERGE
+record for a non-armed repo. Dark by default: both `YR_SHADOW_MODEL` and `YR_SHADOW_BASE_URL`
+(`tools/dev-runner.sh:46-51`) must be set, or the feature is a pure no-op — no shadow subprocess, no
+shadow artifact, no shadow comment, byte-identical to a build without it. When lit, a shadow round runs
+the same review prompt against the same review bundle as the gating round, on its own model/base-URL
+pair (`shadow_review_round()`, `tools/dev-runner.sh:927`), and is never wired into the review gate,
+`terminal_approval`, or the merge evaluator — a shadow stage failure is logged and the build proceeds
+unchanged.
+
+Every shadow artifact is inert by construction — a record that can never be mistaken for the gating
+grammar:
+
+- `YR-SHADOW-REVIEW: <token>` (`shadow_verdict_token()` / the posting loop, `tools/dev-runner.sh:1079`)
+  states the shadow round's own verdict, but blockquotes the transcript beneath it so no line can match
+  the line-anchored gating grammar `^VERDICT:` (`verdict_line()`, same file).
+- `YR-VERDICT-DIFF: agree|disagree` (`tools/verdict_diff.py`'s `render_comment` / `build_records`) pairs
+  a gating round with its own same-index shadow round into one `yr-verdict-diff/1` record
+  (`{schema, round, gating, shadow, agree}`) — a round with no shadow record gets no diff, never a
+  synthesized disagreement.
+
+Both grammars are defined in the modules cited above — read them there, not restated here.
+
+## The bench
+
+The attended benchmark tool (epic yellow-robots/factory#161) that replays a candidate's solution to a
+past task against sealed, held-out tests, grades it deterministically, and reports the result — never
+contending with the live dispatch line: attended host CLI only, no dispatch coupling, no `/build` path,
+no capacity-slot claims (`tools/bench_replay.py`'s module docstring).
+
+Pipeline: **corpus → sealed replay → deterministic grading → report.**
+
+- **Corpus** (`tools/bench_corpus.py extract`): derives one `yr-bench-corpus/1` record per eligible
+  merged `task/*` PR — the DoR prompt, the pre-solution ref, and the held-out test files' paths and
+  contents — under `bench/corpus/`.
+- **Sealed replay** (`tools/bench_replay.py`'s `grade()` / `run_candidate()`): seals a fresh workdir at
+  the record's `pre_solution_ref` via a depth-1 fetch of exactly that one commit. **The seal rule:** the
+  seal is verified *before any grading* — no configured remote, exactly one commit reachable from HEAD
+  and it IS `pre_solution_ref`, and the GitHub credential env vars absent from the child process's
+  environment; any failure is `invalid-seal`, loud, never graded. The seal must survive its own
+  verification.
+- **Deterministic grading**: no LLM judge. The held-out tests are patched back onto the candidate's tree
+  from the record itself (never from git), then the repo's own `check_cmd` runs: exit 0 is `pass`, else
+  `fail`; a check harness that couldn't even execute is `ungraded-environmental`, never a graded fail.
+  `run_candidate()` appends one `yr-bench-result/1` row per run to `bench/results/`.
+- **Report** (`tools/bench_report.py`): `report` aggregates `yr-bench-result/1` rows into a dated
+  `bench/reports/*.md` (pass rate, weighted cost, N, per-repo composition, the grading caveat below);
+  `sweep-diffs` aggregates posted `YR-VERDICT-DIFF` comments into `bench/diffs/`, backfilling each PR's
+  merge outcome.
+
+**The grading caveat** — quoted verbatim by `tools/bench_report.py`'s `load_grading_caveat()` from
+`bench/corpus/README.md`'s own `## Grading caveat` section, never re-worded in the report or here: a
+`pass` proves only that a candidate's change makes the *same PR's own* anchored test artifacts green
+under the repo's own check command — not independent proof of correctness, and not graded against the
+original PR's approach.
+
 ## Judgment points
 
 - **`REQUIRE_ISSUE_TYPE=''`** in the runner environment opts out of the Type=Task check for repos that

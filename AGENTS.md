@@ -137,6 +137,15 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   arm a repo, or hand-merge a PR (an armed repo merges via the evaluator; everything else is the
   human's click). Grants are per-agent and the human's to extend.
 - **Auth is human work** — orgs/repos/tokens/scopes, never an agent.
+- **Bench evidence and the shadow review seat** (epic yellow-robots/factory#161; depth:
+  [`skills/factory/references/pipeline.md`](skills/factory/references/pipeline.md) → "The shadow review
+  seat" / "The bench"). Three record schemas: `yr-bench-corpus/1` (`tools/bench_corpus.py`),
+  `yr-bench-result/1` (`tools/bench_replay.py`), and `yr-verdict-diff/1` (`tools/verdict_diff.py`,
+  pairing a gating review round with its own shadow round). The shadow review seat is dark by default
+  behind two env keys, `YR_SHADOW_MODEL` / `YR_SHADOW_BASE_URL` (`tools/dev-runner.sh:46-51`) — both or
+  neither, never gating. No shadow- or bench-derived PR trail comment ever carries a line-anchored
+  `VERDICT:` itself (only the gating review's own comment does): a shadow or verdict-diff comment always
+  blockquotes its transcript, so it can never be mistaken for the gating grammar.
 
 ---
 
