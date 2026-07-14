@@ -538,8 +538,12 @@ fi
 set_status "In Progress"
 log "claimed #$ISSUE -> In Progress, branch $BRANCH, build=$BUILD_ID review=$REVIEW_ID"
 
-# from here, any failure flags Reason=Blocked (and comments) before exiting — failures are visible
-fail_blocked(){ set_reason Blocked; comment "dev-runner: **Blocked** — $1"; cleanup_wt; die "$1"; }
+# from here, any failure flags Reason=Blocked (and comments) before exiting — failures are visible.
+# If a review-repair round ran this run, $RUN_DIR/final.patch holds the post-repair tree (issue #172) —
+# name it in the record so salvage recovers the final tree, not diff.patch's pre-repair snapshot.
+fail_blocked(){ local extra=""
+                 [ -f "$RUN_DIR/final.patch" ] && extra="  Post-repair artifact: $RUN_DIR/final.patch (the tree after the review-repair round — salvage from this, not diff.patch)."
+                 set_reason Blocked; comment "dev-runner: **Blocked** — $1$extra"; cleanup_wt; die "$1"; }
 
 # ---- run dir (per-pid), worktree (repo+branch-keyed, stable), per-repo-branch stage-completion state
 #      (issue #39; repo-keyed epic #126) --------------------------------------------------------------
@@ -919,6 +923,15 @@ else
     REVIEWREPAIR_RC=0
     run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || REVIEWREPAIR_RC=$?
     if [ "$REVIEWREPAIR_RC" -ne 0 ] && is_quota_failure "$RUN_DIR/review-repair.log"; then llm_quota_hold "review repair" "$RUN_DIR/review-repair.log"; fi
+    # ---- persist the post-repair diff (issue #172) ----
+    # Capture the repair's edits BEFORE the check re-run below, regardless of the repair's own exit
+    # status (REVIEWREPAIR_RC) — a crashed repair's partial edits are exactly what salvage wants. The
+    # repair stage itself stages nothing, so stage the worktree here first. This pins the artifact ahead
+    # of BOTH blocked-after-repair paths (checks failing after repair; the second review round blocking),
+    # so a teardown on either path still leaves the final tree recoverable from $RUN_DIR/final.patch —
+    # unlike diff.patch above, which is the PRE-repair snapshot.
+    "$GIT_BIN" -C "$WT" add -A
+    "$GIT_BIN" -C "$WT" diff --cached > "$RUN_DIR/final.patch"
     run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)"
     review_stage || fail_blocked "reviewer still requests changes after one repair"
   fi
