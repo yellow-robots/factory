@@ -29,20 +29,17 @@ ALLOWED_CHANGED_DOC_PATHS = {
     "skills/factory/references/pipeline.md",
 }
 
+# Issue #168 shipped as this single merge commit (b84be92, parent 2b19472) — a closed, immutable
+# slice of history. The scope checks below pin to that fixed commit range rather than the
+# repo's moving base_ref: a moving base_ref would re-diff *every later* PR's own working tree
+# against the docs-only invariant that only ever applied to #168's own change, failing any
+# unrelated future PR (e.g. a version bump) that touches a non-doc, non-tests/ file.
+MERGE_COMMIT = "b84be92a106a810149422a6b68317b491920ad77"
+MERGE_PARENT = "2b19472d1389e05f5741f8ddfe05baffbf72771e"
+
 
 def _text(path):
     return path.read_text(encoding="utf-8")
-
-
-def _resolve_base_ref():
-    """Same manifest key the runner itself resolves (AGENTS.md > Conventions): .yr/factory.toml's
-    base_ref, default origin/main."""
-    manifest = ROOT / ".yr" / "factory.toml"
-    if manifest.exists():
-        match = re.search(r'^base_ref\s*=\s*"([^"]+)"', _text(manifest), re.MULTILINE)
-        if match:
-            return match.group(1)
-    return "origin/main"
 
 
 def _run_git(*args):
@@ -51,19 +48,9 @@ def _run_git(*args):
     ).stdout
 
 
-def _changed_paths_since_base():
-    """Every path with a working-tree difference (staged or not) against the base ref, plus any
-    brand-new untracked file — the same universe a PR diff for this branch would show."""
-    base = _resolve_base_ref()
-    tracked = set(_run_git("diff", "--name-only", base).split())
-    untracked = set(_run_git("ls-files", "--others", "--exclude-standard").split())
-    return tracked | untracked
-
-
-def _tracked_and_untracked_paths():
-    tracked = set(_run_git("ls-files").split())
-    untracked = set(_run_git("ls-files", "--others", "--exclude-standard").split())
-    return tracked | untracked
+def _changed_paths_in_merge_commit():
+    """Every path #168's own merge commit (b84be92) touched, relative to its parent."""
+    return set(_run_git("diff", "--name-only", MERGE_PARENT, MERGE_COMMIT).split())
 
 
 def _md_paths_at_ref(ref):
@@ -75,7 +62,7 @@ def _md_paths_at_ref(ref):
 # ---------------------------------------------------------------------------------------------
 
 def test_diff_outside_tests_touches_only_the_three_named_doc_files():
-    changed = _changed_paths_since_base()
+    changed = _changed_paths_in_merge_commit()
     outside_tests = {p for p in changed if not p.startswith("tests/")}
     unexpected = outside_tests - ALLOWED_CHANGED_DOC_PATHS
     assert not unexpected, (
@@ -85,8 +72,7 @@ def test_diff_outside_tests_touches_only_the_three_named_doc_files():
 
 
 def test_the_three_named_doc_files_are_modifications_not_additions():
-    base = _resolve_base_ref()
-    status = _run_git("diff", "--name-status", base)
+    status = _run_git("diff", "--name-status", MERGE_PARENT, MERGE_COMMIT)
     for line in status.splitlines():
         parts = line.split("\t")
         if len(parts) == 2 and parts[1] in ALLOWED_CHANGED_DOC_PATHS:
@@ -96,9 +82,8 @@ def test_the_three_named_doc_files_are_modifications_not_additions():
 
 
 def test_no_new_markdown_doc_file_was_added_anywhere_in_the_tree():
-    base = _resolve_base_ref()
-    before = _md_paths_at_ref(base)
-    after = {p for p in _tracked_and_untracked_paths() if p.endswith(".md")}
+    before = _md_paths_at_ref(MERGE_PARENT)
+    after = _md_paths_at_ref(MERGE_COMMIT)
     new_md = after - before
     assert not new_md, (
         f"docs are consolidated, not accreted (AGENTS.md > Invariants) — new .md file(s) "
@@ -107,8 +92,10 @@ def test_no_new_markdown_doc_file_was_added_anywhere_in_the_tree():
 
 
 def test_version_pin_test_file_is_untouched():
-    base = _resolve_base_ref()
-    diff = _run_git("diff", "--name-only", base, "--", str(VERSION_PIN_TEST.relative_to(ROOT)))
+    diff = _run_git(
+        "diff", "--name-only", MERGE_PARENT, MERGE_COMMIT,
+        "--", str(VERSION_PIN_TEST.relative_to(ROOT)),
+    )
     assert diff.strip() == "", (
         "tests/test_plugin_version_pin_canonical.py must stay untouched by this docs-only slice"
     )
