@@ -51,6 +51,48 @@ def test_skip_files_are_ignored(tmp_path):
     assert main(["--scan-root", str(tmp_path)]) == 0
 
 
+# --- frozen bench evidence boundary (issue #194) ---
+# The offending corpus itself only lands on main once #193 merges, so the boundary is proven here
+# structurally, over a fixture tree, per the acceptance criteria's own instruction.
+
+def test_scan_skips_hit_inside_bench_corpus_record_subdirectory(tmp_path):
+    _write(tmp_path, "bench/corpus/some--repo/1-pr2.json",
+           '{"note": "see 01-conventions for the model"}\n')
+    assert list(scan(tmp_path)) == []
+    assert main(["--scan-root", str(tmp_path)]) == 0
+
+
+def test_scan_reports_hit_in_bench_corpus_readme(tmp_path):
+    _write(tmp_path, "bench/corpus/README.md",
+           "The documentation model is at 01-conventions in the vault.\n")
+    hits = list(scan(tmp_path))
+    assert len(hits) == 1
+    assert hits[0][0] == "bench/corpus/README.md"
+    assert main(["--scan-root", str(tmp_path)]) == 1
+
+
+def test_scan_reports_hit_outside_bench_directory(tmp_path):
+    _write(tmp_path, "docs/note.md",
+           "The documentation model is at 01-conventions in the vault.\n")
+    hits = list(scan(tmp_path))
+    assert len(hits) == 1
+    assert hits[0][0] == "docs/note.md"
+    assert main(["--scan-root", str(tmp_path)]) == 1
+
+
+def test_scan_boundary_both_ways_together(tmp_path):
+    # planted in three places at once: only the record-subdirectory hit is skipped
+    _write(tmp_path, "bench/corpus/some--repo/1-pr2.json",
+           '{"note": "01-conventions embedded verbatim"}\n')
+    _write(tmp_path, "bench/corpus/README.md",
+           "01-conventions must not be the living model.\n")
+    _write(tmp_path, "docs/note.md",
+           "01-conventions still shows up here.\n")
+    reported = {rel for rel, _lineno, _line in scan(tmp_path)}
+    assert reported == {"bench/corpus/README.md", "docs/note.md"}
+    assert main(["--scan-root", str(tmp_path)]) == 1
+
+
 def test_skip_vcs_and_build_dirs(tmp_path):
     # Forbidden references inside .git, .venv, node_modules must be ignored
     for skip_dir in (".git", ".venv", "node_modules"):
