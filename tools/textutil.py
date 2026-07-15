@@ -1,3 +1,42 @@
+def is_frozen_bench_evidence(rel_path: str) -> bool:
+    """Return True iff `rel_path` (a forward-slash repo-relative path) is frozen bench evidence —
+    a surface a living-text tree guard (e.g. tools/check_model_refs.py, the version-pin sweep) must
+    not read as if it were living documentation.
+
+    Derived rule: frozen evidence surfaces are records, not living docs. A `yr-bench-corpus/1`
+    record embeds a past PR's file contents verbatim by design — a sealed replay
+    (tools/bench_replay.py) cannot reach git history, so it patches those contents back byte-exact
+    from the record; a `yr-bench-result/1` row stores raw check output; a dated report under
+    bench/reports/ is frozen once written. A guard asserting "string X appears nowhere in the tree"
+    must skip these surfaces, or it fails on history rather than on drift.
+
+    Excluded (fail-closed the *other* direction: scan by default, only these are evidence):
+      - bench/results/... and bench/reports/... (any depth under either prefix)
+      - bench/corpus/exclusions.jsonl, the append-only exclusion log
+      - anything inside a direct subdirectory of bench/corpus/ whose name contains "--" — the
+        owner--name shape tools/bench_corpus.py writes one per repo. Recognized structurally as a
+        directory-with-something-inside-it (a path with a segment past the "--" directory name),
+        never "any subdirectory" of bench/corpus/ — a sibling subdirectory with no "--" in its name
+        is not a per-repo record directory and stays scanned.
+
+    NOT excluded, overriding all of the above: any path whose basename is "README.md" — a living
+    doc is never evidence, wherever it lands under bench/ (bench/corpus/README.md is the living
+    grading-caveat contract tools/bench_report.py quotes verbatim into every report; the same logic
+    would protect a README.md dropped under bench/results/ or bench/reports/). Also not excluded:
+    other top-level files of bench/corpus/, and everything outside bench/ entirely.
+    """
+    parts = rel_path.split("/")
+    if parts[-1] == "README.md":
+        return False
+    if rel_path.startswith("bench/results/") or rel_path.startswith("bench/reports/"):
+        return True
+    if rel_path == "bench/corpus/exclusions.jsonl":
+        return True
+    if len(parts) >= 4 and parts[0] == "bench" and parts[1] == "corpus" and "--" in parts[2]:
+        return True
+    return False
+
+
 def _unquote(item: str):
     """Strip a wrapping pair of double quotes from one scalar/list-item token, verbatim inside."""
     if item.startswith('"'):

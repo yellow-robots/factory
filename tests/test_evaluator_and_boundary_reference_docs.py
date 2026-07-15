@@ -12,8 +12,12 @@ Runs under `.venv/bin/python -m pytest tests/ -q` (or `pytest tests/ -q` on PATH
 import json
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.textutil import is_frozen_bench_evidence
 REFS = ROOT / "skills" / "factory" / "references"
 PIPELINE = REFS / "pipeline.md"
 ONBOARDING = REFS / "onboarding.md"
@@ -263,8 +267,8 @@ def test_onboarding_md_merge_verdict_step_cites_pipeline_ci_green_model():
 THIS_FILE = pathlib.Path(__file__).resolve()
 
 
-def _tracked_text_files():
-    for path in ROOT.rglob("*"):
+def _tracked_text_files(root=ROOT):
+    for path in root.rglob("*"):
         if not path.is_file():
             continue
         if path.resolve() == THIS_FILE:
@@ -273,6 +277,9 @@ def _tracked_text_files():
             continue
         if path.suffix not in TEXT_SUFFIXES:
             continue
+        rel = str(path.relative_to(root)).replace("\\", "/")
+        if is_frozen_bench_evidence(rel):
+            continue  # frozen bench evidence embeds history verbatim by design — not living text
         yield path
 
 
@@ -288,3 +295,33 @@ def test_no_0_9_0_version_pin_remains_anywhere_in_the_tree():
             offenders.append(str(path.relative_to(ROOT)))
     assert not offenders, \
         f"'0.9.0' still present in: {offenders} — should read '0.9.1' after the skill 0.9.1 release"
+
+
+# --- issue #194: frozen bench evidence excluded from this walker's living-text scan ---
+#
+# The offending corpus (embedded 0.9.0 pins inside historical record files) only lands on main
+# once yellow-robots/factory#193 merges, so the real tree cannot prove this boundary yet. Proven
+# here structurally instead, over a fixture tree, by driving _tracked_text_files() itself — the
+# same helper the real-tree test above consults.
+
+def test_tracked_text_files_skips_bench_corpus_record_subdirectory(tmp_path):
+    record = tmp_path / "bench" / "corpus" / "some--repo" / "1-pr2.json"
+    record.parent.mkdir(parents=True)
+    record.write_text('{"note": "0.9.0 embedded verbatim from a past PR"}\n', encoding="utf-8")
+
+    found = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in _tracked_text_files(root=tmp_path)}
+    assert "bench/corpus/some--repo/1-pr2.json" not in found
+
+
+def test_tracked_text_files_still_yields_bench_corpus_readme_and_non_bench_files(tmp_path):
+    readme = tmp_path / "bench" / "corpus" / "README.md"
+    readme.parent.mkdir(parents=True)
+    readme.write_text("0.9.0 must not linger in the living grading-caveat contract.\n", encoding="utf-8")
+
+    outside = tmp_path / "docs" / "note.md"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("0.9.0 still shows up here.\n", encoding="utf-8")
+
+    found = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in _tracked_text_files(root=tmp_path)}
+    assert "bench/corpus/README.md" in found
+    assert "docs/note.md" in found
