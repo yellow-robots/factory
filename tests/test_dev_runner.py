@@ -962,7 +962,7 @@ def test_tester_boundary_guard_checkpoint_is_after_implementer(tmp_path):
 # before any git op — so no real repo is ever touched.
 
 def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, lint_cmd=None,
-                   lint_fix_cmd=None, name="repo"):
+                   lint_fix_cmd=None, lens_cmd=None, name="repo"):
     """A minimal repo dir carrying a .yr/factory.toml (no git needed — dry-run never touches git). A
     leading comment line is always present — with no keys at all, `"\\n".join([]) + "\\n"` is just a
     newline, and `$(cat ...)` strips an all-whitespace read down to an EMPTY string, which the admission
@@ -975,6 +975,7 @@ def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, lint_cmd=N
     if base_ref is not None:     lines.append(f'base_ref = "{base_ref}"')
     if lint_cmd is not None:     lines.append(f'lint_cmd = "{lint_cmd}"')
     if lint_fix_cmd is not None: lines.append(f'lint_fix_cmd = "{lint_fix_cmd}"')
+    if lens_cmd is not None:     lines.append(f'lens_cmd = "{lens_cmd}"')
     (repo / ".yr" / "factory.toml").write_text("\n".join(lines) + "\n")
     return repo
 
@@ -2148,10 +2149,11 @@ def test_dryrun_json_contract_unchanged_by_usage_capture(tmp_path):
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
-    # issue #213 deliberately expands this contract by exactly two keys (lint_cmd/lint_fix_cmd) — the
-    # lint-tier acceptance criterion requires the dry-run to report them. No USAGE-related key may appear.
+    # issue #213 expands this contract by lint_cmd/lint_fix_cmd; issue #214 adds lens_cmd — each tier's
+    # acceptance criterion requires the dry-run to report its own key(s). No USAGE-related key may appear.
     assert set(d) == {"repo", "issue", "branch", "model", "workspace", "base_repo", "base_ref",
-                       "check_cmd", "auto_merge", "lint_cmd", "lint_fix_cmd", "build", "review", "ready"}
+                       "check_cmd", "auto_merge", "lint_cmd", "lint_fix_cmd", "lens_cmd",
+                       "build", "review", "ready"}
 
 
 def test_usage_summary_never_collides_with_the_yr_merge_shadow_record(tmp_path):
