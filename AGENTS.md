@@ -99,6 +99,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/board.sh` | operator: one-shot org-wide board TSV |
 | `tools/stage_usage.py`, `tools/textutil.py` | PR usage-summary comment; shared text helpers |
 | `models.toml` + `tools/registry.py` | the model registry + loader/CLI |
+| `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tests/` | the pytest suite |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |
 | `docs/rfcs/` | canonical RFCs |
@@ -130,6 +131,11 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   exactly the Claude API price ratios, so weighted-total × the model's input $/Mtok = the build's shadow
   cost at API rates. Builds run on the host's Claude subscription — no per-token invoice exists; the
   shadow price is the decision metric (model choice, capacity headroom, cross-provider comparison).
+- **The usage ledger informs, never gates** (epic yellow-robots/factory#204). `tools/ledger.py` appends
+  one `yr-ledger-row/1` row per runner invocation to `$DEV_RUNNER_HOME/ledger/rows.jsonl` and archives
+  each stage's session transcript into the run dir under a runner-owned retention cap — both fail-soft,
+  never blocking, failing, or gating a run. `per-model`/`report` are read-only aggregations over those
+  rows (depth: `skills/factory/references/pipeline.md` → "The ledger").
 - **Attended operator sessions** run under the human's standing grants (settled 2026-07-03, dogfooded
   through it-6→10): cold design reviews with per-finding dispositions; the crossing's technical-rfc and
   decomposition review as its gate; epic Ready flips under a design's standing approval and standalone

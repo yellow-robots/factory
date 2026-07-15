@@ -37,6 +37,17 @@ enough) so concurrent builds each land exactly one, uninterleaved row. Fail-soft
 function here degrades to an empty/best-effort result rather than raising on a missing run dir or log —
 `tools/dev-runner.sh`'s own call site wraps this CLI so a failure warns and never blocks, fails, or gates
 the run.
+
+`per-model` / `report` (issue #207, epic #204 slice 3) are read-only aggregations over `rows.jsonl` —
+never a write path, never a gate. Each stage's `price` is `tools/registry.py`'s `price_for_id()` snapshot
+of that stage's `model` at append time (null when the id is unregistered or carries no price), stored
+beside the raw counts so a row re-weights as a read (re-run `per-model`/`report`) rather than a re-run of
+the build. `totals.shadow_cost_usd` sums `weighted_total × price` over the row's non-shadow, priced
+stages only (the AGENTS.md rule verbatim: the census weights are exactly the Claude API price ratios) —
+an unpriced or shadow-review-seat stage contributes nothing to the sum but never causes the row itself,
+or any other stage in it, to be skipped. `per_model_view()`/`close_time_cost()`/`crossover_cost_axis()`/
+`daily_weighted_tokens()` are the four standing reads (informing capacity/model decisions only — nothing
+here gates a build), windowed on `ts_end` (a row's close time) via lexical ISO-8601 comparison.
 """
 import argparse
 import fcntl
@@ -50,6 +61,7 @@ import time
 # sibling-module import (never `tools.`-prefixed): run as a bare script (`tools/ledger.py ...`),
 # sys.path[0] is already `tools/` — the same discipline tools/bench_replay.py documents for
 # `import stage_usage` / `import registry`.
+import registry
 import stage_usage
 
 DEFAULT_MAX_AGE_DAYS = 90
@@ -239,10 +251,22 @@ def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
     for r in stage_records:
         r["weighted_total"] = _stage_weighted_total(r)
 
+    # The price snapshot (issue #207): each stage's registry input_price_per_mtok at append time, taken
+    # by the stage's own model id — never by role — so a stage that ran under an override still prices
+    # correctly. null (unregistered id, or a registered id with no price) never skips the stage or the row.
+    registry_data = registry.load()
+    for r in stage_records:
+        r["price"] = registry.price_for_id(registry_data, r.get("model"))
+
     # Shadow-review-seat stages are recorded above but excluded from the run's weighted total (issue #206
     # acceptance criteria) — stage_usage.build_summary's own census weights, unchanged, over the rest.
     non_shadow = [r for r in stage_records if not str(r.get("stage") or "").startswith("shadow-review")]
     summary = stage_usage.build_summary(non_shadow)
+
+    # Shadow cost (issue #207): weighted-total × the model's registry input price, summed over the
+    # non-shadow stages that carry a price — the AGENTS.md rule verbatim. A stage with price: null (no
+    # registry match) simply contributes nothing to the sum, never excludes the row.
+    shadow_cost_usd = sum(r["weighted_total"] * r["price"] for r in non_shadow if r.get("price") is not None)
 
     repairs = {
         "check": 1 if (run_dir_path / "repair.log").is_file() else 0,
@@ -258,7 +282,8 @@ def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
         "base_sha": base_sha or None,
         "models": {"build": build_model or None, "review": review_model or None},
         "stages": stage_records,
-        "totals": {**summary["totals"], "weighted_total": summary["weighted_total"]},
+        "totals": {**summary["totals"], "weighted_total": summary["weighted_total"],
+                   "shadow_cost_usd": shadow_cost_usd},
         "outcome": {"type": outcome_type, "decision": outcome_decision or None},
         "repairs": repairs,
         "wall_seconds": wall_seconds,
@@ -283,6 +308,125 @@ def append_row(ledger_dir, row):
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return path
+
+
+# ---------------------------------------------------------------------------
+# per-model / report — read-only aggregations over rows.jsonl (issue #207). Never a write path, never
+# a gate: these inform (model choice, capacity headroom, cross-repo/before-after comparison) only.
+# ---------------------------------------------------------------------------
+
+def load_rows(ledger_dir):
+    """Every row in `<ledger_dir>/rows.jsonl`, file order (oldest-appended first). A line that fails to
+    parse is skipped (degrade, never crash a read over one bad row); a missing ledger dir/file yields an
+    empty list — these are read-only reports, so there is nothing here to create."""
+    path = pathlib.Path(ledger_dir) / "rows.jsonl"
+    if not path.is_file():
+        return []
+    rows = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    return rows
+
+
+def filter_rows(rows, *, repo=None, since=None, until=None):
+    """Rows matching `repo` (exact match, when given) and windowed on `ts_end` (a row's close time) via
+    lexical ISO-8601 comparison (inclusive both ends) — the timestamps `tools/dev-runner.sh` stamps are
+    always `%Y-%m-%dT%H:%M:%SZ`, so string order IS chronological order. `since`/`until` of None leave
+    that side of the window open."""
+    out = []
+    for r in rows:
+        if repo is not None and r.get("repo") != repo:
+            continue
+        ts_end = r.get("ts_end") or ""
+        if since is not None and ts_end < since:
+            continue
+        if until is not None and ts_end > until:
+            continue
+        out.append(r)
+    return out
+
+
+def _row_shadow_cost(row):
+    return (row.get("totals") or {}).get("shadow_cost_usd") or 0
+
+
+def _row_repairs_count(row):
+    repairs = row.get("repairs") or {}
+    return int(repairs.get("check") or 0) + int(repairs.get("review") or 0)
+
+
+def per_model_view(rows):
+    """The per-model aggregate view (issue #207) — keyed by each row's BUILD model id (the axis a
+    build-model trial varies; the id that actually executed the task). Per model: `runs` (row count);
+    `merged` (outcome.type == 'merged' — armed merges ONLY, never conflated with 'shadow-would-merge',
+    which lands as its own bucket in `verdict_outcomes` instead); `weighted_cost_per_merged_task` (that
+    model's total shadow_cost_usd across ALL its rows, divided by its merged count — None when merged is
+    0, a per-task figure being undefined with no completed task to divide by); `repair_rate` (total
+    repairs.check + repairs.review across its rows, divided by runs); `verdict_outcomes` (a count per
+    distinct outcome.type, straight from each row's own `outcome` field)."""
+    by_model = {}
+    for r in rows:
+        model = (r.get("models") or {}).get("build")
+        bucket = by_model.setdefault(model, {"runs": 0, "merged": 0, "cost": 0.0, "repairs": 0,
+                                              "verdict_outcomes": {}})
+        bucket["runs"] += 1
+        bucket["cost"] += _row_shadow_cost(r)
+        bucket["repairs"] += _row_repairs_count(r)
+        outcome_type = (r.get("outcome") or {}).get("type")
+        bucket["verdict_outcomes"][outcome_type] = bucket["verdict_outcomes"].get(outcome_type, 0) + 1
+        if outcome_type == "merged":
+            bucket["merged"] += 1
+
+    view = {}
+    for model, b in by_model.items():
+        view[model] = {
+            "runs": b["runs"],
+            "merged": b["merged"],
+            "weighted_cost_per_merged_task": (b["cost"] / b["merged"]) if b["merged"] else None,
+            "repair_rate": (b["repairs"] / b["runs"]) if b["runs"] else 0,
+            "verdict_outcomes": b["verdict_outcomes"],
+        }
+    return view
+
+
+def close_time_cost(rows):
+    """Standing read (1) — the close-time cost line: total `shadow_cost_usd` and the per-merged-task
+    figure, over whatever rows the caller already narrowed to a repo/window (`filter_rows()`)."""
+    total = sum(_row_shadow_cost(r) for r in rows)
+    merged = sum(1 for r in rows if (r.get("outcome") or {}).get("type") == "merged")
+    return {"total_shadow_cost_usd": total, "merged_count": merged,
+            "cost_per_merged_task": (total / merged) if merged else None}
+
+
+def crossover_cost_axis(rows, *, factory_repo="yellow-robots/factory"):
+    """Standing read (2) — the crossover cost axis: the same close-time-cost figure, split into the
+    factory's own repo vs every other (product) repo over the same window. `rows` should be
+    window-filtered only (via `filter_rows()`, repo=None) — this function does the repo split itself,
+    comparing two repo populations at once rather than being pre-narrowed to one."""
+    factory_rows = [r for r in rows if r.get("repo") == factory_repo]
+    product_rows = [r for r in rows if r.get("repo") != factory_repo]
+    return {"factory": close_time_cost(factory_rows), "product": close_time_cost(product_rows)}
+
+
+def daily_weighted_tokens(rows):
+    """Standing read (4) — the concurrency headroom: weighted tokens per day, summed ACROSS every repo
+    in `rows` (window-filtered only via `filter_rows()`, repo=None — headroom is a host-wide figure, not
+    a per-repo one). Bucketed by the date portion (first 10 chars) of each row's `ts_end`; a row with no
+    `ts_end` contributes to no bucket."""
+    by_day = {}
+    for r in rows:
+        day = (r.get("ts_end") or "")[:10]
+        if not day:
+            continue
+        weighted_total = (r.get("totals") or {}).get("weighted_total") or 0
+        by_day[day] = by_day.get(day, 0) + weighted_total
+    return dict(sorted(by_day.items()))
 
 
 def _cli_archive(args):
@@ -310,8 +454,32 @@ def _cli_append(args):
     return 0
 
 
+def _cli_per_model(args):
+    rows = filter_rows(load_rows(args.ledger_dir), repo=args.repo or None,
+                        since=args.since or None, until=args.until or None)
+    print(json.dumps(per_model_view(rows), sort_keys=True))
+    return 0
+
+
+def _cli_report(args):
+    windowed = filter_rows(load_rows(args.ledger_dir), since=args.since or None, until=args.until or None)
+    if args.kind == "close-time-cost":
+        result = close_time_cost(filter_rows(windowed, repo=args.repo or None))
+    elif args.kind == "crossover-cost":
+        result = crossover_cost_axis(windowed, factory_repo=args.factory_repo)
+    elif args.kind == "concurrency-headroom":
+        result = daily_weighted_tokens(windowed)
+    else:
+        print(json.dumps({"error": f"unknown report kind '{args.kind}'"}))
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Stage transcript archiving + retention cap (issue #205); the per-invocation ledger row (issue #206).")
+    ap = argparse.ArgumentParser(
+        description="Stage transcript archiving + retention cap (#205); the ledger row (#206); "
+                     "the per-model view + the four standing reads (#207).")
     sub = ap.add_subparsers(dest="command", required=True)
 
     p_arc = sub.add_parser("archive", help="archive a just-finished stage's CLI session transcript into the run dir")
@@ -350,6 +518,25 @@ def main(argv=None):
     p_app.add_argument("--ts-end", required=True)
     p_app.add_argument("--wall-seconds", type=int, required=True)
     p_app.set_defaults(func=_cli_append)
+
+    p_pm = sub.add_parser("per-model", help="the per-model aggregate view over rows.jsonl (issue #207)")
+    p_pm.add_argument("--ledger-dir", required=True, help="the ledger dir (e.g. $DEV_RUNNER_HOME/ledger); rows.jsonl lives here")
+    p_pm.add_argument("--repo", default="", help="restrict to one repo (owner/name); default: every repo")
+    p_pm.add_argument("--since", default="", help="ISO-8601 lower bound on a row's ts_end, inclusive")
+    p_pm.add_argument("--until", default="", help="ISO-8601 upper bound on a row's ts_end, inclusive")
+    p_pm.set_defaults(func=_cli_per_model)
+
+    p_rep = sub.add_parser("report", help="the other three standing reads over rows.jsonl (issue #207)")
+    p_rep.add_argument("--kind", required=True,
+                        choices=["close-time-cost", "crossover-cost", "concurrency-headroom"],
+                        help="close-time-cost (repo/window); crossover-cost (factory vs product "
+                             "repo, window); concurrency-headroom (weighted tokens/day, window)")
+    p_rep.add_argument("--ledger-dir", required=True, help="the ledger dir (e.g. $DEV_RUNNER_HOME/ledger); rows.jsonl lives here")
+    p_rep.add_argument("--repo", default="", help="close-time-cost only: restrict to one repo; ignored by the other kinds")
+    p_rep.add_argument("--factory-repo", default="yellow-robots/factory", help="crossover-cost only: the repo counted as 'factory'; every other repo is 'product'")
+    p_rep.add_argument("--since", default="", help="ISO-8601 lower bound on a row's ts_end, inclusive")
+    p_rep.add_argument("--until", default="", help="ISO-8601 upper bound on a row's ts_end, inclusive")
+    p_rep.set_defaults(func=_cli_report)
 
     args = ap.parse_args(argv)
     return args.func(args)

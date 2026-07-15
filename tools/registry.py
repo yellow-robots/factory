@@ -42,6 +42,19 @@ def _stage_tiers(data):
     return _roles(data).get("stage_tiers") or {}
 
 
+def price_for_id(data, model_id):
+    """The registered `input_price_per_mtok` for a model id (never a registry name — the ledger's
+    per-stage records are tagged with the resolved id, e.g. 'claude-sonnet-5'), or None when the id
+    names no entry, or names one with no price set. Never raises — an unpriceable model is a null
+    read, not an error."""
+    if not model_id:
+        return None
+    for entry in _entries(data).values():
+        if entry.get("id") == model_id:
+            return entry.get("input_price_per_mtok")
+    return None
+
+
 def rank_check(build_entry, review_entry):
     """True iff the reviewer is never weaker than the build: both entries ranked, same provider,
     and review.rank >= build.rank. Missing entries or ranks, or a cross-provider pair, fail closed."""
@@ -157,6 +170,18 @@ def _cli_pool_for_id(args):
     return 0
 
 
+def _cli_price_for_id(args):
+    """Resolve a model id to its registry entry's input_price_per_mtok (JSON; {} if unknown/unpriced,
+    exit 0 either way — the same 'no match is not an error' shape as pool-for-id)."""
+    data = load(args.registry)
+    for name, entry in _entries(data).items():
+        if entry.get("id") == args.id:
+            print(json.dumps({"name": name, "input_price_per_mtok": entry.get("input_price_per_mtok")}))
+            return 0
+    print(json.dumps({}))
+    return 0
+
+
 def _cli_stage_tier(args):
     """Resolve a stage's tier entry when roles.stage_tiers names one, else signal "no tier" ({}).
 
@@ -201,6 +226,10 @@ def main(argv=None):
     p_pool = sub.add_parser("pool-for-id", help="resolve a model id to its entry's quota_pool (JSON; {} if unknown)")
     p_pool.add_argument("--id", required=True, help="model id, e.g. claude-sonnet-5")
     p_pool.set_defaults(func=_cli_pool_for_id)
+
+    p_price = sub.add_parser("price-for-id", help="resolve a model id to its entry's input_price_per_mtok (JSON; {} if unknown)")
+    p_price.add_argument("--id", required=True, help="model id, e.g. claude-sonnet-5")
+    p_price.set_defaults(func=_cli_price_for_id)
 
     p_validate = sub.add_parser("validate", help="validate registry self-consistency (JSON)")
     p_validate.set_defaults(func=_cli_validate)

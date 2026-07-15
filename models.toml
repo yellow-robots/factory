@@ -13,18 +13,26 @@
 # `rank` orders entries WITHIN one provider only — ranks are not comparable across providers.
 # `quota_pool` names the shared rate/spend pool an entry draws from (informational to this loader;
 # consumed by whatever meters usage).
+# `input_price_per_mtok` is the Claude API list price, USD per million input tokens (read 2026-07-15).
+# It feeds the ledger's shadow-cost read (tools/ledger.py) only — never rank/role resolution. Optional:
+# an entry with no price carries `price: null` in a ledger row and is excluded from that row's
+# shadow_cost_usd, never blocking the row itself. Operator-maintained on a price change; this column
+# pins the LIST price even when an introductory rate applies (e.g. Sonnet 5's $2.00/MTok promo through
+# 2026-08-31 is a temporary rate, not the number recorded here).
 
 [models.sonnet]
 id = "claude-sonnet-5"
 provider = "anthropic"
 rank = 30
 quota_pool = "anthropic-main"
+input_price_per_mtok = 3.00
 
 [models.opus]
 id = "claude-opus-4-8"
 provider = "anthropic"
 rank = 40
 quota_pool = "anthropic-main"
+input_price_per_mtok = 5.00
 
 [roles]
 build = "sonnet"
