@@ -484,6 +484,69 @@ def test_no_promotion_to_ready_on_any_merge_run(tmp_path):
     assert not _promoted_ready(td._timeline(tmp_path))
 
 
+# ================= issue #206: ledger row at the armed-merge terminal branches =======================
+# tools/ledger.py's `append` derives the row's outcome from the SAME terminal decision this whole module
+# exercises: a factory MERGED lands type=merged/decision=MERGED; an armed_block (any failed condition,
+# the sentinel, an unranked override) is PINNED as type=in-review/decision=BLOCKED — never a plain
+# "blocked" outcome type (that belongs to fail_blocked's own build-failure branch) — and armed_block
+# itself never appends, so exactly ONE row lands, at the shared terminus; a merge-API environmental
+# failure inside terminal_step falls through to a plain in-review with no decision at all.
+
+def test_ledger_row_on_armed_merged(tmp_path):
+    work, origin = td._make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _armed_env(tmp_path, binp, work, origin, prs=_complete_prs())
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _merged_stub(tmp_path)
+    rows = td._ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == {"type": "merged", "decision": "MERGED"}
+    assert rows[0]["models"] == {"build": "claude-sonnet-5", "review": "claude-opus-4-8"}
+
+
+def test_ledger_row_on_armed_blocked_pinned_as_in_review(tmp_path):
+    """Acceptance: the armed-BLOCKED case is pinned as outcome.type in-review / outcome.decision
+    BLOCKED, and armed_block itself appends nothing — this is the ONE row for the whole run."""
+    work, origin = td._make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _armed_env(tmp_path, binp, work, origin, checks=(CR_OK, CR_FAIL), prs=_complete_prs())
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)
+    rows = td._ledger_rows(tmp_path)
+    assert len(rows) == 1                       # armed_block itself never appends — only the terminus does
+    assert rows[0]["outcome"] == {"type": "in-review", "decision": "BLOCKED"}
+
+
+def test_ledger_row_on_sentinel_thrown_also_pinned_as_in_review_blocked(tmp_path):
+    work, origin = td._make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    drhome = tmp_path / "drhome"; drhome.mkdir(parents=True, exist_ok=True)
+    (drhome / "merge-killswitch").write_text("stop\n")
+    env = _armed_env(tmp_path, binp, work, origin, prs=_complete_prs())
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rows = td._ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == {"type": "in-review", "decision": "BLOCKED"}
+
+
+def test_ledger_row_on_armed_environmental_terminal_failure(tmp_path):
+    """A merge-API error inside terminal_step is classified environmental (no durable record at all) —
+    the ledger row still lands exactly once, at the shared terminus, as a plain in-review with no
+    decision."""
+    work, origin = td._make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _armed_env(tmp_path, binp, work, origin, prs=_complete_prs(), extra={"STUB_MERGE_FAIL": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _merge_record(tmp_path) is None
+    rows = td._ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == {"type": "in-review", "decision": None}
+
+
 # ================= criterion 4 (mechanics): shadow completion computed over canned records ==========
 # Direct tests of `merge_shadow.py shadow-complete` — the unified N=5/K=3 window algorithm.
 
