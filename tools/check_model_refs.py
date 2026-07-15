@@ -5,11 +5,17 @@ Any file that names 01-conventions (bare or as its full vault path) as the livin
 model is a stale reference. This scanner keeps that guard permanent: exit 0 when clean, exit 1
 (with `<file>:<lineno>: <message>` lines) when any un-allowlisted hit remains.
 
+Frozen bench evidence (tools.textutil.is_frozen_bench_evidence) is skipped: those surfaces embed
+past PRs' file contents verbatim by design, so this living-text guard must not read them.
+
 Usage: check_model_refs.py [--scan-root DIR]
 """
 import argparse
 import pathlib
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from tools.textutil import is_frozen_bench_evidence
 
 # Every line containing this substring is a potential hit
 _PATTERN = "01-conventions"
@@ -53,6 +59,8 @@ def scan(scan_root):
             continue
         rel = _rel(path, root)
         if rel in _SKIP_FILES:
+            continue
+        if is_frozen_bench_evidence(rel):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")

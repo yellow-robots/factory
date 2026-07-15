@@ -21,8 +21,12 @@ re-asserted below for this issue's own record.
 import pathlib
 import re
 import subprocess
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.textutil import is_frozen_bench_evidence
 README = ROOT / "README.md"
 AGENTS = ROOT / "AGENTS.md"
 DISPATCH_MD = ROOT / "deploy" / "DISPATCH.md"
@@ -210,14 +214,21 @@ def test_templates_readme_guard_test_is_removed():
     )
 
 
-def test_no_other_reference_to_templates_readme_survives():
-    text_files = list(ROOT.rglob("*.md")) + list(ROOT.rglob("*.py"))
-    offenders = []
-    for path in text_files:
+def _md_and_py_files(root=ROOT):
+    for path in list(root.rglob("*.md")) + list(root.rglob("*.py")):
         if ".git" in path.parts:
             continue
         if path == pathlib.Path(__file__):
             continue
+        rel = str(path.relative_to(root)).replace("\\", "/")
+        if is_frozen_bench_evidence(rel):
+            continue  # frozen bench evidence embeds history verbatim by design — not living text
+        yield path
+
+
+def test_no_other_reference_to_templates_readme_survives():
+    offenders = []
+    for path in _md_and_py_files():
         try:
             content = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -227,6 +238,35 @@ def test_no_other_reference_to_templates_readme_survives():
     assert not offenders, (
         f"deleted templates/README.md is still referenced by: {offenders}"
     )
+
+
+# --- issue #194: frozen bench evidence excluded from this walker's living-text scan ---
+#
+# This guard is latent against today's records (they are .json, and _md_and_py_files only globs
+# *.md/*.py) but a future dated report (.md, under bench/reports/) quoting an offending path would
+# trip it — proven here structurally via the same helper the real-tree test above consults.
+
+def test_md_and_py_files_skips_a_dated_report_quoting_the_offending_path(tmp_path):
+    report = tmp_path / "bench" / "reports" / "2026-07-15-report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("attended run notes quote templates/README.md verbatim\n", encoding="utf-8")
+
+    found = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in _md_and_py_files(root=tmp_path)}
+    assert "bench/reports/2026-07-15-report.md" not in found
+
+
+def test_md_and_py_files_still_yields_bench_corpus_readme_and_non_bench_files(tmp_path):
+    readme = tmp_path / "bench" / "corpus" / "README.md"
+    readme.parent.mkdir(parents=True)
+    readme.write_text("templates/README.md is still discussed here\n", encoding="utf-8")
+
+    outside = tmp_path / "docs" / "note.md"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("templates/README.md still shows up here\n", encoding="utf-8")
+
+    found = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in _md_and_py_files(root=tmp_path)}
+    assert "bench/corpus/README.md" in found
+    assert "docs/note.md" in found
 
 
 # ---------------------------------------------------------------------------
