@@ -1915,8 +1915,15 @@ CLAUDE_STUB_JSON = '''#!/usr/bin/env bash
 stdin_content="$(cat)"
 args="$*"$'\\n'"$stdin_content"   # issue #121: classification must see stdin too (the task prompt lives there)
 [ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
+# issue #205: emit_json optionally adds a "session_id" key when STUB_SESSION_ID is set — no pre-existing
+# exact-dict-equality assertion in this suite ever sets that var, so this stays byte-for-byte
+# backward-compatible there; new tests opt in to exercise session_id-based transcript resolution.
 emit_json() {  # $1=result-text $2=input $3=output $4=cache_write $5=cache_read $6=duration_ms
-  printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$2" "$3" "$4" "$5"
+  if [ -n "${STUB_SESSION_ID:-}" ]; then
+    printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","session_id":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$STUB_SESSION_ID" "$2" "$3" "$4" "$5"
+  else
+    printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$2" "$3" "$4" "$5"
+  fi
 }
 case "$args" in
   *REVIEWER*)
@@ -3319,3 +3326,266 @@ def test_hard_kill_bounds_residue_to_its_own_run_dir_and_a_later_run_is_unaffect
     assert rd2 != rd
     assert not (rd2 / "tmp").exists()                   # its own tmp dir was torn down normally
     assert (rd / "tmp").exists()                         # the killed run's leftover is still just sitting there, untouched
+
+
+# ============ Issue #205: the stage transcript becomes a run artifact, capped ============
+# Every completed LLM stage's full CLI session transcript is copied into the run dir as
+# transcript-<stage>.jsonl (dedup suffix -2/-3 on repair re-runs, matching usage-<stage>.json), resolved
+# from the stage log's result envelope session_id when it names a real file under the CLI project slug
+# dir ($HOME/.claude/projects/<slugified $WT>/<session_id>.jsonl) — else the newest .jsonl there
+# (heuristic, always so logged) — skipping loud only when that dir is absent or empty. tools/ledger.py
+# also provides a runner-owned prune (age, then size, oldest-first) wired fail-soft into the success
+# terminus. CLAUDE_STUB_JSON's emit_json (above) is extended, not cloned, with an optional
+# STUB_SESSION_ID-driven "session_id" envelope key for these tests to opt into.
+
+def _resolve_wt_slug(env, repo, number):
+    """The exact CLI project-slug dir tools/dev-runner.sh's own wt_slug() produces for this run — read
+    from --dry-run's real 'branch' field (never re-deriving the title-slugify pipeline by hand) combined
+    with the trivial owner--name REPO_SLUG this whole suite's repo="test/repo" reduces to unambiguously
+    (no upper-case/special chars to fold). --dry-run is read-only (proven elsewhere in this file), so
+    calling it ahead of the real run never disturbs any state the real run depends on."""
+    r = _run([str(number), "--repo", repo, "--dry-run"], dict(env))
+    assert r.returncode == 0, r.stderr
+    branch = json.loads(r.stdout)["branch"]
+    owner, name = repo.split("/", 1)
+    repo_slug = f"{owner}--{name}".lower()
+    wt = f"{env['DEV_RUNNER_HOME']}/wt/{repo_slug}--{branch.replace('/', '-')}"
+    return wt.replace("/", "-").replace(".", "-")
+
+
+def _seed_slug_dir(home, slug):
+    d = pathlib.Path(home) / ".claude" / "projects" / slug
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _transcript_files(rundir):
+    return sorted(p.name for p in rundir.glob("transcript-*.jsonl"))
+
+
+def test_transcript_archived_via_heuristic_fallback_for_every_llm_stage(tmp_path):
+    """The plain-text stub (this suite's default `claude`, no JSON envelope anywhere) still gets its
+    per-stage transcript archived, via the documented fallback: the newest .jsonl under the CLI project
+    slug dir — since the stub never rotates it, every stage-named transcript resolves to the one seeded
+    fixture file, byte-faithfully."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    home = tmp_path / "home"
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Transcript heuristic fallback"), work)
+    env["HOME"] = str(home)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    slug = _resolve_wt_slug(env, "test/repo", 5)
+    slug_dir = _seed_slug_dir(home, slug)
+    fixture = slug_dir / "session-abc123.jsonl"
+    fixture.write_text('{"fixture": "transcript content"}\n')
+
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rd = _run_dir(tmp_path, 5)
+    assert _transcript_files(rd) == ["transcript-implement.jsonl", "transcript-review.jsonl", "transcript-test.jsonl"]
+    for name in _transcript_files(rd):
+        assert (rd / name).read_text() == fixture.read_text()   # byte-faithful copy, no redaction
+
+
+def test_transcript_archive_skipped_loudly_when_slug_dir_absent(tmp_path):
+    """No envelope AND no CLI project slug dir at all (never created) — archiving is skipped, logged
+    loudly (never silently), and the run's own outcome is completely unaffected."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    home = tmp_path / "home-empty"; home.mkdir()
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Transcript slug dir absent"), work)
+    env["HOME"] = str(home)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rd = _run_dir(tmp_path, 5)
+    assert _transcript_files(rd) == []
+    assert "transcript archive" in r.stderr.lower()
+    assert "skipped" in r.stderr.lower() and "absent" in r.stderr.lower()
+
+
+def test_transcript_archive_skipped_loudly_when_slug_dir_empty(tmp_path):
+    """The slug dir exists but holds no .jsonl at all — same loud skip, distinguished reason."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    home = tmp_path / "home-empty-dir"
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Transcript slug dir empty"), work)
+    env["HOME"] = str(home)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    slug = _resolve_wt_slug(env, "test/repo", 5)
+    _seed_slug_dir(home, slug)   # created, but left empty
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rd = _run_dir(tmp_path, 5)
+    assert _transcript_files(rd) == []
+    assert "skipped" in r.stderr.lower() and "empty" in r.stderr.lower()
+
+
+def test_transcript_archive_never_blocks_or_fails_the_run(tmp_path):
+    """Fail-soft, restated as a direct assertion: even with no slug dir at all, the pipeline still reaches
+    a PR — archiving failures/skips are advisory only, never a gate."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Transcript never gates"), work)
+    env["HOME"] = str(tmp_path / "home-never-created")
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+
+def test_transcript_dedup_suffix_on_review_repair_recheck_matches_usage_convention(tmp_path):
+    """review.md is the one log file run_stage writes into TWICE in a single run (initial review, then
+    the post-repair re-review) — archiving must suffix the second round's transcript exactly like
+    usage-review-2.json does, never overwriting the first round's copy."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    home = tmp_path / "home"
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Transcript dedup on review repair"), work)
+    env["HOME"] = str(home)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_BLOCK": "1"})
+    slug = _resolve_wt_slug(env, "test/repo", 5)
+    slug_dir = _seed_slug_dir(home, slug)
+    (slug_dir / "session-x.jsonl").write_text("dedup fixture\n")
+
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert tl.count("REVIEW") == 2   # blocked once, approved after repair — review.md written to twice
+
+    rd = _run_dir(tmp_path, 5)
+    files = _transcript_files(rd)
+    assert "transcript-review.jsonl" in files
+    assert "transcript-review-2.jsonl" in files
+
+
+def test_session_id_resolution_wins_over_the_newest_file_heuristic(tmp_path):
+    """Acceptance: envelope parsing must read the stage log's intact result envelope BEFORE
+    capture_stage_usage rewrites it — proven here by placing a session_id-NAMED transcript with an OLDER
+    mtime alongside a plain DECOY file with a NEWER mtime in the slug dir. If archiving ran after the
+    rewrite (or ignored session_id), the heuristic-newest fallback would pick the decoy instead."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    home = tmp_path / "home"
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Session id wins over heuristic"), work)
+    env["HOME"] = str(home)
+    env["STUB_SESSION_ID"] = "sess-1"
+    slug = _resolve_wt_slug(env, "test/repo", 5)
+    slug_dir = _seed_slug_dir(home, slug)
+
+    named = slug_dir / "sess-1.jsonl"
+    named.write_text("the correct session transcript\n")
+    os.utime(named, (time.time() - 3600, time.time() - 3600))   # older
+
+    decoy = slug_dir / "decoy-newer.jsonl"
+    decoy.write_text("must NOT be picked\n")
+    # decoy keeps its just-created (newer) mtime
+
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rd = _run_dir(tmp_path, 5)
+    assert (rd / "transcript-implement.jsonl").read_text() == "the correct session transcript\n"
+
+
+def test_failed_stage_archives_from_intact_envelope_without_rewrite(tmp_path):
+    """rc != 0: capture_stage_usage never runs (guarded on rc -eq 0), so the envelope sits intact in the
+    log either way — archiving must still resolve session_id from it and copy the named transcript."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    home = tmp_path / "home"
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Failed stage still archives"), work)
+    env["HOME"] = str(home)
+    env["STUB_SESSION_ID"] = "sess-fail-1"
+    env["STUB_IMPL_JSON_THEN_FAIL"] = "1"
+    slug = _resolve_wt_slug(env, "test/repo", 5)
+    slug_dir = _seed_slug_dir(home, slug)
+    (slug_dir / "sess-fail-1.jsonl").write_text("the failed stage's own transcript\n")
+
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "https://stub/pr/1" not in r.stdout
+    rd = _run_dir(tmp_path, 5)
+    assert (rd / "implement.log").read_text().strip().startswith('{"type":"result"')   # untouched, per #48
+    assert (rd / "transcript-implement.jsonl").read_text() == "the failed stage's own transcript\n"
+
+
+def test_session_id_additive_field_in_usage_record_when_envelope_carries_one(tmp_path):
+    """Acceptance: adding session_id to the usage record is the one permitted additive change — present
+    when the envelope carries one, alongside every field the pre-existing #48 suite already pins."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Session id in usage record"), work)
+    env["HOME"] = str(tmp_path / "home")
+    env["STUB_SESSION_ID"] = "sess-usage-1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rd = _run_dir(tmp_path, 5)
+    record = json.loads((rd / "usage-implement.json").read_text())
+    assert record["session_id"] == "sess-usage-1"
+    assert record["input_tokens"] == 61   # every field the #48 suite already pins is still exactly there
+
+
+def _seed_old_run_dir(runs_dir, name, *, transcript_name="transcript-old.jsonl", age_days=100, size_bytes=10):
+    d = runs_dir / name
+    d.mkdir(parents=True, exist_ok=True)
+    t = d / transcript_name
+    t.write_bytes(b"x" * size_bytes)
+    old = time.time() - age_days * 86400
+    os.utime(t, (old, old))
+    u = d / "usage-old.json"
+    u.write_text(json.dumps({"stage": "old", "input_tokens": 1}))
+    return d, t, u
+
+
+def test_prune_deletes_old_transcript_but_not_other_artifacts_after_a_successful_run(tmp_path):
+    """The runner-owned retention cap fires at the success terminus: an old transcript-*.jsonl elsewhere
+    under runs/ is deleted, while every other artifact in that same run dir (a usage-*.json here, standing
+    in for any non-transcript run artifact) is left completely untouched."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Prune wiring happy path"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["HOME"] = str(tmp_path / "home")
+    runs_dir = pathlib.Path(env["DEV_RUNNER_HOME"]) / "runs"
+    _, old_transcript, old_usage = _seed_old_run_dir(runs_dir, "999-oldrun", age_days=100)
+
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert not old_transcript.exists()      # past the default 90-day age cap: pruned
+    assert old_usage.exists()               # a non-transcript artifact: never touched
+
+
+def test_prune_never_fires_before_a_pr_is_ever_created(tmp_path):
+    """A Blocked run (no PR ever created) never reaches the success terminus prune is wired into — the
+    spec's accepted tolerance ('a failure streak defers pruning to the next successful run')."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Prune deferred on blocked run"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1", "STUB_REPAIR_NOFIX": "1"})
+    env["HOME"] = str(tmp_path / "home")
+    runs_dir = pathlib.Path(env["DEV_RUNNER_HOME"]) / "runs"
+    _, old_transcript, _ = _seed_old_run_dir(runs_dir, "999-oldrun", age_days=100)
+
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "https://stub/pr/1" not in r.stdout
+    assert old_transcript.exists()          # never pruned — the run never reached the success terminus
+
+
+def test_prune_respects_the_max_age_env_tunable_through_the_whole_runner(tmp_path):
+    """LEDGER_TRANSCRIPT_MAX_AGE_DAYS, set in the runner's own environment, must reach ledger.py's prune
+    call unmodified: a transcript younger than the DEFAULT cap (90 days) but older than an explicit,
+    tighter override must still be pruned."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Prune env tunable"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["HOME"] = str(tmp_path / "home")
+    env["LEDGER_TRANSCRIPT_MAX_AGE_DAYS"] = "5"
+    runs_dir = pathlib.Path(env["DEV_RUNNER_HOME"]) / "runs"
+    _, young_transcript, young_usage = _seed_old_run_dir(runs_dir, "999-youngrun", age_days=10)  # >5, <90
+
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert not young_transcript.exists()     # pruned only because of the tighter env override
+    assert young_usage.exists()
