@@ -41,7 +41,12 @@ case "$1" in
                    done
                    [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
                    [ -n "$__body" ] && { echo "=== PRCOMMENT ==="; printf '%s\\n' "$__body"; } >> "$STUB_PRCOMMENTS"
-                 fi ;;
+                 fi
+                 true ;;   # a real `gh pr comment` exits 0 on success regardless of which of
+                           # --body-file/--body was used — the two recording checks above are each
+                           # conditional (false whenever their own flag wasn't the one passed), so
+                           # without this the LAST one's false test would leak out as the stub's own
+                           # exit code and falsely fail every --body-file-only caller (e.g. emit_and_post).
         *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
       esac ;;
   *)  echo "unhandled gh $*" >&2; exit 9 ;;
@@ -3589,3 +3594,227 @@ def test_prune_respects_the_max_age_env_tunable_through_the_whole_runner(tmp_pat
     assert r.returncode == 0, r.stderr
     assert not young_transcript.exists()     # pruned only because of the tighter env override
     assert young_usage.exists()
+
+
+# ============ Issue #206: ledger — one row per runner invocation at every terminal branch =============
+# tools/ledger.py's `append` writes one yr-ledger-row/1 JSONL row to $DEV_RUNNER_HOME/ledger/rows.jsonl
+# at whichever terminal branch a run reaches (Needs-info bounce, fail_blocked, env_hold, and the success
+# terminus deriving outcome from the merge decision). Unit coverage of build_ledger_row/append_row/the
+# CLI lives in tests/test_ledger.py; these tests prove the WIRING into tools/dev-runner.sh itself — the
+# exact terminal branches call ledger_append, a hard kill (no terminal branch reached) appends nothing,
+# and a ledger failure never affects the run's own outcome.
+
+def _ledger_rows(tmp):
+    p = tmp / "drhome" / "ledger" / "rows.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+
+
+def test_ledger_row_appended_on_needs_info_bounce(tmp_path):
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp, body="### Goal\njust do it\n")
+    env["DEV_RUNNER_HOME"] = str(tmp_path / "drhome")
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode == 3
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["schema"] == "yr-ledger-row/1"
+    assert row["task"] == "test/repo#7"           # owner/repo#issue — never derived from a run dir
+    assert row["repo"] == "test/repo"
+    assert row["outcome"] == {"type": "needs-info", "decision": None}
+    # the bounce runs BEFORE claim/worktree: base_sha is genuinely unknown at that point (branch is
+    # already resolved by then — it's derived from the issue/title alone, no worktree needed).
+    assert row["base_sha"] is None
+    assert row["stages"] == []                    # no run dir ever existed for this branch
+
+
+def test_ledger_row_appended_on_fail_blocked(tmp_path):
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Cannot fix"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1", "STUB_REPAIR_NOFIX": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["task"] == "test/repo#5"
+    assert row["outcome"] == {"type": "blocked", "decision": None}
+    assert row["branch"]                                   # claimed -> a real branch name
+    assert row["base_sha"] and len(row["base_sha"]) == 40   # resolved from the worktree HEAD
+    assert row["repairs"]["check"] == 1                     # the one repair attempt is on record
+
+
+def test_ledger_row_appended_on_env_hold(tmp_path):
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Quota kill on implement"), work)
+    env["STUB_IMPL_QUOTA"] = "Error: usage limit reached for this account, try again later"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["outcome"] == {"type": "env-hold", "decision": None}
+    # the append itself never disturbed worktree preservation (env_hold_record's own contract).
+    assert _wt_dir(tmp_path) is not None
+    assert (_state_dir(tmp_path) / "env-hold").exists()
+
+
+def test_ledger_row_appended_on_shadow_would_merge(tmp_path):
+    env = _shadow_env(tmp_path, title="Ledger shadow would-merge", checks=[CR_OK])
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == {"type": "shadow-would-merge", "decision": "WOULD-MERGE"}
+    # criterion: the #79 usage comment is unaffected by the ledger addition.
+    assert "### dev-runner usage" in _prcomments(tmp_path)
+
+
+def test_ledger_row_appended_on_shadow_would_block(tmp_path):
+    env = _shadow_env(tmp_path, title="Ledger shadow would-block", checks=[CR_OK, CR_FAIL])
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == {"type": "shadow-would-block", "decision": "WOULD-BLOCK"}
+
+
+def test_ledger_row_appended_even_with_zero_usage_artifacts(tmp_path):
+    """The plain-text stub (no JSON envelope anywhere) still gets exactly one row, with an empty stage
+    array rather than a skipped append."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Plain text degrade"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["stages"] == []
+    assert rows[0]["totals"]["weighted_total"] == 0
+
+
+def test_ledger_row_stage_usage_includes_all_dedup_suffixed_files(tmp_path):
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Ledger dedup suffixes"), work)
+    env["STUB_REVIEW_BLOCK"] = "1"           # forces a second review round -> usage-review-2.json
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    stages = {s["stage"]: s for s in rows[0]["stages"]}
+    assert "review" in stages and "review-2" in stages
+    assert stages["review"]["source"] == "usage-file" and stages["review-2"]["source"] == "usage-file"
+    assert stages["review"]["duration_ms"] == 100 and stages["review-2"]["duration_ms"] == 200
+    # both rounds counted in the run-wide total, never just one.
+    assert rows[0]["totals"]["input_tokens"] >= stages["review"]["input_tokens"] + stages["review-2"]["input_tokens"]
+
+
+def test_ledger_row_failed_stage_uses_envelope_without_rewriting_the_log(tmp_path):
+    """rc != 0: capture_stage_usage never runs, so implement.log still holds the raw envelope when
+    fail_blocked's own ledger_append call reads it — via the read-only find_result_envelope fallback,
+    never a rewrite."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Envelope then fail"), work)
+    env["STUB_IMPL_JSON_THEN_FAIL"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    rd = _run_dir(tmp_path)
+    raw_log = (rd / "implement.log").read_text()
+    assert raw_log.strip().startswith('{"type":"result"')   # still the raw envelope, unrewritten
+
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    stages = {s["stage"]: s for s in rows[0]["stages"]}
+    assert stages["implement"]["source"] == "envelope"
+    assert stages["implement"]["input_tokens"] == 61   # CLAUDE_STUB_JSON's implement-round token counts
+
+    # ledger.py's own read (via build_ledger_row -> find_result_envelope) is confirmed above to still be
+    # untouched — this is the direct, byte-exact assertion the criterion calls for.
+    assert (rd / "implement.log").read_text() == raw_log
+
+
+def test_ledger_row_shares_task_key_across_a_resumed_invocation(tmp_path):
+    """A relaunch of a preserved env-hold appends its OWN second row (a fresh run_id — a new pid-keyed
+    run dir), sharing the SAME task key as the first — no usage-file recovery, no row merging; that is
+    the read side's job."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Broken toolchain"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_ENVFAIL": "126"})
+    r1 = _run(["5", "--repo", "test/repo"], env)
+    assert r1.returncode != 0
+    rows1 = _ledger_rows(tmp_path)
+    assert len(rows1) == 1 and rows1[0]["outcome"]["type"] == "env-hold"
+
+    env2 = {**env, "STUB_TIMELINE": str(tmp_path / "timeline2")}
+    del env2["STUB_CHECK_ENVFAIL"]
+    r2 = _run(["5", "--repo", "test/repo"], env2)
+    assert r2.returncode == 0, r2.stderr
+
+    rows2 = _ledger_rows(tmp_path)
+    assert len(rows2) == 2                                       # one row per invocation
+    assert rows2[0]["run_id"] != rows2[1]["run_id"]               # distinct run ids (separate pids)
+    assert rows2[0]["task"] == rows2[1]["task"] == "test/repo#5"  # same task key, both rows
+    assert rows2[1]["outcome"]["type"] != "env-hold"               # the resume reached a later terminus
+
+
+def test_ledger_row_hard_kill_appends_nothing(tmp_path):
+    """The accepted gap: a run SIGKILLed mid check-gate (the whole process group — nothing gets a
+    chance to run any teardown or terminal-branch path) reaches no ledger_append call at all, so
+    rows.jsonl is never even created."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"
+    binp.mkdir(parents=True, exist_ok=True)
+    _exec(binp / "gh", GH_STUB)
+    _exec(binp / "claude", CLAUDE_STUB)
+    _exec(binp / "check.sh", CHECK_STUB_HANG)
+
+    reached = tmp_path / "check_reached"
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Hard killed run (ledger)"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_CHECK_REACHED"] = str(reached)
+    env["STUB_CHECK_TMPDIR_FILE"] = str(tmp_path / "check_tmpdir_hang")
+
+    proc = _run_bg(["5", "--repo", "test/repo"], env)
+    try:
+        deadline = time.monotonic() + 20
+        while not reached.exists():
+            assert proc.poll() is None, f"runner exited early (rc={proc.poll()}) before reaching the check gate"
+            assert time.monotonic() < deadline, "check gate was never reached within the timeout"
+            time.sleep(0.05)
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait(timeout=10)
+
+    assert _ledger_rows(tmp_path) == []
+    assert not (tmp_path / "drhome" / "ledger" / "rows.jsonl").exists()
+
+
+def test_ledger_append_failure_never_blocks_the_run(tmp_path):
+    """Fail-soft: an append failure (here, the ledger dir path is pre-occupied by a plain FILE, so
+    ledger.py's own mkdir fails) is warned about but never blocks, fails, or gates the run — the PR
+    still opens and In Review is still reached."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Ledger append failure tolerated"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    drhome = tmp_path / "drhome"; drhome.mkdir(parents=True, exist_ok=True)
+    (drhome / "ledger").write_text("not a directory")   # forces ledger.py's own mkdir(parents=True) to fail
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    tl = _timeline(tmp_path)
+    assert any(l.startswith("EDIT") and "STATUSFIELD" in l and "InReview" in l for l in tl)
+    assert "ledger append failed" in r.stderr.lower()
+    assert "non-fatal" in r.stderr.lower()

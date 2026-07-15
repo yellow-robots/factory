@@ -109,6 +109,10 @@ OWNER="${REPO%/*}"
 # process's stdout+stderr into a per-run log file: an attended invocation just prints it to the terminal.
 RUN_DIR="$DEV_RUNNER_HOME/runs/${ISSUE}-$$"
 log "run #$ISSUE ($REPO) starting — run dir: $RUN_DIR"
+# ledger row (issue #206): wall-clock start, stamped BEFORE the DoR gate — the Needs-info bounce (which
+# precedes claim) is itself a terminal branch and must carry a real wall_seconds figure too.
+RUN_START_EPOCH="$(date +%s)"
+RUN_START_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # ---- resolve the target repo's checkout + its build manifest (all relative to the workspace) ----
 NAME="${REPO#*/}"
@@ -518,11 +522,42 @@ a=sys.argv
 print(json.dumps({"name":a[1] or None,"id":a[2],"provider":a[3] or None,
                   "rank":(int(a[4]) if a[4] else None),"ranked":a[5]=="1"}))' "$1" "$2" "$3" "$4" "$5"; }
 
+# ledger_append (issue #206): one yr-ledger-row/1 JSONL row per runner invocation, appended at whichever
+# terminal branch this run reaches. $1 = outcome type (needs-info|blocked|env-hold|merged|
+# shadow-would-merge|shadow-would-block|in-review), $2 = outcome decision (may be empty). Fail-soft
+# throughout: never dies, never exits, always returns 0 — a failure here must never block, fail, or gate
+# the run. base_sha prefers the already-resolved $BASE_SHA (set once the worktree's cut point is known);
+# before that it's read fresh from the worktree ($WT), and empty when neither exists yet (e.g. the
+# Needs-info bounce, which runs before claim/worktree).
+ledger_append(){
+  local now_iso wall base_sha out rc=0
+  now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 0
+  wall=$(( $(date +%s 2>/dev/null || printf '%s' "$RUN_START_EPOCH") - RUN_START_EPOCH ))
+  base_sha="${BASE_SHA:-}"
+  if [ -z "$base_sha" ] && [ -n "${WT:-}" ]; then base_sha="$("$GIT_BIN" -C "$WT" rev-parse HEAD 2>/dev/null || true)"; fi
+  out="$(python3 "$SELF_DIR/ledger.py" append \
+    --ledger-dir "$DEV_RUNNER_HOME/ledger" \
+    --run-id "$(basename "$RUN_DIR")" \
+    --task "$REPO#$ISSUE" \
+    --repo "$REPO" \
+    --branch "${BRANCH:-}" \
+    --base-sha "$base_sha" \
+    --run-dir "$RUN_DIR" \
+    --build-model "${BUILD_ID:-}" --review-model "${REVIEW_ID:-}" \
+    --check-repair-model "${CHECK_REPAIR_ID:-}" --review-repair-model "${REVIEW_REPAIR_ID:-}" \
+    --shadow-model "${YR_SHADOW_MODEL:-}" \
+    --outcome-type "$1" --outcome-decision "${2:-}" \
+    --ts-start "${RUN_START_ISO:-$now_iso}" --ts-end "$now_iso" --wall-seconds "$wall" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then log "ledger: row appended ($1)"; else log "warn: ledger append failed (non-fatal): $out"; fi
+  return 0
+}
+
 # ---- DoR content gate -> Needs-info bounce (Status=Backlog + Reason=Needs-info). Dry-run stays read-only ----
 if [ -n "$NEEDS_INFO" ]; then
   [ "$DRY_RUN" = 1 ] && gate "$NEEDS_INFO"
   set_status Backlog; set_reason Needs-info
   comment "dev-runner: bounced to **Needs-info** — $NEEDS_INFO. Fix it, then set Status back to Ready."
+  ledger_append needs-info ""
   gate "needs-info: $NEEDS_INFO"
 fi
 
@@ -549,7 +584,9 @@ log "claimed #$ISSUE -> In Progress, branch $BRANCH, build=$BUILD_ID review=$REV
 # name it in the record so salvage recovers the final tree, not diff.patch's pre-repair snapshot.
 fail_blocked(){ local extra=""
                  [ -f "$RUN_DIR/final.patch" ] && extra="  Post-repair artifact: $RUN_DIR/final.patch (the tree after the review-repair round — salvage from this, not diff.patch)."
-                 set_reason Blocked; comment "dev-runner: **Blocked** — $1$extra"; cleanup_wt; die "$1"; }
+                 set_reason Blocked; comment "dev-runner: **Blocked** — $1$extra"
+                 ledger_append blocked ""
+                 cleanup_wt; die "$1"; }
 
 # ---- run dir (per-pid), worktree (repo+branch-keyed, stable), per-repo-branch stage-completion state
 #      (issue #39; repo-keyed epic #126) --------------------------------------------------------------
@@ -601,6 +638,7 @@ env_hold_record(){   # $1 = die/log message, $2 = issue comment body
   mkdir -p "$STATE_DIR"; : > "$HOLD_MARKER"
   set_reason Blocked
   comment "$2"
+  ledger_append env-hold ""
   die "$1"
 }
 
@@ -1319,6 +1357,25 @@ else
   set_status "In Review"
   log "PR opened: $PR_URL  (#$ISSUE -> In Review${ARMED_BLOCKED:+, Reason=Blocked})"
 fi
+
+# ledger row (issue #206): the success terminus — one row, deriving the outcome from the merge decision.
+# The armed-BLOCKED case is pinned as type in-review / decision BLOCKED (armed_block itself never
+# appends — this is the one append for that path, at the shared terminus). An armed_block's own
+# environmental failure inside terminal_step (MERGE_MARKER never set) falls through to the same
+# in-review/no-decision default as an ungoverned (non-armed) build.
+LEDGER_OUTCOME_TYPE="in-review"; LEDGER_OUTCOME_DECISION=""
+if [ "$MERGED" -eq 1 ]; then
+  LEDGER_OUTCOME_TYPE="merged"; LEDGER_OUTCOME_DECISION="MERGED"
+elif [ "$ARMED_BLOCKED" -eq 1 ]; then
+  LEDGER_OUTCOME_TYPE="in-review"; LEDGER_OUTCOME_DECISION="BLOCKED"
+else
+  case "$MERGE_MARKER" in
+    *WOULD-MERGE*) LEDGER_OUTCOME_TYPE="shadow-would-merge"; LEDGER_OUTCOME_DECISION="WOULD-MERGE";;
+    *WOULD-BLOCK*) LEDGER_OUTCOME_TYPE="shadow-would-block"; LEDGER_OUTCOME_DECISION="WOULD-BLOCK";;
+  esac
+fi
+ledger_append "$LEDGER_OUTCOME_TYPE" "$LEDGER_OUTCOME_DECISION"
+
 cleanup_wt
 
 # ---- transcript retention (issue #205): the runner-owned age/size cap on archived transcripts, wired

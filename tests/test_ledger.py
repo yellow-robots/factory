@@ -23,11 +23,13 @@ import os
 import pathlib
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import ledger  # noqa: E402
+import stage_usage  # noqa: E402
 
 LEDGER_PY = ROOT / "tools" / "ledger.py"
 
@@ -431,3 +433,320 @@ def test_ledger_resolve_transcript_delegates_to_the_real_stage_usage_module(monk
     path, method = ledger.resolve_transcript(log, slug_dir)
     assert path == target and method == "session_id"
     assert calls, "ledger.resolve_transcript never called stage_usage.find_result_envelope"
+
+
+# ============ append (issue #206): one yr-ledger-row/1 JSONL row per runner invocation ==============
+# Derived from the CRITERIA (the spec), not the implementation's internals:
+#   * the row carries schema/run_id/task/repo/branch/base_sha/models/per-stage usage/totals/outcome/
+#     repairs/wall_seconds/ts_start/ts_end, and `task` is whatever the caller passes — NEVER derived
+#     from run_dir (build_ledger_row must never raise on a missing/empty run_dir, since the Needs-info
+#     bounce calls it before the run dir even exists);
+#   * usage covers every usage-*.json artifact (dedup-suffixed rounds included, usage-summary.json
+#     excluded — tools/stage_usage.py's own loader), PLUS a read-only envelope fallback for a stage
+#     whose log still holds an unextracted result envelope (an rc != 0 stage), assigned the next free
+#     dedup suffix when its stage name is already taken — never overwriting or double-counting;
+#   * weighted totals use stage_usage.WEIGHTED_TOTAL_WEIGHTS/build_summary unchanged;
+#   * a shadow-review-seat stage (shadow-review*.md, scanned only when shadow_model is set) is recorded
+#     in the per-stage array but excluded from totals.weighted_total, and never causes the row to be
+#     skipped even carrying an unregistered model id;
+#   * repairs are counted by ARTIFACT NAME (repair.log / review-repair.log), never by usage-*-N.json
+#     suffix (a second review round is not itself a "review repair");
+#   * append_row holds a blocking flock so concurrent writers each land exactly one, uninterleaved row.
+
+def _usage_file(run_dir, stage, **kw):
+    d = {"stage": stage, "model": "claude-sonnet-5", "duration_ms": 100,
+         "input_tokens": 10, "output_tokens": 20, "cache_write_tokens": 0, "cache_read_tokens": 0}
+    d.update(kw)
+    pathlib.Path(run_dir).mkdir(parents=True, exist_ok=True)
+    (pathlib.Path(run_dir) / f"usage-{stage}.json").write_text(json.dumps(d))
+    return d
+
+
+def _build_row(run_dir, *, outcome_type="merged", outcome_decision="MERGED", **overrides):
+    kw = dict(run_id="5-1234", task="acme/widgets#5", repo="acme/widgets", branch="task/5-x",
+              base_sha="a" * 40, run_dir=run_dir, build_model="claude-sonnet-5",
+              review_model="claude-opus-4-8", check_repair_model="", review_repair_model="",
+              shadow_model="", outcome_type=outcome_type, outcome_decision=outcome_decision,
+              ts_start="2026-01-01T00:00:00Z", ts_end="2026-01-01T00:05:00Z", wall_seconds=300)
+    kw.update(overrides)
+    return ledger.build_ledger_row(**kw)
+
+
+def test_build_ledger_row_basic_shape_and_schema(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement")
+    row = _build_row(run_dir)
+    assert row["schema"] == "yr-ledger-row/1"
+    assert row["run_id"] == "5-1234"
+    assert row["task"] == "acme/widgets#5"
+    assert row["repo"] == "acme/widgets"
+    assert row["branch"] == "task/5-x"
+    assert row["base_sha"] == "a" * 40
+    assert row["models"] == {"build": "claude-sonnet-5", "review": "claude-opus-4-8"}
+    assert row["outcome"] == {"type": "merged", "decision": "MERGED"}
+    assert row["repairs"] == {"check": 0, "review": 0}
+    assert row["wall_seconds"] == 300
+    assert row["ts_start"] == "2026-01-01T00:00:00Z" and row["ts_end"] == "2026-01-01T00:05:00Z"
+    assert len(row["stages"]) == 1
+    stage = row["stages"][0]
+    assert stage["stage"] == "implement" and stage["source"] == "usage-file"
+    assert "weighted_total" in stage
+
+
+def test_build_ledger_row_task_is_never_derived_from_run_dir(tmp_path):
+    """The run dir basename ('999-9999') carries no repo/issue semantics of its own — task must be
+    exactly whatever the caller passes, never parsed or reconstructed from the run dir path."""
+    run_dir = tmp_path / "runs" / "999-9999"
+    row = _build_row(run_dir, task="other-owner/other-repo#42", outcome_type="needs-info",
+                      outcome_decision="")
+    assert row["task"] == "other-owner/other-repo#42"
+
+
+def test_build_ledger_row_never_raises_on_missing_run_dir(tmp_path):
+    """The Needs-info bounce calls this BEFORE the run dir is ever created (tools/dev-runner.sh mkdirs
+    RUN_DIR only after claim) — an absent run_dir must yield an empty stage array, never an error."""
+    row = _build_row(tmp_path / "does-not-exist", outcome_type="needs-info", outcome_decision="")
+    assert row["schema"] == "yr-ledger-row/1"
+    assert row["stages"] == []
+    assert row["totals"]["weighted_total"] == 0
+
+
+def test_build_ledger_row_weighted_totals_use_stage_usage_census_weights(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", input_tokens=100, output_tokens=10, cache_write_tokens=8,
+                cache_read_tokens=1000)
+    row = _build_row(run_dir)
+    expected = round(sum(stage_usage.WEIGHTED_TOTAL_WEIGHTS[k] * v for k, v in
+                          {"input_tokens": 100, "output_tokens": 10, "cache_write_tokens": 8,
+                           "cache_read_tokens": 1000}.items()))
+    assert row["stages"][0]["weighted_total"] == expected
+    assert row["totals"]["weighted_total"] == expected
+    assert row["totals"]["input_tokens"] == 100   # build_summary's own totals carried through too
+
+
+def test_build_ledger_row_includes_all_dedup_suffixed_usage_files(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "review", input_tokens=11)
+    _usage_file(run_dir, "review-2", input_tokens=21)
+    _usage_file(run_dir, "review-3", input_tokens=31)
+    row = _build_row(run_dir, outcome_type="in-review", outcome_decision="")
+    stages = {s["stage"] for s in row["stages"]}
+    assert stages == {"review", "review-2", "review-3"}
+    assert row["totals"]["input_tokens"] == 11 + 21 + 31
+
+
+def test_build_ledger_row_excludes_the_aggregate_usage_summary_file(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement")
+    (run_dir / "usage-summary.json").write_text(json.dumps({"stages": [], "totals": {}, "weighted_total": 0}))
+    row = _build_row(run_dir)
+    assert {s["stage"] for s in row["stages"]} == {"implement"}
+
+
+def test_build_ledger_row_reads_failed_stage_via_envelope_without_rewriting_log(tmp_path):
+    """rc != 0: capture_stage_usage never ran, so implement.log still holds the raw result envelope —
+    the fallback must read it (never rewrite it) and still produce a per-stage record."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    envelope_text = _envelope_line(session_id="s1") + "\n"
+    log = run_dir / "implement.log"
+    log.write_text(envelope_text)
+    row = _build_row(run_dir, outcome_type="blocked", outcome_decision="")
+    assert log.read_text() == envelope_text   # byte-identical — never rewritten
+    stages = {s["stage"]: s for s in row["stages"]}
+    assert "implement" in stages
+    assert stages["implement"]["source"] == "envelope"
+    assert stages["implement"]["input_tokens"] == 1   # _envelope_line's default usage
+
+
+def test_build_ledger_row_envelope_fallback_gets_next_dedup_suffix_when_stage_name_taken(tmp_path):
+    """A second review round that failed after the first round already succeeded: usage-review.json
+    (round 1, extracted) plus a still-raw review.md (round 2, rc != 0, overwritten in place — the same
+    dedup-on-write convention capture_stage_usage's OWN output filename uses) must land as review AND
+    review-2, never overwriting or double-counting the first round."""
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "review", input_tokens=11)
+    (run_dir / "review.md").write_text(_envelope_line(session_id="s2") + "\n")
+    row = _build_row(run_dir, outcome_type="blocked", outcome_decision="")
+    stages = {s["stage"]: s for s in row["stages"]}
+    assert stages["review"]["input_tokens"] == 11 and stages["review"]["source"] == "usage-file"
+    assert stages["review-2"]["input_tokens"] == 1 and stages["review-2"]["source"] == "envelope"
+
+
+def test_build_ledger_row_repairs_counted_by_artifact_presence(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "repair.log").write_text("x")
+    (run_dir / "review-repair.log").write_text("x")
+    row = _build_row(run_dir)
+    assert row["repairs"] == {"check": 1, "review": 1}
+
+
+def test_build_ledger_row_repairs_zero_when_no_repair_artifacts(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    row = _build_row(run_dir)
+    assert row["repairs"] == {"check": 0, "review": 0}
+
+
+def test_build_ledger_row_repairs_never_confused_with_a_suffixed_review_round(tmp_path):
+    """A second review round's own usage-review-2.json (a normal repair cycle, or the shadow seat) must
+    NOT itself be counted as a review repair — only review-repair.log/usage-review-repair.json does."""
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "review", input_tokens=1)
+    _usage_file(run_dir, "review-2", input_tokens=1)
+    row = _build_row(run_dir)
+    assert row["repairs"]["review"] == 0
+
+
+def test_build_ledger_row_shadow_stage_recorded_but_excluded_from_totals(tmp_path):
+    """A shadow-review-seat stage is recorded in the per-stage array (tagged with its own, possibly
+    unregistered, model) but excluded from the run's weighted total — and never causes the row itself
+    to be skipped."""
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", input_tokens=100)
+    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
+    row = _build_row(run_dir, shadow_model="some-unregistered-cross-vendor-model")
+    stages = {s["stage"]: s for s in row["stages"]}
+    assert "shadow-review" in stages
+    assert stages["shadow-review"]["model"] == "some-unregistered-cross-vendor-model"
+    assert stages["shadow-review"]["source"] == "envelope"
+    # totals reflect ONLY the non-shadow stage — the shadow stage never folds into the census total.
+    assert row["totals"]["weighted_total"] == stages["implement"]["weighted_total"]
+    assert row["totals"]["input_tokens"] == 100
+
+
+def test_build_ledger_row_shadow_files_ignored_when_the_seat_is_dark(tmp_path):
+    """Dark by default (no shadow_model passed): a stray shadow-review*.md is never even scanned."""
+    run_dir = tmp_path / "run"
+    (run_dir / "shadow-review.md").parent.mkdir(parents=True, exist_ok=True)
+    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
+    row = _build_row(run_dir, shadow_model="")
+    assert row["stages"] == []
+
+
+def test_build_ledger_row_second_shadow_round_dedup_suffixed(tmp_path):
+    run_dir = tmp_path / "run"
+    (run_dir).mkdir(parents=True, exist_ok=True)
+    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
+    (run_dir / "shadow-review-2.md").write_text(_envelope_line(session_id="sh2") + "\n")
+    row = _build_row(run_dir, shadow_model="acme/shadow-model")
+    stages = {s["stage"] for s in row["stages"]}
+    assert stages == {"shadow-review", "shadow-review-2"}
+    assert row["totals"]["weighted_total"] == 0   # both shadow rounds excluded from the census total
+
+
+def test_append_row_creates_ledger_dir_and_writes_one_line(tmp_path):
+    ledger_dir = tmp_path / "nested" / "ledger"
+    row = {"schema": ledger.ROW_SCHEMA, "run_id": "x"}
+    path = ledger.append_row(ledger_dir, row)
+    assert path == ledger_dir / "rows.jsonl"
+    lines = path.read_text().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0]) == row
+
+
+def test_append_row_appends_without_clobbering_prior_rows(tmp_path):
+    ledger_dir = tmp_path / "ledger"
+    ledger.append_row(ledger_dir, {"schema": ledger.ROW_SCHEMA, "run_id": "a"})
+    ledger.append_row(ledger_dir, {"schema": ledger.ROW_SCHEMA, "run_id": "b"})
+    lines = (ledger_dir / "rows.jsonl").read_text().splitlines()
+    assert [json.loads(l)["run_id"] for l in lines] == ["a", "b"]
+
+
+def test_append_row_concurrent_appends_never_interleave(tmp_path):
+    """Acceptance: the append holds a BLOCKING flock because a row can exceed PIPE_BUF — proven here by
+    padding every row well past the typical 4096-byte PIPE_BUF, firing N writers at once (a Barrier so
+    they all hit the lock together, not staggered), and requiring every line to still parse as valid,
+    distinct JSON."""
+    ledger_dir = tmp_path / "ledger"
+    n = 12
+    barrier = threading.Barrier(n)
+    errors = []
+
+    def worker(i):
+        try:
+            barrier.wait(timeout=10)
+            ledger.append_row(ledger_dir, {"schema": ledger.ROW_SCHEMA, "run_id": f"run-{i}",
+                                            "pad": "x" * 20000})
+        except Exception as e:  # pragma: no cover - surfaced via `errors` below
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    lines = (ledger_dir / "rows.jsonl").read_text().splitlines()
+    assert len(lines) == n   # every writer landed exactly one line — none lost, none interleaved
+    parsed = [json.loads(l) for l in lines]   # raises if any line got corrupted by interleaving
+    assert sorted(r["run_id"] for r in parsed) == sorted(f"run-{i}" for i in range(n))
+
+
+def test_cli_append_concurrent_processes_never_interleave(tmp_path):
+    """The same guarantee across independent OS processes (concurrent builds), through the exact CLI
+    entry point tools/dev-runner.sh shells out to."""
+    ledger_dir = tmp_path / "ledger"
+    n = 8
+    procs = []
+    for i in range(n):
+        run_dir = tmp_path / f"run-{i}"
+        run_dir.mkdir()
+        procs.append(subprocess.Popen(
+            [sys.executable, str(LEDGER_PY), "append",
+             "--ledger-dir", str(ledger_dir), "--run-id", f"run-{i}", "--task", f"test/repo#{i}",
+             "--repo", "test/repo", "--run-dir", str(run_dir), "--outcome-type", "merged",
+             "--outcome-decision", "MERGED", "--ts-start", "t0", "--ts-end", "t1", "--wall-seconds", "1"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+    for p in procs:
+        rc = p.wait(timeout=30)
+        assert rc == 0, p.stderr.read()
+    lines = (ledger_dir / "rows.jsonl").read_text().splitlines()
+    assert len(lines) == n
+    parsed = [json.loads(l) for l in lines]
+    assert sorted(r["run_id"] for r in parsed) == sorted(f"run-{i}" for i in range(n))
+
+
+def test_cli_append_writes_a_row_and_exits_zero(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    ledger_dir = tmp_path / "ledger"
+    r = _run_cli("append", "--ledger-dir", str(ledger_dir), "--run-id", "5-123",
+                 "--task", "acme/widgets#5", "--repo", "acme/widgets", "--branch", "task/5-x",
+                 "--base-sha", "a" * 40, "--run-dir", str(run_dir),
+                 "--build-model", "claude-sonnet-5", "--review-model", "claude-opus-4-8",
+                 "--outcome-type", "merged", "--outcome-decision", "MERGED",
+                 "--ts-start", "2026-01-01T00:00:00Z", "--ts-end", "2026-01-01T00:05:00Z",
+                 "--wall-seconds", "300")
+    assert r.returncode == 0, r.stderr
+    rows = [json.loads(l) for l in (ledger_dir / "rows.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == "5-123" and rows[0]["task"] == "acme/widgets#5"
+    assert rows[0]["outcome"] == {"type": "merged", "decision": "MERGED"}
+
+
+def test_cli_append_optional_fields_default_to_none_not_empty_string(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    ledger_dir = tmp_path / "ledger"
+    r = _run_cli("append", "--ledger-dir", str(ledger_dir), "--run-id", "7-1", "--task", "o/r#7",
+                 "--repo", "o/r", "--run-dir", str(run_dir), "--outcome-type", "needs-info",
+                 "--ts-start", "t0", "--ts-end", "t1", "--wall-seconds", "0")
+    assert r.returncode == 0, r.stderr
+    row = json.loads((ledger_dir / "rows.jsonl").read_text().splitlines()[0])
+    assert row["branch"] is None and row["base_sha"] is None and row["outcome"]["decision"] is None
+
+
+def test_cli_append_succeeds_even_when_run_dir_does_not_exist(tmp_path):
+    """The Needs-info bounce calls this before RUN_DIR is ever created — the CLI must still append a
+    (empty-stages) row rather than fail."""
+    ledger_dir = tmp_path / "ledger"
+    r = _run_cli("append", "--ledger-dir", str(ledger_dir), "--run-id", "1-1", "--task", "o/r#1",
+                 "--repo", "o/r", "--run-dir", str(tmp_path / "no-such-run-dir"),
+                 "--outcome-type", "needs-info", "--ts-start", "t0", "--ts-end", "t1",
+                 "--wall-seconds", "0")
+    assert r.returncode == 0, r.stderr
+    rows = [json.loads(l) for l in (ledger_dir / "rows.jsonl").read_text().splitlines()]
+    assert rows[0]["stages"] == []
