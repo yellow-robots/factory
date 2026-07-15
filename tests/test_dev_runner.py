@@ -961,7 +961,8 @@ def test_tester_boundary_guard_checkpoint_is_after_implementer(tmp_path):
 # These exercise resolution/precedence via --dry-run, which reports the resolved config and exits
 # before any git op — so no real repo is ever touched.
 
-def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, name="repo"):
+def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, lint_cmd=None,
+                   lint_fix_cmd=None, name="repo"):
     """A minimal repo dir carrying a .yr/factory.toml (no git needed — dry-run never touches git). A
     leading comment line is always present — with no keys at all, `"\\n".join([]) + "\\n"` is just a
     newline, and `$(cat ...)` strips an all-whitespace read down to an EMPTY string, which the admission
@@ -969,9 +970,11 @@ def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, name="repo
     repo = tmp / name
     (repo / ".yr").mkdir(parents=True)
     lines = ["# seeded by the test harness"]
-    if check_cmd is not None: lines.append(f'check_cmd = "{check_cmd}"')
-    if model is not None:     lines.append(f'model = "{model}"')
-    if base_ref is not None:  lines.append(f'base_ref = "{base_ref}"')
+    if check_cmd is not None:    lines.append(f'check_cmd = "{check_cmd}"')
+    if model is not None:        lines.append(f'model = "{model}"')
+    if base_ref is not None:     lines.append(f'base_ref = "{base_ref}"')
+    if lint_cmd is not None:     lines.append(f'lint_cmd = "{lint_cmd}"')
+    if lint_fix_cmd is not None: lines.append(f'lint_fix_cmd = "{lint_fix_cmd}"')
     (repo / ".yr" / "factory.toml").write_text("\n".join(lines) + "\n")
     return repo
 
@@ -2145,8 +2148,10 @@ def test_dryrun_json_contract_unchanged_by_usage_capture(tmp_path):
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
+    # issue #213 deliberately expands this contract by exactly two keys (lint_cmd/lint_fix_cmd) — the
+    # lint-tier acceptance criterion requires the dry-run to report them. No USAGE-related key may appear.
     assert set(d) == {"repo", "issue", "branch", "model", "workspace", "base_repo", "base_ref",
-                       "check_cmd", "auto_merge", "build", "review", "ready"}
+                       "check_cmd", "auto_merge", "lint_cmd", "lint_fix_cmd", "build", "review", "ready"}
 
 
 def test_usage_summary_never_collides_with_the_yr_merge_shadow_record(tmp_path):
@@ -3818,3 +3823,467 @@ def test_ledger_append_failure_never_blocks_the_run(tmp_path):
     assert any(l.startswith("EDIT") and "STATUSFIELD" in l and "InReview" in l for l in tl)
     assert "ledger append failed" in r.stderr.lower()
     assert "non-fatal" in r.stderr.lower()
+
+
+# ============ Issue #213: manifest-declared lint tier — blocking, autofix-first repair ============
+# The check gate runs a repo's manifest-declared `lint_cmd` as a BLOCKING tier, AFTER `check_cmd` passes.
+# The repair scope is ruled: deterministic autofix (`lint_fix_cmd`) FIRST — no LLM — then at most ONE LLM
+# repair confined to the lint-flagged files; after ANY repair-path mutation of the tree (the autofix
+# alone included) BOTH `check_cmd` and `lint_cmd` re-run before the stage may pass, and either failing
+# ends the run Blocked. An absent `lint_cmd` = today's behavior, byte-identical (no probe, no output). A
+# lint (or autofix) exit 126/127 is an ENVIRONMENT hold naming the lint command + lint.log (never the
+# check command's text / checks.log), with NO LLM repair.
+#
+# Stubs — self-contained, no live LLM or network. `lint.sh` / `lintfix.sh` are OPAQUE shell commands the
+# runner runs verbatim (run_lint), gated on env vars and a `lint_ok` marker they drop in the worktree
+# (cwd = $WT for both run_lint and the claude stages). The claude stub gains a `*"lint gate FAILS"*`
+# branch (a LINTREPAIR timeline marker), so the LLM lint-repair stage is OBSERVABLE and DISTINCT from the
+# check-repair stage (REPAIR) and the implementer (IMPL) — the shipped stub would misroute the lint
+# prompt to the implementer (`*)`), collapsing exactly the distinction these tests must prove.
+
+LINT_STUB = '''#!/usr/bin/env bash
+echo LINT >> "$STUB_LINT_TL"
+[ -n "${STUB_LINT_ENVFAIL:-}" ] && exit "${STUB_LINT_ENVFAIL}"
+if [ -n "${STUB_LINT_FAIL:-}" ] && [ ! -f lint_ok ]; then exit 1; fi
+exit 0
+'''
+
+LINT_FIX_STUB = '''#!/usr/bin/env bash
+echo LINTFIX >> "$STUB_LINT_TL"
+[ -n "${STUB_FIX_ENVFAIL:-}" ] && exit "${STUB_FIX_ENVFAIL}"
+[ -z "${STUB_FIX_NOHEAL:-}" ] && : > lint_ok
+exit 0
+'''
+
+# the shipped claude stub, plus a lint-repair branch inserted BEFORE the check-repair one. The LLM
+# lint-repair task prompt carries "The lint gate FAILS" (never "tests FAIL"/"TESTER"/"REVIEWER"), so it
+# routes here and nowhere else. It heals (drops the worktree's `lint_ok` marker) only when
+# STUB_LINTREPAIR_HEAL is set, so both the still-broken and the healed paths are exercisable.
+LINT_CLAUDE_STUB = CLAUDE_STUB.replace(
+    '  *"tests FAIL"*)',
+    '''  *"lint gate FAILS"*) echo LINTREPAIR >> "$STUB_TIMELINE"
+                        [ -n "${STUB_LINTREPAIR_HEAL:-}" ] && : > lint_ok ;;
+  *"tests FAIL"*)''',
+)
+
+
+def _lint_bin(tmp):
+    """Stubs for a lint-tier run: the lint-aware claude stub plus the opaque lint.sh / lintfix.sh."""
+    binp = tmp / "bin"; _stubs(binp)
+    _exec(binp / "claude", LINT_CLAUDE_STUB)
+    _exec(binp / "lint.sh", LINT_STUB)
+    _exec(binp / "lintfix.sh", LINT_FIX_STUB)
+    return binp
+
+
+def _lint_env(tmp, *, title="Lint tier", declare_fix=True, number=5):
+    """A real-git flow env with the lint tier wired via explicit LINT_CMD/LINT_FIX_CMD (env > manifest);
+    an end-to-end manifest-declared variant is exercised separately (test_lint_cmd_declared_in_manifest)."""
+    work, _ = _make_repo(tmp)
+    binp = _lint_bin(tmp)
+    env = _real(tmp, _env(tmp, binp, number=number, title=title), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_LINT_TL"] = str(tmp / "lint_tl")
+    env["LINT_CMD"] = f"bash {binp / 'lint.sh'}"
+    if declare_fix:
+        env["LINT_FIX_CMD"] = f"bash {binp / 'lintfix.sh'}"
+    return env, work, binp
+
+
+def _lint_tl(tmp):
+    p = tmp / "lint_tl"
+    return p.read_text().splitlines() if p.exists() else []
+
+
+def _lint_log(tmp, number=5):
+    rd = _run_dir(tmp, number)
+    p = rd / "lint.log"
+    return p.read_text() if p.exists() else None
+
+
+# ---- criterion: the dry-run JSON reports lint_cmd / lint_fix_cmd; env overrides manifest (precedence) --
+
+def test_dryrun_reports_lint_cmd_and_fix_from_manifest(tmp_path):
+    """A repo's manifest lint_cmd/lint_fix_cmd surface in the dry-run JSON when no env override is set."""
+    repo = _manifest_repo(tmp_path, lint_cmd="ruff check .", lint_fix_cmd="ruff check --fix .")
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(r.stdout)
+    assert d["lint_cmd"] == "ruff check ."
+    assert d["lint_fix_cmd"] == "ruff check --fix ."
+
+
+def test_dryrun_lint_absent_reports_empty(tmp_path):
+    """No manifest lint keys and no env override -> both report as empty (absent = off)."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(r.stdout)
+    assert d["lint_cmd"] == "" and d["lint_fix_cmd"] == ""
+
+
+def test_dryrun_env_lint_cmd_overrides_manifest(tmp_path):
+    """Explicit LINT_CMD/LINT_FIX_CMD in the env win over the manifest (env > manifest > default)."""
+    repo = _manifest_repo(tmp_path, lint_cmd="ruff check .", lint_fix_cmd="ruff check --fix .")
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
+    env["LINT_CMD"] = "eslint ."; env["LINT_FIX_CMD"] = "eslint --fix ."
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(r.stdout)
+    assert d["lint_cmd"] == "eslint ." and d["lint_fix_cmd"] == "eslint --fix ."
+
+
+# ---- criterion: WHEN a repo declares no lint_cmd, behave byte-identically to today (no probe/output) --
+
+def test_no_lint_cmd_is_byte_identical_to_today(tmp_path):
+    """With no lint_cmd declared, the lint tier is inert: no probe (lint.sh never runs), no lint.log in
+    the run dir, and the check gate runs exactly once — the whole build proceeds to a PR as it always has."""
+    work, _ = _make_repo(tmp_path)
+    binp = _lint_bin(tmp_path)   # lint.sh EXISTS on disk, but nothing must invoke it
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="No lint declared"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_LINT_TL"] = str(tmp_path / "lint_tl")
+    # deliberately NO LINT_CMD / LINT_FIX_CMD in the env and none in the manifest
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    assert _lint_tl(tmp_path) == []                       # the lint command was never probed
+    assert _lint_log(tmp_path) is None                    # no lint.log artifact at all
+    tl = _timeline(tmp_path)
+    assert tl.count("CHECK") == 1                          # no lint-driven re-check
+    assert "LINTREPAIR" not in tl and "REPAIR" not in tl
+    assert any(l.startswith("EDIT") and "InReview" in l for l in tl)
+
+
+# ---- criterion: lint_cmd runs AFTER check_cmd passes; green lint proceeds -----------------------------
+
+def test_lint_green_proceeds_after_check(tmp_path):
+    """A declared lint_cmd that passes runs once (after the check gate), triggers no autofix and no LLM
+    repair and no re-check, and the build proceeds to a PR / In Review."""
+    env, work, binp = _lint_env(tmp_path, title="Lint green")
+    # lint passes on the first probe (STUB_LINT_FAIL unset)
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    lint_tl = _lint_tl(tmp_path)
+    assert lint_tl == ["LINT"]                             # probed once, passed; no autofix, no re-run
+    assert "LINTFIX" not in lint_tl
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" not in tl                          # no LLM lint repair
+    assert tl.count("CHECK") == 1                          # no mutation -> no re-check
+    assert _lint_log(tmp_path) is not None                 # the probe produced a lint.log
+    assert any(l.startswith("EDIT") and "InReview" in l for l in tl)
+
+
+def test_lint_not_probed_until_check_passes(tmp_path):
+    """lint_cmd runs strictly AFTER check_cmd passes: when the check gate fails unrepairably, the run
+    Blocks at the check gate and the lint command is NEVER probed (no lint.log, no lint marker)."""
+    env, work, binp = _lint_env(tmp_path, title="Lint gated behind check")
+    env["STUB_CHECK_FAIL"] = "1"; env["STUB_REPAIR_NOFIX"] = "1"   # check fails, repair can't heal it
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0 and "checks still failing" in r.stderr.lower()
+    assert _lint_tl(tmp_path) == []                        # lint never ran — check never passed
+    assert _lint_log(tmp_path) is None
+    assert "https://stub/pr/1" not in r.stdout
+
+
+def test_lint_cmd_declared_in_manifest_runs_end_to_end(tmp_path):
+    """The manifest-declared path end-to-end (no env override): a green lint_cmd read from origin/main's
+    .yr/factory.toml runs and the build proceeds — proving the manifest tuple carries the key, not just
+    the env."""
+    work, _ = _make_repo(tmp_path)
+    binp = _lint_bin(tmp_path)
+    lint_marker = tmp_path / "manifest_lint_ran"
+    _exec(binp / "mlint.sh", f'#!/usr/bin/env bash\n: > "{lint_marker}"\nexit 0\n')
+    (work / ".yr" / "factory.toml").write_text(f'lint_cmd = "bash {binp / "mlint.sh"}"\n')
+    _git(["add", "-A"], work); _git(["commit", "-q", "-m", "declare lint"], work)
+    _git(["push", "-q", "origin", "main"], work)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Manifest lint"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert lint_marker.exists()                            # the manifest's lint_cmd actually ran
+    assert "https://stub/pr/1" in r.stdout
+
+
+# ---- criterion: lint fail -> deterministic autofix first (no LLM), then re-run BOTH gates -------------
+
+def test_lint_fail_autofix_heals_no_llm_and_rechecks(tmp_path):
+    """A lint failure with a declared lint_fix_cmd that heals: the DETERMINISTIC autofix runs (no LLM
+    stage), then BOTH check_cmd and lint_cmd re-run against the mutated tree before the stage passes."""
+    env, work, binp = _lint_env(tmp_path, title="Autofix heals")
+    env["STUB_LINT_FAIL"] = "1"    # lint fails until the autofix drops `lint_ok`
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    lint_tl = _lint_tl(tmp_path)
+    assert lint_tl.count("LINTFIX") == 1                   # the autofix ran, exactly once
+    assert lint_tl.count("LINT") >= 2                      # probe (fail) + at least one re-run (pass)
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" not in tl                          # NO LLM stage ran — the autofix sufficed
+    assert tl.count("CHECK") == 2                          # check_cmd RE-RAN after the autofix mutation
+    assert any(l.startswith("EDIT") and "InReview" in l for l in tl)
+
+
+def test_lint_autofix_alone_triggers_recheck_even_though_llm_never_runs(tmp_path):
+    """The deterministic autofix alone counts as a repair-path mutation: check_cmd must re-run after it
+    even though no LLM stage ever fired (the criterion's 'the deterministic autofix alone included')."""
+    env, work, binp = _lint_env(tmp_path, title="Autofix alone rechecks")
+    env["STUB_LINT_FAIL"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" not in tl and "REPAIR" not in tl   # no LLM repair of either kind
+    assert tl.count("CHECK") == 2                          # yet the check gate re-ran post-autofix
+
+
+# ---- criterion: autofix that doesn't heal -> ONE LLM repair -> re-run BOTH gates -> Blocked if failing
+
+def test_lint_fail_unfixed_one_llm_repair_then_blocked(tmp_path):
+    """Autofix runs but doesn't heal, then the single LLM lint-repair also doesn't heal: exactly ONE LLM
+    repair fires, then the run ends Blocked (never a PR)."""
+    env, work, binp = _lint_env(tmp_path, title="Unfixable lint")
+    env["STUB_LINT_FAIL"] = "1"; env["STUB_FIX_NOHEAL"] = "1"   # neither autofix nor LLM heal it
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "lint still failing" in r.stderr.lower()
+    tl = _timeline(tmp_path)
+    assert tl.count("LINTREPAIR") == 1                     # exactly ONE LLM repair attempt
+    assert _lint_tl(tmp_path).count("LINTFIX") == 1        # the autofix ran first (once), deterministically
+    edits = " ".join(_edits(tl))
+    assert "REASONFIELD" in edits and "Blocked" in edits
+    assert "https://stub/pr/1" not in r.stdout            # no PR
+
+
+def test_lint_fail_no_fix_cmd_goes_straight_to_one_llm_repair(tmp_path):
+    """With NO lint_fix_cmd declared, the autofix step is skipped entirely — the run goes straight to the
+    single LLM lint-repair. Here that repair heals, so both gates re-run and the build proceeds."""
+    env, work, binp = _lint_env(tmp_path, title="No fix cmd", declare_fix=False)
+    env["STUB_LINT_FAIL"] = "1"; env["STUB_LINTREPAIR_HEAL"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    lint_tl = _lint_tl(tmp_path)
+    assert "LINTFIX" not in lint_tl                        # no autofix was declared, so none ran
+    tl = _timeline(tmp_path)
+    assert tl.count("LINTREPAIR") == 1                     # one LLM repair, which healed it
+    assert tl.count("CHECK") == 2                          # both gates re-ran after the repair mutation
+    assert any(l.startswith("EDIT") and "InReview" in l for l in tl)
+
+
+def test_lint_repaired_but_check_now_fails_ends_blocked(tmp_path):
+    """After a repair-path mutation heals lint, the mandatory check_cmd re-run must still pass: if the
+    fix broke the check suite, EITHER gate failing ends the run Blocked (the shipped tree is what the
+    review bundle attests). No LLM lint stage runs here — the autofix alone healed lint."""
+    work, _ = _make_repo(tmp_path)
+    binp = _lint_bin(tmp_path)
+    # a check that PASSES until the lint autofix drops `lint_ok`, then FAILS (the fix broke the tree)
+    _exec(binp / "check.sh", '#!/usr/bin/env bash\n'
+                             'echo CHECK >> "$STUB_TIMELINE"\n'
+                             '[ -f lint_ok ] && exit 1\n'
+                             'exit 0\n')
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Fix breaks checks"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_LINT_TL"] = str(tmp_path / "lint_tl")
+    env["LINT_CMD"] = f"bash {binp / 'lint.sh'}"; env["LINT_FIX_CMD"] = f"bash {binp / 'lintfix.sh'}"
+    env["STUB_LINT_FAIL"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" not in tl                          # the autofix healed lint; no LLM stage needed
+    assert _lint_tl(tmp_path).count("LINTFIX") == 1
+    assert tl.count("CHECK") == 2                          # initial pass + the post-mutation re-run (fail)
+    edits = " ".join(_edits(tl))
+    assert "REASONFIELD" in edits and "Blocked" in edits
+    assert "https://stub/pr/1" not in r.stdout
+
+
+# ---- criterion: lint_cmd / lint_fix_cmd exit 126|127 -> env hold naming the lint cmd + log, no LLM ----
+
+def test_lint_env_failure_126_holds_naming_lint_cmd_no_repair(tmp_path):
+    """A lint_cmd exit 126 (found-but-not-executable) is an ENVIRONMENT hold: no LLM repair, and the
+    record names the LINT command and lint.log — never the check command's text or checks.log."""
+    env, work, binp = _lint_env(tmp_path, title="Lint cannot execute")
+    env["STUB_LINT_ENVFAIL"] = "126"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" not in tl and "REPAIR" not in tl   # NO LLM repair attempt of any kind
+    assert _lint_tl(tmp_path) == ["LINT"]                  # probed once, failed closed (no re-run)
+    comments = " ".join(_comments(tl))
+    assert comments                                        # a hold WAS recorded (never a silent claim)
+    assert "hold" in comments.lower()
+    assert "lint.log" in comments                          # names the lint log path
+    assert f"bash {binp / 'lint.sh'}" in comments          # names the lint COMMAND that failed
+    assert "checks.log" not in comments                    # NOT the check command's log
+    assert "check command could not execute" not in comments   # NOT the check-gate hold's text
+    assert "Blocked" in " ".join(_edits(tl))
+    assert "https://stub/pr/1" not in r.stdout
+
+
+def test_lint_env_failure_127_also_holds_naming_lint_cmd(tmp_path):
+    """The other 'cannot execute' code, 127 (command not found), is treated the same way."""
+    env, work, binp = _lint_env(tmp_path, title="Lint tool missing")
+    env["STUB_LINT_ENVFAIL"] = "127"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" not in tl
+    comments = " ".join(_comments(tl))
+    assert "lint.log" in comments and f"bash {binp / 'lint.sh'}" in comments
+    assert "checks.log" not in comments
+    assert "Blocked" in " ".join(_edits(tl)) and "https://stub/pr/1" not in r.stdout
+
+
+def test_lint_autofix_env_failure_holds_naming_the_fix_cmd_no_repair(tmp_path):
+    """An autofix (lint_fix_cmd) exit 126/127 is environmental too: the same lint-naming env hold — here
+    naming the AUTOFIX command — and NO LLM repair follows."""
+    env, work, binp = _lint_env(tmp_path, title="Autofix cannot execute")
+    env["STUB_LINT_FAIL"] = "1"; env["STUB_FIX_ENVFAIL"] = "127"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" not in tl                          # no LLM repair on an environmental autofix death
+    comments = " ".join(_comments(tl))
+    assert "lint.log" in comments
+    assert f"bash {binp / 'lintfix.sh'}" in comments       # the hold names the autofix command that failed
+    assert "checks.log" not in comments
+    assert "Blocked" in " ".join(_edits(tl))
+    assert "https://stub/pr/1" not in r.stdout
+
+
+def test_lint_env_hold_preserves_worktree_for_resume(tmp_path):
+    """A lint env hold inherits the check gate's preserve+resume discipline (issue #39): the worktree is
+    NOT torn down and the hold marker is dropped, so a relaunch can resume."""
+    env, work, binp = _lint_env(tmp_path, title="Lint hold preserves")
+    env["STUB_LINT_ENVFAIL"] = "126"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert _wt_dir(tmp_path) is not None                   # worktree preserved
+    sd = _state_dir(tmp_path)
+    assert sd is not None and (sd / "env-hold").exists()   # the resume marker is present
+
+
+def test_lint_env_hold_appends_one_env_hold_ledger_row(tmp_path):
+    """#211 puts a ledger row at every terminal branch; the lint env hold reuses the existing env-hold
+    terminal, so it inherits that row rather than minting a new terminal path."""
+    env, work, binp = _lint_env(tmp_path, title="Lint hold ledger")
+    env["STUB_LINT_ENVFAIL"] = "126"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == {"type": "env-hold", "decision": None}
+
+
+def test_lint_unfixed_block_appends_one_blocked_ledger_row(tmp_path):
+    """A lint failure surviving the one repair reuses the existing fail_blocked terminal — one blocked
+    ledger row, no new terminal path minted."""
+    env, work, binp = _lint_env(tmp_path, title="Lint block ledger")
+    env["STUB_LINT_FAIL"] = "1"; env["STUB_FIX_NOHEAL"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == {"type": "blocked", "decision": None}
+
+
+# ---- criterion: prompt-independence pins (existing check-repair pin unchanged; new lint-repair pin;
+#                 a lint failure never triggers the check-repair prompt, nor a test failure the lint one)
+
+def _all_stdin(tmp):
+    """Every claude stage's raw stdin (task prompt) content, in call order."""
+    return _stdin_raw_calls(tmp)
+
+
+def test_lint_repair_prompt_text_pinned(tmp_path):
+    """A NEW pin fixing the lint-repair prompt's text: it names the failing lint COMMAND, confines the
+    fix to exactly the flagged files (test or production), forbids changing a test's assertions, and
+    carries the lint output — distinct from the tests-frozen check-repair prompt."""
+    env, work, binp = _lint_env(tmp_path, title="Lint prompt pin")
+    env["STUB_LINT_FAIL"] = "1"; env["STUB_FIX_NOHEAL"] = "1"   # force the LLM lint-repair to fire
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0                               # unfixed -> Blocked, but the repair prompt was sent
+    lint_calls = [c for c in _all_stdin(tmp_path) if "The lint gate FAILS" in c]
+    assert len(lint_calls) == 1, "exactly one LLM lint-repair prompt expected"
+    prompt = lint_calls[0]
+    assert f"The lint gate FAILS (command: bash {binp / 'lint.sh'})." in prompt   # names the lint command
+    assert ("Fix ONLY what the lint output flags, in exactly the files it names, test or production; "
+            "change no test's assertions; make the linter pass, nothing else.") in prompt
+    assert "Lint output:" in prompt
+
+
+def test_lint_failure_does_not_trigger_the_check_repair_prompt(tmp_path):
+    """Direction 1: a lint failure must route to the lint-repair prompt ONLY — never the tests-frozen
+    check-repair prompt. The check gate passes clean here, so no check-repair may fire."""
+    env, work, binp = _lint_env(tmp_path, title="Lint not check-repair")
+    env["STUB_LINT_FAIL"] = "1"; env["STUB_FIX_NOHEAL"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    assert "LINTREPAIR" in tl and "REPAIR" not in tl       # the lint stage fired; the check-repair did not
+    # the tests-frozen check-repair prompt never went out on any stage
+    assert not any("The project tests FAIL." in c for c in _all_stdin(tmp_path))
+
+
+def test_test_failure_does_not_trigger_the_lint_prompt(tmp_path):
+    """Direction 2: a check (test) failure must route to the check-repair prompt ONLY — never the lint
+    prompt — even when a lint_cmd is also declared (and green)."""
+    env, work, binp = _lint_env(tmp_path, title="Check not lint-repair")
+    env["STUB_CHECK_FAIL"] = "1"    # check fails until the check-repair writes `repaired`; lint stays green
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "REPAIR" in tl and "LINTREPAIR" not in tl       # the check-repair fired; no lint stage
+    # the lint prompt never went out on any stage
+    assert not any("The lint gate FAILS" in c for c in _all_stdin(tmp_path))
+
+
+def test_existing_check_repair_prompt_pin_still_passes(tmp_path):
+    """The existing check-repair prompt pin's invariant (its load-bearing routing fragment + the scoping
+    sentence) must survive this change unchanged — asserted directly here so a regression in the lint
+    slice that disturbs the check-repair prompt is caught in this file too."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _all_stages_env(tmp_path, binp, "Check-repair pin survives")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    by_stage = _stage_calls(tmp_path)
+    for call in by_stage["REPAIR"]:
+        assert "The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests." in call
+        assert "Reproduce with the failing tests only; the runner re-runs the full check suite after this stage." in call
+
+
+# ---- criterion: the review verdict, the merge path, and every non-check gate are untouched -----------
+
+def test_lint_tier_leaves_review_and_pr_path_intact(tmp_path):
+    """With a (green) lint tier declared, the downstream review verdict and PR/In-Review path are
+    unchanged: the reviewer verdict is still posted on the PR and the run still reaches In Review."""
+    env, work, binp = _lint_env(tmp_path, title="Lint leaves review intact")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "REVIEW" in tl                                  # the reviewer stage ran
+    assert "PRCOMMENT" in tl                               # its verdict was attached to the PR
+    assert "https://stub/pr/1" in r.stdout
+    assert any(l.startswith("EDIT") and "InReview" in l for l in tl)
+    assert not any("REASONFIELD" in l and "Blocked" in l for l in tl)
+
+
+def test_lint_tier_does_not_disturb_the_terminal_merge_record(tmp_path):
+    """The terminal (shadow) merge decision — the merge path — is untouched by the lint tier: a green
+    lint declared alongside a green build still posts exactly one YR-MERGE-SHADOW record on the PR."""
+    work, _ = _make_repo(tmp_path)
+    binp = _lint_bin(tmp_path)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Lint vs merge record"), work)
+    env["STUB_CLAUDE_CHANGE"] = "1"
+    env["STUB_LINT_TL"] = str(tmp_path / "lint_tl")
+    env["LINT_CMD"] = f"bash {binp / 'lint.sh'}"
+    env["STUB_ROLLUP_JSON"] = _rollup(tmp_path, [CR_OK])
+    env["MERGE_CI_POLL_INTERVAL"] = "0"; env["MERGE_CI_TIMEOUT"] = "0"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert _prcomments(tmp_path).count("YR-MERGE-SHADOW") == 1
