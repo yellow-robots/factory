@@ -29,12 +29,12 @@ enumerated by a pinned rule: every component directory directly under `--scope` 
 child contributes that subtree plus every non-hidden sibling directory (dot-dirs excluded, underscore dirs
 included — legacy zoos included whole, aggregated). When `--scope` itself has an `iterations/` child — a
 component-rooted scope, e.g. a single-project root — the scope sweeps as that one component instead, named
-by the scope's own basename, picking up its root-level docs too (the parent-shaped case has none to pick
-up). When `--scope` is parent-shaped instead (no `iterations/` child of its own), the sweep prints what it
-structurally skips rather than staying silent: the non-component subtrees it excludes (`archive/`-style, no
-`iterations/` child) and the parent root's own loose docs (the org tier's `brand/`/`strategy/`/loose root
-notes) that `_governed_components` does not enumerate — reported, never scanned; widening the scan is a
-design decision outside this check. Every doc in the scanned space is classified: legacy (alien type, alien
+by the scope's own basename, picking up its root-level docs too. When `--scope` is parent-shaped instead
+(no `iterations/` child of its own), the parent tier joins the sweep as one more component, also named by
+the scope's own basename: it covers the parent root's own loose docs (the org tier's `brand/`/`strategy/`
+notes) and every non-component child (no `iterations/` child of its own) except `archive/`, which stays
+excluded by folder name — the sweep still prints that one skip line so the exclusion stays visible rather
+than silent. Every doc in the scanned space is classified: legacy (alien type, alien
 status, or no
 parseable frontmatter — aggregated per folder, never itemized) or conformant (alien frontmatter keys
 surfaced as one observation line per key, never blocking). An ideas-folder note (vault-relative path with
@@ -307,10 +307,14 @@ def _component_dirs(comp_dir):
 
 
 def _governed_components(vault_root, scope):
-    """[(component_name, [dirs...], [root_docs...])] — every component under scope with an
-    `iterations/` child. `root_docs` holds *.md files sitting directly in the component's own
-    root (only ever populated for a component-rooted scope; a parent-shaped scope's children
-    carry no loose root docs today, so this is always `[]` for them)."""
+    """[(component_name, [dirs...], [root_docs...])] — every component under scope, scanned.
+    A component-rooted scope (its own `iterations/` child) sweeps as that one component, named
+    by the scope's basename, `root_docs` holding its own loose root `*.md` files. A parent-shaped
+    scope (no `iterations/` child of its own) sweeps as: every child component with its own
+    `iterations/` child, PLUS the parent tier itself as one more component — named by the scope's
+    basename — covering every non-iteration child except `archive/` (which stays excluded by
+    folder name, reported by `_parent_skip_lines` instead) and the parent root's own loose `*.md`
+    files."""
     scope_dir = vault_root / scope
     if not scope_dir.is_dir():
         return []
@@ -320,26 +324,25 @@ def _governed_components(vault_root, scope):
         return [(scope_dir.name, _component_dirs(scope_dir), root_docs)]
 
     components = []
+    parent_dirs = []
     for comp in sorted(p for p in scope_dir.iterdir() if p.is_dir() and not p.name.startswith(".")):
-        if not (comp / "iterations").is_dir():
-            continue
-        components.append((comp.name, _component_dirs(comp), []))
+        if (comp / "iterations").is_dir():
+            components.append((comp.name, _component_dirs(comp), []))
+        elif comp.name != "archive":
+            parent_dirs.append(comp)
+
+    parent_root_docs = sorted(p for p in scope_dir.glob("*.md") if not p.name.startswith("."))
+    components.append((scope_dir.name, parent_dirs, parent_root_docs))
     return components
 
 
 def _parent_skip_lines(scope_dir, scope):
-    """Skip-report lines for a parent-shaped scope — named, never scanned: the non-component subtrees
-    `_governed_components` excludes (no `iterations/` child of their own, `archive/`-style) and the
-    parent root's own loose docs (the org tier's `brand/`/`strategy/`/loose notes) it never enumerates."""
-    excluded = sorted(p.name for p in scope_dir.iterdir()
-                       if p.is_dir() and not p.name.startswith(".") and not (p / "iterations").is_dir())
-    loose = sorted(p.name for p in scope_dir.glob("*.md") if not p.name.startswith("."))
+    """Skip-report lines for a parent-shaped scope — named, never scanned: only `archive/`, excluded
+    by folder name. Every other non-component subtree and the parent root's own loose docs now scan
+    as the parent tier's own component (`_governed_components`), so this narrows to that one line."""
     lines = []
-    if excluded:
-        lines.append(f"skip: {scope} — non-component subtree(s) with no iterations/, excluded: "
-                     + ", ".join(excluded))
-    if loose:
-        lines.append(f"skip: {scope} — root-level loose doc(s) not enumerated: " + ", ".join(loose))
+    if (scope_dir / "archive").is_dir():
+        lines.append(f"skip: {scope} — non-component subtree(s) with no iterations/, excluded: archive")
     return lines
 
 

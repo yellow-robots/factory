@@ -5,7 +5,7 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.check_supersession import check_draft, check_sweep
+from tools.check_supersession import check_draft, check_sweep, _governed_components
 
 
 def _vault_file(root, relpath, content):
@@ -299,11 +299,13 @@ def test_target_not_product_spec_has_no_downflow_requirement(tmp_path):
 # sweep mode — governed space enumeration (the pinned rule)
 # =====================================================================================
 
-def test_sweep_component_without_iterations_is_excluded_entirely(tmp_path):
+def test_sweep_non_component_sibling_now_scanned_under_parent_tier(tmp_path):
+    # a sibling with no iterations/ child of its own no longer sits outside the governed space
+    # entirely -- ruling (b) folds it into the parent tier's own scan (unless it's archive/)
     _vault_file(tmp_path, "proj/compA/iterations/doc1.md", _doc(status="active"))
     _vault_file(tmp_path, "proj/compB/doc-outside.md", _doc(status="active"))  # no iterations/ child
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
-    assert "1 docs" in lines[0]
+    assert "2 docs" in lines[0]
     assert failed is False
 
 
@@ -362,13 +364,30 @@ def test_sweep_component_rooted_scope_pair_integrity_still_runs(tmp_path):
     assert failed is True
 
 
+def test_sweep_component_rooted_scope_census_output_pinned_byte_identical(tmp_path):
+    # ruling (b) only changes parent-shaped scopes -- a component-rooted scope's output (including
+    # its root docs and siblings) must stay byte-identical to today
+    _vault_file(tmp_path, "proj/factory/iterations/spec1.md", _doc(type_="product-spec", status="active"))
+    _vault_file(tmp_path, "proj/factory/iterations/legacy1.md", "no frontmatter here\n")
+    _vault_file(tmp_path, "proj/factory/_extra/doc.md", _doc(type_="task", status="active"))
+    _vault_file(tmp_path, "proj/factory/root-doc.md", _doc(type_="task", status="active"))
+
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj/factory")
+    assert lines[0] == "census [proj/factory]: 4 docs / 1 spine-active (factory 1) / 1 legacy"
+    assert failed is False
+    assert not any(l.startswith("skip:") for l in lines)
+
+
 # =====================================================================================
 # sweep mode — the parent-shaped scope regression pin (default scope shape unchanged)
 # =====================================================================================
 
 def test_sweep_parent_shaped_scope_census_output_pinned(tmp_path):
     # identical fixture to test_census_headline_arithmetic — pins the exact output line so a
-    # component-rooted-scope change can never alter the parent-shaped scope's byte-for-byte output
+    # component-rooted-scope change can never alter the parent-shaped scope's byte-for-byte output.
+    # compC has no iterations/ child of its own, so ruling (b) folds its doc into the parent tier's
+    # own scan (named "proj", not "compC") — it counts toward the total but not spine-active, since
+    # it never sat inside an iterations/ subtree.
     _vault_file(tmp_path, "proj/compA/iterations/spec1.md", _doc(type_="product-spec", status="active"))
     _vault_file(tmp_path, "proj/compA/iterations/task1.md", _doc(type_="task", status="active"))
     _vault_file(tmp_path, "proj/compA/iterations/note1.md", _doc(type_="research", status="active"))
@@ -378,7 +397,7 @@ def test_sweep_parent_shaped_scope_census_output_pinned(tmp_path):
     _vault_file(tmp_path, "proj/compC/plain/doc.md", _doc(type_="task", status="active"))
 
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
-    assert lines[0] == "census [proj]: 6 docs / 3 spine-active (compA 2, compB 1) / 1 legacy"
+    assert lines[0] == "census [proj]: 7 docs / 3 spine-active (compA 2, compB 1) / 1 legacy"
     assert failed is False
 
 
@@ -631,12 +650,13 @@ def test_census_headline_arithmetic(tmp_path):
     _vault_file(tmp_path, "proj/compA/_extra/spec2.md", _doc(type_="product-spec", status="active"))
     # compB/iterations: 1 active spine doc
     _vault_file(tmp_path, "proj/compB/iterations/task2.md", _doc(type_="task", status="active"))
-    # compC has no iterations/ child at all — excluded from the governed space entirely
+    # compC has no iterations/ child of its own — scanned under the parent tier (named "proj")
+    # instead: counted in the total but not spine-active, since it never sits in an iterations/ subtree
     _vault_file(tmp_path, "proj/compC/plain/doc.md", _doc(type_="task", status="active"))
 
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
     census = lines[0]
-    assert "6 docs" in census
+    assert "7 docs" in census
     assert "3 spine-active" in census
     assert "compA 2" in census
     assert "compB 1" in census
@@ -701,25 +721,58 @@ def test_sweep_parent_shaped_reports_excluded_non_component_subtree(tmp_path):
     assert failed is False
 
 
-def test_sweep_parent_shaped_reports_loose_root_docs(tmp_path):
+def test_sweep_parent_shaped_scans_loose_root_docs_into_parent_component(tmp_path):
+    # ruling (b): the parent root's own loose docs no longer just get named in a skip line --
+    # they scan into the census as the parent tier's own component, named by the scope's basename
     _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
-    _vault_file(tmp_path, "proj/strategy.md", _doc(status="active"))  # org-tier loose root doc
+    _vault_file(tmp_path, "proj/strategy.md", _doc(type_="task", status="active"))  # org-tier loose root doc
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
     skip_lines = [l for l in lines if l.startswith("skip:")]
-    assert any("strategy.md" in l for l in skip_lines)
-    assert "1 docs" in lines[0]
+    assert not any("strategy.md" in l for l in skip_lines)
+    assert "2 docs" in lines[0]
     assert failed is False
 
 
-def test_sweep_parent_shaped_two_skip_lines_for_two_skip_classes(tmp_path):
+def test_sweep_parent_shaped_only_archive_skip_line_remains(tmp_path):
+    # archive/ is the only thing still reported as skipped -- every other non-component
+    # sibling and every loose root doc now scans in as the parent tier's own component, so the
+    # skip report narrows to exactly that one line
     _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
     _vault_file(tmp_path, "proj/archive/old.md", _doc(status="active"))
-    _vault_file(tmp_path, "proj/brand.md", _doc(status="active"))
+    _vault_file(tmp_path, "proj/brand.md", _doc(type_="task", status="active"))
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
     skip_lines = [l for l in lines if l.startswith("skip:")]
-    assert len(skip_lines) == 2
-    assert any("archive" in l for l in skip_lines)
-    assert any("brand.md" in l for l in skip_lines)
+    assert len(skip_lines) == 1
+    assert "archive" in skip_lines[0]
+    assert "brand" not in skip_lines[0]
+    # brand.md now scanned into the census; archive/old.md stays excluded and uncounted
+    assert "2 docs" in lines[0]
+    assert failed is False
+
+
+def test_sweep_parent_shaped_scans_children_and_root_docs_as_named_parent_component(tmp_path):
+    # the org tier itself: brand/, strategy/, ideas/ children plus a root loose doc all scan in as
+    # one parent-tier component named by the scope's basename; archive/ is the only exclusion, and
+    # the skip report narrows to exactly that one line
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    _vault_file(tmp_path, "proj/root-note.md", _doc(type_="task", status="active"))
+    _vault_file(tmp_path, "proj/brand/brand-note.md", _doc(type_="task", status="active"))
+    _vault_file(tmp_path, "proj/strategy/strategy-note.md", _doc(type_="task", status="active"))
+    _vault_file(tmp_path, "proj/ideas/idea1.md",
+                _doc(type_="note", status="open",
+                     extra_lines=["summary: x", "value: high", "effort: low"]))
+    _vault_file(tmp_path, "proj/archive/old-note.md", _doc(status="active"))
+
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    census = lines[0]
+    assert failed is False
+    assert "5 docs" in census  # compA doc + root-note + brand-note + strategy-note + idea1
+    assert "0 legacy" in census
+    assert "[proj]" in census
+
+    skip_lines = [l for l in lines if l.startswith("skip:")]
+    assert len(skip_lines) == 1
+    assert "archive" in skip_lines[0]
 
 
 def test_sweep_parent_shaped_no_skip_lines_when_nothing_to_skip(tmp_path):
@@ -735,6 +788,14 @@ def test_sweep_component_rooted_scope_has_no_skip_lines(tmp_path):
     _vault_file(tmp_path, "proj/factory/root-doc.md", _doc(type_="task", status="active"))
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj/factory")
     assert not any(l.startswith("skip:") for l in lines)
+
+
+def test_governed_components_docstring_rewritten_to_new_contract(tmp_path):
+    # the aged assumption ("a parent-shaped scope's children carry no loose root docs today")
+    # must be gone -- the docstring now records that the parent tier scans as its own component
+    doc = _governed_components.__doc__ or ""
+    assert "carry no loose root docs today" not in doc
+    assert "archive" in doc.lower()
 
 
 # =====================================================================================
