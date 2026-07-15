@@ -71,6 +71,9 @@ def usage_record(envelope, *, stage, model):
     duration = envelope.get("duration_ms")
     if duration is not None:
         record["duration_ms"] = duration
+    session_id = envelope.get("session_id")
+    if session_id is not None:
+        record["session_id"] = session_id
     for cli_key, out_key in USAGE_FIELDS:
         if cli_key in usage:
             record[out_key] = usage[cli_key]

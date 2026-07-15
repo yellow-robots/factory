@@ -689,6 +689,31 @@ pool_credential(){   # $1 = pool name -> the resolved YR_POOL_<POOL> value, or "
   printf '%s' "${!var:-}"
 }
 
+# wt_slug: the CLI's own project-slug transform for this run's worktree path (every '/' and '.' -> '-')
+# — shared by archive_stage_transcript (the transcript's on-disk location) and stage_fail_msg (its
+# pointer in a Blocked message) so the expression lives once, not as two copies free to drift apart.
+wt_slug(){ printf '%s' "$WT" | tr '/.' '-'; }
+
+# archive_stage_transcript (issue #205): at every stage's end, copy its CLI session transcript into the
+# run dir as transcript-<stage>.jsonl (dedup suffix -2/-3 on repair re-runs — same convention as
+# capture_stage_usage's usage-<stage>.json below) — a run artifact independent of the CLI's own
+# retention. Reads the stage log READ-ONLY via tools/ledger.py (which imports tools/stage_usage.py's
+# find_result_envelope for session_id — never a cloned parser), so it must run BEFORE
+# capture_stage_usage rewrites the log in place on a clean exit; on a failed stage the log was never
+# rewritten, so read order doesn't matter there. No envelope/session_id (e.g. signal-killed) falls back
+# to the newest .jsonl in the CLI project slug dir (stages serialize per worktree, so "newest at stage
+# end" IS this stage's own transcript) — logged either way. Fail-soft: never blocks or fails the run.
+archive_stage_transcript(){   # $1 = stage log file
+  local log="$1" base stage n=2 out slug_dir result
+  base="$(basename "$log")"; base="${base%.*}"
+  stage="$base"
+  while [ -e "$RUN_DIR/transcript-$stage.jsonl" ]; do stage="$base-$n"; n=$((n + 1)); done
+  out="$RUN_DIR/transcript-$stage.jsonl"
+  slug_dir="$HOME/.claude/projects/$(wt_slug)"
+  result="$(python3 "$SELF_DIR/ledger.py" archive --log "$log" --slug-dir "$slug_dir" --out "$out" 2>&1)" || true
+  log "transcript archive ($stage): $result"
+}
+
 # capture_stage_usage (issue #48): on a stage's clean exit, best-effort extract the CLI's JSON result
 # envelope from its log via tools/stage_usage.py — rewriting the log to the plain reply text (every
 # downstream consumer: the verdict gate, review_bundle.py, the repair prompts, the PR-attached review
@@ -765,6 +790,7 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
   pid=$!
   wait "$pid" || rc=$?
   reap_pgid "$pid"
+  archive_stage_transcript "$3"
   if [ "$rc" -eq 0 ] && [ "$fmt_overridden" -eq 0 ]; then capture_stage_usage "$3" "$model"; fi
   return "$rc"
 }
@@ -781,7 +807,7 @@ stage_fail_msg(){   # $1 = stage label, $2 = log file, $3 = exit code
     printf '%s stage failed (exit %s; log: %s)' "$label" "$rc" "$log"
   else
     printf '%s stage failed: signal-terminated (exit %s) — the log is empty (log: %s), so the CLI likely died before writing anything; check the preserved session transcript under %s for what happened before the kill' \
-      "$label" "$rc" "$log" "$HOME/.claude/projects/$(printf '%s' "$WT" | tr '/.' '-')"
+      "$label" "$rc" "$log" "$HOME/.claude/projects/$(wt_slug)"
   fi
 }
 SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
@@ -1294,4 +1320,11 @@ else
   log "PR opened: $PR_URL  (#$ISSUE -> In Review${ARMED_BLOCKED:+, Reason=Blocked})"
 fi
 cleanup_wt
+
+# ---- transcript retention (issue #205): the runner-owned age/size cap on archived transcripts, wired
+# into this success terminus only — a failure streak simply defers pruning to the next successful run
+# (the cap sizing tolerates it). Fail-soft: never affects this run's outcome or its PR_URL output.
+PRUNE_OUT="$(python3 "$SELF_DIR/ledger.py" prune --runs-dir "$DEV_RUNNER_HOME/runs" 2>&1)" || true
+log "transcript retention prune: $PRUNE_OUT"
+
 echo "$PR_URL"
