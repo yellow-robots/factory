@@ -356,21 +356,27 @@ MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_REF:.yr/factory.toml" 2>/de
 # separate exit, so it fires after the DoR/Type gate above but before claim/worktree either way.
 MF_ONBOARD_MSG=""
 [ -z "$MF_RAW" ] && MF_ONBOARD_MSG="this repo is not onboarded — no \`.yr/factory.toml\` found at the base ref ($MANIFEST_REF) or in the working tree ($MANIFEST). Onboarding (auth, onboarding the repo, arming) is attended, design-side work — never a slice the factory can pick up itself. Onboard the repo, then set Status back to Ready to resume."
-MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""; MF_AUTO_MERGE="false"
+MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""; MF_LINT_CMD=""; MF_LINT_FIX_CMD=""; MF_AUTO_MERGE="false"
 if [ -n "$MF_RAW" ]; then
   # auto_merge (issue #38) is parsed here alongside the rest, but the MERGE DECISION never trusts this
   # start-of-run value — read_auto_merge re-reads it from the base ref's current tip at decision time.
+  # lint_cmd/lint_fix_cmd (issue #213) are the lint tier's opaque commands — no built-in default (absent
+  # = off, the auto_merge defaults-off precedent), applied via the same env>manifest precedence below.
   _mf_out="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
 d=tomllib.loads(sys.stdin.read())
-for k in ("check_cmd","model","base_ref","review_model"): print(str(d.get(k) or "").replace("\n"," "))
+for k in ("check_cmd","model","base_ref","review_model","lint_cmd","lint_fix_cmd"): print(str(d.get(k) or "").replace("\n"," "))
 print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null)" \
     || log "warn: could not parse manifest from $MANIFEST_REF"
   mapfile -t _mf <<<"$_mf_out"
-  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"; MF_AUTO_MERGE="${_mf[4]:-false}"
+  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"; MF_LINT_CMD="${_mf[4]:-}"; MF_LINT_FIX_CMD="${_mf[5]:-}"; MF_AUTO_MERGE="${_mf[6]:-false}"
 fi
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
 CHECK_CMD="${CHECK_CMD:-${MF_CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest tests/ -q}}"
+# lint tier (issue #213): NO built-in default — an absent key leaves LINT_CMD/LINT_FIX_CMD empty, and an
+# empty LINT_CMD is off (byte-identical to today: no probe, no output). env overrides manifest as ever.
+LINT_CMD="${LINT_CMD:-${MF_LINT_CMD:-}}"
+LINT_FIX_CMD="${LINT_FIX_CMD:-${MF_LINT_FIX_CMD:-}}"
 
 # ---- fetch issue (state/title/body) ----
 ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state,issueType 2>/dev/null)" \
@@ -568,10 +574,12 @@ a=sys.argv
 def role(name,mid,prov,rank): return {"name":name or None,"id":mid,"provider":prov or None,"rank":(int(rank) if rank else None)}
 print(json.dumps({"repo":a[1],"issue":int(a[2]),"branch":a[3],"model":a[4],"workspace":a[5],
                   "base_repo":a[6],"base_ref":a[7],"check_cmd":a[8],"auto_merge":a[17]=="true",
+                  "lint_cmd":a[18],"lint_fix_cmd":a[19],
                   "build":role(a[9],a[10],a[11],a[12]),"review":role(a[13],a[14],a[15],a[16]),"ready":True}))' \
     "$REPO" "$ISSUE" "$BRANCH" "$BUILD_ID" "$YR_WORKSPACE" "$BASE_REPO" "$BASE_REF" "$CHECK_CMD" \
     "$BUILD_NAME" "$BUILD_ID" "$BUILD_PROVIDER" "$BUILD_RANK" \
-    "$REVIEW_NAME" "$REVIEW_ID" "$REVIEW_PROVIDER" "$REVIEW_RANK" "$MF_AUTO_MERGE"
+    "$REVIEW_NAME" "$REVIEW_ID" "$REVIEW_PROVIDER" "$REVIEW_RANK" "$MF_AUTO_MERGE" \
+    "$LINT_CMD" "$LINT_FIX_CMD"
   exit 0
 fi
 
@@ -925,6 +933,11 @@ fi
 # needs git identity/config must set it up in its own fixtures, same as CI. This is scoped to the check
 # child only — LLM stages and the runner's own git operations (worktree/commit/push) keep full host config.
 run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
+# run_lint (issue #213): the lint tier's runner, cloned from run_checks — same confinement (worktree cd,
+# the venv + node bin dirs on PATH, host git config neutralized), output to lint.log in the run dir. $1 is
+# an OPAQUE command run verbatim: python repos declare ruff, node repos eslint — no lint-output parsing, no
+# language assumption anywhere. Used for both LINT_CMD (the probe / re-run) and LINT_FIX_CMD (the autofix).
+run_lint(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1; }
 # Distinguish a CODE failure (the harness ran and tests failed) from an ENVIRONMENT failure (the harness
 # could not execute at all: 127=command not found, 126=found-but-not-executable — e.g. a venv whose
 # console-script shebang points at a moved/rebuilt interpreter). An env failure is NOT the implementer's
@@ -941,6 +954,14 @@ env_hold(){   # $1 = check exit code, $2 = context suffix
   local msg="check command could not execute (exit $1)$2 — an ENVIRONMENT/toolchain failure, not a code failure. The check harness (e.g. $BASE_REPO/.venv) is missing or broken; rebuild it, then set Ready again — do not paper over it. (log: $RUN_DIR/checks.log)"
   env_hold_record "$msg" "dev-runner: **Environmental hold** — $msg  The worktree ($WT) and completed-stage checkpoints are preserved; a relaunch resumes at the first incomplete stage (green stages are not re-run)."
 }
+# lint_env_hold (issue #213): the lint tier's sibling of env_hold — same preserve+resume machinery, but the
+# record NAMES THE LINT COMMAND that failed and lint.log, never the check command's text or checks.log. A
+# failure surface is read as a fact; a hold naming the wrong command would misdirect the rebuild. No LLM
+# repair is attempted on a 126/127 lint or autofix failure — it is environmental, not the code's to fix.
+lint_env_hold(){   # $1 = the lint (or autofix) command that failed, $2 = exit code, $3 = context suffix
+  local msg="lint command could not execute (exit $2)$3 — command: $1 — an ENVIRONMENT/toolchain failure, not a code failure. The lint toolchain is missing or broken; rebuild it, then set Ready again — do not paper over it. (log: $RUN_DIR/lint.log)"
+  env_hold_record "$msg" "dev-runner: **Environmental hold** — $msg  The worktree ($WT) and completed-stage checkpoints are preserved; a relaunch resumes at the first incomplete stage (green stages are not re-run)."
+}
 if stage_done 03-check; then
   log "resume: skipping check (03-check.done present)"
   CHECK_RC=0
@@ -955,6 +976,48 @@ else
     CHECK_RC=0; run_checks || CHECK_RC=$?
     if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the repair attempt"; fi
     [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
+  fi
+
+  # ---- lint tier (issue #213): a manifest-declared, BLOCKING lint gate, run only AFTER check_cmd passes.
+  # Absent LINT_CMD = off, byte-identical to today (no probe, no warning, no output). Ruled repair scope:
+  # (1) deterministic autofix (LINT_FIX_CMD) first, NO LLM; then (2) at most ONE LLM repair confined to the
+  # lint-flagged files; then (3) unconditionally after ANY repair-path mutation (the autofix alone
+  # included) re-run BOTH check_cmd and lint_cmd, so checks.log/lint.log and the bundle's --check-exit
+  # describe the tree AS SHIPPED — either failing ends the run Blocked. A lint 126/127 (and an autofix
+  # 126/127) is environmental: lint_env_hold, no LLM. The lint-repair prompt is distinct from the
+  # tests-frozen check-repair prompt so neither failure can trigger the other's stage.
+  if [ -n "$LINT_CMD" ]; then
+    LINT_MUTATED=0
+    LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
+    if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" ""; fi
+    if [ "$LINT_RC" -ne 0 ]; then
+      log "lint failed (exit $LINT_RC) — lint-repair: deterministic autofix${LINT_FIX_CMD:+ ($LINT_FIX_CMD)}, then at most one LLM repair"
+      # (1) deterministic autofix first (no LLM). A 126/127 here is environmental too — same lint hold.
+      if [ -n "$LINT_FIX_CMD" ]; then
+        FIX_RC=0; run_lint "$LINT_FIX_CMD" || FIX_RC=$?
+        if is_env_failure "$FIX_RC"; then lint_env_hold "$LINT_FIX_CMD" "$FIX_RC" " (autofix)"; fi
+        LINT_MUTATED=1
+        LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
+        if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the autofix"; fi
+      fi
+      # (2) if lint still fails, ONE LLM repair — a NEW prompt, confined to the lint-flagged files.
+      if [ "$LINT_RC" -ne 0 ]; then
+        log "lint still failing — one LLM repair attempt [$CHECK_REPAIR_ID]"
+        LINT_REPAIR_RC=0
+        run_stage "$IMPL_SYS" "$(printf 'The lint gate FAILS (command: %s). Fix ONLY what the lint output flags, in exactly the files it names, test or production; change no test'"'"'s assertions; make the linter pass, nothing else. Lint output:\n\n%s\n\nTask:\n%s' "$LINT_CMD" "$(tail -n 40 "$RUN_DIR/lint.log")" "$SPEC")" "$RUN_DIR/lint-repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || LINT_REPAIR_RC=$?
+        if [ "$LINT_REPAIR_RC" -ne 0 ] && is_quota_failure "$RUN_DIR/lint-repair.log"; then llm_quota_hold "lint repair" "$RUN_DIR/lint-repair.log"; fi
+        LINT_MUTATED=1
+      fi
+    fi
+    # (3) after ANY repair-path mutation, re-run BOTH gates against the shipped tree. Either failing → Blocked.
+    if [ "$LINT_MUTATED" -eq 1 ]; then
+      CHECK_RC=0; run_checks || CHECK_RC=$?
+      if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the lint repair"; fi
+      [ "$CHECK_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (checks failed after the lint fix; log: $RUN_DIR/checks.log)"
+      LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
+      if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the lint repair"; fi
+      [ "$LINT_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (log: $RUN_DIR/lint.log)"
+    fi
   fi
   mark_stage 03-check
 fi
