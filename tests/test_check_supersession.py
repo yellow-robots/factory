@@ -864,3 +864,130 @@ def test_cli_draft_mode_needs_no_scope_and_is_unaffected(tmp_path):
     )
     assert r.returncode == 0
     assert "Traceback" not in (r.stdout + r.stderr)
+
+
+# =====================================================================================
+# ideas-folder vocabulary — location-aware status/closed-keys (issue #197)
+# =====================================================================================
+#
+# An "ideas-folder note" is any doc whose vault-relative path has an `ideas/` directory
+# segment. Inside `ideas/`: `open`/`rejected`/`superseded` are the known statuses (`draft`
+# is deliberately NOT tolerated there — ruling (c)), and `summary`/`value`/`effort` join
+# the closed keys. Outside `ideas/`, the spine vocabulary and closed-key set are unchanged.
+
+def test_sweep_ideas_note_open_with_scoring_keys_is_conformant_no_observations(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-good.md",
+                _doc(type_="note", status="open",
+                     extra_lines=["summary: a neat idea", "value: high", "effort: low"]))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert "0 legacy" in lines[0]
+    assert not any(l.startswith("observation:") for l in lines)
+
+
+def test_sweep_value_key_on_product_spec_outside_ideas_still_an_observation(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/spec-with-value.md",
+                _doc(type_="product-spec", status="active", extra_lines=["value: high"]))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert any(l.startswith("observation:") and "'value'" in l for l in lines)
+
+
+def test_sweep_draft_status_inside_ideas_folder_is_alien_status_legacy(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-draft.md",
+                _doc(type_="note", status="draft"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert "1 legacy" in lines[0]
+
+
+def test_sweep_open_status_outside_ideas_folder_is_alien_status_legacy(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc-open.md",
+                _doc(type_="note", status="open"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert "1 legacy" in lines[0]
+
+
+def test_draft_gate_accepts_pending_open_ideas_seed(tmp_path):
+    # a draft spine document (product-spec/feature-rfc) declaring supersedes against a
+    # pending ideas-folder note (status "open") must be accepted — its legitimate
+    # pre-accept state, in place of the spine's "active".
+    _vault_file(tmp_path, "ideas/idea-pending.md",
+                _doc(type_="note", status="open",
+                     extra_lines=["summary: a neat idea", "value: high", "effort: low"]))
+    text = _doc(type_="product-spec", supersedes=["[[ideas/idea-pending]]"])
+    assert check_draft(text, vault_root=tmp_path) == []
+
+
+def test_draft_gate_rejects_a_rejected_ideas_seed_exactly_as_today(tmp_path):
+    _vault_file(tmp_path, "ideas/idea-rejected.md", _doc(type_="note", status="rejected"))
+    text = _doc(type_="product-spec", supersedes=["[[ideas/idea-rejected]]"])
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("rejected" in e.lower() and "open" in e.lower() for e in errors)
+
+
+def test_draft_gate_rejects_an_already_superseded_ideas_seed_naming_replacer(tmp_path):
+    _vault_file(tmp_path, "ideas/idea-done.md",
+                _doc(type_="note", status="superseded", superseded_by="[[ideas/promoted-spec]]"))
+    text = _doc(type_="product-spec", supersedes=["[[ideas/idea-done]]"])
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("superseded" in e.lower() and "promoted-spec" in e for e in errors)
+
+
+def test_draft_gate_target_status_draft_inside_ideas_is_indeterminate(tmp_path):
+    # `draft` is not tolerated in ideas/ — a draft-status target there is alien status,
+    # not a legitimate pending state, so it's indeterminate exactly like any other
+    # unclassifiable target (never silently accepted).
+    _vault_file(tmp_path, "ideas/idea-draft.md", _doc(type_="note", status="draft"))
+    text = _doc(type_="product-spec", supersedes=["[[ideas/idea-draft]]"])
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("indeterminate" in e.lower() for e in errors)
+
+
+def test_draft_gate_target_status_open_outside_ideas_is_indeterminate(tmp_path):
+    _vault_file(tmp_path, "not-ideas/doc-open.md", _doc(type_="note", status="open"))
+    text = _doc(type_="product-spec", supersedes=["[[not-ideas/doc-open]]"])
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("indeterminate" in e.lower() for e in errors)
+
+
+def test_sweep_still_draft_declaring_doc_targets_pending_ideas_seed_no_hard_finding(tmp_path):
+    # a still-draft spine doc already living in the vault (not yet accepted) that declares
+    # supersedes against a pending ("open") ideas note must not be treated as indeterminate —
+    # location awareness must reach the classifier _lookup uses in sweep mode too, not only
+    # the draft-mode entry point.
+    _vault_file(tmp_path, "proj/compA/iterations/draft-spec.md",
+                _doc(type_="product-spec", status="draft",
+                     supersedes=["[[proj/compA/iterations/ideas/idea-pending]]"]))
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-pending.md",
+                _doc(type_="note", status="open",
+                     extra_lines=["summary: x", "value: high", "effort: low"]))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert not any("indeterminate" in l.lower() for l in lines)
+
+
+def test_sweep_completed_promotion_pair_verifies_both_directions(tmp_path):
+    # once the pair completes (declarer accepted, ideas target superseded with a correct
+    # back-pointer), sweep-mode pair verification runs exactly as it does for spine targets.
+    _vault_file(tmp_path, "proj/compA/iterations/promoted-spec.md",
+                _doc(type_="feature-rfc", status="active",
+                     supersedes=["[[proj/compA/iterations/ideas/idea-promoted]]"]))
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-promoted.md",
+                _doc(type_="note", status="superseded",
+                     superseded_by="[[proj/compA/iterations/promoted-spec]]"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+
+
+def test_sweep_completed_promotion_pair_missing_back_pointer_is_still_hard(tmp_path):
+    # the ideas target is not exempted from ordinary pair-integrity enforcement once
+    # superseded — a missing back-pointer is a hard finding exactly as for any other pair.
+    _vault_file(tmp_path, "proj/compA/iterations/promoted-spec2.md",
+                _doc(type_="feature-rfc", status="active",
+                     supersedes=["[[proj/compA/iterations/ideas/idea-promoted2]]"]))
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-promoted2.md",
+                _doc(type_="note", status="superseded"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is True

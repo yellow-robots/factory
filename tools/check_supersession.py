@@ -11,7 +11,10 @@ proper. A `product-spec` / `feature-rfc` draft must carry a `supersedes` key: mi
 value that doesn't parse as a list is an error; an empty list is only allowed with a body line matching
 `**Supersedes:** nothing <justification>`. Every declared target must resolve with the same wikilink
 semantics as `check_links._resolve_wikilink` (explicit vault-relative path, or a unique basename —
-dot-dirs excluded); an unresolved/ambiguous, already-superseded, or non-`active` target is an error. When
+dot-dirs excluded); an unresolved/ambiguous, already-superseded, or non-`active` target is an error — except
+a target that is itself an ideas-folder note (vault-relative path with an `ideas/` segment), whose
+legitimate pre-accept status is `open` instead of `active`; a `rejected` or already-`superseded` ideas
+target still errors exactly as any other non-conformant target. When
 a target is a `product-spec`, every *active* spine doc (the four spine types) whose `source_spec`
 resolves to it must be named in the draft's own declaration or cited as a `[[wikilink]]` in the draft's
 body — an undispositioned child is an error, and a child this check cannot classify (alien type/status,
@@ -34,7 +37,11 @@ notes) that `_governed_components` does not enumerate — reported, never scanne
 design decision outside this check. Every doc in the scanned space is classified: legacy (alien type, alien
 status, or no
 parseable frontmatter — aggregated per folder, never itemized) or conformant (alien frontmatter keys
-surfaced as one observation line per key, never blocking). Pair integrity runs both directions — forward
+surfaced as one observation line per key, never blocking). An ideas-folder note (vault-relative path with
+an `ideas/` segment) runs the ideas-backlog contract instead of the spine one for this classification:
+`open`/`rejected`/`superseded` are its known statuses (`draft` is alien status there, by design — no
+transitional tolerance), and `summary`/`value`/`effort` join its closed keys, so they never surface as
+alien-key observations. Pair integrity runs both directions — forward
 from a `supersedes` declaration to its target, and backward from a `superseded` doc to its `superseded_by`
 replacer. Findings split into **hard** (exit 1) — anything reachable from a `supersedes` declaration
 (unresolved/not-yet-superseded target, missing/wrong back-pointer, an unjustified empty declaration,
@@ -77,6 +84,13 @@ CLOSED_KEYS = {
     "crossed_to", "superseded_by", "retired_reason", "supersedes",
 }
 
+# An ideas-folder note (vault-relative path with an `ideas/` directory segment) runs the
+# ideas-backlog contract instead of the spine one: `open` replaces `draft`/`active` as its pending
+# status (no `draft` tolerance — a draft idea is alien status by design), and its scoring keys join
+# the closed set.
+IDEAS_STATUSES = {"open", "rejected", "superseded"}
+IDEAS_EXTRA_CLOSED_KEYS = {"summary", "value", "effort"}
+
 _NOTHING_RE = re.compile(r"^\*\*Supersedes:\*\*\s*nothing\b(.*)$", re.IGNORECASE)
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
@@ -85,17 +99,35 @@ DocRecord = namedtuple("DocRecord", "path rel meta body legacy_reason")
 
 # --- shared primitives (frontmatter classification, wikilink resolution) --------------------------
 
-def _legacy_reason(meta):
-    """Why a doc is legacy-class (alien type / alien status / unparseable) — None if conformant."""
+def _legacy_reason(meta, is_ideas=False):
+    """Why a doc is legacy-class (alien type / alien status / unparseable) — None if conformant.
+    `is_ideas` swaps in the ideas-folder status vocabulary in place of the spine one; the type
+    vocabulary is shared either way (the discriminator is the path, never the type)."""
     if not meta:
         return "no parseable frontmatter"
     t = meta.get("type")
     if not isinstance(t, str) or t not in KNOWN_TYPES:
         return "alien type"
     s = meta.get("status")
-    if not isinstance(s, str) or s not in KNOWN_STATUSES:
+    statuses = IDEAS_STATUSES if is_ideas else KNOWN_STATUSES
+    if not isinstance(s, str) or s not in statuses:
         return "alien status"
     return None
+
+
+def _is_ideas_note(path, vault_root):
+    """True if `path`'s vault-relative directory chain has an `ideas` segment."""
+    try:
+        rel_parts = path.resolve().relative_to(vault_root.resolve()).parts
+    except ValueError:
+        rel_parts = path.resolve().parts
+    return "ideas" in rel_parts[:-1]
+
+
+def _closed_keys_for(path, vault_root):
+    if _is_ideas_note(path, vault_root):
+        return CLOSED_KEYS | IDEAS_EXTRA_CLOSED_KEYS
+    return CLOSED_KEYS
 
 
 def _wikilink_target(value):
@@ -222,7 +254,8 @@ def _check_supersedes_required(meta, body, vault_root):
             continue
         target_path = pathlib.Path(detail)
         t_meta, _ = split_frontmatter(target_path.read_text(encoding="utf-8", errors="replace"))
-        reason = _legacy_reason(t_meta)
+        is_ideas = _is_ideas_note(target_path, vault_root)
+        reason = _legacy_reason(t_meta, is_ideas)
         if reason:
             errors.append(f"supersedes target {raw!r} is indeterminate ({reason}) — cannot verify status")
             continue
@@ -231,8 +264,11 @@ def _check_supersedes_required(meta, body, vault_root):
             replacer = t_meta.get("superseded_by", "<unspecified>")
             errors.append(f"supersedes target {raw!r} is already superseded — see {replacer!r}")
             continue
-        if status != "active":
-            errors.append(f"supersedes target {raw!r} has status {status!r}, expected 'active'")
+        # An ideas-folder target's legitimate pre-accept state is `open` (its pending status); every
+        # other target still expects the spine's `active`.
+        expected_status = "open" if is_ideas else "active"
+        if status != expected_status:
+            errors.append(f"supersedes target {raw!r} has status {status!r}, expected {expected_status!r}")
             continue
         if t_meta.get("type") == "product-spec":
             product_spec_targets.append(target_path)
@@ -335,7 +371,7 @@ def _sweep_docs(vault_root, scope):
         text = p.read_text(encoding="utf-8", errors="replace")
         meta, body = split_frontmatter(text)
         rec = DocRecord(path=p, rel=str(p.relative_to(vault_root)), meta=meta, body=body,
-                         legacy_reason=_legacy_reason(meta))
+                         legacy_reason=_legacy_reason(meta, _is_ideas_note(p, vault_root)))
         docs.append(rec)
         resolved = p.resolve()
         component_of[resolved] = name
@@ -372,7 +408,7 @@ def _format_census(scope, total, spine_active, legacy):
             f"{legacy} legacy")
 
 
-def _lookup(index, resolved_path):
+def _lookup(index, resolved_path, vault_root):
     """A DocRecord for `resolved_path` — from the governed index if present, else loaded fresh (a
     target outside the sweep scope but still a real vault file)."""
     rec = index.get(resolved_path)
@@ -381,7 +417,7 @@ def _lookup(index, resolved_path):
     text = resolved_path.read_text(encoding="utf-8", errors="replace")
     meta, body = split_frontmatter(text)
     return DocRecord(path=resolved_path, rel=str(resolved_path), meta=meta, body=body,
-                      legacy_reason=_legacy_reason(meta))
+                      legacy_reason=_legacy_reason(meta, _is_ideas_note(resolved_path, vault_root)))
 
 
 def _points_back(back_value, replacer_path, vault_root):
@@ -413,7 +449,7 @@ def _pair_forward_errors(d, raw, index, vault_root):
     if not ok:
         return [f"{d.rel}: supersedes target {raw!r} unresolved — {detail}"]
     target_path = pathlib.Path(detail)
-    target = _lookup(index, target_path.resolve())
+    target = _lookup(index, target_path.resolve(), vault_root)
     if target.legacy_reason:
         return [f"{d.rel}: supersedes target {raw!r} is indeterminate ({target.legacy_reason})"]
 
@@ -449,7 +485,7 @@ def _pair_backward_findings(d, index, vault_root):
     ok, detail = _resolve_target(back, vault_root)
     if not ok:
         return [], [f"{d.rel}: superseded_by target unresolved — {detail}"]
-    replacer = _lookup(index, pathlib.Path(detail).resolve())
+    replacer = _lookup(index, pathlib.Path(detail).resolve(), vault_root)
     if replacer.legacy_reason:
         return [], [f"{d.rel}: superseded_by replacer {replacer.rel} is indeterminate "
                     f"({replacer.legacy_reason})"]
@@ -487,7 +523,7 @@ def _pair_adjacent_advisory(docs, index, vault_root):
                 ok, detail = _resolve_target(v, vault_root)
                 if not ok:
                     continue
-                target = _lookup(index, pathlib.Path(detail).resolve())
+                target = _lookup(index, pathlib.Path(detail).resolve(), vault_root)
                 if not target.legacy_reason and target.meta.get("status") == "superseded":
                     advisory.append(f"{d.rel}: {key} resolves to superseded doc {target.rel}")
     return advisory
@@ -514,13 +550,14 @@ def _legacy_aggregate(docs, vault_root):
     return [f"legacy: {folder}: {n} doc(s)" for folder, n in sorted(by_folder.items())]
 
 
-def _alien_key_observations(docs):
+def _alien_key_observations(docs, vault_root):
     counts = {}
     for d in docs:
         if d.legacy_reason:
             continue
+        closed = _closed_keys_for(d.path, vault_root)
         for k in d.meta:
-            if k not in CLOSED_KEYS:
+            if k not in closed:
                 counts[k] = counts.get(k, 0) + 1
     return [f"observation: alien frontmatter key {k!r} present on {n} conformant doc(s)"
             for k, n in sorted(counts.items())]
@@ -560,7 +597,7 @@ def check_sweep(*, vault_root, scope):
     advisory.extend(_spine_in_home_advisory(docs, in_iterations))
 
     legacy_lines = _legacy_aggregate(docs, vault_root)
-    observations = _alien_key_observations(docs)
+    observations = _alien_key_observations(docs, vault_root)
     total, spine_active, legacy = _census(docs, component_of, in_iterations)
 
     lines = [_format_census(scope, total, spine_active, legacy)]
