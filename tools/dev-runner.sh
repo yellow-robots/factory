@@ -356,19 +356,20 @@ MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_REF:.yr/factory.toml" 2>/de
 # separate exit, so it fires after the DoR/Type gate above but before claim/worktree either way.
 MF_ONBOARD_MSG=""
 [ -z "$MF_RAW" ] && MF_ONBOARD_MSG="this repo is not onboarded — no \`.yr/factory.toml\` found at the base ref ($MANIFEST_REF) or in the working tree ($MANIFEST). Onboarding (auth, onboarding the repo, arming) is attended, design-side work — never a slice the factory can pick up itself. Onboard the repo, then set Status back to Ready to resume."
-MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""; MF_LINT_CMD=""; MF_LINT_FIX_CMD=""; MF_AUTO_MERGE="false"
+MF_CHECK_CMD=""; MF_MODEL=""; MF_BASE_REF=""; MF_REVIEW_MODEL=""; MF_LINT_CMD=""; MF_LINT_FIX_CMD=""; MF_LENS_CMD=""; MF_AUTO_MERGE="false"
 if [ -n "$MF_RAW" ]; then
   # auto_merge (issue #38) is parsed here alongside the rest, but the MERGE DECISION never trusts this
   # start-of-run value — read_auto_merge re-reads it from the base ref's current tip at decision time.
-  # lint_cmd/lint_fix_cmd (issue #213) are the lint tier's opaque commands — no built-in default (absent
-  # = off, the auto_merge defaults-off precedent), applied via the same env>manifest precedence below.
+  # lint_cmd/lint_fix_cmd (issue #213) are the lint tier's opaque commands, lens_cmd (issue #214) the
+  # advisory lens tier's — all with no built-in default (absent = off, the auto_merge defaults-off
+  # precedent), applied via the same env>manifest precedence below.
   _mf_out="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
 d=tomllib.loads(sys.stdin.read())
-for k in ("check_cmd","model","base_ref","review_model","lint_cmd","lint_fix_cmd"): print(str(d.get(k) or "").replace("\n"," "))
+for k in ("check_cmd","model","base_ref","review_model","lint_cmd","lint_fix_cmd","lens_cmd"): print(str(d.get(k) or "").replace("\n"," "))
 print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null)" \
     || log "warn: could not parse manifest from $MANIFEST_REF"
   mapfile -t _mf <<<"$_mf_out"
-  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"; MF_LINT_CMD="${_mf[4]:-}"; MF_LINT_FIX_CMD="${_mf[5]:-}"; MF_AUTO_MERGE="${_mf[6]:-false}"
+  MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"; MF_LINT_CMD="${_mf[4]:-}"; MF_LINT_FIX_CMD="${_mf[5]:-}"; MF_LENS_CMD="${_mf[6]:-}"; MF_AUTO_MERGE="${_mf[7]:-false}"
 fi
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
@@ -377,6 +378,9 @@ CHECK_CMD="${CHECK_CMD:-${MF_CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest te
 # empty LINT_CMD is off (byte-identical to today: no probe, no output). env overrides manifest as ever.
 LINT_CMD="${LINT_CMD:-${MF_LINT_CMD:-}}"
 LINT_FIX_CMD="${LINT_FIX_CMD:-${MF_LINT_FIX_CMD:-}}"
+# lens tier (issue #214): NO built-in default either — an absent key leaves LENS_CMD empty, and an empty
+# LENS_CMD is off (byte-identical to today: no run, no artifact, no comment). env overrides manifest as ever.
+LENS_CMD="${LENS_CMD:-${MF_LENS_CMD:-}}"
 
 # ---- fetch issue (state/title/body) ----
 ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state,issueType 2>/dev/null)" \
@@ -574,12 +578,12 @@ a=sys.argv
 def role(name,mid,prov,rank): return {"name":name or None,"id":mid,"provider":prov or None,"rank":(int(rank) if rank else None)}
 print(json.dumps({"repo":a[1],"issue":int(a[2]),"branch":a[3],"model":a[4],"workspace":a[5],
                   "base_repo":a[6],"base_ref":a[7],"check_cmd":a[8],"auto_merge":a[17]=="true",
-                  "lint_cmd":a[18],"lint_fix_cmd":a[19],
+                  "lint_cmd":a[18],"lint_fix_cmd":a[19],"lens_cmd":a[20],
                   "build":role(a[9],a[10],a[11],a[12]),"review":role(a[13],a[14],a[15],a[16]),"ready":True}))' \
     "$REPO" "$ISSUE" "$BRANCH" "$BUILD_ID" "$YR_WORKSPACE" "$BASE_REPO" "$BASE_REF" "$CHECK_CMD" \
     "$BUILD_NAME" "$BUILD_ID" "$BUILD_PROVIDER" "$BUILD_RANK" \
     "$REVIEW_NAME" "$REVIEW_ID" "$REVIEW_PROVIDER" "$REVIEW_RANK" "$MF_AUTO_MERGE" \
-    "$LINT_CMD" "$LINT_FIX_CMD"
+    "$LINT_CMD" "$LINT_FIX_CMD" "$LENS_CMD"
   exit 0
 fi
 
@@ -938,6 +942,13 @@ run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.
 # an OPAQUE command run verbatim: python repos declare ruff, node repos eslint — no lint-output parsing, no
 # language assumption anywhere. Used for both LINT_CMD (the probe / re-run) and LINT_FIX_CMD (the autofix).
 run_lint(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1; }
+# run_lens (issue #214): the advisory lens tier's runner — the run_checks/run_lint confinement shape
+# (worktree cd, the venv + node bin dirs on PATH, host git config neutralized) with two DELIBERATE
+# deviations: (1) stdout -> the run dir's lens.md and stderr -> lens.log are SEPARATE, never the shape's
+# merged 2>&1 — a stderr traceback must never land in the PR-trail comment; and (2) YR_BASE_REF="$BASE_REF"
+# is exported so a lens can be diff-aware. $1 is an OPAQUE command run verbatim — any stack's lens works,
+# no lens-output parsing, no language assumption. The exit code is READ BUT NEVER GATES (see below).
+run_lens(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null YR_BASE_REF="$BASE_REF" bash -c "$1" ) >"$RUN_DIR/lens.md" 2>"$RUN_DIR/lens.log"; }
 # Distinguish a CODE failure (the harness ran and tests failed) from an ENVIRONMENT failure (the harness
 # could not execute at all: 127=command not found, 126=found-but-not-executable — e.g. a venv whose
 # console-script shebang points at a moved/rebuilt interpreter). An env failure is NOT the implementer's
@@ -1018,6 +1029,18 @@ else
       if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the lint repair"; fi
       [ "$LINT_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (log: $RUN_DIR/lint.log)"
     fi
+  fi
+
+  # ---- lens tier (issue #214): a manifest-declared, purely ADVISORY tier, run only AFTER check_cmd (and
+  # lint_cmd, when declared) both pass. Absent LENS_CMD = off, byte-identical to today (no run, no
+  # artifact, no comment). The lens exit code is READ BUT NEVER GATES — a non-zero exit (126/127 included)
+  # becomes a one-line legible note appended to lens.md, and the run's terminal state is IDENTICAL to the
+  # same run with a passing lens (no fail_blocked, no env hold, no repair). The artifact lands on the PR
+  # trail as its own comment after the PR exists (below); it never enters PR_BODY or the review bundle.
+  if [ -n "$LENS_CMD" ]; then
+    LENS_RC=0; run_lens "$LENS_CMD" || LENS_RC=$?
+    [ "$LENS_RC" -eq 0 ] || printf '\nlens did not run cleanly (exit %s)\n' "$LENS_RC" >> "$RUN_DIR/lens.md"
+    log "lens ran (advisory, exit $LENS_RC) — never gating; artifact: $RUN_DIR/lens.md"
   fi
   mark_stage 03-check
 fi
@@ -1255,6 +1278,20 @@ print(len(d.get("stages") or []))' "$USAGE_SUMMARY_JSON" 2>/dev/null || echo 0)"
     || log "warn: could not post the usage-summary comment (non-fatal, PR already open)"
 else
   log "warn: usage summary aggregation failed (non-fatal, PR already open)"
+fi
+
+# ---- lens advisory comment (issue #214): the manifest-declared lens tier's artifact lands on the PR trail
+# as its OWN comment via the usage-summary --body-file pattern, first line `YR-LENS (advisory)` — purely
+# advisory, never a gate, and deliberately clear of PR_BODY and the review bundle (the reviewer consumes
+# the bundle before any PR exists). Posted exactly ONCE, only when lens.md is non-empty and the PR exists;
+# an empty (or absent, LENS_CMD off) artifact posts nothing, and a Blocked run (no PR) leaves lens.md
+# unposted in the run dir — correct behavior. Best-effort like the usage summary: a post failure logs, never
+# blocks. No `YR-MERGE`/`VERDICT:` grammar, so it can never be mistaken for a gating record.
+if [ -s "$RUN_DIR/lens.md" ]; then
+  LENS_COMMENT="$RUN_DIR/lens-comment.md"
+  { printf 'YR-LENS (advisory)\n\n'; cat "$RUN_DIR/lens.md"; } > "$LENS_COMMENT"
+  "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$LENS_COMMENT" >/dev/null 2>&1 \
+    || log "warn: could not post the lens advisory comment (non-fatal, PR already open)"
 fi
 
 # ---- terminal merge-condition evaluator + autonomous merge (issues #37 shadow, #38 arming) ----------
