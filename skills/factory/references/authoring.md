@@ -27,6 +27,10 @@ replaces, or `[]` when nothing is replaced (an empty declaration needs a one-lin
 mode while authoring (see [`gates.md`](gates.md)) — it checks the declaration's grammar, resolves each
 named target, and flags any active spine doc still undispositioned under a superseded target.
 
+**The backlog-sweep duty:** each spec session sweeps the component's `ideas/` Pending view — promote
+what's earned (name it in this spec's `supersedes`), and disposition the rest (reject, or leave `open`
+for a later session), see [`documentation-model.md`](documentation-model.md) — *The ideas-backlog*.
+
 **How to work:** open the `01` draft early and evolve WHAT/WHY *there* with the human, in Obsidian. Don't
 brainstorm in the terminal and paste a finished spec — the doc is where the thinking lives. The spec must
 be developed *in* the doc, not assembled from a finished outline.
@@ -37,8 +41,8 @@ proposed design is sound, without knowing how it will be built? If not, it is no
 **Gate: *spec-ready* (human).** A human reads the spec and decides it is complete enough to design against.
 Accepting a spec that declares `supersedes` is the **accept act**: in that same session, stamp every named
 target `status: superseded` with `superseded_by` back-pointing to this spec, then run
-`check_supersession.py --sweep` to verify the pairs (see [`gates.md`](gates.md)). For the review discipline
-that feeds this gate, see [`reviewing.md`](reviewing.md).
+`check_supersession.py --sweep --scope <component>` to verify the pairs (see [`gates.md`](gates.md)). For
+the review discipline that feeds this gate, see [`reviewing.md`](reviewing.md).
 
 ---
 
@@ -64,8 +68,8 @@ meaningful context about *why* this approach over alternatives?
 **Gate: *approve-RFC* (human).** Human reviews the outline, then the draft. Accepting a draft that
 declares `supersedes` is the **accept act**: in that same session, stamp every named target
 `status: superseded` with `superseded_by` back-pointing to this feature-rfc, then run
-`check_supersession.py --sweep` to verify the pairs (see [`gates.md`](gates.md)). For the review
-discipline, see [`reviewing.md`](reviewing.md).
+`check_supersession.py --sweep --scope <component>` to verify the pairs (see [`gates.md`](gates.md)). For
+the review discipline, see [`reviewing.md`](reviewing.md).
 
 ---
 
