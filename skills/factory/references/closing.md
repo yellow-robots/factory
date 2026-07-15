@@ -1,9 +1,9 @@
 # Closing — promote, merge, freeze, and release
 
 > **When to load this reference:** closing out an iteration — promoting a task to Ready, receiving a
-> merged PR (→ Done), freezing Obsidian docs, and running a skill release. Promote-to-Ready is the
-> **input gate**; merge → Done is the **output gate**. For authoring, see [`authoring.md`](authoring.md).
-> For the lower pipeline, see [`pipeline.md`](pipeline.md).
+> merged PR (→ Done), freezing Obsidian docs, judging the crossover test, and running a skill release.
+> Promote-to-Ready is the **input gate**; merge → Done is the **output gate**. For authoring, see
+> [`authoring.md`](authoring.md). For the lower pipeline, see [`pipeline.md`](pipeline.md).
 
 ---
 
@@ -76,6 +76,18 @@ When the PR merges, the iteration's Obsidian docs become immutable records:
 
 This is **shipping freezes the why** from the documentation model; see
 [`documentation-model.md`](documentation-model.md) — *Two principles*.
+
+---
+
+## 4. The crossover test
+
+**Ruled 2026-07-06 — carried here whole, in the ruling's own wording.** At each close, the candidate set
+includes product iterations: factory work must beat the product line on the three standing axes —
+*quality control per iteration · incremental understanding · cost control* — the ruling's own order, kept
+verbatim (the value-scoring line in [`documentation-model.md`](documentation-model.md) — *The
+ideas-backlog* — deliberately words the same three axes in the front door's order; the two are not
+harmonized). The factory is ready when no factory candidate wins. And a gap surfacing mid-product
+re-enters the candidate set having just proven its value.
 
 ---
 
