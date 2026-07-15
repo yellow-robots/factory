@@ -29,6 +29,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import ledger  # noqa: E402
+import registry  # noqa: E402
 import stage_usage  # noqa: E402
 
 LEDGER_PY = ROOT / "tools" / "ledger.py"
@@ -750,3 +751,360 @@ def test_cli_append_succeeds_even_when_run_dir_does_not_exist(tmp_path):
     assert r.returncode == 0, r.stderr
     rows = [json.loads(l) for l in (ledger_dir / "rows.jsonl").read_text().splitlines()]
     assert rows[0]["stages"] == []
+
+
+# ============ issue #207: the price snapshot + shadow_cost_usd (build_ledger_row) ====================
+# Derived from the CRITERIA (the spec), not the implementation's internals:
+#   * each stage's `price` is the registry's input_price_per_mtok for that stage's OWN model id — never
+#     the role — null when the id is unregistered (never an error, never skips the stage or the row);
+#   * totals.shadow_cost_usd = sum(weighted_total x price) over non-shadow, priced stages only — an
+#     unpriced or shadow-review-seat stage contributes nothing to the sum, but is never dropped from
+#     `stages` or from the raw-count totals;
+#   * the price is snapshotted onto the row itself, so shadow_cost_usd is reproducible by summing the
+#     row's own stored per-stage price x weighted_total — a read over the row, not a re-run of the build.
+
+def test_build_ledger_row_stage_price_snapshot_matches_registry_list_price(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="claude-sonnet-5")
+    row = _build_row(run_dir)
+    assert row["stages"][0]["price"] == 3.00
+
+
+def test_build_ledger_row_stage_price_is_null_for_an_unregistered_model(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="some-unregistered-model")
+    row = _build_row(run_dir)
+    assert row["stages"][0]["price"] is None
+
+
+def test_build_ledger_row_append_never_skips_a_row_over_an_unpriceable_model(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="some-unregistered-model", input_tokens=100)
+    row = _build_row(run_dir)
+    assert len(row["stages"]) == 1
+    assert row["stages"][0]["stage"] == "implement"
+    assert row["totals"]["shadow_cost_usd"] == 0
+
+
+def test_build_ledger_row_shadow_cost_usd_is_weighted_total_times_registry_price(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=100, output_tokens=10,
+                cache_write_tokens=8, cache_read_tokens=1000)
+    row = _build_row(run_dir)
+    weighted_total = row["stages"][0]["weighted_total"]
+    assert row["totals"]["shadow_cost_usd"] == weighted_total * 3.00
+
+
+def test_build_ledger_row_shadow_cost_usd_sums_multiple_priced_stages(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=1000, output_tokens=0,
+                cache_write_tokens=0, cache_read_tokens=0)
+    _usage_file(run_dir, "review", model="claude-opus-4-8", input_tokens=0, output_tokens=200,
+                cache_write_tokens=0, cache_read_tokens=0)
+    row = _build_row(run_dir, outcome_type="in-review", outcome_decision="")
+    stages = {s["stage"]: s for s in row["stages"]}
+    expected = stages["implement"]["weighted_total"] * 3.00 + stages["review"]["weighted_total"] * 5.00
+    assert row["totals"]["shadow_cost_usd"] == expected
+
+
+def test_build_ledger_row_shadow_cost_usd_excludes_unpriced_stage_but_keeps_its_raw_counts(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=1000)
+    _usage_file(run_dir, "check", model="some-unregistered-model", input_tokens=5000)
+    row = _build_row(run_dir, outcome_type="in-review", outcome_decision="")
+    stages = {s["stage"]: s for s in row["stages"]}
+    assert stages["check"]["price"] is None
+    # only the dollar figure excludes the unpriced stage — its raw tokens still land in totals.
+    assert row["totals"]["shadow_cost_usd"] == stages["implement"]["weighted_total"] * 3.00
+    assert row["totals"]["input_tokens"] == 1000 + 5000
+
+
+def test_build_ledger_row_shadow_cost_usd_excludes_shadow_review_seat_stage(tmp_path):
+    """Shadow-review-seat stages are already excluded from weighted_total (issue #206); #207 must keep
+    them out of shadow_cost_usd too, even when the shadow model happens to carry a registry price."""
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=1000)
+    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
+    row = _build_row(run_dir, shadow_model="claude-opus-4-8")
+    stages = {s["stage"]: s for s in row["stages"]}
+    assert "shadow-review" in stages
+    assert row["totals"]["shadow_cost_usd"] == stages["implement"]["weighted_total"] * 3.00
+
+
+def test_build_ledger_row_shadow_cost_recomputable_purely_from_the_rows_own_stored_fields(tmp_path):
+    """"the price snapshot SHALL be stored beside the raw counts so rows re-weight as a read, not a
+    re-run": summing each non-shadow, priced stage's own stored price x weighted_total, straight off the
+    row already on disk, must reproduce totals.shadow_cost_usd exactly — no registry lookup, no
+    re-running the build."""
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=1000, output_tokens=50)
+    _usage_file(run_dir, "review", model="claude-opus-4-8", input_tokens=10, output_tokens=5)
+    row = _build_row(run_dir)
+    recomputed = sum(s["weighted_total"] * s["price"] for s in row["stages"]
+                      if not s["stage"].startswith("shadow-review") and s.get("price") is not None)
+    assert recomputed == row["totals"]["shadow_cost_usd"]
+
+
+# ============ issue #207: per_model_view — the per-model aggregate view, computable from rows alone ===
+# Derived from the CRITERIA: runs, merged (armed 'merged' outcome only — 'shadow-would-merge' lands in
+# its own verdict_outcomes bucket, never conflated), weighted-cost-per-merged-task, repair rate (from
+# repairs counts), verdict outcomes — keyed by the row's build model, over fixture rows alone (no
+# run_dir, no registry, no I/O).
+
+def _row(*, repo="acme/widgets", build_model="claude-sonnet-5", outcome_type="merged",
+         shadow_cost_usd=0.0, weighted_total=0, repairs_check=0, repairs_review=0,
+         ts_end="2026-01-01T00:00:00Z"):
+    return {
+        "schema": "yr-ledger-row/1",
+        "repo": repo,
+        "models": {"build": build_model, "review": "claude-opus-4-8"},
+        "outcome": {"type": outcome_type, "decision": None},
+        "totals": {"shadow_cost_usd": shadow_cost_usd, "weighted_total": weighted_total},
+        "repairs": {"check": repairs_check, "review": repairs_review},
+        "ts_end": ts_end,
+    }
+
+
+def test_per_model_view_separates_merged_from_shadow_would_merge():
+    rows = [
+        _row(build_model="claude-sonnet-5", outcome_type="merged", shadow_cost_usd=10),
+        _row(build_model="claude-sonnet-5", outcome_type="merged", shadow_cost_usd=20),
+        _row(build_model="claude-sonnet-5", outcome_type="needs-info", shadow_cost_usd=0),
+        _row(build_model="claude-opus-4-8", outcome_type="shadow-would-merge", shadow_cost_usd=15,
+             repairs_check=1, repairs_review=1),
+        _row(build_model="claude-opus-4-8", outcome_type="merged", shadow_cost_usd=5),
+    ]
+    view = ledger.per_model_view(rows)
+
+    sonnet = view["claude-sonnet-5"]
+    assert sonnet["runs"] == 3
+    assert sonnet["merged"] == 2
+    assert sonnet["weighted_cost_per_merged_task"] == 15   # (10 + 20 + 0) / 2
+    assert sonnet["verdict_outcomes"] == {"merged": 2, "needs-info": 1}
+
+    opus = view["claude-opus-4-8"]
+    assert opus["runs"] == 2
+    assert opus["merged"] == 1   # shadow-would-merge is NEVER counted as merged
+    assert opus["weighted_cost_per_merged_task"] == 20   # (15 + 5) / 1
+    assert opus["verdict_outcomes"] == {"shadow-would-merge": 1, "merged": 1}
+
+
+def test_per_model_view_repair_rate_from_repairs_counts():
+    rows = [
+        _row(build_model="claude-sonnet-5", repairs_check=1, repairs_review=0),
+        _row(build_model="claude-sonnet-5", repairs_check=0, repairs_review=1),
+        _row(build_model="claude-sonnet-5", repairs_check=0, repairs_review=0),
+        _row(build_model="claude-sonnet-5", repairs_check=0, repairs_review=0),
+    ]
+    view = ledger.per_model_view(rows)
+    assert view["claude-sonnet-5"]["repair_rate"] == 0.5   # 2 repairs (check+review) across 4 runs
+
+
+def test_per_model_view_cost_per_merged_task_is_none_when_nothing_merged():
+    rows = [_row(outcome_type="needs-info", shadow_cost_usd=0)]
+    view = ledger.per_model_view(rows)
+    assert view["claude-sonnet-5"]["merged"] == 0
+    assert view["claude-sonnet-5"]["weighted_cost_per_merged_task"] is None
+
+
+def test_per_model_view_is_computable_from_rows_alone():
+    """No run_dir, no registry access, no filesystem I/O — a pure aggregation over the rows list."""
+    view = ledger.per_model_view([_row(), _row()])
+    assert view["claude-sonnet-5"]["runs"] == 2
+
+
+# ============ issue #207: the four standing reads, each an executable query over rows alone ==========
+
+# ---- standing read 1: the close-time cost line (total + per-merged-task cost for a repo/window) -----
+
+def test_standing_read_close_time_cost_total_and_per_merged_task():
+    rows = [
+        _row(repo="acme/widgets", outcome_type="merged", shadow_cost_usd=10, ts_end="2026-01-01T00:00:00Z"),
+        _row(repo="acme/widgets", outcome_type="merged", shadow_cost_usd=20, ts_end="2026-01-02T00:00:00Z"),
+        _row(repo="acme/widgets", outcome_type="needs-info", shadow_cost_usd=0, ts_end="2026-01-03T00:00:00Z"),
+        _row(repo="other/repo", outcome_type="merged", shadow_cost_usd=999, ts_end="2026-01-01T00:00:00Z"),
+    ]
+    windowed = ledger.filter_rows(rows, repo="acme/widgets")
+    result = ledger.close_time_cost(windowed)
+    assert result["total_shadow_cost_usd"] == 30
+    assert result["merged_count"] == 2
+    assert result["cost_per_merged_task"] == 15
+
+
+def test_standing_read_close_time_cost_windowed_by_ts_end():
+    rows = [
+        _row(shadow_cost_usd=10, outcome_type="merged", ts_end="2026-01-01T00:00:00Z"),
+        _row(shadow_cost_usd=20, outcome_type="merged", ts_end="2026-02-01T00:00:00Z"),
+    ]
+    windowed = ledger.filter_rows(rows, since="2026-01-15T00:00:00Z")
+    result = ledger.close_time_cost(windowed)
+    assert result["total_shadow_cost_usd"] == 20
+    assert result["merged_count"] == 1
+
+
+def test_standing_read_close_time_cost_none_per_task_when_nothing_merged():
+    rows = [_row(outcome_type="needs-info", shadow_cost_usd=0)]
+    result = ledger.close_time_cost(rows)
+    assert result["cost_per_merged_task"] is None
+
+
+# ---- standing read 2: the crossover cost axis (factory-repo vs product-repo, same window) -----------
+
+def test_standing_read_crossover_cost_axis_splits_factory_vs_product_repo():
+    rows = [
+        _row(repo="yellow-robots/factory", outcome_type="merged", shadow_cost_usd=100),
+        _row(repo="yellow-robots/factory", outcome_type="merged", shadow_cost_usd=50),
+        _row(repo="acme/widgets", outcome_type="merged", shadow_cost_usd=10),
+        _row(repo="other/product", outcome_type="merged", shadow_cost_usd=30),
+    ]
+    result = ledger.crossover_cost_axis(rows)
+    assert result["factory"]["total_shadow_cost_usd"] == 150
+    assert result["factory"]["cost_per_merged_task"] == 75
+    assert result["product"]["total_shadow_cost_usd"] == 40
+    assert result["product"]["cost_per_merged_task"] == 20
+
+
+def test_standing_read_crossover_cost_axis_respects_a_custom_factory_repo_name():
+    rows = [
+        _row(repo="mine/factory-fork", outcome_type="merged", shadow_cost_usd=42),
+        _row(repo="acme/widgets", outcome_type="merged", shadow_cost_usd=8),
+    ]
+    result = ledger.crossover_cost_axis(rows, factory_repo="mine/factory-fork")
+    assert result["factory"]["total_shadow_cost_usd"] == 42
+    assert result["product"]["total_shadow_cost_usd"] == 8
+
+
+# ---- standing read 3: a trial's before/after (per-model aggregates across two windows) ---------------
+
+def test_standing_read_before_after_trial_compares_per_model_aggregates_across_two_windows():
+    rows = [
+        _row(build_model="claude-sonnet-5", outcome_type="merged", shadow_cost_usd=10,
+             ts_end="2026-01-05T00:00:00Z"),
+        _row(build_model="claude-sonnet-5", outcome_type="merged", shadow_cost_usd=30,
+             ts_end="2026-02-05T00:00:00Z"),
+    ]
+    before = ledger.per_model_view(ledger.filter_rows(rows, until="2026-01-31T23:59:59Z"))
+    after = ledger.per_model_view(ledger.filter_rows(rows, since="2026-02-01T00:00:00Z"))
+    assert before["claude-sonnet-5"]["runs"] == 1
+    assert before["claude-sonnet-5"]["weighted_cost_per_merged_task"] == 10
+    assert after["claude-sonnet-5"]["runs"] == 1
+    assert after["claude-sonnet-5"]["weighted_cost_per_merged_task"] == 30
+
+
+# ---- standing read 4: the concurrency headroom (weighted tokens per day, across repos) ---------------
+
+def test_standing_read_concurrency_headroom_weighted_tokens_per_day_across_repos():
+    rows = [
+        _row(repo="a/a", weighted_total=100, ts_end="2026-01-01T10:00:00Z"),
+        _row(repo="b/b", weighted_total=50, ts_end="2026-01-01T20:00:00Z"),
+        _row(repo="a/a", weighted_total=200, ts_end="2026-01-02T00:00:00Z"),
+    ]
+    result = ledger.daily_weighted_tokens(rows)
+    assert result == {"2026-01-01": 150, "2026-01-02": 200}
+
+
+def test_standing_read_concurrency_headroom_ignores_rows_with_no_ts_end():
+    rows = [_row(weighted_total=100, ts_end="")]
+    assert ledger.daily_weighted_tokens(rows) == {}
+
+
+# ============ issue #207: load_rows / filter_rows — the read-only substrate over rows.jsonl ===========
+
+def test_load_rows_missing_ledger_dir_returns_empty_list(tmp_path):
+    assert ledger.load_rows(tmp_path / "does-not-exist") == []
+
+
+def test_load_rows_skips_unparseable_lines_without_raising(tmp_path):
+    ledger_dir = tmp_path / "ledger"; ledger_dir.mkdir()
+    (ledger_dir / "rows.jsonl").write_text('{"a": 1}\nnot json\n{"a": 2}\n')
+    rows = ledger.load_rows(ledger_dir)
+    assert rows == [{"a": 1}, {"a": 2}]
+
+
+# ============ issue #207: the `per-model` / `report` CLI subcommands over rows.jsonl ===================
+
+def test_cli_per_model_aggregates_over_rows_jsonl(tmp_path):
+    ledger_dir = tmp_path / "ledger"; ledger_dir.mkdir()
+    rows = [_row(build_model="claude-sonnet-5", outcome_type="merged", shadow_cost_usd=10),
+            _row(build_model="claude-sonnet-5", outcome_type="merged", shadow_cost_usd=20)]
+    (ledger_dir / "rows.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    r = _run_cli("per-model", "--ledger-dir", str(ledger_dir))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["claude-sonnet-5"]["runs"] == 2
+    assert out["claude-sonnet-5"]["weighted_cost_per_merged_task"] == 15
+
+
+def test_cli_per_model_filters_by_repo(tmp_path):
+    ledger_dir = tmp_path / "ledger"; ledger_dir.mkdir()
+    rows = [_row(repo="a/a", build_model="claude-sonnet-5"), _row(repo="b/b", build_model="claude-opus-4-8")]
+    (ledger_dir / "rows.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    r = _run_cli("per-model", "--ledger-dir", str(ledger_dir), "--repo", "a/a")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert list(out.keys()) == ["claude-sonnet-5"]
+
+
+def test_cli_report_close_time_cost(tmp_path):
+    ledger_dir = tmp_path / "ledger"; ledger_dir.mkdir()
+    rows = [_row(repo="a/a", outcome_type="merged", shadow_cost_usd=10),
+            _row(repo="a/a", outcome_type="merged", shadow_cost_usd=20)]
+    (ledger_dir / "rows.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    r = _run_cli("report", "--kind", "close-time-cost", "--ledger-dir", str(ledger_dir), "--repo", "a/a")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["total_shadow_cost_usd"] == 30
+    assert out["cost_per_merged_task"] == 15
+
+
+def test_cli_report_crossover_cost(tmp_path):
+    ledger_dir = tmp_path / "ledger"; ledger_dir.mkdir()
+    rows = [_row(repo="yellow-robots/factory", outcome_type="merged", shadow_cost_usd=100),
+            _row(repo="acme/widgets", outcome_type="merged", shadow_cost_usd=10)]
+    (ledger_dir / "rows.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    r = _run_cli("report", "--kind", "crossover-cost", "--ledger-dir", str(ledger_dir))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["factory"]["total_shadow_cost_usd"] == 100
+    assert out["product"]["total_shadow_cost_usd"] == 10
+
+
+def test_cli_report_concurrency_headroom(tmp_path):
+    ledger_dir = tmp_path / "ledger"; ledger_dir.mkdir()
+    rows = [_row(repo="a/a", weighted_total=100, ts_end="2026-01-01T00:00:00Z"),
+            _row(repo="b/b", weighted_total=50, ts_end="2026-01-01T12:00:00Z")]
+    (ledger_dir / "rows.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    r = _run_cli("report", "--kind", "concurrency-headroom", "--ledger-dir", str(ledger_dir))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out == {"2026-01-01": 150}
+
+
+def test_cli_report_unknown_kind_is_an_error():
+    r = _run_cli("report", "--kind", "not-a-real-kind", "--ledger-dir", "/tmp/whatever")
+    assert r.returncode != 0
+
+
+# ============ issue #207: docs reach the shipped references ===========================================
+
+def test_agents_md_repo_map_lists_the_ledger_tool():
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "| `tools/ledger.py` |" in text
+
+
+def test_agents_md_conventions_gains_the_ledger_informs_never_gates_line():
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "ledger informs, never gates" in text.lower()
+    assert "DEV_RUNNER_HOME" in text
+
+
+def test_pipeline_md_gains_a_the_ledger_section_citing_the_tool_and_the_four_reads():
+    text = (ROOT / "skills" / "factory" / "references" / "pipeline.md").read_text(encoding="utf-8")
+    assert "## The ledger" in text
+    section = text.split("## The ledger", 1)[1].split("\n## ", 1)[0]
+    assert "tools/ledger.py" in section
+    assert "never gates" in section.lower()
+    lowered = section.lower()
+    assert "close-time cost" in lowered
+    assert "crossover cost" in lowered
+    assert "concurrency headroom" in lowered

@@ -214,6 +214,25 @@ grammar:
 
 Both grammars are defined in the modules cited above — read them there, not restated here.
 
+## The ledger
+
+The cross-build usage meter (epic yellow-robots/factory#204) — `tools/ledger.py`, stdlib-only like
+`tools/registry.py`. Home: `$DEV_RUNNER_HOME/ledger/rows.jsonl`, an append-only JSONL file of
+`yr-ledger-row/1` rows, one per runner invocation, landed under a blocking flock at whichever terminal
+branch the run reaches (Needs-info bounce, `Blocked`, env-hold, or the success terminus). Each row carries
+census-weighted usage per stage (`tools/stage_usage.py`'s weights, unchanged), a per-stage `price`
+snapshot (`tools/registry.py`'s `input_price_per_mtok` for that stage's model, null when unregistered —
+never skips the row), `totals.shadow_cost_usd` (weighted-total × price, summed over the row's non-shadow,
+priced stages), outcome, repairs, wall-clock, and identity. The ledger **informs, never gates**: nothing
+here touches the review gate, the rank gate, or the merge evaluator.
+
+`per-model`/`report` are read-only aggregations over the rows, answering four standing reads: (1) the
+close-time cost line — total and per-merged-task weighted cost for a repo/window; (2) the crossover cost
+axis — factory-repo vs product-repo cost per merged task, same window; (3) a trial's before/after —
+`per-model`'s aggregates (runs, merged tasks, weighted-cost-per-merged-task, repair rate, verdict
+outcomes) across two windows; (4) the concurrency headroom — weighted tokens per day across repos. All
+four are computable from the rows alone.
+
 ## The bench
 
 The attended benchmark tool (epic yellow-robots/factory#161) that replays a candidate's solution to a

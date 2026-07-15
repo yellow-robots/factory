@@ -369,3 +369,99 @@ def test_cli_pool_for_id_unknown_model_returns_empty_object():
     result = _run_cli("pool-for-id", "--id", "not-a-real-model")
     assert result.returncode == 0
     assert json.loads(result.stdout) == {}
+
+
+# ---------------------------------------------------------------------------
+# issue #207 — the registry's one addition: input_price_per_mtok per entry, exposed via
+# registry.price_for_id() and the `price-for-id` CLI. Derived from the acceptance criteria (the
+# spec), not the loader's internals: the shipped registry carries the two list prices
+# (opus=5.00, sonnet=3.00, read 2026-07-15), a manifest comment notes Sonnet 5's introductory rate
+# without changing the pinned list price, price_for_id()/the CLI resolve by model id (never by
+# registry name) and are null-safe (never raise) for an unknown or unpriced id, and nothing that
+# validated before this change stops validating now.
+# ---------------------------------------------------------------------------
+
+def test_shipped_registry_sonnet_and_opus_carry_the_documented_list_prices():
+    data = load()
+    assert data["models"]["sonnet"]["input_price_per_mtok"] == 3.00
+    assert data["models"]["opus"]["input_price_per_mtok"] == 5.00
+
+
+def test_shipped_registry_header_notes_the_introductory_rate_without_changing_the_pinned_price():
+    text = (ROOT / "models.toml").read_text(encoding="utf-8")
+    header = "\n".join(
+        line for line in text.splitlines() if line.lstrip().startswith("#")
+    ).lower()
+    assert "list price" in header
+    assert "2.00" in header  # the introductory rate is noted...
+    assert "2026-08-31" in header  # ...with the date it lapses...
+    # ...but the recorded field is still the list price, not the promo rate.
+    data = load()
+    assert data["models"]["sonnet"]["input_price_per_mtok"] == 3.00
+
+
+def test_shipped_registry_still_validates_with_no_errors_after_the_price_column():
+    # "rejects nothing that parsed before": adding input_price_per_mtok must not break validate().
+    data = load()
+    assert validate(data) == []
+
+
+def test_validate_tolerates_missing_price_field_entirely():
+    # An entry with no input_price_per_mtok at all (the pre-#207 shape) must still validate — the
+    # field is optional, and its absence is exactly how an unpriceable model is expressed.
+    data = _base_data()
+    assert "input_price_per_mtok" not in data["models"]["sonnet"]
+    assert validate(data) == []
+
+
+def test_price_for_id_resolves_known_ids_to_their_registry_price():
+    data = load()
+    assert registry.price_for_id(data, "claude-sonnet-5") == 3.00
+    assert registry.price_for_id(data, "claude-opus-4-8") == 5.00
+
+
+def test_price_for_id_unknown_id_returns_none_never_raises():
+    data = load()
+    assert registry.price_for_id(data, "not-a-real-model") is None
+
+
+def test_price_for_id_falsy_id_returns_none_never_raises():
+    data = load()
+    assert registry.price_for_id(data, None) is None
+    assert registry.price_for_id(data, "") is None
+
+
+def test_price_for_id_registered_id_with_no_price_set_returns_none():
+    # sonnet here (from _base_data) never had a price to begin with — a registered id with an
+    # absent price must resolve to None, not raise or default to zero.
+    data = copy.deepcopy(_base_data())
+    assert "input_price_per_mtok" not in data["models"]["sonnet"]
+    assert registry.price_for_id(data, "claude-sonnet-5") is None
+
+
+def test_price_for_id_resolves_by_model_id_never_by_registry_name():
+    data = load()
+    assert registry.price_for_id(data, "sonnet") is None  # "sonnet" is the entry NAME, not its id
+    assert registry.price_for_id(data, "claude-sonnet-5") == 3.00
+
+
+def test_cli_price_for_id_known_model_returns_its_price():
+    result = _run_cli("price-for-id", "--id", "claude-sonnet-5")
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert data["name"] == "sonnet"
+    assert data["input_price_per_mtok"] == 3.00
+
+
+def test_cli_price_for_id_opus_returns_its_price():
+    result = _run_cli("price-for-id", "--id", "claude-opus-4-8")
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert data["name"] == "opus"
+    assert data["input_price_per_mtok"] == 5.00
+
+
+def test_cli_price_for_id_unknown_model_returns_empty_object():
+    result = _run_cli("price-for-id", "--id", "not-a-real-model")
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {}
