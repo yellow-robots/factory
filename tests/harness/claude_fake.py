@@ -43,6 +43,11 @@ args="$*"$'\\n'"$stdin_content"
 # stage subprocess actually inherited, and whether that directory existed AT CALL TIME — one line pair
 # appended per invocation, so a multi-stage build's whole sequence of TMPDIR values can be checked.
 [ -n "${STUB_CLAUDE_TMPDIR_FILE:-}" ] && { printf 'TMPDIR=%s\\n' "${TMPDIR:-unset}"; { [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; } && echo DIR_EXISTS=1 || echo DIR_EXISTS=0; } >> "$STUB_CLAUDE_TMPDIR_FILE"
+# issue #247: backgrounded ahead of the classifying case block (never inside the *REVIEWER* arm's own
+# literal text) so tests/test_shadow_review.py's exact-text splice of that arm keeps matching byte-for-byte.
+if [ -n "${STUB_REVIEW_GROUP_CHILD_SLEEP:-}" ] && [[ "$args" == *REVIEWER* ]]; then
+  ( sleep "${STUB_REVIEW_GROUP_CHILD_SLEEP}"; echo GROUP-CHILD-DONE ) &
+fi
 case "$args" in
   *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
                         if [ -n "${STUB_REVIEW_QUOTA:-}" ]; then echo "${STUB_REVIEW_QUOTA}" >&2; exit 1; fi
@@ -68,7 +73,10 @@ case "$args" in
                         if [ -n "${STUB_IMPL_QUOTA:-}" ]; then echo "${STUB_IMPL_QUOTA}" >&2; exit 1; fi
                         if [ -n "${STUB_IMPL_FAIL:-}" ]; then echo "${STUB_IMPL_FAIL}" >&2; exit 1; fi
                         [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\\n' > feature.txt
-                        [ -n "${STUB_LINGER_PIDFILE:-}" ] && { ( exec sleep 5 ) & echo $! > "$STUB_LINGER_PIDFILE"; } ;;
+                        [ -n "${STUB_LINGER_PIDFILE:-}" ] && { ( exec sleep 5 ) & echo $! > "$STUB_LINGER_PIDFILE"; }
+                        if [ -n "${STUB_IMPL_GROUP_CHILD_SLEEP:-}" ]; then
+                          ( sleep "${STUB_IMPL_GROUP_CHILD_SLEEP}"; echo GROUP-CHILD-DONE ) &
+                        fi ;;
 esac
 exit 0
 '''
@@ -90,6 +98,9 @@ emit_json() {  # $1=result-text $2=input $3=output $4=cache_write $5=cache_read 
     printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$2" "$3" "$4" "$5"
   fi
 }
+if [ -n "${STUB_REVIEW_GROUP_CHILD_SLEEP:-}" ] && [[ "$args" == *REVIEWER* ]]; then
+  ( sleep "${STUB_REVIEW_GROUP_CHILD_SLEEP}"; echo GROUP-CHILD-DONE ) &
+fi
 case "$args" in
   *REVIEWER*)
     echo REVIEW >> "$STUB_TIMELINE"

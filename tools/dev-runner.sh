@@ -33,6 +33,10 @@
 #   PR_STAGE_RETRIES (default 3, beyond the first attempt), PR_STAGE_BACKOFF_BASE (default 5s),
 #   PR_STAGE_BACKOFF_FACTOR (default 2), PR_STAGE_BACKOFF_MAX (default 60s per-attempt cap) — see the
 #   PR stage below for the retry loop these drive.
+# STAGE_GROUP_GRACE (issue #247; default 30s, operator-tunable): seconds a stage's process group is given
+#   to empty out on its own after its leader exits before a lingering member is reaped and the stage
+#   records a refusal — see the constant's own doc comment below for what "still alive after the grace"
+#   assumes about the deployment's init.
 set -euo pipefail
 
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"; GH_BIN="${GH_BIN:-gh}"; GIT_BIN="${GIT_BIN:-git}"
@@ -953,11 +957,51 @@ reap_pgid(){   # $1 = the stage's pgid (== its pid; see run_stage)
   kill -KILL -- "-$pgid" 2>/dev/null || true
 }
 
+# STAGE_GROUP_GRACE (issue #247): the stage leader ($pid == the group's pgid, see run_stage) exiting does
+# not mean the group is empty — a child it backgrounded and returned without waiting on is still a member
+# of that SAME group (setsid keeps the whole tree together), and reap_pgid above would kill it on sight:
+# a silent orphaning, not an observed completion or a recorded refusal (the 2026-07-10 pair — #121's
+# implementer and #125's tester — and run 171-200682 all lost a stage exactly this way, with the "works in
+# the foreground only" charter line already live). Give a non-empty group this many seconds to finish
+# naturally — long enough for the backgrounded child's own output to land in the stage log before the
+# runner advances — before concluding it was abandoned and reaping it. `kill -0` cannot distinguish a
+# live process from an unreaped zombie, so "still alive after the grace" below assumes an init that reaps
+# zombies (true under systemd, this deployment's init); without one, a zombie would pin the wait for the
+# full grace even after its actual work finished.
+STAGE_GROUP_GRACE="${STAGE_GROUP_GRACE:-30}"
+# STAGE_REFUSAL_RC: the sentinel exit code run_stage reports when a stage leader exited cleanly (rc 0)
+# but left a live group member past the grace — a REFUSAL, not the leader's own (already-nonzero) exit
+# code, so a caller that gates on rc (`|| X_RC=$?`) still sees a failure instead of a silent success.
+STAGE_REFUSAL_RC=124
+# LAST_STAGE_GROUP_REFUSED: set by run_stage on every call (never left over from a prior one) to whether
+# THIS call's group needed reaping past the grace — the authoritative source callers gate on, since a rc
+# equal to STAGE_REFUSAL_RC could in principle also be a genuine future CLI exit code (set -u: initialize
+# before the first read, in case a caller ever inspects it before any stage has run).
+LAST_STAGE_GROUP_REFUSED=0
+
+# wait_group_or_refuse: after the stage leader has exited, poll (once a second) for up to
+# STAGE_GROUP_GRACE seconds for its process group to empty out on its own. Returns 0 immediately if the
+# group is already empty (the overwhelmingly common case: nothing to wait for). Returns 1 if a member is
+# still alive once the grace is spent — the caller reaps the group either way; this only decides whether
+# that reap is a silent cleanup after an observed completion or a recorded refusal.
+wait_group_or_refuse(){   # $1 = pgid
+  local pgid="$1" waited=0
+  kill -0 -- "-$pgid" 2>/dev/null || return 0
+  while kill -0 -- "-$pgid" 2>/dev/null; do
+    [ "$waited" -ge "$STAGE_GROUP_GRACE" ] && return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
 run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set),
               # $5=model id (default: build), $6=ANTHROPIC_BASE_URL override for THIS subprocess only (default: unset;
               # the shadow review seat, issue #165, is the one caller that passes it — every other call is untouched)
   local model="${5:-$BUILD_ID}" base_url="${6:-}" cred rc=0 fmt_overridden=0 pid
+  LAST_STAGE_GROUP_REFUSED=0   # reset every call (issue #247) — stage_fail_msg reads this, not the rc value,
+                                # so a genuine future 124 from the CLI itself is never misread as a refusal
   local sys_prompt; sys_prompt="$(printf '%s\n\n%s' "$1" "$STAGE_CHARTER")"
   # the task prompt travels on stdin, never argv (issue #121): a task whose acceptance criteria quote a
   # runnable string (e.g. `pkill -f "bash qa/qa-gate.sh"`) must not be able to pattern-match the stage's
@@ -996,9 +1040,20 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
   fi
   pid=$!
   wait "$pid" || rc=$?
+  # a live group member past the grace is a refusal (wait_group_or_refuse), not the leader's own rc — but
+  # usage capture below is keyed to the LEADER's own rc, unaffected by a sibling's refusal, so a stage
+  # whose gate reads the log content rather than rc (the reviewer's verdict line) still sees a correctly
+  # rewritten log either way (recovery amendment #1/#3, issue #247).
+  local group_refused=0
+  wait_group_or_refuse "$pid" || group_refused=1
   reap_pgid "$pid"
   archive_stage_transcript "$3"
   if [ "$rc" -eq 0 ] && [ "$fmt_overridden" -eq 0 ]; then capture_stage_usage "$3" "$model"; fi
+  if [ "$group_refused" -eq 1 ]; then
+    log "stage refused: process group $pid still had a live member after ${STAGE_GROUP_GRACE}s grace (log: $3) — reaped"
+    LAST_STAGE_GROUP_REFUSED=1
+    [ "$rc" -eq 0 ] && rc=$STAGE_REFUSAL_RC
+  fi
   return "$rc"
 }
 
@@ -1008,9 +1063,14 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
 # termination as the likely class (bash reports a signal-killed child as 128+N — 144 = 128+16 — never
 # invent a signal name from the number) and point at the preserved session transcript instead of leaving
 # the record naming only a zero-byte file (issue #121; gilda#9 run 9-4131516).
-stage_fail_msg(){   # $1 = stage label, $2 = log file, $3 = exit code
-  local label="$1" log="$2" rc="$3"
-  if [ -s "$log" ]; then
+stage_fail_msg(){   # $1 = stage label, $2 = log file, $3 = exit code, $4 = 1 iff run_stage's own
+                     # LAST_STAGE_GROUP_REFUSED (not the rc value — a future genuine 124 from the CLI
+                     # itself must not be misread as a refusal, issue #247)
+  local label="$1" log="$2" rc="$3" refused="${4:-0}"
+  if [ "$refused" -eq 1 ]; then
+    printf '%s stage refused (exit %s; log: %s) — it backgrounded a process and returned before that process finished; the runner gave the group %ss to complete on its own, then reaped it rather than let it run unobserved past the stage boundary' \
+      "$label" "$rc" "$log" "$STAGE_GROUP_GRACE"
+  elif [ -s "$log" ]; then
     printf '%s stage failed (exit %s; log: %s)' "$label" "$rc" "$log"
   else
     printf '%s stage failed: signal-terminated (exit %s) — the log is empty (log: %s), so the CLI likely died before writing anything; check the preserved session transcript under %s for what happened before the kill' \
@@ -1039,8 +1099,8 @@ else
   IMPL_RC=0
   run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" || IMPL_RC=$?
   if [ "$IMPL_RC" -ne 0 ]; then
-    is_quota_failure "$RUN_DIR/implement.log" && llm_quota_hold "implement" "$RUN_DIR/implement.log"
-    fail_blocked "$(stage_fail_msg "implement" "$RUN_DIR/implement.log" "$IMPL_RC")"
+    [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/implement.log" && llm_quota_hold "implement" "$RUN_DIR/implement.log"
+    fail_blocked "$(stage_fail_msg "implement" "$RUN_DIR/implement.log" "$IMPL_RC" "$LAST_STAGE_GROUP_REFUSED")"
   fi
 
   # checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
@@ -1060,8 +1120,8 @@ else
   TEST_RC=0
   run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" || TEST_RC=$?
   if [ "$TEST_RC" -ne 0 ]; then
-    is_quota_failure "$RUN_DIR/test.log" && llm_quota_hold "test" "$RUN_DIR/test.log"
-    fail_blocked "$(stage_fail_msg "tester" "$RUN_DIR/test.log" "$TEST_RC")"
+    [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/test.log" && llm_quota_hold "test" "$RUN_DIR/test.log"
+    fail_blocked "$(stage_fail_msg "tester" "$RUN_DIR/test.log" "$TEST_RC" "$LAST_STAGE_GROUP_REFUSED")"
   fi
 
   # tester boundary guard: block if tester modified anything outside tests/**
@@ -1140,7 +1200,7 @@ else
     log "checks failed (exit $CHECK_RC) — one repair attempt [$CHECK_REPAIR_ID]"
     REPAIR_RC=0
     run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Reproduce with the failing tests only; the runner re-runs the full check suite after this stage. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || REPAIR_RC=$?
-    if [ "$REPAIR_RC" -ne 0 ] && is_quota_failure "$RUN_DIR/repair.log"; then llm_quota_hold "check repair" "$RUN_DIR/repair.log"; fi
+    if [ "$REPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/repair.log"; then llm_quota_hold "check repair" "$RUN_DIR/repair.log"; fi
     CHECK_RC=0; run_checks || CHECK_RC=$?
     if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the repair attempt"; fi
     [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
@@ -1173,7 +1233,7 @@ else
         log "lint still failing — one LLM repair attempt [$CHECK_REPAIR_ID]"
         LINT_REPAIR_RC=0
         run_stage "$IMPL_SYS" "$(printf 'The lint gate FAILS (command: %s). Fix ONLY what the lint output flags, in exactly the files it names, test or production; change no test'"'"'s assertions; make the linter pass, nothing else. Lint output:\n\n%s\n\nTask:\n%s' "$LINT_CMD" "$(tail -n 40 "$RUN_DIR/lint.log")" "$SPEC")" "$RUN_DIR/lint-repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || LINT_REPAIR_RC=$?
-        if [ "$LINT_REPAIR_RC" -ne 0 ] && is_quota_failure "$RUN_DIR/lint-repair.log"; then llm_quota_hold "lint repair" "$RUN_DIR/lint-repair.log"; fi
+        if [ "$LINT_REPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/lint-repair.log"; then llm_quota_hold "lint repair" "$RUN_DIR/lint-repair.log"; fi
         LINT_MUTATED=1
       fi
     fi
@@ -1246,7 +1306,7 @@ shadow_review_round(){
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
                 local rc=0
                 run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID" || rc=$?
-                if [ "$rc" -ne 0 ] && is_quota_failure "$RUN_DIR/review.md"; then llm_quota_hold "review" "$RUN_DIR/review.md"; fi
+                if [ "$rc" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/review.md"; then llm_quota_hold "review" "$RUN_DIR/review.md"; fi
                 python3 "$SELF_DIR/review_bundle.py" record-verdict --bundle "$BUNDLE" --file "$RUN_DIR/review.md" \
                   || fail_blocked "review bundle record-verdict failed"
                 shadow_review_round   # non-gating second opinion (issue #165) — never affects the verdict below
@@ -1262,7 +1322,7 @@ else
     log "review requested changes — one repair attempt [$REVIEW_REPAIR_ID]"
     REVIEWREPAIR_RC=0
     run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || REVIEWREPAIR_RC=$?
-    if [ "$REVIEWREPAIR_RC" -ne 0 ] && is_quota_failure "$RUN_DIR/review-repair.log"; then llm_quota_hold "review repair" "$RUN_DIR/review-repair.log"; fi
+    if [ "$REVIEWREPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/review-repair.log"; then llm_quota_hold "review repair" "$RUN_DIR/review-repair.log"; fi
     # ---- persist the post-repair diff (issue #172) ----
     # Capture the repair's edits BEFORE the check re-run below, regardless of the repair's own exit
     # status (REVIEWREPAIR_RC) — a crashed repair's partial edits are exactly what salvage wants. The
