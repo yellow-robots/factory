@@ -178,16 +178,34 @@ concept of "a build is currently running." That makes the human side of the chor
 - **Recovery for a freshness-stale PR: a content-identical rebase, then `--re-evaluate`.** Rebase the
   branch onto the moved tip by hand (attended — the runner never rebases outside its own armed-merge
   remediation) so the diff is unchanged and the existing review verdict still applies; then run
-  `tools/dev-runner.sh <issue#> --repo <owner/name> --re-evaluate <pr#>`. This re-runs *only* the four
-  terminal conditions (`ci_green` / `freshness` / `terminal_approval` / `rank_gate`) against the PR's
-  *current* head — no DoR gate, no claim, no worktree, no LLM stage — reusing the originating run's
-  review verdict, bundle hash, and resolved build/review roles/ranks from
-  `$DEV_RUNNER_HOME/runs/<issue>-<id>/` (located via the `run_id` on the PR's last merge record). It
-  posts a fresh shadow record whose note names the record it supersedes, so history reads truthfully;
-  it never merges, rebases, claims, or writes board state, even on an armed repo with shadow already
-  complete — the posted record is the only write. A closed/merged PR, a PR that doesn't belong to the
-  named issue, or an originating run whose artifacts are missing all refuse fail-closed, before any
-  write.
+  `tools/dev-runner.sh <issue#> --repo <owner/name> --re-evaluate <pr#>`. When the PR already carries a
+  prior `YR-MERGE(-SHADOW)` record, this re-runs *only* the four terminal conditions (`ci_green` /
+  `freshness` / `terminal_approval` / `rank_gate`) against the PR's *current* head — no DoR gate, no
+  claim, no worktree, no LLM stage — reusing the originating run's review verdict, bundle hash, and
+  resolved build/review roles/ranks from `$DEV_RUNNER_HOME/runs/<issue>-<id>/` (located via the
+  `run_id` on the PR's last merge record). It posts a fresh shadow record whose note names the record
+  it supersedes, so history reads truthfully; it never merges, rebases, claims, or writes board state,
+  even on an armed repo with shadow already complete — the posted record is the only write. A
+  closed/merged PR, a PR that doesn't belong to the named issue, or an originating run whose artifacts
+  are missing all refuse fail-closed, before any write.
+- **A CI-green, review-approved PR with NO prior merge record is processable too (issue #239), not
+  refused.** This is the shape of a build whose terminal step never ran or never recorded (a crash, an
+  environmental failure right at the post — the factory's own 2026-07-09 incident): the PR is otherwise
+  fine, it just has no owner. `--re-evaluate` on such a PR has no `run_id` to key off, so it locates the
+  originating run by matching the PR's base commit against this issue's local run bundles instead
+  (`diff.base_sha` in `$DEV_RUNNER_HOME/runs/<issue>-<id>/review-bundle.json`) — the record's absence
+  stops being a refusal condition and becomes a fact carried in the new record's note. It then evaluates
+  the PR's *current* state under the exact same conditions the end-of-build terminal step applies —
+  `ci_green` / `freshness` / `terminal_approval` / `rank_gate`, plus (armed) the host sentinel and shadow
+  completion — via the very same code, and produces exactly the record class the repo's arming state
+  permits: a shadow `WOULD-MERGE` / `WOULD-BLOCK` on a non-armed repo, or an armed `YR-MERGE: MERGED`
+  (the factory squash-merges) / `YR-MERGE: BLOCKED — <condition>` on an armed one. The one difference
+  from the live pipeline: a moved main is never rebase-remediated here (no worktree to rebase in) — a
+  stale green is just one more direct `freshness` block, never a merge. No board/issue write either way
+  (out of scope for this recovery path) — the posted PR comment, and for an armed pass the merge call
+  itself, are the only writes. The refusals above (closed/merged PR, wrong issue) still apply; so does a
+  new one — no local run bundle matches the PR's base commit at all, meaning there is genuinely nothing
+  to evaluate against.
 
 ## The shadow review seat
 
