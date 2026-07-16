@@ -44,6 +44,11 @@ base_ref     = "origin/main"
 The runner runs `check_cmd` with `.venv/bin` and `node_modules/.bin` on PATH — name tools plainly,
 no venv prefix. Precedence: explicit env > manifest > built-in default.
 
+Recommended, not required: also declare `lint_cmd`/`lint_fix_cmd` (a stack-appropriate linter — e.g.
+`ruff` for Python, `eslint` for Node, or the repo's own tooling) and `lens_cmd` (the repo's own advisory
+lens content). Like every other undeclared capability in this manifest, an undeclared key stays silently
+absent — never a per-build warning — the same defaults-off precedent as `auto_merge`.
+
 ### 3. Ensure built deps exist
 
 `.venv` (Python) or `node_modules` (JS) must be present in the **base checkout** so `check_cmd` runs

@@ -14,6 +14,7 @@
 | `check_task` | Task is self-contained: context slice present; no `[[wikilink]]` / `obsidian://` in build-critical sections; every backtick-cited repo path exists at the base ref. | `python3 tools/check_task.py <task.md> --repo-root <repo> --base-ref origin/main` |
 | `check_supersession` | Declaration grammar and empty-justification on a `product-spec`/`feature-rfc` draft; pair integrity both directions (`supersedes` ↔ `superseded_by`); down-flow disposition of every active spine doc under a superseded target. | Draft mode: `python3 tools/check_supersession.py <draft.md> [--vault-root DIR]`. Sweep: `python3 tools/check_supersession.py --sweep --scope REL [--vault-root DIR]` |
 | `check_cmd` | The repo's own check (from `.yr/factory.toml`) — runs in the worktree with `.venv/bin` + `node_modules/.bin` on PATH. | The runner runs it. One repair attempt on a code failure; **no repair** on an environment failure (exit 126/127). |
+| `lint_cmd` | Manifest-declared lint tier: runs at stage `03-check`, immediately after `check_cmd` passes. Absent = off, byte-identical to today. Shares `check_cmd`'s 126/127 environment-failure discipline — an unexecutable lint (or autofix) command is `Blocked`, no repair attempt. | The runner runs it; **blocking**. Ruled repair scope: see *Judgment points* below. |
 | Review verdict | An independent reviewer emits `VERDICT: APPROVE` or `REQUEST_CHANGES`. | The runner gates the PR on a clean `APPROVE`. Fail-closed: anything but a clean `APPROVE` blocks. |
 | Merge evaluator | Deterministic terminal step (no LLM): CI-green · freshness vs `main`'s tip · terminal clean `APPROVE` · review-rank >= build-rank (the reviewer is never weaker), in order, indeterminate = failed. | The runner runs it after the PR opens. Armed repo: all-pass squash-merges, any fail posts `YR-MERGE: BLOCKED`; otherwise a `YR-MERGE-SHADOW` record and the human merges. |
 
@@ -24,7 +25,14 @@ human promote-to-Ready gate (or, for `check_supersession`'s sweep mode, the acce
 yourself before promoting; don't claim CI enforcement that isn't wired.
 
 `check_cmd` and the review verdict are **blocking**: the runner halts and flags `Reason=Blocked` (the
-failure stays visible on the board).
+failure stays visible on the board). The lint tier (`lint_cmd`, when declared) is blocking too, sharing
+`check_cmd`'s 126/127 environment-failure discipline.
+
+The lens (`lens_cmd`, when declared) is advisory in a different sense from `check_links` / `check_task` /
+`check_supersession` above: it never becomes blocking. It runs inside the build itself, after `check_cmd`
+(and `lint_cmd`, when declared) both pass, and its findings land on the PR trail purely to inform review —
+findings inform, never gate. A non-zero lens exit (126/127 included) folds into a one-line note on the
+artifact instead of halting the run.
 
 ## Judgment points
 
@@ -37,3 +45,13 @@ failure stays visible on the board).
   attempt is made after a `REQUEST_CHANGES`; then the verdict gates.
 - **Scope = the artifact:** `check_links` checks only the artifact you pass it, not the whole vault.
   Run it on each draft separately.
+- **Ruled lint-repair scope:** a lint failure is never open-ended repair. First, deterministic autofix
+  (`lint_fix_cmd`), no LLM. If lint still fails, at most one LLM repair, confined to exactly the
+  lint-flagged files — test or production — mechanical fixes only; the tests-frozen rule (no behavioral
+  test edits) still governs any test file that repair touches. Any repair-path mutation (the autofix
+  alone included) forces a re-run of both `check_cmd` and `lint_cmd` against the shipped tree; either
+  failing ends the run `Blocked`.
+- **Lens→lint graduation is a convention edit, not automatic:** a lens rule never self-promotes into a
+  repo's blocking `lint_cmd` tier. It hardens only when a convention edit to the lint config cites
+  false-positive evidence gathered across multiple builds — the same warn→error promotion discipline
+  adopted industry linters use. Until that edit lands, a repeatedly-firing lens finding stays advisory.
