@@ -19,3 +19,8 @@ auto_merge = true
 # ordinary convention edits, never by fixing code to fit a stricter config.
 lint_cmd = "ruff check tools/ tests/"
 lint_fix_cmd = "ruff check --fix tools/ tests/"
+
+# The lens tier (issue #216): advisory, never gating (issue #214's seam). qa/lens.py is the
+# factory's own repo-owned lens content — consumer rules living in qa/, legibly separate from the
+# platform machinery in tools/ (the copyable exemplar other repos' own qa/ dirs follow).
+lens_cmd = "python3 qa/lens.py"
