@@ -4289,3 +4289,13 @@ def test_lint_tier_does_not_disturb_the_terminal_merge_record(tmp_path):
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
     assert _prcomments(tmp_path).count("YR-MERGE-SHADOW") == 1
+
+
+# ============================================================================
+# The factory's own manifest declares the key this tier reads (issue #215)
+# ============================================================================
+
+def test_factory_manifest_declares_lint_cmd():
+    import tomllib
+    manifest = tomllib.loads((ROOT / ".yr" / "factory.toml").read_text())
+    assert manifest.get("lint_cmd") == "ruff check tools/ tests/"
