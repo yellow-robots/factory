@@ -30,13 +30,17 @@ classification correct once the prompt moved to stdin.
 | `*REVIEWER*` | reviewer | emits a `VERDICT: …` line |
 | `*"REQUESTED CHANGES"*` | review-repair | the reviewer's own repair loop |
 | `*TESTER*` | tester | writes test files, gated by its own flag family |
+| `*"lint gate FAILS"*` | lint-repair | the lint tier's own LLM repair loop (issue #213) |
 | `*"tests FAIL"*` | check-repair | the check gate's own repair loop |
 | (no match) | implement | the default arm |
 
-These five literals are exactly the ones `tools/dev-runner.sh` bakes into its own per-stage prompts.
-`tests/harness/test_claude_fake_contract.py::test_runner_prompts_contain_stub_markers` pins them against
-the runner's source directly — if a prompt literal is ever dropped from `tools/dev-runner.sh`, that guard
-fails loudly rather than letting the stub silently misclassify a stage as `implement`.
+The four routing literals `tools/dev-runner.sh` bakes into its per-stage prompts unconditionally
+(`TESTER`, `REVIEWER`, `tests FAIL`, `REQUESTED CHANGES`) are pinned by
+`tests/harness/test_claude_fake_contract.py::test_runner_prompts_contain_stub_markers` against the
+runner's source directly — if one is ever dropped from `tools/dev-runner.sh`, that guard fails loudly
+rather than letting the stub silently misclassify a stage as `implement`. `lint gate FAILS` is a fifth
+literal the runner emits only when a repo declares a `lint_cmd` (the lint tier is otherwise inert), so it
+is not part of that guard's pin set.
 
 This classifier is the single legal stage-recognition path. A suite that needs stage-aware behavior
 consumes `CLAUDE_STUB` as-is, or derives a variant from its exact text (locating the arm to change by
@@ -61,11 +65,24 @@ are grouped by which stage's arm reads them.
 | `STUB_CLAUDE_GITENV_FILE` | append the subprocess's own `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` |
 | `STUB_CLAUDE_TMPDIR_FILE` | append the subprocess's own `TMPDIR` and whether it existed at call time |
 
+### Crash mode (any stage, no-op unless opted in)
+
+| Flag | Effect |
+|---|---|
+| `STUB_CLAUDE_SIGKILL` | `kill -KILL` itself immediately after consuming stdin, before any other hook or classification runs — simulates a stage terminated by a signal before it writes anything (the zero-byte-log class of failure) |
+
+### Process-reap observation (spans the implement and tester arms)
+
+| Flag | Effect |
+|---|---|
+| `STUB_LINGER_PIDFILE` | implement arm: background a `sleep 5` and write its pid to the given path; tester arm: read that pid back and, if the process is still alive, append `LINGERING` to `STUB_TIMELINE` — proves a stray background child from one stage is dead before the next stage starts |
+
 ### Shared timeline
 
 `STUB_TIMELINE` is not a flag but the shared recorder: every arm appends its own stage token (`IMPL`,
-`TEST`, `REPAIR`, `REVIEW`, `REVIEWFIX`) to this file, in call order — the primitive every ordering
-assertion in the consuming suites is built on.
+`TEST`, `REPAIR`, `REVIEW`, `REVIEWFIX`, `LINTREPAIR`) to this file, in call order — the primitive every
+ordering assertion in the consuming suites is built on. The tester arm can additionally append
+`LINGERING` (see the process-reap observation hook above).
 
 ### reviewer arm
 
@@ -80,6 +97,7 @@ assertion in the consuming suites is built on.
 | Flag | Effect |
 |---|---|
 | `STUB_REVIEWFIX_CRASH` | exit 7 before touching the repair marker |
+| `STUB_REVIEWFIX_EDIT` | append a content-visible line (`repaired-by-review`) to `feature.txt` |
 | `STUB_REVIEW_NOFIX` | skip creating the `review_repaired` marker (repair "fails" to heal) |
 
 ### tester arm
@@ -94,6 +112,12 @@ assertion in the consuming suites is built on.
 `STUB_TESTER_PROD_CHANGE`/`STUB_TESTER_TEST_CHANGE` are deliberately separate from the implement arm's
 `STUB_CLAUDE_CHANGE`, so the boundary guard (tester must not touch production files) can be exercised
 independently of the happy-path implement change.
+
+### lint-repair arm
+
+| Flag | Effect |
+|---|---|
+| `STUB_LINTREPAIR_HEAL` | create a `lint_ok` marker (repair "fixes" the lint gate) |
 
 ### check-repair arm
 
@@ -112,8 +136,13 @@ independently of the happy-path implement change.
 
 ## Scope note
 
-Slice 1 of the 19-harness-seam epic (issue #243) relocates the classifier and this contract doc, and
-retires the two hand-typed classifier re-implementations in `tests/test_shadow_review.py`. It
-deliberately leaves the JSON-envelope variant (`CLAUDE_STUB_JSON`) and the other derived/private stubs
-(`REAP_CLAUDE_STUB`, `SIGNAL_CLAUDE_STUB`, `LINT_CLAUDE_STUB`) in `tests/test_dev_runner.py` — those
-migrate in a later slice.
+Slice 1 of the 19-harness-seam epic (issue #243) relocated the classifier and this contract doc, and
+retired the two hand-typed classifier re-implementations in `tests/test_shadow_review.py`. Slice 2
+(issue #244) finished the job: `CLAUDE_STUB_JSON` moved here alongside `CLAUDE_STUB`, and every other
+private stub that used to live beside it in `tests/test_dev_runner.py` (`REAP_CLAUDE_STUB`,
+`SIGNAL_CLAUDE_STUB`, `LINT_CLAUDE_STUB`) is gone — their behavior is now either a mode of `CLAUDE_STUB`
+itself (the crash mode, the process-reap hook, the lint-repair arm — all above) or, where a suite needs
+its own extra observation (e.g. `tests/test_dev_runner_roles.py`'s model-recording stub,
+`tests/test_dev_runner_review_bundle.py`'s bundle-snapshot stub), a variant derived from `CLAUDE_STUB` via
+`.replace()` — locating an arm to splice into, never retyping the classifier. No private clone of the
+classifier remains anywhere in the suite.

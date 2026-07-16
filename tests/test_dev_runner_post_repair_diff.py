@@ -15,8 +15,8 @@ Derived from the issue's acceptance criteria (the spec), NOT the implementation 
 
 Reuses the stubbed-runner fixtures from test_dev_runner.py (git repo, issue/item JSON, gh/claude/check
 stubs, timeline) — a REAL build (stubbed LLM/gh) produces a real run dir under a temp DEV_RUNNER_HOME,
-which is exactly where the persisted artifacts under test live. A local variant of the stage-aware
-`claude` stub adds one extra knob (STUB_REVIEWFIX_EDIT) so the review-repair round can make a
+which is exactly where the persisted artifacts under test live. The shared claude fake's own
+STUB_REVIEWFIX_EDIT knob (tests/harness/claude_fake.py) makes the review-repair round append a
 content-visible edit, independent of whether it also "fixes" the review (STUB_REVIEW_NOFIX).
 
 Assertions are on artifact presence/absence and content shape only — never on log prose or exact
@@ -32,32 +32,6 @@ import test_dev_runner as td   # reuse the stubbed-runner fixtures (git repo, is
 ROOT = td.ROOT
 RUNNER = td.RUNNER
 
-# Same stage-aware classification as td.CLAUDE_STUB (REVIEWER / REQUESTED CHANGES / TESTER / tests FAIL /
-# implementer, matched against combined argv+stdin), plus one added knob: STUB_REVIEWFIX_EDIT makes the
-# review-repair round append a content-visible line to feature.txt — independent of STUB_REVIEW_NOFIX
-# (which only controls whether the repair also clears the reviewer's block), so a test can prove the
-# repair's edit is captured even on a path where the second review round still blocks.
-CLAUDE_STUB_REPAIR = '''#!/usr/bin/env bash
-stdin_content="$(cat; printf x)"; stdin_content="${stdin_content%x}"
-args="$*"$'\\n'"$stdin_content"
-case "$args" in
-  *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
-                        if [ -n "${STUB_REVIEW_VERDICT:-}" ]; then printf '%s\\n' "$STUB_REVIEW_VERDICT"
-                        elif [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then echo "VERDICT: REQUEST_CHANGES"
-                        else echo "VERDICT: APPROVE"; fi ;;
-  *"REQUESTED CHANGES"*) echo REVIEWFIX >> "$STUB_TIMELINE"
-                        [ -n "${STUB_REVIEWFIX_CRASH:-}" ] && exit 7
-                        [ -n "${STUB_REVIEWFIX_EDIT:-}" ] && printf 'repaired-by-review\\n' >> feature.txt
-                        [ -z "${STUB_REVIEW_NOFIX:-}" ] && : > review_repaired ;;
-  *TESTER*)             echo TEST   >> "$STUB_TIMELINE" ;;
-  *"tests FAIL"*)       echo REPAIR >> "$STUB_TIMELINE"
-                        [ -z "${STUB_REPAIR_NOFIX:-}" ] && : > repaired ;;
-  *)                    echo IMPL   >> "$STUB_TIMELINE"
-                        [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\\n' > feature.txt ;;
-esac
-exit 0
-'''
-
 # Passes on the FIRST check (before the review round) but fails once the review-repair round has run —
 # keyed on the same 'review_repaired' marker the repair stage drops — so the post-repair check re-run
 # fails deterministically, exercising the "checks failing after review-repair" blocked path without ever
@@ -72,7 +46,7 @@ exit 0
 def _stubs_repair(binp):
     binp.mkdir(parents=True, exist_ok=True)
     td._exec(binp / "gh", td.GH_STUB)
-    td._exec(binp / "claude", CLAUDE_STUB_REPAIR)
+    td._exec(binp / "claude", td.CLAUDE_STUB)
     td._exec(binp / "check.sh", td.CHECK_STUB)   # default: always passes
 
 

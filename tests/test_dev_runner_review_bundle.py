@@ -27,6 +27,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_dev_runner as base  # the shared stub harness (gh/claude/check stubs + helpers)
+import claude_fake  # tests/harness/claude_fake.py — the classifier's one legal home
 
 ROOT = base.ROOT
 
@@ -42,31 +43,22 @@ def _read_bundle(tmp_path, issue, drhome="drhome"):
 
 
 # ---------------------------------------------------------------------------
-# a claude stub that snapshots the bundle file's content the moment the REVIEWER stage is
-# launched — proving the reviewer is hand the pre-review subset (no verdict rounds yet) rather
-# than deriving it itself.
+# A claude stub that snapshots the bundle file's content the moment the REVIEWER stage is
+# launched — proving the reviewer is handed the pre-review subset (no verdict rounds yet) rather
+# than deriving it itself. DERIVED from the shared classifier (tests/harness/claude_fake.CLAUDE_STUB)
+# via .replace(): the snapshot capture is spliced in at the top of the REVIEWER arm, located by its
+# exact opening text, never by retyping the classification patterns.
 # ---------------------------------------------------------------------------
-SNAPSHOT_CLAUDE_STUB = r'''#!/usr/bin/env bash
-stdin_content="$(cat)"
-[ -n "${STUB_CLAUDE_STDIN:-}" ] && printf '%s' "$stdin_content" > "$STUB_CLAUDE_STDIN"
-# issue #121: the reviewer's bundle path (and every other stage's task prompt) travels on stdin now, not
-# argv — combine both channels for classification and for the bundle-path grep below.
-args="$*"$'\n'"$stdin_content"
-case "$args" in
-  *REVIEWER*)
+_BASE_REVIEWER_ARM_HEAD = '  *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"'
+
+_SNAPSHOT_REVIEWER_ARM_HEAD = r'''  *REVIEWER*)
     bpath="$(printf '%s' "$args" | grep -oE '[^[:space:]]*review-bundle\.json' | head -n1)"
     if [ -n "$bpath" ] && [ -f "$bpath" ] && [ -n "${STUB_REVIEWER_SNAPSHOT:-}" ]; then
       cp "$bpath" "$STUB_REVIEWER_SNAPSHOT"
     fi
-    echo REVIEW >> "$STUB_TIMELINE"
-    if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then echo "VERDICT: REQUEST_CHANGES"
-    else echo "VERDICT: APPROVE"; fi ;;
-  *"REQUESTED CHANGES"*) echo REVIEWFIX >> "$STUB_TIMELINE"; : > review_repaired ;;
-  *TESTER*)              echo TEST >> "$STUB_TIMELINE" ;;
-  *)                     echo IMPL >> "$STUB_TIMELINE"; [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\n' > feature.txt ;;
-esac
-exit 0
-'''
+                        echo REVIEW >> "$STUB_TIMELINE"'''
+
+SNAPSHOT_CLAUDE_STUB = claude_fake.CLAUDE_STUB.replace(_BASE_REVIEWER_ARM_HEAD, _SNAPSHOT_REVIEWER_ARM_HEAD, 1)
 
 
 def _snapshot_stubs(binp):
