@@ -454,6 +454,103 @@ def test_armed_rebase_conflict_blocks_for_human(tmp_path):
     assert _blocked(td._timeline(tmp_path))
 
 
+# ================= issue #240: an environmental failure AFTER freshness remediation has already =========
+# force-pushed the branch can no longer be silently resumed the way every other terminal-step
+# environmental failure is -- the PR's remote head no longer matches any local run's recorded base
+# commit, so no named recovery lane (re-evaluation's base-commit match, the environmental-hold resume, a
+# plain re-Ready re-dispatch) can locate or resume it. The runner must instead leave a fact-stating
+# YR-MERGE: BLOCKED record that names the unrecoverable condition and routes to a rebuild -- never a
+# silent no-record exit, and never a record that claims this state is resumable.
+
+# A GIT_BIN wrapper that fails exactly once on the freshness-remediation's OWN force-with-lease push
+# (simulating a network drop / lease race at that exact point) and passes every other git invocation
+# straight through to the real binary -- so the remote is NEVER actually rewritten in this scenario.
+_GIT_FAIL_FORCE_PUSH = r'''#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = "--force-with-lease" ]; then
+    if [ -n "${STUB_FAIL_FORCE_PUSH_MARKER:-}" ] && [ ! -f "${STUB_FAIL_FORCE_PUSH_MARKER}" ]; then
+      : > "${STUB_FAIL_FORCE_PUSH_MARKER}"
+      echo "simulated environmental failure on the freshness-remediation force-push" >&2
+      exit 1
+    fi
+  fi
+done
+exec git "$@"
+'''
+
+# Like _ADVANCE_UNRELATED, but the check gate only advances main + passes on its FIRST call (the pre-PR
+# check gate); every SUBSEQUENT call (the post-rebase re-check inside rebase_onto_tip) fails with an
+# environment exit code (126) -- simulating an environmental failure that lands only after the freshness
+# remediation has already rebased AND force-pushed the branch onto the new base.
+_ADVANCE_THEN_ENV_FAIL = r'''#!/usr/bin/env bash
+echo CHECK >> "$STUB_TIMELINE"
+if [ -n "${STUB_ADVANCE_MARKER:-}" ] && [ ! -f "${STUB_ADVANCE_MARKER}" ]; then
+  : > "${STUB_ADVANCE_MARKER}"
+  wc="$(mktemp -d)"
+  git clone -q "$STUB_ORIGIN" "$wc" >/dev/null 2>&1
+  ( cd "$wc" && git config user.email t@t && git config user.name t \
+    && printf 'unrelated\n' > OTHER.txt && git add -A \
+    && git commit -q -m "advance main (no conflict)" && git push -q origin main ) >/dev/null 2>&1
+  exit 0
+fi
+exit 126
+'''
+
+
+def test_armed_env_failure_after_force_push_posts_fact_stating_unrecoverable_block(tmp_path):
+    """Acceptance (issue #240): once freshness remediation has rebased AND FORCE-PUSHED the branch onto
+    main's moved tip, a LATER environmental failure in that same remediation (here: the post-rebase
+    re-check gate crashes with an environment exit code) can no longer be silently resumed. Instead of the
+    usual silent no-record exit, the runner leaves a fact-stating YR-MERGE: BLOCKED — unrecoverable
+    record, sets Reason=Blocked, and its comment names the rebuild routing (close the PR, delete the
+    branch, set the issue back to Ready) -- never a claim of resumability."""
+    work, origin = td._make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    adv = binp / "check_adv_then_fail.sh"; td._exec(adv, _ADVANCE_THEN_ENV_FAIL)
+    env = _armed_env(tmp_path, binp, work, origin, prs=_complete_prs(),
+                     extra={"CHECK_CMD": f"bash {adv}", "STUB_ADVANCE_MARKER": str(tmp_path / "advanced")})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)                        # never merges past an unrecoverable state
+    body = _merge_record(tmp_path)
+    assert body is not None, "an env failure past the force-push must leave a fact-stating record, not silence"
+    assert body.splitlines()[0] == f"YR-MERGE: BLOCKED {EMDASH} unrecoverable"
+    rec = _block(body)
+    assert rec["decision"] == "BLOCKED" and rec["mode"] == "armed" and rec["machinery_ok"] is True
+    assert rec["failed_condition"] == "unrecoverable"
+    tl = td._timeline(tmp_path)
+    assert _blocked(tl)                                      # Reason=Blocked -- never left silently resumable
+    # bullet 2: no lane may be told this is resumable -- the comment must instead route to a rebuild.
+    comments = " ".join(td._comments(tl)).lower()
+    assert "rebuild" in comments
+    assert "ready" in comments                               # names setting the issue back to Ready
+    assert "delete" in comments and "branch" in comments      # names deleting the stale branch
+
+
+def test_armed_env_failure_before_force_push_stays_silently_resumable(tmp_path):
+    """Regression companion (criterion 3: the rest of the merge evaluator is unchanged). An environmental
+    failure BEFORE the freshness-remediation force-push actually lands -- here, the force-with-lease push
+    itself fails -- is still the ordinary silently-resumable environmental case: no durable record, not
+    Blocked, falls back to a plain In Review stop, exactly like every other pre-existing environmental
+    terminal-step failure. Proves the new unrecoverable branch engages ONLY once the remote head has
+    actually been rewritten, never before."""
+    work, origin = td._make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    adv = binp / "check_adv.sh"; td._exec(adv, _ADVANCE_UNRELATED)
+    gitwrap = binp / "git-fail-force-push.sh"; td._exec(gitwrap, _GIT_FAIL_FORCE_PUSH)
+    marker = tmp_path / "force-push-failed-once"
+    env = _armed_env(tmp_path, binp, work, origin, prs=_complete_prs(),
+                     extra={"CHECK_CMD": f"bash {adv}", "STUB_ADVANCE_MARKER": str(tmp_path / "advanced"),
+                            "GIT_BIN": str(gitwrap), "STUB_FAIL_FORCE_PUSH_MARKER": str(marker)})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)
+    assert _merge_record(tmp_path) is None                   # silent -- no durable record at all
+    tl = td._timeline(tmp_path)
+    assert not _blocked(tl)                                  # environmental != Blocked
+    assert _in_review(tl)                                    # resumable: stops for the human, same as before
+
+
 # ================= criterion (human-merged otherwise): a non-armed repo just shadows =================
 
 def test_not_armed_repo_stays_shadow_never_merges(tmp_path):
