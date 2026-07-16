@@ -241,15 +241,62 @@ emit_and_post(){
   MERGE_MARKER="$(head -n1 "$body")"
 }
 
-# ---- --re-evaluate <pr#>: re-run ONLY the terminal merge decision against an existing PR's CURRENT head,
-# reusing the originating run's persisted inputs (review verdict, bundle hash, resolved roles/ranks) —
-# no DoR gate, no claim, no worktree, no LLM stage, and NEVER a merge/rebase/board write (an armed repo
-# included: the posted record is the only write). Fail-closed: a closed/merged PR, a PR that doesn't name
-# this issue (via its branch, task/<issue>-*), or a missing/malformed/unlocatable originating run all
-# refuse before any write. The four conditions are recomputed LIVE against the PR's current head via the
-# exact same functions the end-of-build path uses; the posted record's mode is always "shadow" (arming,
-# shadow-completion, sentinel, and the merge/rebase they gate are never exercised here) and its note names
-# the record it supersedes, so history reads truthfully (issue #70).
+# The host sentinel (kill switch): a FILE in the dispatch home, read LIVE at decision time (a file, not an
+# inherited env var — a spawned runner carries its spawn-time environment; the file is global + git-free).
+# Shadow-completion window defaults (the epic's pinned N/K). Hoisted here (issue #239) alongside the rest
+# of the terminal-decision core so a record-less --re-evaluate can reach arming/sentinel/shadow-completion
+# too, not just the four base conditions.
+MERGE_SENTINEL="${MERGE_SENTINEL:-$DEV_RUNNER_HOME/merge-killswitch}"
+SHADOW_WINDOW="${SHADOW_WINDOW:-5}"; SHADOW_NEED="${SHADOW_NEED:-3}"; SHADOW_SCAN="${SHADOW_SCAN:-40}"
+
+# (5b) shadow completion — MECHANICAL, from the repo's prior PR merge records + main history (no sidecar):
+#      one unified window over the last N merge records (shadow YR-MERGE-SHADOW and armed YR-MERGE alike),
+#      >=K landed unreverted successes and no reset. See tools/merge_shadow.py shadow-complete.
+#      MERGE_GIT_DIR is the git checkout main's history is read from — $WT for a live build, $BASE_REPO for
+#      --re-evaluate (same convention as shadow_freshness/read_auto_merge above). Callers must set
+#      PR_NUMBER (the current PR, excluded from the window) before calling.
+compute_shadow_complete(){   # sets SHADOW_DONE (true|false) + SHADOW_PROGRESS (k/N); returns 2 on env failure.
+  local prs="$RUN_DIR/prs.json" mainlog="$RUN_DIR/main-log.txt" out succ size
+  "$GH_BIN" pr list --repo "$REPO" --base "$BASE_BRANCH" --state all --limit "$SHADOW_SCAN" \
+     --json number,state,mergeCommit,mergedAt,comments >"$prs" 2>/dev/null || return 2
+  "$GIT_BIN" -C "$MERGE_GIT_DIR" log "origin/$BASE_BRANCH" --max-count=300 --format='%H%x1e%B%x00' >"$mainlog" 2>/dev/null || return 2
+  out="$(python3 "$SELF_DIR/merge_shadow.py" shadow-complete --prs-file "$prs" --main-log-file "$mainlog" \
+         --repo "$REPO" --exclude-pr "$PR_NUMBER" --window "$SHADOW_WINDOW" --need "$SHADOW_NEED" 2>/dev/null)" || return 2
+  read -r SHADOW_DONE succ size <<<"$out" || return 2
+  SHADOW_PROGRESS="$succ/$SHADOW_WINDOW"
+  return 0
+}
+
+# squash-merge the PR into main ONLY (never a deploy/release target), passing --squash EXPLICITLY (nothing
+# server-side enforces it). Sets MERGE_COMMIT (best-effort). Returns 2 only if the merge API itself fails.
+do_squash_merge(){
+  "$GH_BIN" pr merge "$PR_URL" --repo "$REPO" --squash >/dev/null 2>&1 || return 2
+  MERGE_COMMIT="$("$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json mergeCommit 2>/dev/null \
+    | python3 -c 'import sys,json
+try: d=json.load(sys.stdin)
+except Exception: d={}
+print((d.get("mergeCommit") or {}).get("oid","") or "")' 2>/dev/null || true)"
+  return 0
+}
+
+# ---- --re-evaluate <pr#>: re-run the terminal merge decision against an existing PR's CURRENT head — no
+# DoR gate, no claim, no worktree, no LLM stage. Two shapes, by whether the PR already carries a prior
+# YR-MERGE(-SHADOW) record (issue #70 vs issue #239):
+#   a prior record exists — reuse ITS originating run's persisted inputs (review verdict, bundle hash,
+#     resolved roles/ranks), recompute the four base conditions LIVE, and post a record that only ever
+#     supersedes in shadow mode — NEVER a merge/rebase/board write, an armed repo included (the posted
+#     record is the only write). The note names the record it supersedes, so history reads truthfully.
+#   no prior record — the record-less state has no owner otherwise (a green, approved PR whose terminal
+#     step never ran/recorded — the seed's live incident). There is no run_id to key off, so the
+#     originating run is located by matching this PR's base commit against this issue's local run
+#     bundles instead (_find_run_by_base); its absence is no longer a refusal — it becomes a fact carried
+#     in the new record's note. The conditions, arming, sentinel, and shadow-completion are then evaluated
+#     EXACTLY as the end-of-build terminal_step does, via the very same hoisted helpers, so the produced
+#     record — shadow WOULD-MERGE/WOULD-BLOCK, or (armed) MERGED/BLOCKED — is exactly what the repo's
+#     arming state already permits. Unlike terminal_step, a moved main (freshness) is never
+#     rebase-remediated here (no worktree to rebase in) — it is just one more direct block condition, so a
+#     stale green still never merges. No board/issue write either way (out of scope, issue #239): the
+#     posted PR comment (and, for an armed pass, the merge itself) are the only writes.
 _json_field(){   # $1 = JSON text, $2 = top-level key -> its value (bools as true/false, missing as "")
   printf '%s' "$1" | python3 -c "import sys,json
 v=json.load(sys.stdin).get(\"$2\")
@@ -257,6 +304,37 @@ if isinstance(v, bool): print('true' if v else 'false')
 elif v is None: print('')
 else: print(v)"
 }
+
+# The record-less lookup (issue #239): with no prior record there is no run_id to key off, so locate the
+# originating run by matching THIS PR's base commit against this issue's local run bundles instead — a
+# real build's review-bundle.json names the commit it branched from (diff.base_sha); that's directly
+# comparable to a PR head's own parent commit (the same `head_oid^` re-evaluate already resolves for a
+# prior-record PR, single-commit-PR invariant included). The bundle's OWN diff.head_sha is a tree hash
+# from before the commit was made, not the commit oid, so it is never a candidate for this match. Prefers
+# the most recently modified match. Prints the run dir path, or nothing when no local build matches this
+# base at all (a genuinely unbuilt/unlocatable PR — that stays a refusal, same fail-closed spirit as a
+# missing run_id).
+_find_run_by_base(){
+  python3 -c '
+import glob, json, os, sys
+issue, base, runs_home = sys.argv[1], sys.argv[2], sys.argv[3]
+best, best_mtime = "", -1.0
+for d in glob.glob(os.path.join(runs_home, f"{issue}-*")):
+    bundle_path = os.path.join(d, "review-bundle.json")
+    if not os.path.isdir(d) or not os.path.isfile(bundle_path):
+        continue
+    try:
+        bundle = json.load(open(bundle_path))
+    except Exception:
+        continue
+    if (bundle.get("diff") or {}).get("base_sha") != base:
+        continue
+    mtime = os.path.getmtime(d)
+    if mtime >= best_mtime:
+        best, best_mtime = d, mtime
+print(best)' "$ISSUE" "$1" "$DEV_RUNNER_HOME/runs"
+}
+
 re_evaluate(){
   mkdir -p "$DEV_RUNNER_HOME"
   local pr="$REEVAL_PR" prjson
@@ -281,30 +359,43 @@ re_evaluate(){
   rm -f "$cfile"
   [ -n "$origrec" ] || reeval_refuse "could not evaluate PR #$pr's prior merge records"
 
-  [ "$(_json_field "$origrec" found)" = "true" ] || reeval_refuse "PR #$pr carries no prior YR-MERGE(-SHADOW) record — nothing to re-evaluate"
-  [ "$(_json_field "$origrec" malformed)" != "true" ] || reeval_refuse "PR #$pr's last merge record is malformed — refusing to guess the originating run"
-
-  local run_id sup_decision sup_cond
-  run_id="$(_json_field "$origrec" run_id)"; sup_decision="$(_json_field "$origrec" decision)"
-  sup_cond="$(_json_field "$origrec" failed_condition)"
-  [ -n "$run_id" ] || reeval_refuse "PR #$pr's last merge record carries no run_id — cannot locate the originating run"
-  case "$run_id" in
-    "${ISSUE}-"*) : ;;
-    *) reeval_refuse "PR #$pr's originating run ($run_id) does not belong to issue #$ISSUE" ;;
-  esac
-
-  local orig_dir="$DEV_RUNNER_HOME/runs/$run_id"
-  [ -d "$orig_dir" ] || reeval_refuse "the originating run dir ($orig_dir) is missing — cannot re-evaluate"
-  [ -f "$orig_dir/review.md" ] || reeval_refuse "the originating run's review.md is missing ($orig_dir/review.md)"
-  [ -f "$orig_dir/review-bundle.json" ] || reeval_refuse "the originating run's review-bundle.json is missing ($orig_dir/review-bundle.json)"
-
-  RUN_DIR="$orig_dir"; BUNDLE="$RUN_DIR/review-bundle.json"
+  local orig_dir note found; found="$(_json_field "$origrec" found)"
   PR_URL="${url:-$pr}"; BASE_BRANCH="$base_ref"; MERGE_GIT_DIR="$BASE_REPO"; PR_HEAD_SHA="$head_oid"
 
   "$GIT_BIN" -C "$BASE_REPO" fetch -q origin "$BASE_BRANCH" "$head_ref" 2>/dev/null \
     || reeval_refuse "git fetch of $BASE_BRANCH / $head_ref failed — cannot re-evaluate"
   BASE_SHA="$("$GIT_BIN" -C "$BASE_REPO" rev-parse "${head_oid}^" 2>/dev/null || true)"
   [ -n "$BASE_SHA" ] || reeval_refuse "could not resolve the parent of the PR's current head ($head_oid) — is it a single-commit PR?"
+
+  if [ "$found" = "true" ]; then
+    # ---- a prior record exists: reuse ITS originating run, always a shadow supersession (issue #70;
+    # unchanged — never a merge/rebase/board write, an armed repo included).
+    [ "$(_json_field "$origrec" malformed)" != "true" ] || reeval_refuse "PR #$pr's last merge record is malformed — refusing to guess the originating run"
+
+    local run_id sup_decision sup_cond
+    run_id="$(_json_field "$origrec" run_id)"; sup_decision="$(_json_field "$origrec" decision)"
+    sup_cond="$(_json_field "$origrec" failed_condition)"
+    [ -n "$run_id" ] || reeval_refuse "PR #$pr's last merge record carries no run_id — cannot locate the originating run"
+    case "$run_id" in
+      "${ISSUE}-"*) : ;;
+      *) reeval_refuse "PR #$pr's originating run ($run_id) does not belong to issue #$ISSUE" ;;
+    esac
+
+    orig_dir="$DEV_RUNNER_HOME/runs/$run_id"
+    [ -d "$orig_dir" ] || reeval_refuse "the originating run dir ($orig_dir) is missing — cannot re-evaluate"
+    [ -f "$orig_dir/review.md" ] || reeval_refuse "the originating run's review.md is missing ($orig_dir/review.md)"
+    [ -f "$orig_dir/review-bundle.json" ] || reeval_refuse "the originating run's review-bundle.json is missing ($orig_dir/review-bundle.json)"
+    note="re-evaluation of run $run_id — supersedes ${sup_decision:-an unknown decision}${sup_cond:+ — $sup_cond}"
+  else
+    # ---- no prior record (issue #239): the PR's absence of a record is a fact, not a refusal — locate
+    # the run by matching this PR's base commit, then evaluate live under the standard conditions below.
+    orig_dir="$(_find_run_by_base "$BASE_SHA")"
+    [ -n "$orig_dir" ] || reeval_refuse "could not locate a build for PR #$pr's base commit ($BASE_SHA) among issue #$ISSUE's local runs — nothing to evaluate against"
+    [ -f "$orig_dir/review.md" ] || reeval_refuse "the located run's review.md is missing ($orig_dir/review.md)"
+    note="no prior merge decision record found on PR #$pr — evaluated live against its current head"
+  fi
+
+  RUN_DIR="$orig_dir"; BUNDLE="$RUN_DIR/review-bundle.json"
 
   # resolved roles/ranks: REUSED verbatim from the originating run's bundle, never re-derived or re-resolved.
   local roles; roles="$(python3 -c 'import json,sys
@@ -319,19 +410,76 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
   BUILD_PROVIDER="${_roles[0]:-}"; BUILD_RANK="${_roles[1]:-}"; BUILD_RANKED="${_roles[2]:-0}"
   REVIEW_PROVIDER="${_roles[3]:-}"; REVIEW_RANK="${_roles[4]:-}"; REVIEW_RANKED="${_roles[5]:-0}"
 
-  AUTO_MERGE=""; read_auto_merge || true   # informational only in this mode — never gates or arms anything
-
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
   shadow_ci || reeval_refuse "environmental failure reading CI status for PR #$pr — retry later, no record posted"
   shadow_freshness || reeval_refuse "environmental failure reading $BASE_BRANCH's current tip — retry later, no record posted"
   shadow_terminal_approval
   shadow_rank_gate
 
-  local note="re-evaluation of run $run_id — supersedes ${sup_decision:-an unknown decision}${sup_cond:+ — $sup_cond}"
-  emit_and_post "$RUN_DIR/merge-shadow-reeval.md" --mode shadow --note "$note" \
-    || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+  if [ "$found" = "true" ]; then
+    # a prior record's re-evaluation NEVER arms: auto_merge is still READ (informational, into the
+    # posted record's own auto_merge field) but never gates or selects the mode — this path always
+    # posts shadow, whatever it reads.
+    AUTO_MERGE=""; read_auto_merge || true
+    emit_and_post "$RUN_DIR/merge-shadow-reeval.md" --mode shadow --note "$note" \
+      || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+    log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
+    echo "$PR_URL"
+    return
+  fi
 
-  log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $run_id) — ${MERGE_MARKER:-<none>}"
+  # ---- no prior record: AUTO_MERGE now DIRECTLY selects the record class — the SAME arming/sentinel/
+  # shadow-completion gates the live pipeline's terminal_step applies, via the very same hoisted helpers
+  # (issue #239). Freshness is never rebase-remediated here (no worktree) — it is one more direct block.
+  read_auto_merge || reeval_refuse "environmental failure reading auto_merge for $REPO — retry later, no record posted"
+
+  if [ "$AUTO_MERGE" != true ]; then
+    emit_and_post "$RUN_DIR/merge-shadow-reeval.md" --mode shadow --note "$note" \
+      || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+    log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
+    echo "$PR_URL"
+    return
+  fi
+
+  PR_NUMBER="$pr"
+  compute_shadow_complete || reeval_refuse "environmental failure computing shadow completion for PR #$pr — retry later, no record posted"
+  if [ "$SHADOW_DONE" != true ]; then
+    emit_and_post "$RUN_DIR/merge-shadow-reeval.md" --mode shadow --shadow-complete false --shadow-progress "$SHADOW_PROGRESS" \
+      --note "$note — armed, shadow-incomplete $SHADOW_PROGRESS" \
+      || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+    log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
+    echo "$PR_URL"
+    return
+  fi
+
+  if [ -e "$MERGE_SENTINEL" ]; then
+    emit_and_post "$RUN_DIR/merge-record-reeval.md" --mode armed --decision BLOCKED --block-reason sentinel \
+      --shadow-complete true --shadow-progress "$SHADOW_PROGRESS" --sentinel thrown --note "$note" \
+      || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+    log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
+    echo "$PR_URL"
+    return
+  fi
+
+  local blk=""
+  [ "$APPROVE_RESULT" = pass ] || blk=terminal_approval
+  [ -z "$blk" ] && { [ "$RANK_RESULT" = pass ] || blk=rank_gate; }
+  [ -z "$blk" ] && { [ "$CI_RESULT" = pass ] || blk=ci_green; }
+  [ -z "$blk" ] && { [ "$FRESH_RESULT" = pass ] || blk=freshness; }
+  if [ -n "$blk" ]; then
+    emit_and_post "$RUN_DIR/merge-record-reeval.md" --mode armed --decision BLOCKED --block-reason "$blk" \
+      --shadow-complete true --shadow-progress "$SHADOW_PROGRESS" --sentinel ok --note "$note" \
+      || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+    log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
+    echo "$PR_URL"
+    return
+  fi
+
+  do_squash_merge || reeval_refuse "environmental failure merging PR #$pr — retry later, no record posted"
+  emit_and_post "$RUN_DIR/merge-record-reeval.md" --mode armed --decision MERGED --merge-commit "${MERGE_COMMIT:-}" \
+    --shadow-complete true --shadow-progress "$SHADOW_PROGRESS" --sentinel ok --note "$note" \
+    || log "warn: PR #$pr merged but the YR-MERGE: MERGED re-evaluation record failed to post (environmental, resumable)"
+  log "re-evaluation squash-merged PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-YR-MERGE: MERGED}"
   echo "$PR_URL"
 }
 if [ -n "$REEVAL_PR" ]; then
@@ -1307,28 +1455,12 @@ fi
 # failures (a gh API blip / network drop / merge API error while evaluating, recording, or merging) are
 # classified environmental — no machinery-error record, resumable — and never reset a streak or hard-Block.
 # shadow_ci / shadow_freshness / shadow_terminal_approval / shadow_rank_gate / read_auto_merge /
-# emit_and_post — conditions (1)-(4), auto_merge, and the record post — are defined earlier (hoisted
-# right after BASE_REPO resolution, issue #70) so --re-evaluate can reuse them without a worktree.
+# emit_and_post / compute_shadow_complete / do_squash_merge — conditions (1)-(4), auto_merge, shadow
+# completion, the record post, and the merge call — are defined earlier (hoisted right after BASE_REPO
+# resolution, issues #70/#239) so --re-evaluate can reuse them without a worktree.
 # The host sentinel (kill switch): a FILE in the dispatch home, read LIVE at decision time (a file, not an
 # inherited env var — a spawned runner carries its spawn-time environment; the file is global + git-free).
-MERGE_SENTINEL="${MERGE_SENTINEL:-$DEV_RUNNER_HOME/merge-killswitch}"
-SHADOW_WINDOW="${SHADOW_WINDOW:-5}"; SHADOW_NEED="${SHADOW_NEED:-3}"; SHADOW_SCAN="${SHADOW_SCAN:-40}"
 PR_NUMBER="${PR_URL##*/}"                                # the current PR number (excluded from the window)
-
-# (5b) shadow completion — MECHANICAL, from the repo's prior PR merge records + main history (no sidecar):
-#      one unified window over the last N merge records (shadow YR-MERGE-SHADOW and armed YR-MERGE alike),
-#      >=K landed unreverted successes and no reset. See tools/merge_shadow.py shadow-complete.
-compute_shadow_complete(){   # sets SHADOW_DONE (true|false) + SHADOW_PROGRESS (k/N); returns 2 on env failure.
-  local prs="$RUN_DIR/prs.json" mainlog="$RUN_DIR/main-log.txt" out succ size
-  "$GH_BIN" pr list --repo "$REPO" --base "$BASE_BRANCH" --state all --limit "$SHADOW_SCAN" \
-     --json number,state,mergeCommit,mergedAt,comments >"$prs" 2>/dev/null || return 2
-  "$GIT_BIN" -C "$WT" log "origin/$BASE_BRANCH" --max-count=300 --format='%H%x1e%B%x00' >"$mainlog" 2>/dev/null || return 2
-  out="$(python3 "$SELF_DIR/merge_shadow.py" shadow-complete --prs-file "$prs" --main-log-file "$mainlog" \
-         --repo "$REPO" --exclude-pr "$PR_NUMBER" --window "$SHADOW_WINDOW" --need "$SHADOW_NEED" 2>/dev/null)" || return 2
-  read -r SHADOW_DONE succ size <<<"$out" || return 2
-  SHADOW_PROGRESS="$succ/$SHADOW_WINDOW"
-  return 0
-}
 
 # freshness remediation: main moved, so rebase the branch onto the tip and RE-ESTABLISH green (re-run the
 # check gate + re-wait CI) before merging — the reviewed diff is unchanged so the verdict stands. A stale
@@ -1353,17 +1485,7 @@ rebase_onto_tip(){
   return 0
 }
 
-# squash-merge the PR into main ONLY (never a deploy/release target), passing --squash EXPLICITLY (nothing
-# server-side enforces it). Sets MERGE_COMMIT (best-effort). Returns 2 only if the merge API itself fails.
-do_squash_merge(){
-  "$GH_BIN" pr merge "$PR_URL" --repo "$REPO" --squash >/dev/null 2>&1 || return 2
-  MERGE_COMMIT="$("$GH_BIN" pr view "$PR_URL" --repo "$REPO" --json mergeCommit 2>/dev/null \
-    | python3 -c 'import sys,json
-try: d=json.load(sys.stdin)
-except Exception: d={}
-print((d.get("mergeCommit") or {}).get("oid","") or "")' 2>/dev/null || true)"
-  return 0
-}
+# do_squash_merge is defined earlier (hoisted alongside compute_shadow_complete, issue #239).
 
 # armed-blocked: record YR-MERGE: BLOCKED — <reason>, flag Reason=Blocked, comment. Sets ARMED_BLOCKED.
 armed_block(){   # $1 = block reason (condition id), $2 = human-facing detail
