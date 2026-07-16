@@ -29,44 +29,34 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_dev_runner as base  # the shared stub harness (gh/claude/check stubs + helpers)
+import claude_fake  # tests/harness/claude_fake.py — the classifier's one legal home
 
 ROOT = base.ROOT
 
 
 # ---------------------------------------------------------------------------
-# A claude stub that RECORDS the --model each stage was launched with.
-# Same stage classification as the shared stub (REVIEWER / REQUESTED CHANGES / TESTER / tests FAIL /
-# else implement), but writes "<STAGE> <model-id>" to $STUB_STAGE_MODELS so per-stage model
-# resolution is observable. Behaviour mirrors the shared stub closely enough to reach a PR.
+# A claude stub that RECORDS the --model each stage was launched with, alongside its usual
+# stage-aware behaviour. DERIVED from the shared classifier (tests/harness/claude_fake.CLAUDE_STUB)
+# via .replace(): a model-capture preamble is spliced in before the case block, and a recording line
+# is spliced in right after the case block reads — locating both insertion points by their exact
+# text, never retyping the classification patterns themselves.
 # ---------------------------------------------------------------------------
-REC_CLAUDE_STUB = r'''#!/usr/bin/env bash
-model=""; prev=""
+_MODEL_RECORD_PREAMBLE = r'''model=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--model" ] && model="$a"
   prev="$a"
 done
-stdin_content="$(cat)"
-# issue #121: the task prompt travels on stdin now, not argv — classify from both channels combined, or
-# the repair/review-fix routing literals ("tests FAIL", "REQUESTED CHANGES"), which live in the task
-# prompt, are never seen.
-args="$*"$'\n'"$stdin_content"
-case "$args" in
-  *REVIEWER*)            stage=REVIEW ;;
-  *"REQUESTED CHANGES"*) stage=REVIEWFIX ;;
-  *TESTER*)              stage=TEST ;;
-  *"tests FAIL"*)        stage=REPAIR ;;
-  *)                     stage=IMPL ;;
-esac
-printf '%s %s\n' "$stage" "$model" >> "$STUB_STAGE_MODELS"
-echo "$stage" >> "$STUB_TIMELINE"
-case "$stage" in
-  REVIEW)    if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then echo "VERDICT: REQUEST_CHANGES"; else echo "VERDICT: APPROVE"; fi ;;
-  REVIEWFIX) : > review_repaired ;;
-  REPAIR)    : > repaired ;;
-  IMPL)      [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\n' > feature.txt ;;
-esac
-exit 0
 '''
+
+REC_CLAUDE_STUB = claude_fake.CLAUDE_STUB.replace(
+    'case "$args" in\n', _MODEL_RECORD_PREAMBLE + 'case "$args" in\n', 1,
+).replace(
+    'esac\nexit 0\n',
+    'esac\n'
+    '[ -n "${STUB_STAGE_MODELS:-}" ] && printf \'%s %s\\n\' "$(tail -n1 "$STUB_TIMELINE" 2>/dev/null)" "$model" >> "$STUB_STAGE_MODELS"\n'
+    'exit 0\n',
+    1,
+)
 
 
 def _rec_stubs(binp):

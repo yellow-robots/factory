@@ -1869,52 +1869,9 @@ def test_pool_seam_documented_in_dispatch_md_and_env_example():
 # the per-stage artifacts are aggregated into usage-summary.json + one PR comment. An explicit
 # CLAUDE_OUTPUT_FORMAT still wins (old stream-json+--verbose pairing, no capture attempted).
 #
-# CLAUDE_STUB_JSON is a second claude stub, stage-aware like CLAUDE_STUB, but each branch emits a
-# single-line `--output-format json` result envelope (fixed, distinguishable token counts per stage)
-# instead of plain text — proving extraction, the rewrite, and the summary end-to-end.
-
-CLAUDE_STUB_JSON = '''#!/usr/bin/env bash
-stdin_content="$(cat)"
-args="$*"$'\\n'"$stdin_content"   # issue #121: classification must see stdin too (the task prompt lives there)
-[ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
-# issue #205: emit_json optionally adds a "session_id" key when STUB_SESSION_ID is set — no pre-existing
-# exact-dict-equality assertion in this suite ever sets that var, so this stays byte-for-byte
-# backward-compatible there; new tests opt in to exercise session_id-based transcript resolution.
-emit_json() {  # $1=result-text $2=input $3=output $4=cache_write $5=cache_read $6=duration_ms
-  if [ -n "${STUB_SESSION_ID:-}" ]; then
-    printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","session_id":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$STUB_SESSION_ID" "$2" "$3" "$4" "$5"
-  else
-    printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\\n' "$6" "$1" "$2" "$3" "$4" "$5"
-  fi
-}
-case "$args" in
-  *REVIEWER*)
-    echo REVIEW >> "$STUB_TIMELINE"
-    if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then
-      emit_json "VERDICT: REQUEST_CHANGES" 11 12 13 14 100
-    else
-      emit_json "VERDICT: APPROVE" 21 22 23 24 200
-    fi ;;
-  *"REQUESTED CHANGES"*)
-    echo REVIEWFIX >> "$STUB_TIMELINE"
-    : > review_repaired
-    emit_json "fixed the blockers" 31 32 33 34 300 ;;
-  *TESTER*)
-    echo TEST >> "$STUB_TIMELINE"
-    mkdir -p tests && printf 'pass\\n' > tests/test_stub_output.py
-    emit_json "wrote tests" 41 42 43 44 400 ;;
-  *"tests FAIL"*)
-    echo REPAIR >> "$STUB_TIMELINE"
-    : > repaired
-    emit_json "repaired the code" 51 52 53 54 500 ;;
-  *)
-    echo IMPL >> "$STUB_TIMELINE"
-    printf 'hello\\n' > feature.txt
-    emit_json "implemented the feature" 61 62 63 64 600
-    if [ -n "${STUB_IMPL_JSON_THEN_FAIL:-}" ]; then exit 1; fi ;;
-esac
-exit 0
-'''
+# CLAUDE_STUB_JSON — the `--output-format json` twin of the stage-aware claude fake — lives in
+# tests/harness/claude_fake.py (imported above) alongside CLAUDE_STUB; the classifier's one legal home.
+CLAUDE_STUB_JSON = claude_fake.CLAUDE_STUB_JSON
 
 
 def _stubs_json(binp):
@@ -2628,44 +2585,15 @@ def test_task_prompt_absent_from_own_command_line(tmp_path):
         "the task text must still reach the stage — on stdin, never on argv"
 
 
-REAP_CLAUDE_STUB = r'''#!/usr/bin/env bash
-stdin_content="$(cat)"
-args="$*"$'\n'"$stdin_content"
-case "$args" in
-  *TESTER*)
-    echo TEST >> "$STUB_TIMELINE"
-    child_pid="$(cat "$STUB_LINGER_PIDFILE" 2>/dev/null)"
-    if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
-      echo LINGERING >> "$STUB_TIMELINE"
-    fi ;;
-  *REVIEWER*)
-    # The reviewer must approve so the run reaches rc=0 and the reap assertion (no LINGERING) can gate;
-    # without this branch a REVIEWER call falls to the IMPL default, never emits a verdict, and the run
-    # blocks independent of the reap fix under test.
-    echo REVIEW >> "$STUB_TIMELINE"
-    echo "VERDICT: APPROVE" ;;
-  *)
-    echo IMPL >> "$STUB_TIMELINE"
-    [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\n' > feature.txt
-    ( exec sleep 5 ) &
-    echo $! > "$STUB_LINGER_PIDFILE" ;;
-esac
-exit 0
-'''
-
-
 def test_process_group_reap_kills_lingering_child_before_next_stage(tmp_path):
     """Acceptance: a stage's stray background child (the class that motivated the fatal `pkill` cleanup
     in gilda#9 run 9-4131516 — a leftover Playwright run from an EARLIER attempt) must be dead before the
-    NEXT stage starts. The implement stub backgrounds a `sleep`, exits immediately without waiting on it,
-    and records its pid; the tester stub — the very next stage to run — checks that pid the moment IT
-    starts and would mark the timeline LINGERING if it were still alive."""
+    NEXT stage starts. The shared claude fake's STUB_LINGER_PIDFILE hook (tests/harness/claude_fake.py)
+    backgrounds a `sleep` on the implement arm, exits immediately without waiting on it, and records its
+    pid; the tester arm — the very next stage to run — checks that pid the moment IT starts and would
+    mark the timeline LINGERING if it were still alive."""
     work, _ = _make_repo(tmp_path)
-    binp = tmp_path / "bin"
-    binp.mkdir(parents=True, exist_ok=True)
-    _exec(binp / "gh", GH_STUB)
-    _exec(binp / "claude", REAP_CLAUDE_STUB)
-    _exec(binp / "check.sh", CHECK_STUB)
+    binp = tmp_path / "bin"; _stubs(binp)
     env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Reap lingering child"), work)
     env["STUB_CLAUDE_CHANGE"] = "1"
     env["STUB_LINGER_PIDFILE"] = str(tmp_path / "linger.pid")
@@ -2676,24 +2604,16 @@ def test_process_group_reap_kills_lingering_child_before_next_stage(tmp_path):
     assert "LINGERING" not in tl, "the implementer's stray child was still alive when the tester stage started"
 
 
-SIGNAL_CLAUDE_STUB = '''#!/usr/bin/env bash
-cat >/dev/null
-kill -KILL $$
-'''
-
-
 def test_signal_terminated_stage_blocked_record_names_exit_code_and_transcript(tmp_path):
     """Acceptance: a stage terminated by a signal before it writes anything (an empty log — the exact
     shape of gilda#9 run 9-4131516's zero-byte implement.log) must produce a Blocked record that states
     the numeric exit code, names signal termination as the likely class, and points at the preserved
-    session transcript — never a record naming only the empty log file."""
+    session transcript — never a record naming only the empty log file. The shared claude fake's
+    STUB_CLAUDE_SIGKILL crash mode (tests/harness/claude_fake.py) simulates the signal kill."""
     work, _ = _make_repo(tmp_path)
-    binp = tmp_path / "bin"
-    binp.mkdir(parents=True, exist_ok=True)
-    _exec(binp / "gh", GH_STUB)
-    _exec(binp / "claude", SIGNAL_CLAUDE_STUB)
-    _exec(binp / "check.sh", CHECK_STUB)
+    binp = tmp_path / "bin"; _stubs(binp)
     env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Signal terminated implementer"), work)
+    env["STUB_CLAUDE_SIGKILL"] = "1"
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode != 0
 
@@ -3791,10 +3711,9 @@ def test_ledger_append_failure_never_blocks_the_run(tmp_path):
 #
 # Stubs — self-contained, no live LLM or network. `lint.sh` / `lintfix.sh` are OPAQUE shell commands the
 # runner runs verbatim (run_lint), gated on env vars and a `lint_ok` marker they drop in the worktree
-# (cwd = $WT for both run_lint and the claude stages). The claude stub gains a `*"lint gate FAILS"*`
-# branch (a LINTREPAIR timeline marker), so the LLM lint-repair stage is OBSERVABLE and DISTINCT from the
-# check-repair stage (REPAIR) and the implementer (IMPL) — the shipped stub would misroute the lint
-# prompt to the implementer (`*)`), collapsing exactly the distinction these tests must prove.
+# (cwd = $WT for both run_lint and the claude stages). The shared claude fake's `*"lint gate FAILS"*` arm
+# (tests/harness/claude_fake.py; a LINTREPAIR timeline marker) makes the LLM lint-repair stage OBSERVABLE
+# and DISTINCT from the check-repair stage (REPAIR) and the implementer (IMPL).
 
 LINT_STUB = '''#!/usr/bin/env bash
 echo LINT >> "$STUB_LINT_TL"
@@ -3810,22 +3729,11 @@ echo LINTFIX >> "$STUB_LINT_TL"
 exit 0
 '''
 
-# the shipped claude stub, plus a lint-repair branch inserted BEFORE the check-repair one. The LLM
-# lint-repair task prompt carries "The lint gate FAILS" (never "tests FAIL"/"TESTER"/"REVIEWER"), so it
-# routes here and nowhere else. It heals (drops the worktree's `lint_ok` marker) only when
-# STUB_LINTREPAIR_HEAL is set, so both the still-broken and the healed paths are exercisable.
-LINT_CLAUDE_STUB = CLAUDE_STUB.replace(
-    '  *"tests FAIL"*)',
-    '''  *"lint gate FAILS"*) echo LINTREPAIR >> "$STUB_TIMELINE"
-                        [ -n "${STUB_LINTREPAIR_HEAL:-}" ] && : > lint_ok ;;
-  *"tests FAIL"*)''',
-)
-
 
 def _lint_bin(tmp):
-    """Stubs for a lint-tier run: the lint-aware claude stub plus the opaque lint.sh / lintfix.sh."""
+    """Stubs for a lint-tier run: the shared claude fake (its lint-repair arm heals the worktree's
+    lint_ok marker only when STUB_LINTREPAIR_HEAL is set) plus the opaque lint.sh / lintfix.sh."""
     binp = tmp / "bin"; _stubs(binp)
-    _exec(binp / "claude", LINT_CLAUDE_STUB)
     _exec(binp / "lint.sh", LINT_STUB)
     _exec(binp / "lintfix.sh", LINT_FIX_STUB)
     return binp
