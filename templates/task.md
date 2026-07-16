@@ -38,7 +38,11 @@ Definition of Ready) · **Source:** the technical-RFC slice — or, on a floor i
      technical RFC — author the slice directly from the product-spec. A dev should NOT need to open
      Obsidian. If a cited path is this task's own not-yet-built output, name it on a `Deliverable:`
      line (e.g. `Deliverable: \`tools/x.py\` — the new script`) — check_task exempts it from the
-     cited-path-exists gate; plain references still resolve. -->
+     cited-path-exists gate; plain references still resolve. If the change touches the harness seam
+     (the shared fakes' home, `tests/harness/` — see `tests/harness/contract.md`), name the coupled
+     suites inline, e.g. a sentence like `Blast radius (coupled suites): tests/test_x.py, tests/test_y.py`
+     listing every consuming test file the change couples to, so a builder checks them before editing.
+     Teaching content only — no promotion or check gate evaluates this line. -->
 
 ## Test expectations
 <!-- How this is verified. The independent tester writes tests against the acceptance criteria above. -->

@@ -4,13 +4,14 @@
 Consumer content, not platform machinery: this is the factory-as-consumer's own lens,
 declared via `.yr/factory.toml`'s `lens_cmd` (the seam shipped in issue #214). It reads
 YR_BASE_REF (default origin/main), diffs the working tree against it, and scans only the
-CHANGED test files under tests/ for three recorded assertion species — each one a test-hygiene
-bug this repo actually hit — where a test checks a raw string/transport artifact instead of the
-behavior it stands in for. Advisory only: the report is markdown on stdout, and the exit code is
-always 0 regardless of what it finds (a non-zero exit here would make the lens gate, which the
-seam explicitly forbids).
+CHANGED test files under tests/ for four recorded species — each one a test-hygiene bug this
+repo actually hit — the first three where a test checks a raw string/transport artifact instead
+of the behavior it stands in for, the fourth where a test grows a private clone of a shared
+test-harness fake instead of obtaining it from its shared home. Advisory only: the report is
+markdown on stdout, and the exit code is always 0 regardless of what it finds (a non-zero exit
+here would make the lens gate, which the seam explicitly forbids).
 
-The species list is closed at three (no rule added without a new issue reopening this file):
+The species list is closed at four (no rule added without a new issue reopening this file):
 
   1. raw-argv/transport greps — a prompt/transcript-shaped (multi-word) literal matched with a
      bare `in` against something captured off argv/transcript, standing in for an assertion on
@@ -23,6 +24,17 @@ The species list is closed at three (no rule added without a new issue reopening
   3. marker substrings unanchored to a line — a recorded protocol marker (e.g. `VERDICT:`) tested
      with a bare `in` instead of line-anchored (`str.startswith` on a split line, or a
      `^`-anchored regex), so a prose mention of the marker would pass the same as the real thing.
+
+Issue #246 reopened the list (it had been closed at three) to add species 4:
+
+  4. clone-accretion — a private, from-scratch re-implementation of a shared test-harness fake (the
+     `claude` stage classifier or the `gh` CLI dispatcher) defined beside `tests/harness/claude_fake.py`
+     / `tests/harness/gh_fake.py` instead of being obtained from there — imported directly, or derived
+     via `.replace()` (never retyped). Detected with the same full-reimplementation fingerprint the
+     harness's own migration acceptance tests already use to prove no clone survives
+     (tests/harness/test_shared_fake_migration.py, tests/harness/test_gh_fake_migration.py): a plain
+     (non-derived) module-level string literal carrying the claude classifier's four routing literals,
+     or the gh dispatcher's bash/python catch-all shape.
 
 Each finding is heuristic and errs toward silence: the graduation evidence base this script ships
 with (tests/test_qa_lens.py, independently authored) is what earns any future tightening.
@@ -50,10 +62,39 @@ SPECIES_ALTERNATIVE = {
         "line-anchor the marker check (str.startswith on a split line, or a ^-anchored regex) "
         "instead of a bare `in` containment test"
     ),
+    "clone-accretion": (
+        "obtain the fake from tests/harness/claude_fake.py or tests/harness/gh_fake.py — import the "
+        "shared constant directly, or derive a variant via .replace() — instead of retyping a private "
+        "copy of it"
+    ),
 }
 
 _TRANSPORT_NAME_RE = re.compile(r"argv|transcript", re.IGNORECASE)
 _MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_-]{1,40}:$")
+
+# tests/harness/{claude_fake,gh_fake}.py ARE the shared home the clone-accretion species is defined
+# relative to — the species detects a SECOND definition beside them, so the shared home's own
+# constants (which of course carry the fingerprint below) are excluded from this species by path.
+_HARNESS_HOME_FILES = {"tests/harness/claude_fake.py", "tests/harness/gh_fake.py"}
+
+# the exact fingerprints tests/harness/test_shared_fake_migration.py and
+# tests/harness/test_gh_fake_migration.py already use to prove no private clone of either shared fake
+# survives anywhere in tests/ — reused here rather than re-derived, so this species agrees with the
+# harness's own clone census by construction.
+_CLAUDE_ROUTING_LITERALS = ("*REVIEWER*", '*"REQUESTED CHANGES"*', "*TESTER*", '*"tests FAIL"*')
+
+
+def _is_claude_classifier_reimplementation(text):
+    return 'case "$args" in' in text and all(lit in text for lit in _CLAUDE_ROUTING_LITERALS)
+
+
+def _is_bash_gh_reimplementation(text):
+    return ('case "$1" in' in text and 'pr)' in text
+            and 'echo "unhandled gh $*" >&2; exit 9' in text)
+
+
+def _is_python_gh_reimplementation(text):
+    return 'argv[:2] == ["api", "graphql"]' in text and "sys.exit(9)" in text
 
 
 @dataclass(frozen=True)
@@ -153,8 +194,24 @@ def _scan_byte_exact_transport_artifact(path, source, asserts, func_of):
     return findings
 
 
+def _scan_clone_accretion(path, tree):
+    if path in _HARNESS_HOME_FILES:
+        return []
+    findings = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            continue
+        text = node.value.value
+        if (_is_claude_classifier_reimplementation(text)
+                or _is_bash_gh_reimplementation(text)
+                or _is_python_gh_reimplementation(text)):
+            findings.append(Finding(path, node.lineno, "clone-accretion"))
+    return findings
+
+
 def scan_text(path, source):
-    """Every finding (list[Finding]) across the three closed species in one file's source text.
+    """Every finding (list[Finding]) across the four closed species in one file's source text.
 
     Pure and side-effect-free — the same function the corpus/fixture proofs in
     tests/test_qa_lens.py call directly, independent of git or stdout.
@@ -178,6 +235,7 @@ def scan_text(path, source):
     findings.extend(_scan_raw_argv_transport_grep(path, source, asserts))
     findings.extend(_scan_byte_exact_transport_artifact(path, source, asserts, func_of))
     findings.extend(_scan_unanchored_marker_substring(path, source, asserts))
+    findings.extend(_scan_clone_accretion(path, tree))
     return sorted(findings, key=lambda f: (f.lineno, f.species))
 
 

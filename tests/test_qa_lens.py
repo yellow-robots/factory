@@ -15,6 +15,16 @@ calling functions private to the lens module.
   * Exit code is 0 whether or not there are findings.
   * `.yr/factory.toml` declares `lens_cmd = "python3 qa/lens.py"` (tests/test_bench_corpus.py:435-438
     pattern: read the manifest, assert the declared key).
+
+Extended for Issue #246 — the closed species list reopened to add a fourth: clone-accretion. Per
+#246's ACCEPTANCE CRITERIA, a change introducing a new private clone of a shared fake (a second
+executable faking a dependency's binary name, defined outside `tests/harness/` — the shared home
+issue #252/#254/#255 established) earns a recorded finding naming the clone, while the lens stays
+advisory (exit 0 regardless). The additions below drive the same subprocess interface as the first
+three species' tests — true-positive fixtures cloning the `claude` stage classifier and the `gh`
+CLI dispatcher (bash and python faces), and false-positive fixtures for a recorder that legitimately
+derives/imports the shared fake, for the shared home files themselves (excluded by path, by
+definition), and for the task template's own teaching-line phrasing.
 """
 import subprocess
 import sys
@@ -60,6 +70,59 @@ import subprocess
 def test_stdin_behavior():
     result = subprocess.run(["myprog"], input="hello", capture_output=True, text=True)
     assert result.returncode == 0
+'''
+
+# ---- species 4 (issue #246): clone-accretion — a private, from-scratch re-implementation of a
+# shared test-harness fake (the `claude` stage classifier or the `gh` CLI dispatcher), defined
+# outside tests/harness/ instead of imported/derived from there. ----
+
+SPECIES4_CLAUDE_CLASSIFIER_CLONE = (
+    'FAKE_CLAUDE = "#!/usr/bin/env bash\\n'
+    'case \\"$args\\" in\\n'
+    '  *REVIEWER*) echo REVIEW ;;\\n'
+    '  *\\"REQUESTED CHANGES\\"*) echo REVIEWFIX ;;\\n'
+    '  *TESTER*) echo TEST ;;\\n'
+    '  *\\"tests FAIL\\"*) echo REPAIR ;;\\n'
+    'esac\\n"\n'
+)
+
+SPECIES4_GH_BASH_DISPATCHER_CLONE = (
+    'FAKE_GH = "#!/usr/bin/env bash\\n'
+    'case \\"$1\\" in\\n'
+    '  pr) echo ok ;;\\n'
+    '  *) echo \\"unhandled gh $*\\" >&2; exit 9 ;;\\n'
+    'esac\\n"\n'
+)
+
+SPECIES4_GH_PYTHON_DISPATCHER_CLONE = (
+    'FAKE_GH_PY = "import sys\\n'
+    'argv = sys.argv[1:]\\n'
+    'if argv[:2] == [\\"api\\", \\"graphql\\"]:\\n'
+    '    print(\\"ok\\")\\n'
+    'sys.exit(9)\\n"\n'
+)
+
+GOOD_RECORDER_DERIVES_SHARED_FAKE = '''\
+from tests.harness.claude_fake import CLAUDE_STUB
+
+
+def test_shadow_variant():
+    variant = CLAUDE_STUB.replace("REVIEWER", "SHADOW_REVIEWER")
+    assert variant
+'''
+
+GOOD_RECORDER_IMPORTS_SHARED_FAKE_DIRECTLY = '''\
+from tests.harness.gh_fake import GH_STUB
+
+
+def test_uses_shared_gh_fake():
+    assert "repo" in GH_STUB
+'''
+
+GOOD_TEMPLATE_TEACHING_LINE = '''\
+def test_matches_template_teaching_example():
+    note = "Blast radius (coupled suites): tests/test_x.py, tests/test_y.py"
+    assert note
 '''
 
 
@@ -165,6 +228,88 @@ def test_all_three_species_fire_independently_in_one_diff(tmp_path):
     assert "tests/test_species3.py" in r.stdout
 
 
+# ============ species 4 (issue #246): clone-accretion fires on a purpose-built fixture ============
+
+def test_species_clone_accretion_fires_on_claude_classifier_clone(tmp_path):
+    """A private, from-scratch module-level string carrying the `claude` stage classifier's four
+    routing literals (defined outside tests/harness/) is flagged as a clone of the shared fake."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_private_claude_clone.py", SPECIES4_CLAUDE_CLASSIFIER_CLONE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    assert "tests/test_private_claude_clone.py:1" in r.stdout
+    assert "clone-accretion" in r.stdout
+
+
+def test_species_clone_accretion_fires_on_gh_bash_dispatcher_clone(tmp_path):
+    """A private, from-scratch module-level string carrying the bash `gh` dispatcher's catch-all
+    shape (defined outside tests/harness/) is flagged as a clone of the shared fake."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_private_gh_clone.py", SPECIES4_GH_BASH_DISPATCHER_CLONE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    assert "tests/test_private_gh_clone.py:1" in r.stdout
+    assert "clone-accretion" in r.stdout
+
+
+def test_species_clone_accretion_fires_on_gh_python_dispatcher_clone(tmp_path):
+    """A private, from-scratch module-level string carrying the python `gh` dispatcher's catch-all
+    shape (defined outside tests/harness/) is flagged as a clone of the shared fake."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_private_gh_py_clone.py", SPECIES4_GH_PYTHON_DISPATCHER_CLONE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    assert "tests/test_private_gh_py_clone.py:1" in r.stdout
+    assert "clone-accretion" in r.stdout
+
+
+def test_clone_accretion_report_names_species_and_shared_home_alternative(tmp_path):
+    """The clone-accretion finding line names the file:line, the species, and an alternative that
+    points at obtaining the fake from its shared home instead of retyping a private copy."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_private_claude_clone.py", SPECIES4_CLAUDE_CLASSIFIER_CLONE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    lines = [l for l in r.stdout.splitlines() if l.startswith("- `tests/test_private_claude_clone.py:")]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "clone-accretion" in line
+    assert "tests/harness" in line
+
+
+def test_all_four_species_fire_independently_in_one_diff(tmp_path):
+    """One changed-file set carrying all four species (the original three plus clone-accretion)
+    yields four distinct findings — the new species is detected independently, not merged with or
+    crowded out by the others."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_species1.py", SPECIES1_TRANSCRIPT_GREP)
+    _write(repo, "tests/test_species2.py", SPECIES2_BYTE_EXACT_TRANSPORT)
+    _write(repo, "tests/test_species3.py", SPECIES3_UNANCHORED_MARKER)
+    _write(repo, "tests/test_species4.py", SPECIES4_CLAUDE_CLASSIFIER_CLONE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    findings = [l for l in r.stdout.splitlines() if l.startswith("- `tests/")]
+    assert len(findings) == 4
+    assert "tests/test_species1.py" in r.stdout
+    assert "tests/test_species2.py" in r.stdout
+    assert "tests/test_species3.py" in r.stdout
+    assert "tests/test_species4.py" in r.stdout
+
+
+def test_exit_code_zero_with_clone_accretion_finding(tmp_path):
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_private_claude_clone.py", SPECIES4_CLAUDE_CLASSIFIER_CLONE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0
+    assert r.stdout.strip() != ""
+
+
 # ============ named good patterns stay unflagged ============
 
 def test_line_anchored_marker_assert_unflagged(tmp_path):
@@ -183,6 +328,55 @@ def test_behavioral_stdin_assert_unflagged(tmp_path):
     never fires."""
     repo, base = _init_repo(tmp_path)
     _write(repo, "tests/test_good_stdin.py", GOOD_BEHAVIORAL_STDIN_ASSERT)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+
+
+def test_recorder_deriving_shared_fake_via_replace_unflagged(tmp_path):
+    """A recorder that imports the shared claude fake and derives a variant via `.replace()` — the
+    house convention tests/test_shadow_review.py itself uses — is never flagged as a clone: it
+    obtains the fake from its shared home rather than retyping a private copy of it."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_shadow_variant.py", GOOD_RECORDER_DERIVES_SHARED_FAKE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+
+
+def test_recorder_importing_shared_fake_directly_unflagged(tmp_path):
+    """A suite that imports the shared `gh` fake directly (no private re-implementation) is never
+    flagged, even though it references the same subcommand-routing behavior the clone-accretion
+    species watches for."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_uses_gh_fake.py", GOOD_RECORDER_IMPORTS_SHARED_FAKE_DIRECTLY)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+
+
+def test_shared_home_files_themselves_are_excluded_from_clone_accretion(tmp_path):
+    """The shared home files (tests/harness/claude_fake.py, tests/harness/gh_fake.py) carry the
+    exact fingerprint literals the clone-accretion species watches for — being the ORIGINAL, not a
+    clone of it. The species is defined relative to them, so they must never flag themselves."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/harness/claude_fake.py", SPECIES4_CLAUDE_CLASSIFIER_CLONE)
+    _write(repo, "tests/harness/gh_fake.py", SPECIES4_GH_BASH_DISPATCHER_CLONE)
+    _stage(repo)
+    r = _run_lens(repo, base)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+
+
+def test_template_teaching_line_phrasing_unflagged(tmp_path):
+    """The task template's own teaching-line phrasing ('Blast radius (coupled suites): ...'), if it
+    ever shows up verbatim inside a test file, never trips any species — it names no transport
+    literal, no byte-exact fixture, no protocol marker, and defines no fake."""
+    repo, base = _init_repo(tmp_path)
+    _write(repo, "tests/test_blast_radius_phrasing.py", GOOD_TEMPLATE_TEACHING_LINE)
     _stage(repo)
     r = _run_lens(repo, base)
     assert r.returncode == 0, r.stderr
