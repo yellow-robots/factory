@@ -101,6 +101,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `models.toml` + `tools/registry.py` | the model registry + loader/CLI |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tests/` | the pytest suite |
+| `qa/` | consumer quality content (e.g. `qa/lens.py`) — distinct from the platform machinery in `tools/` |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |
 | `docs/rfcs/` | canonical RFCs |
 | `skills/` | the factory skill (router + references) |
