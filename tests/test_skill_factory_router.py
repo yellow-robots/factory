@@ -141,6 +141,19 @@ def test_no_orphan_references():
             f"Orphan reference with no router entry in SKILL.md: references/{ref}"
 
 
+def test_no_orphan_reference_files_on_disk():
+    """Every markdown file that actually exists under skills/factory/references/ must
+    have a router entry in SKILL.md — enumerated from disk, not from the static
+    REQUIRED_REFS list above (which can go stale: it omits documentation-model.md,
+    which is linked from SKILL.md's body rather than the router table alone)."""
+    text = _skill_text()
+    on_disk = sorted(p.name for p in REFS.glob("*.md"))
+    assert on_disk, "no reference files found under skills/factory/references/"
+    for ref in on_disk:
+        assert ref in text, \
+            f"Orphan reference file with no router entry in SKILL.md: references/{ref}"
+
+
 # ---------------------------------------------------------------------------
 # Description sync
 # ---------------------------------------------------------------------------
