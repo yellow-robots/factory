@@ -186,7 +186,7 @@ A component (or the org — *Structure*) may grow an **ideas-backlog**: the name
   - `summary` — one plain-speech scan line, the so-what a human prioritizes by.
   - `value` (1–5) — the so-what magnitude against the standing axes (cost control · quality per iteration · incremental understanding — breadth across repos counts; evidence cited in the body where it exists).
   - `effort` — `S` (a slice) / `M` (a few slices) / `L` (an iteration or more).
-  - **Rank** = value ÷ effort — computed by the views, never stored.
+  - **Rank** = value − size discount (`S` 0 · `M` 0.5 · `L` 1) — computed by the views, never stored. (The effort-divisor form replaced 2026-07-16, the human's ruling: a divisor let every small nit outrank a value-5/L — it priced the falling resource, tokens, while the scarce one, attended gate time, is near-fixed per iteration; size discounts, never divides, and the views' value tiebreak leans large.)
 - **The stamping rule.** Never hand-stamp `created`/`updated` — the vault's update-time plugin stamps both on any write path; supply `created` only to backdate; re-stamps throttle at 5 minutes.
 - **The typed-write caveat.** Scores land as YAML numbers; the CLI property write quotes them to strings instead — the typed paths are `processFrontMatter` and FS creation.
 - **Scoring conduct.** The capturing session proposes `value`/`effort`; the human adjusts inline; the spec session that later sweeps the backlog re-ranks.
