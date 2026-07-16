@@ -78,6 +78,13 @@ are grouped by which stage's arm reads them.
 |---|---|
 | `STUB_LINGER_PIDFILE` | implement arm: background a `sleep 5` and write its pid to the given path; tester arm: read that pid back and, if the process is still alive, append `LINGERING` to `STUB_TIMELINE` — proves a stray background child from one stage is dead before the next stage starts |
 
+### Stage-group grace observation (issue #247; implement and reviewer arms, both stubs)
+
+| Flag | Effect |
+|---|---|
+| `STUB_IMPL_GROUP_CHILD_SLEEP` | implement arm: background `sleep <n>; echo GROUP-CHILD-DONE` (no wait) before the arm returns — the marker lands in the stage log only once the child actually wakes and writes it, so it proves whether the runner waited for that write or reaped the child first |
+| `STUB_REVIEW_GROUP_CHILD_SLEEP` | reviewer arm: same shape, backgrounded before the verdict is emitted |
+
 ### Shared timeline
 
 `STUB_TIMELINE` is not a flag but the shared recorder: every arm appends its own stage token (`IMPL`,

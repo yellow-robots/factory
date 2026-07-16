@@ -89,6 +89,13 @@ A build or review stage (`claude -p`) can die because its account has hit a usag
 - **Signatures are data**, not a hardcoded exit code: `QUOTA_SIGNATURES` is a `grep -E` alternation checked against the stage's log (default: `usage limit|rate limit|quota|overloaded|429` — verified against the installed Claude CLI's own error vocabulary: "usage limit reached", "rate limited", "overloaded"/`overloaded_error`, and the Anthropic API's `429 rate_limit_error` status; `quota` is kept as a conservative catch-all). Override `QUOTA_SIGNATURES` in the dispatch environment to add or narrow signatures for a different CLI/provider mix. Keep it conservative — a signature that's too broad risks misclassifying a genuine code failure as environmental.
 - **Resume, don't repair:** a quota hold reuses the same branch-keyed worktree + per-branch `.done` markers as the check gate's env-hold (issue #39) — wait for the limit to reset, then re-run; the earlier green stages are not re-paid.
 
+### The stage process-group grace (`STAGE_GROUP_GRACE`, issue #247)
+
+A stage runs its `claude -p` leader as the sole member of its own process group; a group member the leader backgrounds and returns without waiting on is still alive when the leader exits. Before reaping that group, the runner gives it `STAGE_GROUP_GRACE` seconds (default `30`) to empty out on its own — long enough for a backgrounded child's own output to reach the stage log before the runner advances. A member still alive once the grace is spent is reaped and the stage is recorded as **refused** (`Reason=Blocked`, the same visible-failure path as any other stage failure — never a silent kill and never routed through the quota-hold path above).
+
+- **Override** `STAGE_GROUP_GRACE` in the dispatch environment to lengthen or shorten the grace for a slower or faster deployment.
+- **Assumes a reaping init:** `kill -0` cannot tell a live process from an unreaped zombie, so "still alive after the grace" assumes the deployment's init reaps zombies (true under systemd). Without one, a zombie pins the wait for the full grace even after its actual work finished.
+
 ### The pool → credential seam (`YR_POOL_<POOL>`)
 
 Every `models.toml` entry names a `quota_pool` — the shared rate/spend ceiling it draws from. A single account ceiling can halt every stage using that account at once, even across build and review. `YR_POOL_<POOL_UPPER_SNAKE>` (hyphens become underscores; e.g. pool `anthropic-main` → `YR_POOL_ANTHROPIC_MAIN`) in the dispatch environment names the **credential/config directory** (`CLAUDE_CONFIG_DIR`) to use for a stage whose resolved model belongs to that pool, letting different pools draw on different accounts.

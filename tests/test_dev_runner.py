@@ -2597,6 +2597,145 @@ def test_signal_terminated_stage_blocked_record_names_exit_code_and_transcript(t
     assert "137" in comments and "signal-terminated" in comments.lower()
 
 
+# ============ Issue #247: stage-group grace — observed completion or recorded refusal ============
+# A stage runs as the leader of its own process group (issue #121); reap_pgid kills whatever is left in
+# that group once the leader exits. If the leader backgrounds a child and returns without waiting on it,
+# that child is a member of the SAME group — a naive immediate reap would silently kill it, orphaning it
+# with neither an observed completion nor a recorded refusal (the failure class this issue closes). The
+# runner must instead give the group a grace window (STAGE_GROUP_GRACE) to empty out on its own: if the
+# child finishes inside the grace, its own output must reach the stage log before the runner advances
+# (observed completion); if it is still alive once the grace is spent, the stage must come back as a
+# RECORDED refusal (a distinct, legible failure — never a silent success) rather than the reap simply
+# eating the evidence. The harness's STUB_IMPL_GROUP_CHILD_SLEEP / STUB_REVIEW_GROUP_CHILD_SLEEP hooks
+# (tests/harness/claude_fake.py) background exactly such a child, without waiting on it, before the arm
+# returns.
+
+def test_lingering_child_within_grace_completes_observed(tmp_path):
+    """Acceptance: WHEN a backgrounded child is still running, the runner must not silently kill it — here
+    it finishes on its own well inside the (default, generous) grace window, and its own output must have
+    reached the stage log before the runner advances to the next stage. The build must succeed normally,
+    with no refusal recorded anywhere."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Lingering child finishes in time"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_IMPL_GROUP_CHILD_SLEEP": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+    rundirs = list((tmp_path / "drhome" / "runs").glob("5-*"))
+    assert len(rundirs) == 1
+    log_text = (rundirs[0] / "implement.log").read_text()
+    assert "GROUP-CHILD-DONE" in log_text, \
+        "the backgrounded child's own output never reached the stage log — completion was not observed"
+
+    assert "refused" not in r.stderr.lower()
+    tl = _timeline(tmp_path)
+    assert tl.index("IMPL") < tl.index("TEST")   # the pipeline advanced normally, in order
+
+
+def test_lingering_child_past_grace_is_a_recorded_refusal_not_a_silent_kill(tmp_path):
+    """Acceptance: WHEN the backgrounded child is STILL running once the grace is spent, the stage must
+    refuse rather than let the reap silently eat it — a legible, non-zero failure that states the exit
+    code (recovery amendment #2), distinguishable from both a plain success and a quota/environmental
+    hold (recovery amendment #1). The child's sleep (5s) comfortably exceeds the shrunk grace (1s) so a
+    scheduling hiccup can't misfire this assertion (recovery amendment #5)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Lingering child outlives the grace"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_IMPL_GROUP_CHILD_SLEEP": "5", "STAGE_GROUP_GRACE": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+
+    # a distinct, legible refusal — never a silent success, and never mistaken for the quota/environmental
+    # classification (which has its own dedicated, unrelated coverage above).
+    assert "refused" in r.stderr.lower()
+    assert "124" in r.stderr           # the stated exit code (STAGE_REFUSAL_RC)
+    assert "environmental" not in r.stderr.lower()
+    assert "quota" not in r.stderr.lower()
+
+    tl = _timeline(tmp_path)
+    assert "IMPL" in tl and "TEST" not in tl          # never silently advanced past the refused stage
+    assert "Blocked" in " ".join(_edits(tl))
+    comments = " ".join(_comments(tl))
+    assert comments and "124" in comments             # the exit code is stated on the visible record too
+    assert "https://stub/pr/1" not in r.stdout
+
+
+def test_review_lingering_child_within_grace_approves_and_is_observed(tmp_path):
+    """Acceptance (recovery amendment #3): an approving reviewer with a stray child that finishes inside
+    the grace must still be read as APPROVE — never misread as REQUEST_CHANGES — and the child's own
+    output must have reached review.md before the runner advances (observed completion), same as the
+    implement-arm case above but on the stage whose gate reads log CONTENT, not exit code."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Review lingering child finishes in time"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_GROUP_CHILD_SLEEP": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+    rd = list((tmp_path / "drhome" / "runs").glob("5-*"))[0]
+    review_text = (rd / "review.md").read_text()
+    assert "GROUP-CHILD-DONE" in review_text
+    assert "VERDICT: APPROVE" in review_text
+
+    tl = _timeline(tmp_path)
+    assert tl.count("REVIEW") == 1 and "REVIEWFIX" not in tl   # approved on the first round, no repair
+    assert "refused" not in r.stderr.lower()
+
+
+def test_review_lingering_child_past_grace_still_approves_not_misread_as_request_changes(tmp_path):
+    """Acceptance (recovery amendment #3, the sharp case): the reviewer's OWN stray child outlives the
+    grace — a recorded refusal fires — but the review verdict itself was still APPROVE. Fail-closed stays
+    (the refusal is recorded, visibly, in the runner's own log), but it must never be misread as
+    REQUEST_CHANGES: no wasted review-repair round, and the build still completes with a PR."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Review lingering child outlives the grace"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_GROUP_CHILD_SLEEP": "5", "STAGE_GROUP_GRACE": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+    tl = _timeline(tmp_path)
+    assert tl.count("REVIEW") == 1 and "REVIEWFIX" not in tl   # never treated as a REQUEST_CHANGES round
+
+    rd = list((tmp_path / "drhome" / "runs").glob("5-*"))[0]
+    review_text = (rd / "review.md").read_text()
+    assert "VERDICT: APPROVE" in review_text.splitlines()[-1] or "VERDICT: APPROVE" in review_text
+
+    # the refusal is still a recorded, legible fact (never silently swallowed) — it just doesn't gate a
+    # review decision that was never rc-based to begin with. (The review stage's pass/fail reads
+    # verdict_line(), never rc, so no exit code is stated here — unlike the implement-arm case above,
+    # where the caller DOES gate on rc and the stated 124 is asserted.)
+    assert "refused" in r.stderr.lower() and "grace" in r.stderr.lower()
+
+
+def test_review_lingering_child_past_grace_still_captures_usage(tmp_path):
+    """Acceptance (recovery amendment #3, the usage-capture half): a refused review stage must not skip
+    the usage capture that rewrites review.md from the JSON envelope — that rewrite is keyed to the
+    LEADER's own (pre-override) exit code, not the group-refusal outcome, so it must still run."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs_json(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Review lingering child, JSON usage capture"), work)
+    env["STUB_REVIEW_GROUP_CHILD_SLEEP"] = "5"; env["STAGE_GROUP_GRACE"] = "1"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+
+    rd = _run_dir(tmp_path)
+    assert (rd / "usage-review.json").exists(), \
+        "usage capture was skipped on a refused-but-approving review stage"
+    usage = json.loads((rd / "usage-review.json").read_text())
+    assert usage["stage"] == "review" and usage["input_tokens"] == 21
+
+    # the log is rewritten to EXACTLY the envelope's result text — the stray child's own output (appended
+    # after the JSON envelope line) must not survive into the artifact every downstream consumer reads.
+    assert (rd / "review.md").read_text() == "VERDICT: APPROVE"
+    tl = _timeline(tmp_path)
+    assert "REVIEWFIX" not in tl
+
+
 # ============ Issue #116: build-pipeline (implement -> review) gate-pass-count pins ============
 # The check command (CHECK_STUB, timestamped "CHECK" on the shared timeline) is the repo's full check
 # suite — the same one the deterministic check gate and server CI run. Repair choreography must not
