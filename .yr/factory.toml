@@ -13,3 +13,9 @@ bench_test_globs = ["tests/**"]
 # from origin/main's tip — un-arm by removing it, or throw the host sentinel
 # ($DEV_RUNNER_HOME/merge-killswitch) to refuse all merges without a git round-trip.
 auto_merge = true
+
+# The lint tier (issue #213): blocking, autofix-first repair after check_cmd passes. lint_cmd's rule
+# set is this repo's own ruff.toml (issue #215) — chosen green-at-adoption, tightened later by
+# ordinary convention edits, never by fixing code to fit a stricter config.
+lint_cmd = "ruff check tools/ tests/"
+lint_fix_cmd = "ruff check --fix tools/ tests/"
