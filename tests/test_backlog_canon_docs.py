@@ -12,8 +12,9 @@ ideas-backlog per-file shape: folder, naming, capture form, statuses with
 their meanings, summary, scoring keys (with the axes tie and the
 effort-letter meanings), computed Rank, the stamping rule, the typed-write
 caveat, the scoring conduct, custody-not-progress, body form, the
-append-only-mined-at-spec-time conduct, promotion pairs, the deletion rule,
-the board boundary, computed views, and census inclusion. Nothing from that
+append-only-mined-at-spec-time conduct, promotion pairs, the tombstones-are-kept
+rule (amended 2026-07-16 by Issue #229, formerly the deletion rule), the
+board boundary, computed views, and census inclusion. Nothing from that
 enumeration may be dropped.
 """
 
@@ -295,18 +296,77 @@ def test_ideas_backlog_promotion_pairs():
 
 
 def test_ideas_backlog_deletion_rule():
+    """Ruled 2026-07-16 (Issue #229): the deletion rule is replaced — a promoted
+    seed's tombstone is kept permanently, resolving the it-15 canon-vs-checker
+    contradiction on the checker's side."""
     body = _ideas_backlog_section()
-    assert re.search(r"promoting\s+iteration\s+ships", body, re.IGNORECASE), (
-        "ideas-backlog section does not tie the deletion rule to the promoting iteration shipping"
+    # The new rule's load-bearing phrases.
+    assert re.search(
+        r"promoted\s+seed.s\s+now-`?superseded`?\s+file\s+stays\s+in\s+place\s+\*{0,2}permanently\*{0,2}",
+        body,
+        re.IGNORECASE,
+    ), (
+        "ideas-backlog section does not state a promoted seed's superseded file "
+        "stays in place permanently"
     )
-    assert re.search(r"spine\s+freezes", body, re.IGNORECASE), (
-        "ideas-backlog section does not tie the deletion rule to the spine freezing"
+    assert re.search(r"supersession\s+pair.s\s+physical\s+evidence", body, re.IGNORECASE), (
+        "ideas-backlog section does not state the kept tombstone is the supersession "
+        "pair's physical evidence"
     )
-    assert re.search(r"promoted\s+seed.s\s+now-`?superseded`?\s+file\s+is\s+\*{0,2}deleted\*{0,2}", body, re.IGNORECASE), (
-        "ideas-backlog section does not state the promoted seed's superseded file is deleted"
+    assert re.search(
+        r"dangling\s+wikilink\s+always\s+means\s+a\s+defect,?\s+never\s+an\s+executed\s+lifecycle",
+        body,
+        re.IGNORECASE,
+    ), (
+        "ideas-backlog section does not state a dangling wikilink always means a "
+        "defect, never an executed lifecycle"
     )
+    # The amendment's provenance, recorded in one clause.
+    assert re.search(r"it-15", body, re.IGNORECASE), (
+        "ideas-backlog section does not name the it-15 deletion rule in the amendment's provenance"
+    )
+    assert re.search(
+        r"contradicted\s+the\s+sweep.s\s+pair\s+integrity", body, re.IGNORECASE
+    ), (
+        "ideas-backlog section does not state the it-15 deletion rule contradicted "
+        "the sweep's pair integrity"
+    )
+    assert re.search(r"it-16\s+ship-walk", body, re.IGNORECASE), (
+        "ideas-backlog section does not cite the it-16 ship-walk as where the "
+        "contradiction was first exercised and blocked"
+    )
+    assert re.search(r"it-17\s+close", body, re.IGNORECASE), (
+        "ideas-backlog section does not cite the it-17 close as where the "
+        "contradiction was demonstrated and reverted"
+    )
+    assert "2026-07-16" in body, (
+        "ideas-backlog section does not cite the 2026-07-16 ruling date"
+    )
+    # No deleted-file language survives the amendment.
+    assert not re.search(
+        r"now-`?superseded`?\s+file\s+is\s+\*{0,2}deleted\*{0,2}", body, re.IGNORECASE
+    ), (
+        "ideas-backlog section still asserts the superseded file is deleted — "
+        "the deletion rule should have been replaced"
+    )
+    # The rejected-seed dated tombstone sentence survives the amendment unchanged.
     assert re.search(r"rejected.{0,40}seed.{0,40}keeps?\s+its\s+dated\s+tombstone", body, re.IGNORECASE), (
         "ideas-backlog section does not contrast: a rejected seed still keeps its dated tombstone"
+    )
+
+
+def test_ideas_backlog_lifecycle_contrast_clause_removed():
+    """AC 2: after the amendment no case exists where a superseded doc loses its
+    tombstone, so the old Lifecycle-contrast clause ("the one case where a
+    superseded doc doesn't keep its tombstone") must be gone."""
+    body = _ideas_backlog_section()
+    assert not re.search(
+        r"one\s+case\s+where\s+a\s+`?superseded`?\s+doc\s+doesn.t\s+keep\s+its\s+tombstone",
+        body,
+        re.IGNORECASE,
+    ), (
+        "ideas-backlog section still carries the Lifecycle-contrast clause claiming "
+        "a superseded doc doesn't keep its tombstone in one case"
     )
 
 
