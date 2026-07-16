@@ -177,8 +177,14 @@ def test_ideas_backlog_scoring_keys_axes_tie_and_effort_letters():
 
 def test_ideas_backlog_computed_rank():
     body = _ideas_backlog_section()
-    assert re.search(r"rank\*{0,2}\s*=\s*value\s*(÷|/)\s*effort", body, re.IGNORECASE), (
-        "ideas-backlog section does not define Rank = value / effort"
+    assert re.search(r"rank\*{0,2}\s*=\s*value\s*(−|-)\s*size\s+discount", body, re.IGNORECASE), (
+        "ideas-backlog section does not define Rank = value - size discount"
+    )
+    assert re.search(r"`?S`?\s*0\s*·\s*`?M`?\s*0\.5\s*·\s*`?L`?\s*1", body), (
+        "ideas-backlog section does not state the discount weights S 0 / M 0.5 / L 1"
+    )
+    assert not re.search(r"rank\*{0,2}\s*=\s*value\s*(÷|/)\s*effort", body, re.IGNORECASE), (
+        "ideas-backlog section still defines the retired divisor form Rank = value / effort"
     )
     assert re.search(r"computed\s+by\s+the\s+views,?\s+never\s+stored", body, re.IGNORECASE), (
         "ideas-backlog section does not state Rank is computed by the views and never stored"
