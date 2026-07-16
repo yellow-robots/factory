@@ -539,7 +539,7 @@ STATE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.loa
 # native Issue Type name ("Task"/"Bug"/"Feature"), or "" when the issue is untyped (issueType: null).
 ITYPE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; t=json.load(sys.stdin).get("issueType") or {}; print((t.get("name","") if isinstance(t,dict) else "") or "")')"
 
-# ---- find the project item id + current Status (status is project-item-resident, RFC 0003) ----
+# ---- find the project item id + current Status/Reason (both project-item-resident, RFC 0003) ----
 ITEMS_JSON="$("$GH_BIN" project item-list "$PROJECT_NUMBER" --owner "$OWNER" --limit 500 --format json 2>/dev/null)" \
   || die "could not query project #$PROJECT_NUMBER on $OWNER (is the gh 'project' scope granted?)"
 ITEM_LINE="$(printf '%s' "$ITEMS_JSON" | python3 -c 'import sys,json
@@ -547,9 +547,10 @@ n=int(sys.argv[1]); repo=sys.argv[2]
 for it in json.load(sys.stdin).get("items",[]):
     c=it.get("content") or {}
     if c.get("number") == n and (c.get("repository") or "") == repo:
-        print((it.get("id","") or "") + "\t" + (it.get("status","") or "")); break' "$ISSUE" "$REPO")"
-ITEM_ID="${ITEM_LINE%%$'\t'*}"; ITEM_STATUS="${ITEM_LINE#*$'\t'}"
-[ "$ITEM_ID" = "$ITEM_LINE" ] && ITEM_STATUS=""   # no tab => no match
+        print((it.get("id","") or "") + "\t" + (it.get("status","") or "") + "\t" + (it.get("reason","") or "")); break' "$ISSUE" "$REPO")"
+ITEM_ID="${ITEM_LINE%%$'\t'*}"; _ITEM_REST="${ITEM_LINE#*$'\t'}"
+ITEM_STATUS="${_ITEM_REST%%$'\t'*}"; ITEM_REASON="${_ITEM_REST#*$'\t'}"
+[ "$ITEM_ID" = "$ITEM_LINE" ] && { ITEM_STATUS=""; ITEM_REASON=""; }   # no tab => no match
 
 # field setters (best-effort: a failed state write warns, never aborts the actual work)
 _set_field(){ "$GH_BIN" project item-edit --id "$ITEM_ID" --project-id "$PROJECT_ID" \
@@ -558,6 +559,8 @@ set_status(){ local o="${STATUS_OPT[$1]:-}"; [ -n "$o" ] || { log "warn: no opti
               _set_field "$STATUS_FIELD_ID" "$o" "Status=$1"; }
 set_reason(){ local o="${REASON_OPT[$1]:-}"; [ -n "$o" ] || { log "warn: no option id for Reason=$1"; return 0; }
               _set_field "$REASON_FIELD_ID" "$o" "Reason=$1"; }
+clear_reason(){ "$GH_BIN" project item-edit --id "$ITEM_ID" --project-id "$PROJECT_ID" \
+                --field-id "$REASON_FIELD_ID" --clear >/dev/null 2>&1 || log "warn: could not clear Reason on #$ISSUE"; }
 comment(){ "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$1" >/dev/null 2>&1 || true; }
 
 # ---- DoR gate (refuse before any work; never invokes the LLM on refusal; no writes) ----
@@ -737,6 +740,12 @@ fi
 
 # ---- claim (Status: Ready -> In Progress) as early as possible ----
 set_status "In Progress"
+# A stale Blocked/Needs-info Reason left over from a prior failed round must not survive a fresh claim
+# (issue #241) — cleared by VALUE at claim time, not by writer (a Projects field carries no author). Any
+# other Reason value is left untouched.
+case "$ITEM_REASON" in
+  Blocked|Needs-info) clear_reason ;;
+esac
 log "claimed #$ISSUE -> In Progress, branch $BRANCH, build=$BUILD_ID review=$REVIEW_ID"
 
 # from here, any failure flags Reason=Blocked (and comments) before exiting — failures are visible.
