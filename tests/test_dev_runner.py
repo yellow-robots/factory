@@ -7,10 +7,16 @@ CHECK_CMD is a stub script — both append to the timeline, so tests can prove t
 claim → IMPL → TEST → CHECK → (REPAIR → CHECK) → In Review, and that the check gate is deterministic.
 Field/option ids are overridden to readable strings (STATUSFIELD, InProgress, …) for legible assertions.
 """
-import json, os, re, signal, stat, subprocess, pathlib, time
+import json, os, re, signal, stat, subprocess, pathlib, sys, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "dev-runner.sh"
+
+# the shared stage-aware claude fake (classifier included) — the single legal stage-recognition
+# path; see tests/harness/contract.md for the harness contract this module documents.
+sys.path.insert(0, str(ROOT / "tests" / "harness"))
+import claude_fake  # noqa: E402
+CLAUDE_STUB = claude_fake.CLAUDE_STUB
 
 GH_STUB = '''#!/usr/bin/env bash
 case "$1" in
@@ -52,53 +58,8 @@ case "$1" in
   *)  echo "unhandled gh $*" >&2; exit 9 ;;
 esac
 '''
-# stage-aware: REVIEWER role -> reviewer (emits VERDICT); "REQUESTED CHANGES" -> review-repair;
-# TESTER role -> tester; "tests FAIL" -> check-repair; otherwise implementer.
-# Tester file-writing is controlled by separate env vars (STUB_TESTER_PROD_CHANGE /
-# STUB_TESTER_TEST_CHANGE) so the boundary guard can be exercised independently of the
-# implementer's STUB_CLAUDE_CHANGE, and the happy-path tests don't inadvertently violate
-# the boundary by writing a prod file from the tester stage.
-CLAUDE_STUB = '''#!/usr/bin/env bash
-# Capture stdin byte-exactly: `$(cat)` strips ALL trailing newlines, so append a sentinel before the
-# command substitution and strip it after — the byte-exact stdin pin (issue #121) must be able to see a
-# stray trailing newline the transport might add, which a naive `$(cat)` would silently swallow.
-stdin_content="$(cat; printf x)"; stdin_content="${stdin_content%x}"
-[ -n "${STUB_CLAUDE_ARGV:-}" ] && printf '%s\\n' "$@" > "$STUB_CLAUDE_ARGV"
-[ -n "${STUB_CLAUDE_ARGV_LOG:-}" ] && { printf '===STUB-CALL===\\n'; printf '%s\\n' "$@"; } >> "$STUB_CLAUDE_ARGV_LOG"
-[ -n "${STUB_CLAUDE_STDIN:-}" ] && printf '%s' "$stdin_content" > "$STUB_CLAUDE_STDIN"
-[ -n "${STUB_CLAUDE_STDIN_LOG:-}" ] && { printf '===STUB-STDIN-BEGIN===\\n'; printf '%s' "$stdin_content"; printf '\\n===STUB-STDIN-END===\\n'; } >> "$STUB_CLAUDE_STDIN_LOG"
-# issue #121: the task prompt travels on stdin now, never argv — so stage classification (below) must
-# match against the combined argv+stdin text, not argv alone, or every stage whose routing literal lived
-# in its task prompt (check-repair's "tests FAIL", review-repair's "REQUESTED CHANGES") misclassifies.
-args="$*"$'\\n'"$stdin_content"
-[ -n "${STUB_CLAUDE_ENV_FILE:-}" ] && printf 'CLAUDE_CONFIG_DIR=%s\\n' "${CLAUDE_CONFIG_DIR:-}" >> "$STUB_CLAUDE_ENV_FILE"
-[ -n "${STUB_CLAUDE_GITENV_FILE:-}" ] && printf 'GIT_CONFIG_GLOBAL=%s GIT_CONFIG_SYSTEM=%s\\n' "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_SYSTEM:-unset}" >> "$STUB_CLAUDE_GITENV_FILE"
-# issue #142: an optional observation hook (a no-op unless a test opts in) recording the TMPDIR this
-# stage subprocess actually inherited, and whether that directory existed AT CALL TIME — one line pair
-# appended per invocation, so a multi-stage build's whole sequence of TMPDIR values can be checked.
-[ -n "${STUB_CLAUDE_TMPDIR_FILE:-}" ] && { printf 'TMPDIR=%s\\n' "${TMPDIR:-unset}"; { [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; } && echo DIR_EXISTS=1 || echo DIR_EXISTS=0; } >> "$STUB_CLAUDE_TMPDIR_FILE"
-case "$args" in
-  *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
-                        if [ -n "${STUB_REVIEW_QUOTA:-}" ]; then echo "${STUB_REVIEW_QUOTA}" >&2; exit 1; fi
-                        if [ -n "${STUB_REVIEW_VERDICT:-}" ]; then printf '%s\\n' "$STUB_REVIEW_VERDICT"
-                        elif [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then echo "VERDICT: REQUEST_CHANGES"
-                        else echo "VERDICT: APPROVE"; fi ;;
-  *"REQUESTED CHANGES"*) echo REVIEWFIX >> "$STUB_TIMELINE"; [ -n "${STUB_REVIEWFIX_CRASH:-}" ] && exit 7; [ -z "${STUB_REVIEW_NOFIX:-}" ] && : > review_repaired ;;
-  *TESTER*)             echo TEST   >> "$STUB_TIMELINE"
-                        if [ -n "${STUB_TESTER_QUOTA:-}" ]; then echo "${STUB_TESTER_QUOTA}" >&2; exit 1; fi
-                        [ -n "${STUB_TESTER_PROD_CHANGE:-}" ] && printf 'by tester\\n' > tester_prod.txt
-                        [ -n "${STUB_TESTER_TEST_CHANGE:-}" ] && { mkdir -p tests && printf 'pass\\n' > tests/test_stub_output.py; }
-                        [ -n "${STUB_TESTER_ARTIFACT_CHANGE:-}" ] && { mkdir -p tools/__pycache__ && printf 'bytecode\\n' > tools/__pycache__/check.cpython-314.pyc; } ;;
-  *"tests FAIL"*)       echo REPAIR >> "$STUB_TIMELINE"
-                        if [ -n "${STUB_REPAIR_QUOTA:-}" ]; then echo "${STUB_REPAIR_QUOTA}" >&2; exit 1; fi
-                        [ -z "${STUB_REPAIR_NOFIX:-}" ] && : > repaired ;;
-  *)                    echo IMPL   >> "$STUB_TIMELINE"
-                        if [ -n "${STUB_IMPL_QUOTA:-}" ]; then echo "${STUB_IMPL_QUOTA}" >&2; exit 1; fi
-                        if [ -n "${STUB_IMPL_FAIL:-}" ]; then echo "${STUB_IMPL_FAIL}" >&2; exit 1; fi
-                        [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\\n' > feature.txt ;;
-esac
-exit 0
-'''
+# CLAUDE_STUB — the stage-aware claude fake — lives in tests/harness/claude_fake.py (imported
+# above); this is the ONLY legal stage-recognition path other suites may consume or derive from.
 # check gate stub (runs with cwd = worktree): pass, unless STUB_CHECK_FAIL and no 'repaired' marker yet.
 # STUB_CHECK_ENVFAIL=<code> makes it exit with that code (use 126/127) to simulate a harness that cannot
 # EXECUTE — an environment failure, not a test failure — which no 'repaired' marker can clear.
@@ -805,14 +766,6 @@ def test_no_change_blocks(tmp_path):
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode != 0 and "no changes" in r.stderr.lower()
     assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
-
-
-def test_runner_prompts_contain_stub_markers():
-    """Guard: the stage-aware claude stub classifies by the literals 'TESTER' and 'tests FAIL'.
-    If the runner's prompts drop them the stub would silently misclassify, so fail loudly here."""
-    src = RUNNER.read_text()
-    assert "TESTER" in src and "REVIEWER" in src             # tester / reviewer role markers
-    assert "tests FAIL" in src and "REQUESTED CHANGES" in src  # check-repair / review-repair markers
 
 
 def test_review_block_then_approve(tmp_path):
