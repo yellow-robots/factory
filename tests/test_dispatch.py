@@ -1,5 +1,5 @@
 """Unit tests for tools/dispatch.py — the spawn is stubbed, so no real build is ever launched."""
-import contextlib, errno, fcntl, importlib, json, os, pathlib, re, signal, subprocess, sys, threading, time
+import contextlib, errno, fcntl, importlib, json, os, pathlib, re, shlex, signal, subprocess, sys, threading, time
 import urllib.error, urllib.request
 from http.server import HTTPServer
 
@@ -528,6 +528,121 @@ def test_http_build_answers_before_the_runner_finishes_and_still_persists_its_ou
         assert elapsed < 0.8, "the HTTP response waited on the (1s-sleeping) runner"
         log_path = pathlib.Path(body["log"])
         assert _wait_for(lambda: log_path.exists() and "fire-and-forget-marker" in log_path.read_text())
+    finally:
+        srv.shutdown()
+        dispatch.DEV_RUNNER, dispatch.RUNS_DIR, dispatch.LOCK = orig_runner, orig_runs, orig_lock
+
+
+# ---- spawn env allowlist (issue #237) ----
+# The runner (and everything it spawns) must receive an ALLOWLISTED environment, not dispatch's own
+# os.environ wholesale: dispatch's bearer secret (DISPATCH_TOKEN) must never reach the runner or any
+# stage, while the runner's declared seam (process basics, the homes it reads, its named credential/
+# config seams) and the test harness's own STUB_* injection flags still flow through. These exercise the
+# REAL spawn path (unstubbed _spawn_detached), since the behavior lives in that seam, not in build_task's
+# argv construction.
+
+def _dump_env_script(path, out_file):
+    return _script(path, f'env > {shlex.quote(str(out_file))}\n')
+
+
+def _read_env_dump(path):
+    """Parse a KEY=VALUE-per-line `env` dump into a dict (values may contain '=' themselves)."""
+    lines = path.read_text().splitlines()
+    return dict(line.split("=", 1) for line in lines if "=" in line)
+
+
+def test_build_task_spawn_env_excludes_dispatch_token_and_includes_allowlisted_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISPATCH_TOKEN", "top-secret-bearer-value")
+    monkeypatch.setenv("BUILD_MODEL", "sonnet")
+    monkeypatch.setenv("DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+    monkeypatch.setenv("YR_WORKSPACE", str(tmp_path / "ws"))
+    monkeypatch.setenv("STUB_HARNESS_FLAG", "harness-value")
+    monkeypatch.setenv("SOME_UNRELATED_SECRET", "must-not-leak")
+    env_file = tmp_path / "env.txt"
+    runner = _dump_env_script(tmp_path / "runner.sh", env_file)
+    runs_dir = tmp_path / "runs"
+    r = dispatch.build_task("55", "o/r", runner=str(runner), lock=str(tmp_path / "lock"),
+                             runs_dir=str(runs_dir))
+    assert r["ok"]
+    assert _wait_for(env_file.exists)
+    time.sleep(0.2)   # let the (already-exited) writer's buffered output settle onto disk
+    got = _read_env_dump(env_file)
+
+    # the dispatch service's own secret never reaches the runner, under any name or value
+    assert "DISPATCH_TOKEN" not in got
+    assert "top-secret-bearer-value" not in env_file.read_text()
+
+    # an arbitrary var dispatch happened to have is NOT let through (allowlist, not a scrub-list of one)
+    assert "SOME_UNRELATED_SECRET" not in got
+
+    # process basics + the homes the runner reads + a named seam all flow through
+    assert "PATH" in got and got["PATH"]
+    assert got.get("DEV_RUNNER_HOME") == str(tmp_path / "drhome")
+    assert got.get("YR_WORKSPACE") == str(tmp_path / "ws")
+    assert got.get("BUILD_MODEL") == "sonnet"
+
+    # the test harness's own STUB_* injection flags still flow (additive allowlist, per the spec's ruling)
+    assert got.get("STUB_HARNESS_FLAG") == "harness-value"
+
+
+def test_build_task_spawn_env_is_not_empty_and_not_the_full_parent_environ(tmp_path, monkeypatch):
+    # guards against a no-op "allowlist" that's actually empty (breaks every runner) or actually everything
+    # (doesn't fix the leak) — the spawned env must be a proper, non-trivial subset.
+    monkeypatch.setenv("DISPATCH_TOKEN", "should-not-appear")
+    monkeypatch.setenv("SOME_OTHER_RANDOM_VAR_237", "also-should-not-appear")
+    env_file = tmp_path / "env.txt"
+    runner = _dump_env_script(tmp_path / "runner.sh", env_file)
+    r = dispatch.build_task("56", "o/r", runner=str(runner), lock=str(tmp_path / "lock"),
+                             runs_dir=str(tmp_path / "runs"))
+    assert r["ok"]
+    assert _wait_for(env_file.exists)
+    time.sleep(0.2)
+    got = _read_env_dump(env_file)
+    assert len(got) > 0                                      # not an empty environment
+    assert "PATH" in got                                     # a bare minimum a subprocess needs
+    assert "SOME_OTHER_RANDOM_VAR_237" not in got             # not a wholesale copy of the parent either
+
+
+def test_run_sweep_spawn_env_excludes_dispatch_token(tmp_path, monkeypatch):
+    # the sweep spawn is the same seam as the build spawn (both go through _spawn_detached) — the
+    # acceptance criteria call out "the runner or any stage", which includes the sweeper.
+    monkeypatch.setenv("DISPATCH_TOKEN", "sweep-secret-value")
+    monkeypatch.setenv("STUB_SWEEP_FLAG", "1")
+    env_file = tmp_path / "env.txt"
+    sweeper = _dump_env_script(tmp_path / "sweeper.sh", env_file)
+    r = dispatch.run_sweep(sweeper=str(sweeper), lock=str(tmp_path / "sweep.lock"))
+    assert r["ok"]
+    assert _wait_for(env_file.exists)
+    time.sleep(0.2)
+    got = _read_env_dump(env_file)
+    assert "DISPATCH_TOKEN" not in got
+    assert "sweep-secret-value" not in env_file.read_text()
+    assert "PATH" in got
+    assert got.get("STUB_SWEEP_FLAG") == "1"
+
+
+def test_http_build_spawn_env_excludes_the_live_dispatch_token(tmp_path):
+    # end-to-end over the real HTTP adapter (the actual deployed path): the service's own bearer secret,
+    # read fresh by do_POST from os.environ["DISPATCH_TOKEN"], must not ride into the spawned runner even
+    # though the request that triggered the spawn was itself authenticated with that exact token.
+    token = "live-dispatch-bearer-token"
+    os.environ["DISPATCH_TOKEN"] = token
+    env_file = tmp_path / "env.txt"
+    runner = _dump_env_script(tmp_path / "runner.sh", env_file)
+    runs_dir = tmp_path / "runs"
+    orig_runner, orig_runs, orig_lock = dispatch.DEV_RUNNER, dispatch.RUNS_DIR, dispatch.LOCK
+    dispatch.DEV_RUNNER, dispatch.RUNS_DIR, dispatch.LOCK = str(runner), str(runs_dir), str(tmp_path / "lock")
+    srv = HTTPServer(("127.0.0.1", 0), dispatch.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_address[1]}"
+        code, body = _post(url + "/build", {"issue": 77, "repo": "o/r"}, token=token)
+        assert code == 202 and body["dispatched"]
+        assert _wait_for(env_file.exists)
+        time.sleep(0.2)
+        content = env_file.read_text()
+        assert "DISPATCH_TOKEN" not in _read_env_dump(env_file)
+        assert token not in content
     finally:
         srv.shutdown()
         dispatch.DEV_RUNNER, dispatch.RUNS_DIR, dispatch.LOCK = orig_runner, orig_runs, orig_lock

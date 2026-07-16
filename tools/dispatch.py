@@ -37,6 +37,10 @@ never cleaned up by the runner's own teardown (tools/dev-runner.sh's cleanup_wt)
 run-failure disposal. This capture is orthogonal to the runner's own stdio: an attended `dev-runner.sh`
 invocation (an operator's terminal, not dispatch) is never routed through this file and keeps printing to
 the terminal exactly as before.
+
+Every spawn (`_spawn_detached`, build and sweep alike) hands the child an ALLOWLISTED environment (see
+`_ENV_ALLOW_KEYS`/`_ENV_ALLOW_PREFIXES`), never dispatch's own `os.environ` wholesale — so `DISPATCH_TOKEN`
+(this service's own bearer secret) can never reach the runner or any stage it spawns (issue #237).
 """
 import hmac
 import json
@@ -127,15 +131,63 @@ def _compose_build_cmd(runner_argv, repo_lock, slot_locks):
     return ["flock", "-n", "-E", str(LOCK_BUSY_EXIT), repo_lock, "bash", "-c", outer]
 
 
+# ---- the spawn env allowlist (issue #237): the runner's declared seam — process basics, the homes it
+# reads, and the credential/config seams it names (see AGENTS.md conventions + deploy/DISPATCH.md) —
+# never dispatch's own environment wholesale, so DISPATCH_TOKEN (dispatch's own bearer secret) can never
+# ride into a stage. Additive only (no scrub-list, per the spec's ruling): STUB_* passes through so the
+# dispatch test suite's PATH-injected fakes keep reading the STUB_* knobs they're driven by; YR_POOL_*
+# passes through for the pool -> credential seam (deploy/DISPATCH.md), whose pool names are operator-set
+# and unbounded, so a prefix stands in for an exhaustive key list.
+_ENV_ALLOW_KEYS = {
+    # process basics
+    "PATH", "HOME", "LANG", "TMPDIR",
+    # the homes the runner reads
+    "DEV_RUNNER_HOME", "YR_WORKSPACE",
+    # the named seams the runner declares (tools/dev-runner.sh's `VAR="${VAR:-default}"` overrides,
+    # plus the env reads in tools/epic_gate.py / tools/ledger.py) — mechanically enumerated from
+    # `grep -oE '[A-Z_][A-Z_0-9]*="\$\{[A-Z_][A-Z_0-9]*:?-' tools/dev-runner.sh` and the sibling
+    # scripts' `os.environ.get(...)` calls (issue #237 review). MERGE_SENTINEL is here because a
+    # dropped kill-switch override fails OPEN (the check is `[ -e "$MERGE_SENTINEL" ]` — an unarmed
+    # default path reads as clear), so it must never silently fall back to the default.
+    "BUILD_MODEL", "REVIEW_MODEL", "YR_SHADOW_MODEL", "YR_SHADOW_BASE_URL",
+    "GH_BIN", "CLAUDE_BIN", "GIT_BIN",
+    "EFFORT", "REQUIRE_ISSUE_TYPE",
+    "BASE_REPO", "BASE_REF", "CHECK_CMD", "MANIFEST_REF",
+    "LINT_CMD", "LINT_FIX_CMD", "LENS_CMD",
+    "FACTORY_DIR", "FACTORY_FETCH_TIMEOUT",
+    "MERGE_SENTINEL",
+    "MERGE_CI_POLL_INTERVAL", "MERGE_CI_TIMEOUT",
+    "MERGE_CI_REG_POLL_INTERVAL", "MERGE_CI_REG_GRACE",
+    "SHADOW_WINDOW", "SHADOW_NEED", "SHADOW_SCAN",
+    "QUOTA_SIGNATURES",
+    "PR_STAGE_RETRIES", "PR_STAGE_BACKOFF_BASE", "PR_STAGE_BACKOFF_FACTOR", "PR_STAGE_BACKOFF_MAX",
+    "MODELS_REGISTRY",
+    "PROJECT_NUMBER", "PROJECT_ID", "STATUS_FIELD_ID", "REASON_FIELD_ID",
+    "OPT_BACKLOG", "OPT_READY", "OPT_INPROGRESS", "OPT_INREVIEW", "OPT_DONE",
+    "OPT_NEEDSINFO", "OPT_BLOCKED",
+    "LEDGER_TRANSCRIPT_MAX_AGE_DAYS", "LEDGER_TRANSCRIPT_MAX_GB",
+    "YR_ORG", "STRANDED_AFTER_MIN", "DEBT_ROUND_EVERY",
+}
+_ENV_ALLOW_PREFIXES = ("LC_", "STUB_", "YR_POOL_")
+
+
+def _spawn_env():
+    """The allowlisted environment handed to a spawned runner/sweeper — see `_ENV_ALLOW_KEYS`/
+    `_ENV_ALLOW_PREFIXES` above for the membership and why each bucket is there."""
+    return {k: v for k, v in os.environ.items()
+            if k in _ENV_ALLOW_KEYS or k.startswith(_ENV_ALLOW_PREFIXES)}
+
+
 def _spawn_detached(cmd, log_path=None, lock_home=None):
     # cmd = [flock, -n, <lock>, ...] historically -> cmd[2] was the lock; the composed build command no
     # longer carries the lock path at that position, so a caller that knows the lock home (build_task)
     # passes it explicitly. run_sweep still calls this with no lock_home, so its cmd[2] fallback stands.
     home = pathlib.Path(lock_home) if lock_home is not None else pathlib.Path(cmd[2]).parent
     home.mkdir(parents=True, exist_ok=True)
+    env = _spawn_env()
     if log_path is None:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+                         stderr=subprocess.DEVNULL, start_new_session=True, env=env)
         return
     # opened by dispatch, handed to the child as its stdout/stderr fd: writes land on disk as the child
     # makes them, so a SIGKILL (or any hard teardown) still leaves the log's prefix intact. Closing our
@@ -144,7 +196,7 @@ def _spawn_detached(cmd, log_path=None, lock_home=None):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "ab") as log_f:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log_f,
-                         stderr=subprocess.STDOUT, start_new_session=True)
+                         stderr=subprocess.STDOUT, start_new_session=True, env=env)
 
 
 _SPAWN = _spawn_detached   # tests override this
