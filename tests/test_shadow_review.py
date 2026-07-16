@@ -31,6 +31,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_dev_runner as base  # the shared stub harness (gh/claude/check stubs + helpers)
+import claude_fake  # tests/harness/claude_fake.py — the classifier's one legal home
 
 ROOT = base.ROOT
 
@@ -41,55 +42,57 @@ ROOT = base.ROOT
 # --model and ANTHROPIC_BASE_URL per call (STUB_CALL_LOG) so a test can prove the override lands on
 # that one subprocess only, plus the usual stage-aware behaviour (REVIEWER / REQUESTED CHANGES /
 # TESTER / tests FAIL / else implement) so the rest of the pipeline reaches a PR.
+#
+# Both variants below are DERIVED from the shared classifier (tests/harness/claude_fake.CLAUDE_STUB
+# and base.CLAUDE_STUB_JSON) via .replace(): a call-log/is_shadow preamble is spliced in before the
+# case block, and the *REVIEWER* arm is located and replaced with a shadow-aware version — never
+# retyped as a fresh case block, so the classifier's one legal home stays tests/harness/claude_fake.
 # ---------------------------------------------------------------------------
-CLAUDE_STUB_SHADOW = r'''#!/usr/bin/env bash
-model=""; prev=""
+_SHADOW_CALL_LOG_PREAMBLE = r'''model=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--model" ] && model="$a"
   prev="$a"
 done
-stdin_content="$(cat)"
-args="$*"$'\n'"$stdin_content"
 is_shadow=0
 [ -n "${ANTHROPIC_BASE_URL:-}" ] && is_shadow=1
-if [ -n "${STUB_CALL_LOG:-}" ]; then
-  printf 'model=%s base_url=%s shadow=%s\n' "$model" "${ANTHROPIC_BASE_URL:-}" "$is_shadow" >> "$STUB_CALL_LOG"
-fi
-case "$args" in
-  *REVIEWER*)
+[ -n "${STUB_CALL_LOG:-}" ] && printf 'model=%s base_url=%s shadow=%s\n' "$model" "${ANTHROPIC_BASE_URL:-}" "$is_shadow" >> "$STUB_CALL_LOG"
+'''
+
+_BASE_REVIEWER_ARM = '''  *REVIEWER*)            echo REVIEW >> "$STUB_TIMELINE"
+                        if [ -n "${STUB_REVIEW_QUOTA:-}" ]; then echo "${STUB_REVIEW_QUOTA}" >&2; exit 1; fi
+                        if [ -n "${STUB_REVIEW_VERDICT:-}" ]; then printf '%s\\n' "$STUB_REVIEW_VERDICT"
+                        elif [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then echo "VERDICT: REQUEST_CHANGES"
+                        else echo "VERDICT: APPROVE"; fi ;;'''
+
+_SHADOW_REVIEWER_ARM = r'''  *REVIEWER*)
     if [ "$is_shadow" = 1 ]; then
       echo SHADOWREVIEW >> "$STUB_TIMELINE"
       if [ -n "${STUB_SHADOW_CRASH:-}" ]; then echo "shadow reviewer crashed" >&2; exit 9; fi
       printf 'Shadow reviewer notes on the diff.\nA second line of transcript.\n%s\n' "${STUB_SHADOW_VERDICT:-VERDICT: APPROVE}"
     else
       echo REVIEW >> "$STUB_TIMELINE"
-      if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then
-        echo "VERDICT: REQUEST_CHANGES"
-      else
-        echo "VERDICT: APPROVE"
-      fi
-    fi ;;
-  *"REQUESTED CHANGES"*) echo REVIEWFIX >> "$STUB_TIMELINE"; : > review_repaired ;;
-  *TESTER*)              echo TEST >> "$STUB_TIMELINE" ;;
-  *"tests FAIL"*)        echo REPAIR >> "$STUB_TIMELINE"; : > repaired ;;
-  *)                     echo IMPL >> "$STUB_TIMELINE"; [ -n "${STUB_CLAUDE_CHANGE:-}" ] && printf 'hello\n' > feature.txt ;;
-esac
-exit 0
-'''
+      if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then echo "VERDICT: REQUEST_CHANGES"
+      else echo "VERDICT: APPROVE"; fi
+    fi ;;'''
+
+CLAUDE_STUB_SHADOW = claude_fake.CLAUDE_STUB.replace(
+    'case "$args" in\n', _SHADOW_CALL_LOG_PREAMBLE + 'case "$args" in\n', 1,
+).replace(_BASE_REVIEWER_ARM, _SHADOW_REVIEWER_ARM, 1)
 
 # JSON-envelope variant of the same stub (mirrors base.CLAUDE_STUB_JSON), so a shadow round's usage
 # capture (issue #48's machinery — capture_stage_usage keys off the log file's basename) can be proven
 # to land in a distinctly-named usage-shadow-review*.json, never colliding with usage-review*.json.
-CLAUDE_STUB_SHADOW_JSON = r'''#!/usr/bin/env bash
-stdin_content="$(cat)"
-args="$*"$'\n'"$stdin_content"
-is_shadow=0
-[ -n "${ANTHROPIC_BASE_URL:-}" ] && is_shadow=1
-emit_json() {  # $1=result-text $2=input $3=output $4=cache_write $5=cache_read $6=duration_ms
-  printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":%s,"result":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}\n' "$6" "$1" "$2" "$3" "$4" "$5"
-}
-case "$args" in
-  *REVIEWER*)
+# Derived from base.CLAUDE_STUB_JSON the same way: splice the call-log preamble in, then locate and
+# replace the *REVIEWER* arm with a shadow-aware version.
+_JSON_REVIEWER_ARM = '''  *REVIEWER*)
+    echo REVIEW >> "$STUB_TIMELINE"
+    if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then
+      emit_json "VERDICT: REQUEST_CHANGES" 11 12 13 14 100
+    else
+      emit_json "VERDICT: APPROVE" 21 22 23 24 200
+    fi ;;'''
+
+_SHADOW_JSON_REVIEWER_ARM = r'''  *REVIEWER*)
     if [ "$is_shadow" = 1 ]; then
       echo SHADOWREVIEW >> "$STUB_TIMELINE"
       if [ -f review_repaired ]; then emit_json "VERDICT: APPROVE" 81 82 83 84 800
@@ -101,23 +104,11 @@ case "$args" in
       else
         emit_json "VERDICT: APPROVE" 21 22 23 24 200
       fi
-    fi ;;
-  *"REQUESTED CHANGES"*)
-    echo REVIEWFIX >> "$STUB_TIMELINE"; : > review_repaired
-    emit_json "fixed the blockers" 31 32 33 34 300 ;;
-  *TESTER*)
-    echo TEST >> "$STUB_TIMELINE"
-    emit_json "wrote tests" 41 42 43 44 400 ;;
-  *"tests FAIL"*)
-    echo REPAIR >> "$STUB_TIMELINE"; : > repaired
-    emit_json "repaired the code" 51 52 53 54 500 ;;
-  *)
-    echo IMPL >> "$STUB_TIMELINE"
-    printf 'hello\n' > feature.txt
-    emit_json "implemented the feature" 61 62 63 64 600 ;;
-esac
-exit 0
-'''
+    fi ;;'''
+
+CLAUDE_STUB_SHADOW_JSON = base.CLAUDE_STUB_JSON.replace(
+    'case "$args" in\n', _SHADOW_CALL_LOG_PREAMBLE + 'case "$args" in\n', 1,
+).replace(_JSON_REVIEWER_ARM, _SHADOW_JSON_REVIEWER_ARM, 1)
 
 
 def _shadow_stubs(binp, claude_src=CLAUDE_STUB_SHADOW):
