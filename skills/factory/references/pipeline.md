@@ -45,7 +45,7 @@ below).
 | **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`. One repair attempt on a code failure (at the registry's `check_repair` stage tier when set, else the build model); no repair on an environment failure (exit 126/127). | `Blocked` |
 | **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
 | **PR** | Commit, push `task/<id>-<slug>`, open PR, post the review. | — |
-| **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · rank gate (review >= build, one provider, both ranked, the reviewer is never weaker) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block |
+| **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · rank gate (review >= build, one provider, both ranked, the reviewer is never weaker) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block (one exception: an environmental failure after freshness remediation already force-pushed the branch — see *Shadow merge choreography* below) |
 
 **Environmental vs code failure, everywhere:** a stage or step that *cannot run* — quota exhaustion on
 an LLM stage, a broken toolchain (exit 126/127), a gh/network blip in the evaluator — is classified
@@ -206,6 +206,22 @@ concept of "a build is currently running." That makes the human side of the chor
   itself, are the only writes. The refusals above (closed/merged PR, wrong issue) still apply; so does a
   new one — no local run bundle matches the PR's base commit at all, meaning there is genuinely nothing
   to evaluate against.
+- **One environmental failure the live pipeline can't leave silently resumable (issue #240).** The armed
+  merge path's own freshness remediation (above the table) rebases the branch onto the moved tip and
+  **force-pushes it** before re-establishing green — so a LATER environmental failure anywhere past that
+  point in the same terminal step (the re-check, the re-wait on CI, the re-read of freshness, or the
+  squash-merge call itself) can no longer be silently resumed the way every other terminal-step
+  environmental failure is: the PR's remote head no longer matches any local run's recorded base commit,
+  so `--re-evaluate`'s record-less base-commit match (previous point) would refuse it as genuinely
+  unlocatable, and the environmental-hold resume never engages here either (the worktree is already torn
+  down by the time this is reached). Rather than the usual silent no-record exit, the runner posts a
+  fact-stating `YR-MERGE: BLOCKED — unrecoverable` record and flags `Reason=Blocked`, naming the rewrite
+  and instructing the human to close the PR, delete the branch, and set the issue back to `Ready` for a
+  clean rebuild — the one case where no named recovery lane can honestly accept the state. A later shadow
+  `--re-evaluate` run can still supersede this record with a `YR-MERGE-SHADOW: WOULD-MERGE` (issue #70's
+  shadow-only shape, same as any other prior record) — that supersession is a routing decision about which
+  record is newest, not a retraction of the unrecoverable finding, and does not make the original state
+  resumable.
 
 ## The shadow review seat
 

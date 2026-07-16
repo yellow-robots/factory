@@ -1454,6 +1454,12 @@ fi
 # A shadow WOULD-BLOCK is a NORMAL negative outcome, NOT Reason=Blocked. The step's OWN environmental
 # failures (a gh API blip / network drop / merge API error while evaluating, recording, or merging) are
 # classified environmental — no machinery-error record, resumable — and never reset a streak or hard-Block.
+# The one exception (issue #240): once freshness remediation has force-pushed the branch onto a new base
+# (rebase_onto_tip, below), the PR's remote head no longer matches any local run's recorded base commit —
+# a LATER environmental failure in that same remediation can no longer be silently resumed, because
+# --re-evaluate's record-less base-commit match (issue #239) would never locate this run again. That one
+# case posts a fact-stating YR-MERGE: BLOCKED — unrecoverable record instead of a silent exit, naming the
+# rewrite and routing to a manual close+rebuild — never a machinery error, never a streak reset.
 # shadow_ci / shadow_freshness / shadow_terminal_approval / shadow_rank_gate / read_auto_merge /
 # emit_and_post / compute_shadow_complete / do_squash_merge — conditions (1)-(4), auto_merge, shadow
 # completion, the record post, and the merge call — are defined earlier (hoisted right after BASE_REPO
@@ -1465,14 +1471,19 @@ PR_NUMBER="${PR_URL##*/}"                                # the current PR number
 # freshness remediation: main moved, so rebase the branch onto the tip and RE-ESTABLISH green (re-run the
 # check gate + re-wait CI) before merging — the reviewed diff is unchanged so the verdict stands. A stale
 # green SHALL NOT merge. Returns 0 (remediated, ready to merge) / 1 (block: conflict or cannot re-green) /
-# 2 (environmental). Updates PR_HEAD_SHA/BASE_SHA/MAIN_TIP to the rebased state.
+# 2 (environmental). Updates PR_HEAD_SHA/BASE_SHA/MAIN_TIP to the rebased state. Sets REBASE_REWROTE_REMOTE
+# (issue #240) the moment the force-push lands — the caller's marker for "an environmental failure past
+# this point can no longer be silently resumed" (below), since the remote head's parent is no longer the
+# base commit any local run recorded.
 rebase_onto_tip(){
+  REBASE_REWROTE_REMOTE=0
   "$GIT_BIN" -C "$WT" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
   if ! "$GIT_BIN" -C "$WT" rebase "origin/$BASE_BRANCH" >/dev/null 2>&1; then
     "$GIT_BIN" -C "$WT" rebase --abort >/dev/null 2>&1 || true
     return 1                                   # rebase conflict -> block for the human
   fi
   "$GIT_BIN" -C "$WT" push -q --force-with-lease origin "$BRANCH" 2>/dev/null || return 2
+  REBASE_REWROTE_REMOTE=1                       # the remote head is now rewritten -- see caller
   PR_HEAD_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
   BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || echo "$BASE_SHA")"
   local rc=0; run_checks || rc=$?             # re-run the deterministic check gate on the rebased tree
@@ -1499,11 +1510,25 @@ armed_block(){   # $1 = block reason (condition id), $2 = human-facing detail
   return 0
 }
 
-# The terminal decision. Returns 2 on ANY environmental failure (resumable — no record, no merge, no
-# streak reset, no Block). Sets MERGED=1 on a factory squash-merge; sets ARMED_BLOCKED=1 on an armed block.
+# The unrecoverable-rewrite record (issue #240): once rebase_onto_tip has force-pushed the branch onto a
+# new base (REBASE_REWROTE_REMOTE=1), NO later environmental failure in this run — whether inside
+# rebase_onto_tip's own re-green wait or in the squash-merge call further down — can be silently resumed:
+# --re-evaluate's record-less base-commit match (issue #239) can never locate this run again, since the
+# recorded base_sha no longer matches head^ on the PR. Posts a fact-stating BLOCKED record naming the
+# rewrite and routing to a manual rebuild. Returns 0 (record posted) or 2 (posting itself failed environmentally).
+unrecoverable_remote_rewrite_block(){
+  armed_block unrecoverable "the freshness-remediation rebase already force-pushed $PR_URL onto a new base before a later step failed environmentally — the PR's remote head no longer matches any local build's recorded base commit, so no named recovery lane (re-evaluation's base-commit match, the already-torn-down environmental-hold resume, or a plain re-Ready re-dispatch, which would collide with the existing branch) can locate or resume this run. Close this PR, delete branch $BRANCH, and set #$ISSUE back to Ready to rebuild from scratch."
+}
+
+# The terminal decision. Returns 2 on an environmental failure (resumable — no record, no merge, no
+# streak reset, no Block) EXCEPT the one case where a prior environmental failure is no longer honestly
+# resumable (issue #240: an env failure after freshness remediation already rewrote the PR's remote head,
+# whether that failure surfaces inside the remediation itself or later at the squash-merge call) — that
+# one posts a fact-stating BLOCKED record instead (unrecoverable_remote_rewrite_block, above). Sets
+# MERGED=1 on a factory squash-merge; sets ARMED_BLOCKED=1 on an armed block (the unrecoverable case included).
 terminal_step(){
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
-  SENTINEL_STATE=ok; SHADOW_DONE=false; SHADOW_PROGRESS=""; MERGE_COMMIT=""
+  SENTINEL_STATE=ok; SHADOW_DONE=false; SHADOW_PROGRESS=""; MERGE_COMMIT=""; REBASE_REWROTE_REMOTE=0
   shadow_ci || return 2                        # bounded CI wait (env gh/parse failure -> skip)
   shadow_freshness || return 2                 # decision-time fetch of main's tip (env fetch failure -> skip)
   shadow_terminal_approval; shadow_rank_gate
@@ -1548,7 +1573,13 @@ terminal_step(){
   # merging; a rebase conflict (or a failure to re-green) hard-blocks for the human — a stale green never merges.
   if [ "$FRESH_RESULT" != pass ]; then
     local rc=0; rebase_onto_tip || rc=$?
-    if [ "$rc" -eq 2 ]; then return 2; fi
+    if [ "$rc" -eq 2 ]; then
+      if [ "${REBASE_REWROTE_REMOTE:-0}" = 1 ]; then
+        unrecoverable_remote_rewrite_block || return 2
+        return 0
+      fi
+      return 2
+    fi
     if [ "$rc" -ne 0 ]; then
       armed_block freshness "main advanced and the rebase onto ${MAIN_TIP:-the tip} could not be re-established green — resolve by hand" || return 2
       return 0
@@ -1556,7 +1587,16 @@ terminal_step(){
   fi
 
   # Full armed pass: squash-merge into main, post the durable YR-MERGE: MERGED, let native close->Done finish.
-  do_squash_merge || return 2                  # merge API failure -> environmental, resumable (no reset)
+  # A merge-API failure here is normally environmental/resumable (no reset) -- UNLESS freshness remediation
+  # already force-pushed this branch onto a new base above, in which case the same unrecoverable-rewrite
+  # record applies (issue #240): the remote head no longer matches any local run's recorded base commit.
+  if ! do_squash_merge; then
+    if [ "${REBASE_REWROTE_REMOTE:-0}" = 1 ]; then
+      unrecoverable_remote_rewrite_block || return 2
+      return 0
+    fi
+    return 2
+  fi
   MERGED=1
   emit_and_post "$RUN_DIR/merge-record.md" --mode armed --decision MERGED --merge-commit "${MERGE_COMMIT:-}" \
     --shadow-complete true --shadow-progress "$SHADOW_PROGRESS" --sentinel ok \

@@ -399,6 +399,39 @@ def test_reevaluate_record_less_pr_armed_failed_condition_blocks_no_merge(tmp_pa
     assert rec["sentinel"] == "ok" and rec["shadow_complete"] is True
 
 
+# ================= issue #240: a prior unrecoverable BLOCKED record is never treated as resumable ======
+
+def test_reevaluate_prior_unrecoverable_block_never_merges_only_supersedes_as_shadow(tmp_path):
+    """Bullet 2 (issue #240): no record may claim resumability that every named lane refuses. A PR
+    carrying a prior `YR-MERGE: BLOCKED — unrecoverable` record (the fact-stating record the terminal step
+    now posts once freshness remediation has already force-pushed the branch before a later step failed
+    environmentally) must never be silently resumed into a merge by ANY named lane — including
+    --re-evaluate. Here the repo is armed, shadow-complete, sentinel-clear, and every base condition on
+    the CURRENT head would otherwise pass — yet because a prior record already exists, --re-evaluate's
+    found-a-prior-record shape (issue #70) is ALWAYS a shadow supersession, never a merge/rebase/board
+    write. The unrecoverable state can be looked at again, but no lane ever resumes it — only a rebuild
+    (closing the PR, deleting the branch, re-Ready) actually clears it."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=29, title="Re-evaluate a prior unrecoverable block")
+    run_id = run_dir.name
+    comments = [_rec_comment("BLOCKED", run_id=run_id, failed_condition="unrecoverable", mode="armed")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=209, head_ref=branch, head_oid=head_oid, comments=comments,
+                       prs=tam._complete_prs(), merge_commit_oid="f" * 40,
+                       extra={"MERGE_AUTO_MERGE": "true"})
+    r = _run_reeval(29, 209, env2)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)                    # never merges, even armed + shadow-complete + all-pass
+    assert "MERGE " not in _reeval_gh_calls(tmp_path)
+    body = _reeval_body(run_dir)
+    assert body is not None, "the prior unrecoverable record must be superseded, not silently dropped"
+    first = body.splitlines()[0]
+    assert first.startswith("YR-MERGE-SHADOW: WOULD-MERGE")   # shadow supersession only, never an armed merge
+    assert f"supersedes BLOCKED {EMDASH} unrecoverable" in first   # names the superseded unrecoverable block
+    rec = td._shadow_block(body)
+    assert rec["mode"] == "shadow" and rec["decision"] == "WOULD-MERGE"
+    assert _reeval_record_body(run_dir) is None          # the armed merge-record path never fires on this shape
+
+
 # ================= refusals: closed / merged / mismatched issue / no or bad prior record / missing =====
 # artifacts -- all fail-closed with a stderr reason and NO writes (no record, no comment, no board edit,
 # no merge call).
