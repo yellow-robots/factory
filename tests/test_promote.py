@@ -5,40 +5,16 @@ RECORDS every call (in order) to a shared log file, so the promotion-record-befo
 is a call-order assertion, not a convention taken on faith. Every refusal path (closed / off-board /
 Type=Feature) is asserted to write NOTHING — no `issue comment`, no `project item-edit`.
 """
-import json, os, stat, subprocess, pathlib
+import json, os, stat, subprocess, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "promote.sh"
 
-GH_STUB = '''#!/usr/bin/env python3
-import sys, os, json
-
-argv = sys.argv[1:]
-log = os.environ.get("STUB_CALLS_LOG")
-if log:
-    with open(log, "a") as f:
-        print(json.dumps(argv), file=f)
-
-if argv[:2] == ["repo", "view"]:
-    print(os.environ.get("STUB_REPO", "test/repo"))
-    sys.exit(0)
-
-if argv[:2] == ["api", "graphql"]:
-    print(os.environ["STUB_ISSUE_RESPONSE"])
-    sys.exit(0)
-
-if argv[:2] == ["api", "user"]:
-    print(os.environ.get("STUB_WHO", "operator"))
-    sys.exit(0)
-
-if argv[:2] == ["issue", "comment"]:
-    sys.exit(1 if os.environ.get("STUB_COMMENT_FAIL") else 0)
-
-if argv[:2] == ["project", "item-edit"]:
-    sys.exit(1 if os.environ.get("STUB_EDIT_FAIL") else 0)
-
-sys.exit(9)
-'''
+# the shared gh fake (python face, for non-runner operator tools) — lives in tests/harness/gh_fake.py;
+# see tests/harness/contract.md for the harness contract this module documents.
+sys.path.insert(0, str(ROOT / "tests" / "harness"))
+import gh_fake  # noqa: E402
+GH_STUB = gh_fake.GH_STUB_TOOLS
 
 
 def _exec(path, body):

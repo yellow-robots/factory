@@ -16,48 +16,12 @@ RUNNER = ROOT / "tools" / "dev-runner.sh"
 # path; see tests/harness/contract.md for the harness contract this module documents.
 sys.path.insert(0, str(ROOT / "tests" / "harness"))
 import claude_fake  # noqa: E402
+import gh_fake  # noqa: E402
 CLAUDE_STUB = claude_fake.CLAUDE_STUB
 
-GH_STUB = '''#!/usr/bin/env bash
-case "$1" in
-  repo) echo "test/repo" ;;
-  issue)
-    case "$2" in
-      view)    cat "$STUB_ISSUE_JSON" ;;
-      comment) printf 'COMMENT %s\\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)       echo "unhandled issue $2" >&2; exit 9 ;;
-    esac ;;
-  project)
-    case "$2" in
-      item-list) [ -n "${STUB_ITEMLIST_FAIL:-}" ] && exit 4 || cat "$STUB_ITEM_JSON" ;;
-      item-edit) printf 'EDIT %s\\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)         echo "unhandled project $2" >&2; exit 9 ;;
-    esac ;;
-  pr) case "$2" in
-        view)    if [ -n "${STUB_PRVIEW_FAIL:-}" ]; then echo "pr view failed (stub env failure)" >&2; exit 5; fi
-                 if [ -n "${STUB_ROLLUP_JSON:-}" ]; then cat "$STUB_ROLLUP_JSON"
-                 else printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1"; fi ;;
-        comment) echo PRCOMMENT >> "$STUB_TIMELINE"
-                 if [ -n "${STUB_PRCOMMENTS:-}" ]; then
-                   __p=""; __bf=""; __body=""
-                   for __a in "$@"; do
-                     [ "$__p" = "--body-file" ] && __bf="$__a"
-                     [ "$__p" = "--body" ] && __body="$__a"
-                     __p="$__a"
-                   done
-                   [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
-                   [ -n "$__body" ] && { echo "=== PRCOMMENT ==="; printf '%s\\n' "$__body"; } >> "$STUB_PRCOMMENTS"
-                 fi
-                 true ;;   # a real `gh pr comment` exits 0 on success regardless of which of
-                           # --body-file/--body was used — the two recording checks above are each
-                           # conditional (false whenever their own flag wasn't the one passed), so
-                           # without this the LAST one's false test would leak out as the stub's own
-                           # exit code and falsely fail every --body-file-only caller (e.g. emit_and_post).
-        *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
-      esac ;;
-  *)  echo "unhandled gh $*" >&2; exit 9 ;;
-esac
-'''
+# the shared gh fake (bash face) — lives in tests/harness/gh_fake.py (imported above); this is the
+# ONLY legal home for a stage-aware/subcommand-aware `gh` stub other bash-family suites may consume.
+GH_STUB = gh_fake.GH_STUB
 # CLAUDE_STUB — the stage-aware claude fake — lives in tests/harness/claude_fake.py (imported
 # above); this is the ONLY legal stage-recognition path other suites may consume or derive from.
 # check gate stub (runs with cwd = worktree): pass, unless STUB_CHECK_FAIL and no 'repaired' marker yet.
@@ -2712,65 +2676,6 @@ fi
 exec git "$@"
 '''
 
-# Extends the base GH_STUB with controllable `pr list` (find_open_pr) / `pr create` behavior. Everything
-# else (issue view/comment, project item-list/item-edit, pr comment/view) is identical to GH_STUB.
-GH_STUB_PR = '''#!/usr/bin/env bash
-case "$1" in
-  repo) echo "test/repo" ;;
-  issue)
-    case "$2" in
-      view)    cat "$STUB_ISSUE_JSON" ;;
-      comment) printf 'COMMENT %s\\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)       echo "unhandled issue $2" >&2; exit 9 ;;
-    esac ;;
-  project)
-    case "$2" in
-      item-list) [ -n "${STUB_ITEMLIST_FAIL:-}" ] && exit 4 || cat "$STUB_ITEM_JSON" ;;
-      item-edit) printf 'EDIT %s\\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)         echo "unhandled project $2" >&2; exit 9 ;;
-    esac ;;
-  pr)
-    case "$2" in
-      list)
-        if [ -n "${STUB_PR_EXISTS_FILE:-}" ] && [ -f "$STUB_PR_EXISTS_FILE" ]; then
-          printf '[{"url": "%s"}]' "$(cat "$STUB_PR_EXISTS_FILE")"
-        else
-          printf '[]'
-        fi ;;
-      create)
-        printf 'CALL\\n' >> "${STUB_PRCREATE_CALLS:-/dev/null}"
-        n=0
-        if [ -n "${STUB_PRCREATE_COUNTER:-}" ] && [ -f "$STUB_PRCREATE_COUNTER" ]; then n=$(cat "$STUB_PRCREATE_COUNTER"); fi
-        n=$((n + 1))
-        [ -n "${STUB_PRCREATE_COUNTER:-}" ] && printf '%s' "$n" > "$STUB_PRCREATE_COUNTER"
-        fail_count="${STUB_PRCREATE_FAIL_COUNT:-0}"
-        if [ "$fail_count" = "always" ] || [ "$n" -le "$fail_count" ]; then
-          if [ -n "${STUB_PRCREATE_MARKS_EXISTING:-}" ] && [ -n "${STUB_PR_EXISTS_FILE:-}" ]; then
-            echo "https://stub/pr/1" > "$STUB_PR_EXISTS_FILE"
-          fi
-          echo "${STUB_PRCREATE_ERR:-stub pr create error: timeout}" >&2
-          exit 1
-        fi
-        echo "https://stub/pr/1" ;;
-      comment) echo PRCOMMENT >> "$STUB_TIMELINE"
-               if [ -n "${STUB_PRCOMMENTS:-}" ]; then
-                 __p=""; __bf=""; __body=""
-                 for __a in "$@"; do
-                   [ "$__p" = "--body-file" ] && __bf="$__a"
-                   [ "$__p" = "--body" ] && __body="$__a"
-                   __p="$__a"
-                 done
-                 [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
-                 [ -n "$__body" ] && { echo "=== PRCOMMENT ==="; printf '%s\\n' "$__body"; } >> "$STUB_PRCOMMENTS"
-               fi ;;
-      view)    if [ -n "${STUB_ROLLUP_JSON:-}" ]; then cat "$STUB_ROLLUP_JSON"
-               else printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1"; fi ;;
-      *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
-    esac ;;
-  *)  echo "unhandled gh $*" >&2; exit 9 ;;
-esac
-'''
-
 SLEEP_STUB = '''#!/usr/bin/env bash
 [ -n "${STUB_SLEEP_LOG:-}" ] && printf '%s\\n' "$1" >> "$STUB_SLEEP_LOG"
 exit 0
@@ -2911,7 +2816,6 @@ def test_pr_stage_pr_create_reuses_existing_pr_on_retry_no_duplicate(tmp_path):
     work, _ = _make_repo(tmp_path)
     binp = tmp_path / "bin"; _stubs(binp)
     env = _pr_stage_env(tmp_path, binp, work, title="PR create reuse on retry")
-    _exec(binp / "gh", GH_STUB_PR)
     env.update({
         "STUB_PRCREATE_FAIL_COUNT": "1",
         "STUB_PRCREATE_MARKS_EXISTING": "1",
@@ -2936,7 +2840,6 @@ def test_pr_stage_pr_create_exhausts_retries_records_environmental_hold(tmp_path
     work, _ = _make_repo(tmp_path)
     binp = tmp_path / "bin"; _stubs(binp)
     env = _pr_stage_env(tmp_path, binp, work, title="PR create exhausts retries")
-    _exec(binp / "gh", GH_STUB_PR)
     env.update({
         "STUB_PRCREATE_FAIL_COUNT": "always",
         "STUB_PRCREATE_ERR": "stub: 502 Bad Gateway",

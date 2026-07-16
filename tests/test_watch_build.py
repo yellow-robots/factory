@@ -5,66 +5,16 @@ Status/Reason, then `gh pr list` for PR presence. The fake `gh` serves a canned 
 one per tick — advancing its shared counter on the `pr list` call, since that call happens exactly once
 per tick regardless of which terminal branch fires. `--interval 0` keeps polling loops instant in tests.
 """
-import json, os, stat, subprocess, pathlib
+import json, os, stat, subprocess, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "watch_build.sh"
 
-GH_STUB = '''#!/usr/bin/env python3
-import sys, os, json
-
-argv = sys.argv[1:]
-log = os.environ.get("STUB_CALLS_LOG")
-if log:
-    with open(log, "a") as f:
-        print(json.dumps(argv), file=f)
-
-states = json.loads(os.environ["STUB_STATES"])
-counter_file = os.environ["STUB_COUNTER"]
-
-def idx():
-    try:
-        return int(open(counter_file).read().strip())
-    except Exception:
-        return 0
-
-def bump():
-    i = idx()
-    if i < len(states) - 1:
-        open(counter_file, "w").write(str(i + 1))
-
-if argv[:2] == ["repo", "view"]:
-    print(os.environ.get("STUB_REPO", "test/repo"))
-    sys.exit(0)
-
-if argv[:2] == ["api", "graphql"]:
-    st = states[idx()]
-    print(json.dumps({"data": {"repository": {"issue": {
-        "state": st.get("issue_state", "OPEN"),
-        "projectItems": {"nodes": [{
-            "project": {"number": int(os.environ.get("PROJECT_NUMBER", "1"))},
-            "status": ({"name": st["status"]} if st.get("status") else None),
-            "reason": ({"name": st["reason"]} if st.get("reason") else None),
-        }]},
-    }}}}))
-    sys.exit(0)
-
-if argv[:2] == ["pr", "list"]:
-    st = states[idx()]
-    prs = []
-    if st.get("pr_open"):
-        prs = [{"number": 1, "headRefName": "task/%s-x" % os.environ["STUB_ISSUE"], "url": "https://example/pr/1"}]
-    print(json.dumps(prs))
-    bump()
-    sys.exit(0)
-
-if argv[:2] == ["issue", "view"]:
-    comments = json.loads(os.environ.get("STUB_COMMENTS", "[]"))
-    print(json.dumps({"comments": comments}))
-    sys.exit(0)
-
-sys.exit(9)
-'''
+# the shared gh fake (python face, for non-runner operator tools) — lives in tests/harness/gh_fake.py;
+# see tests/harness/contract.md for the harness contract this module documents.
+sys.path.insert(0, str(ROOT / "tests" / "harness"))
+import gh_fake  # noqa: E402
+GH_STUB = gh_fake.GH_STUB_TOOLS
 
 
 def _exec(path, body):

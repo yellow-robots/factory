@@ -35,54 +35,9 @@ EMDASH = td.EMDASH
 CR_OK, CR_FAIL, CR_INFLIGHT = td.CR_OK, td.CR_FAIL, td.CR_INFLIGHT
 SHADOW_FIELDS = td.SHADOW_FIELDS
 
-# A `gh` stub identical to test_dev_runner.GH_STUB for everything except `pr view --json
-# statusCheckRollup`: that answer is picked by a call counter (persisted to STUB_ROLLUP_CALLS, since
-# every `gh` invocation is its own subprocess and cannot keep state in a shell variable) — call #1 is
-# served STUB_ROLLUP_JSON_1, every later call STUB_ROLLUP_JSON_2, so a test can make the rollup start
-# empty and later register. STUB_ROLLUP_FAIL_AT, if set, makes the call AT that number (and after) fail
-# the way a real `gh` network/API blip would (non-zero exit, nothing on stdout).
-GH_STUB_SEQ = r'''#!/usr/bin/env bash
-case "$1" in
-  repo) echo "test/repo" ;;
-  issue)
-    case "$2" in
-      view)    cat "$STUB_ISSUE_JSON" ;;
-      comment) printf 'COMMENT %s\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)       echo "unhandled issue $2" >&2; exit 9 ;;
-    esac ;;
-  project)
-    case "$2" in
-      item-list) [ -n "${STUB_ITEMLIST_FAIL:-}" ] && exit 4 || cat "$STUB_ITEM_JSON" ;;
-      item-edit) printf 'EDIT %s\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)         echo "unhandled project $2" >&2; exit 9 ;;
-    esac ;;
-  pr)
-    case "$2" in
-      view)
-        n=0
-        [ -f "$STUB_ROLLUP_CALLS" ] && n="$(cat "$STUB_ROLLUP_CALLS")"
-        n=$((n + 1))
-        echo "$n" > "$STUB_ROLLUP_CALLS"
-        if [ -n "${STUB_ROLLUP_FAIL_AT:-}" ] && [ "$n" -ge "$STUB_ROLLUP_FAIL_AT" ]; then
-          echo "pr view failed (stub)" >&2; exit 5
-        fi
-        if [ "$n" -eq 1 ]; then cat "$STUB_ROLLUP_JSON_1"; else cat "$STUB_ROLLUP_JSON_2"; fi ;;
-      comment) echo PRCOMMENT >> "$STUB_TIMELINE"
-               if [ -n "${STUB_PRCOMMENTS:-}" ]; then
-                 __p=""; __bf=""
-                 for __a in "$@"; do [ "$__p" = "--body-file" ] && __bf="$__a"; __p="$__a"; done
-                 [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
-               fi ;;
-      *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
-    esac ;;
-  *)  echo "unhandled gh $*" >&2; exit 9 ;;
-esac
-'''
-
-
 def _stubs(binp):
     binp.mkdir(parents=True, exist_ok=True)
-    td._exec(binp / "gh", GH_STUB_SEQ)
+    td._exec(binp / "gh", td.GH_STUB)
     td._exec(binp / "claude", td.CLAUDE_STUB)
     td._exec(binp / "check.sh", td.CHECK_STUB)
 

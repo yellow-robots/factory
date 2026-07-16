@@ -47,50 +47,6 @@ ROOT = td.ROOT
 RUNNER = td.RUNNER
 EMDASH = "—"
 
-GH_STUB_REEVAL = r'''#!/usr/bin/env bash
-case "$1" in
-  pr)
-    case "$2" in
-      view)
-        if printf '%s\n' "$@" | grep -q statusCheckRollup; then
-          [ -n "${STUB_PRVIEW_FAIL:-}" ] && { echo "pr view failed (stub)" >&2; exit 5; }
-          cat "$STUB_ROLLUP_JSON"
-        elif printf '%s\n' "$@" | grep -q mergeCommit; then
-          printf '{"mergeCommit":{"oid":"%s"}}\n' "${STUB_MERGECOMMIT_OID:-}"
-        else
-          [ -n "${STUB_PRFETCH_FAIL:-}" ] && { echo "pr view failed (stub)" >&2; exit 5; }
-          cat "$STUB_REEVAL_PRJSON"
-        fi ;;
-      list)
-        [ -n "${STUB_PRLIST_FAIL:-}" ] && { echo "pr list failed (stub)" >&2; exit 5; }
-        cat "${STUB_PRS_JSON:-/dev/null}" ;;
-      comment)
-        printf 'PRCOMMENT %s\n' "$*" >> "$STUB_TIMELINE"
-        __p=""; __bf=""
-        for __a in "$@"; do [ "$__p" = "--body-file" ] && __bf="$__a"; __p="$__a"; done
-        [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
-        ;;
-      merge)
-        printf 'MERGE %s\n' "$*" >> "$STUB_GH_CALLS"
-        [ -n "${STUB_MERGE_FAIL:-}" ] && { echo "merge API failed (stub)" >&2; exit 6; }
-        echo "merged" ;;
-      *)       printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS" ;;
-    esac ;;
-  issue)
-    case "$2" in
-      comment) printf 'COMMENT %s\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)       echo "unhandled issue $2" >&2; exit 9 ;;
-    esac ;;
-  project)
-    case "$2" in
-      item-edit) printf 'EDIT %s\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)         echo "unhandled project $2" >&2; exit 9 ;;
-    esac ;;
-  *)  echo "unhandled gh $*" >&2; exit 9 ;;
-esac
-'''
-
-
 # ---- stage 1: a REAL first build, stubbed LLM/gh/check, producing a real pushed branch + run dir ----
 
 def _branch_name(work, number):
@@ -145,7 +101,7 @@ def _rec_comment(decision, *, run_id, failed_condition=None, mode="shadow", malf
 def _reeval_env(tmp_path, env1, *, pr_number, state="OPEN", head_ref, base_ref="main",
                 head_oid, comments, checks=(td.CR_OK,), prs=None, merge_commit_oid=None, extra=None):
     binp2 = tmp_path / "bin2"; binp2.mkdir(parents=True, exist_ok=True)
-    td._exec(binp2 / "gh", GH_STUB_REEVAL)
+    td._exec(binp2 / "gh", td.GH_STUB)
     env = dict(env1)
     env["GH_BIN"] = str(binp2 / "gh")
     prjson = tmp_path / "reeval_pr.json"
