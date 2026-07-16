@@ -4,21 +4,16 @@ Stubbed `gh` (no network, no `claude`): one `gh api graphql` call returns the or
 `organization.projectV2.items` shape; the script prints one TSV row per OPEN item
 (issue · repo · type · status · reason · title), skipping closed items.
 """
-import json, os, stat, subprocess, pathlib
+import json, os, stat, subprocess, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "board.sh"
 
-GH_STUB = '''#!/usr/bin/env python3
-import sys, os, json
-
-argv = sys.argv[1:]
-if argv[:2] == ["api", "graphql"]:
-    nodes = json.loads(os.environ["STUB_NODES"])
-    print(json.dumps({"data": {"organization": {"projectV2": {"items": {"nodes": nodes}}}}}))
-    sys.exit(0)
-sys.exit(9)
-'''
+# the shared gh fake (python face, for non-runner operator tools) — lives in tests/harness/gh_fake.py;
+# see tests/harness/contract.md for the harness contract this module documents.
+sys.path.insert(0, str(ROOT / "tests" / "harness"))
+import gh_fake  # noqa: E402
+GH_STUB = gh_fake.GH_STUB_TOOLS
 
 
 def _exec(path, body):

@@ -1,11 +1,12 @@
 # The harness contract
 
-`tests/harness/` is the shared home for the pytest suite's fake `claude` CLI: one stage-aware stub
-(`claude_fake.py`'s `CLAUDE_STUB`) whose classifier is the only legal way a test recognizes which stage
-of `tools/dev-runner.sh` is currently running. This doc is the authoritative surface for that contract —
-the flag families it exposes, how the runner's prompt reaches it, and how it tells one stage from
-another. It documents `STUB_*` behavior as it exists; changing what a flag does is out of scope for the
-slice that added this doc (issue #243).
+`tests/harness/` is the shared home for the pytest suite's fakes of the two external CLIs the pipeline
+shells out to: `claude` (`claude_fake.py`'s `CLAUDE_STUB`, one stage-aware stub whose classifier is the
+only legal way a test recognizes which stage of `tools/dev-runner.sh` is currently running) and `gh`
+(`gh_fake.py`'s `GH_STUB`/`GH_STUB_TOOLS`, covered in "The gh fake" below). This doc is the authoritative
+surface for both contracts — the flag families each exposes, how each CLI's input reaches it, and how it
+tells one call/stage from another. It documents `STUB_*` behavior as it exists; changing what a flag does
+is out of scope for the slices that added this doc (issues #243/#244/#245).
 
 ## Prompt transport
 
@@ -134,6 +135,59 @@ independently of the happy-path implement change.
 | `STUB_IMPL_FAIL` | print this to stderr and exit 1 (a distinct failure reason) |
 | `STUB_CLAUDE_CHANGE` | write `feature.txt` — the stand-in for "the implementer changed something" |
 
+## The gh fake
+
+`gh_fake.py` carries two constants, one per consumer category (see its module docstring for why two
+faces rather than one):
+
+- `GH_STUB` — a bash script for the `tools/dev-runner.sh`-based suites (`test_dev_runner.py` and its
+  siblings `test_autonomous_merge.py`, `test_ci_registration_grace.py`, `test_dev_runner_reevaluate.py`).
+  It is a SUPERSET stub: every scenario any one of those suites needs is a mode gated by its own env var
+  (or, for `pr view`/`pr list`, by the actual requested `--json` field / flag — never by which env var a
+  test happens to set, so the routing matches the real call shapes `tools/dev-runner.sh` issues).
+- `GH_STUB_TOOLS` — a python3 script for the three standalone operator-tool suites (`test_board.py`,
+  `test_promote.py`, `test_watch_build.py`), which drive `tools/board.sh`/`tools/promote.sh`/
+  `tools/watch_build.sh` — no `claude` stage, and a disjoint `gh` subcommand surface from the runner.
+
+Both are installed identically to how the runner's own stubs are: written to an executable file (any
+name, conventionally `gh`) and wired in via the `GH_BIN` environment variable — never PATH-shimmed, never
+a `subprocess.run` monkeypatch.
+
+### `GH_STUB` subcommand routing (bash face)
+
+| Call | Behavior |
+|---|---|
+| `repo` (any subcommand) | prints `test/repo` |
+| `issue view` | cats `$STUB_ISSUE_JSON` |
+| `issue comment` | appends `COMMENT <argv>` to `$STUB_TIMELINE` |
+| `project item-list` | exit 4 if `STUB_ITEMLIST_FAIL`, else cats `$STUB_ITEM_JSON` |
+| `project item-edit` | appends `EDIT <argv>` to `$STUB_TIMELINE` |
+| `pr view --json statusCheckRollup` | `STUB_PRVIEW_FAIL` → exit 5; else, if `STUB_ROLLUP_CALLS` is set, a call-counter sequence (call 1 → `STUB_ROLLUP_JSON_1`, later calls → `STUB_ROLLUP_JSON_2`, with `STUB_ROLLUP_FAIL_AT=<n>` failing calls ≥ n); else if `STUB_ROLLUP_JSON` is set, cats it; else records the call to `STUB_GH_CALLS` and echoes the stub PR URL |
+| `pr view --json mergeCommit` | prints `{"mergeCommit":{"oid": "$STUB_MERGECOMMIT_OID"}}` |
+| `pr view` (a `--json` field list containing `headRefName`, i.e. the `--re-evaluate` PR-state fetch) | `STUB_PRFETCH_FAIL` → exit 5; else cats `$STUB_REEVAL_PRJSON` |
+| `pr view` (anything else) | records the call to `STUB_GH_CALLS`, echoes `https://stub/pr/1` |
+| `pr create` | idempotent-retry simulator: counts attempts via `STUB_PRCREATE_COUNTER`/logs to `STUB_PRCREATE_CALLS`, fails the first `STUB_PRCREATE_FAIL_COUNT` calls (or `always`), optionally marks `STUB_PR_EXISTS_FILE` on a failing attempt (`STUB_PRCREATE_MARKS_EXISTING`) — else records to `STUB_GH_CALLS` and echoes the stub PR URL |
+| `pr list --head ...` (the idempotent-create existence check) | `[{"url": ...}]` if `STUB_PR_EXISTS_FILE` exists, else `[]` |
+| `pr list` (anything else — the shadow-completion scan) | `STUB_PRLIST_FAIL` → exit 5; else cats `${STUB_PRS_JSON:-/dev/null}` |
+| `pr merge` | records `MERGE <argv>` to `STUB_GH_CALLS`; `STUB_MERGE_FAIL` → exit 6; else prints `merged` |
+| `pr comment` | appends `PRCOMMENT` to `$STUB_TIMELINE`; if `STUB_PRCOMMENTS` is set, extracts `--body-file`/`--body`'s value from argv and appends it (delimited) to `$STUB_PRCOMMENTS` |
+| anything unhandled | `unhandled ... $*` to stderr, exit 9 |
+
+### `GH_STUB_TOOLS` subcommand routing (python face)
+
+Every call is logged as a JSON argv array to `$STUB_CALLS_LOG` (if set) before dispatch.
+
+| Call | Behavior |
+|---|---|
+| `repo view` | prints `$STUB_REPO` (default `test/repo`) |
+| `api graphql` | dispatches on which canned input is present: `STUB_NODES` (set) → the board-scan org-wide `organization.projectV2.items.nodes` shape; else `STUB_ISSUE_RESPONSE` (set) → echoed verbatim (already-built promote issue-side shape); else `STUB_STATES` (set) → the tick-indexed watch-build issue-status shape (index from `$STUB_COUNTER`, default 0) |
+| `api user` | prints `$STUB_WHO` (default `operator`) |
+| `issue comment` | exit 1 if `STUB_COMMENT_FAIL`, else 0 |
+| `project item-edit` | exit 1 if `STUB_EDIT_FAIL`, else 0 |
+| `pr list` | the watch-build tick: reads `$STUB_STATES`/`$STUB_COUNTER`, prints an open-PR array if the current tick's `pr_open` is set, then advances the counter |
+| `issue view` | prints `{"comments": $STUB_COMMENTS}` (default `[]`) |
+| anything unhandled | exit 9, no output |
+
 ## Scope note
 
 Slice 1 of the 19-harness-seam epic (issue #243) relocated the classifier and this contract doc, and
@@ -146,3 +200,9 @@ its own extra observation (e.g. `tests/test_dev_runner_roles.py`'s model-recordi
 `tests/test_dev_runner_review_bundle.py`'s bundle-snapshot stub), a variant derived from `CLAUDE_STUB` via
 `.replace()` — locating an arm to splice into, never retyping the classifier. No private clone of the
 classifier remains anywhere in the suite.
+
+Slice 3 (issue #245) did the same for `gh`: the eight independent `gh` stub definitions across
+`test_dev_runner.py` (two), `test_autonomous_merge.py`, `test_ci_registration_grace.py`,
+`test_dev_runner_reevaluate.py`, `test_board.py`, `test_promote.py`, and `test_watch_build.py` are gone,
+replaced by the two faces documented above. No private clone of a `gh` fake remains anywhere in the
+suite.

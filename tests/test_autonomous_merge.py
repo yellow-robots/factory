@@ -30,63 +30,9 @@ MERGE_SHADOW = ROOT / "tools" / "merge_shadow.py"
 CR_OK, CR_FAIL, CR_INFLIGHT = td.CR_OK, td.CR_FAIL, td.CR_INFLIGHT
 EMDASH = "—"
 
-# An extended `gh` stub: the base one (test_dev_runner.GH_STUB) has no `pr merge` / `pr list`, and its
-# `pr view` cannot tell a mergeCommit read from a statusCheckRollup read. This one disambiguates `pr view`
-# by the requested --json field, records the squash-merge call (with its flags) to STUB_GH_CALLS, and
-# serves canned prior-PR records for `pr list`. Everything else mirrors the base stub verbatim.
-GH_STUB_EXT = r'''#!/usr/bin/env bash
-case "$1" in
-  repo) echo "test/repo" ;;
-  issue)
-    case "$2" in
-      view)    cat "$STUB_ISSUE_JSON" ;;
-      comment) printf 'COMMENT %s\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)       echo "unhandled issue $2" >&2; exit 9 ;;
-    esac ;;
-  project)
-    case "$2" in
-      item-list) [ -n "${STUB_ITEMLIST_FAIL:-}" ] && exit 4 || cat "$STUB_ITEM_JSON" ;;
-      item-edit) printf 'EDIT %s\n' "$*" >> "$STUB_TIMELINE" ;;
-      *)         echo "unhandled project $2" >&2; exit 9 ;;
-    esac ;;
-  pr)
-    case "$2" in
-      view)
-        if printf '%s\n' "$@" | grep -q statusCheckRollup; then
-          if [ -n "${STUB_PRVIEW_FAIL:-}" ]; then echo "pr view failed (stub)" >&2; exit 5; fi
-          cat "$STUB_ROLLUP_JSON"
-        elif printf '%s\n' "$@" | grep -q mergeCommit; then
-          printf '{"mergeCommit":{"oid":"%s"}}\n' "${STUB_MERGECOMMIT_OID:-}"
-        else
-          echo "https://stub/pr/1"
-        fi ;;
-      create)
-        printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"
-        echo "https://stub/pr/1" ;;
-      list)
-        [ -n "${STUB_PRLIST_FAIL:-}" ] && { echo "pr list failed (stub)" >&2; exit 5; }
-        cat "${STUB_PRS_JSON:-/dev/null}" ;;
-      merge)
-        printf 'MERGE %s\n' "$*" >> "$STUB_GH_CALLS"
-        [ -n "${STUB_MERGE_FAIL:-}" ] && { echo "merge API failed (stub)" >&2; exit 6; }
-        echo "merged" ;;
-      comment)
-        echo PRCOMMENT >> "$STUB_TIMELINE"
-        if [ -n "${STUB_PRCOMMENTS:-}" ]; then
-          __p=""; __bf=""
-          for __a in "$@"; do [ "$__p" = "--body-file" ] && __bf="$__a"; __p="$__a"; done
-          [ -n "$__bf" ] && { echo "=== PRCOMMENT ==="; cat "$__bf"; } >> "$STUB_PRCOMMENTS"
-        fi ;;
-      *)  printf '%s ' "$@" >> "$STUB_GH_CALLS"; echo >> "$STUB_GH_CALLS"; echo "https://stub/pr/1" ;;
-    esac ;;
-  *)  echo "unhandled gh $*" >&2; exit 9 ;;
-esac
-'''
-
-
 def _stubs(binp):
     binp.mkdir(parents=True, exist_ok=True)
-    td._exec(binp / "gh", GH_STUB_EXT)
+    td._exec(binp / "gh", td.GH_STUB)
     td._exec(binp / "claude", td.CLAUDE_STUB)
     td._exec(binp / "check.sh", td.CHECK_STUB)
 
