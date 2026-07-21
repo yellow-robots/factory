@@ -125,12 +125,17 @@ _UNSET = object()
 def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, check_rollup,
                  run_id, timestamp, mode="shadow", decision=None, failed_condition=_UNSET,
                  merge_commit=None, auto_merge=None, shadow_complete=None, shadow_progress=None,
-                 sentinel=None):
+                 sentinel=None, ci_timeout_seconds=None, ci_timeout_source=None,
+                 ci_timeout_rejected=None):
     """The yr-merge-record/1 object — the exact fields fixed by the epic (shadow-completion computes over
     it, so it is machine-parseable, not prose). `decision`/`failed_condition` are DERIVED from the
     conditions when not supplied (shadow: WOULD-MERGE/WOULD-BLOCK); a caller with an out-of-band reason
     (an armed BLOCKED on `sentinel`, or a MERGED) passes them explicitly. `merge_commit`/`auto_merge`/
-    `shadow_*`/`sentinel` are the additive arming fields; old shadow records simply omit them."""
+    `shadow_*`/`sentinel` are the additive arming fields; old shadow records simply omit them.
+    `ci_timeout_seconds`/`ci_timeout_source` (issue #263) name the bounded CI wait's effective window
+    (seconds) and its precedence source (`env`|`manifest`|`default`); `ci_timeout_rejected` is set
+    instead of `ci_timeout_seconds` when the manifest's `merge_ci_timeout` failed to parse as a positive
+    integer — the raw rejected value, never silently replaced by the default."""
     if failed_condition is _UNSET:
         failed_condition = first_failed(results)
     if decision is None:
@@ -157,6 +162,9 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
         "head_sha": head_sha,
         "main_tip_sha": main_tip_sha or None,
         "check_rollup": check_rollup,
+        "ci_timeout_seconds": ci_timeout_seconds,
+        "ci_timeout_source": ci_timeout_source,
+        "ci_timeout_rejected": ci_timeout_rejected,
         "checks": checks,
         "review_verdict": review_verdict,
         "rounds": len(rounds),
@@ -361,6 +369,9 @@ def _cli_record(args):
         merge_commit=args.merge_commit, auto_merge=_tribool(args.auto_merge),
         shadow_complete=_tribool(args.shadow_complete), shadow_progress=(args.shadow_progress or None),
         sentinel=(args.sentinel or None), checks=checks, check_rollup=args.ci_state,
+        ci_timeout_seconds=(int(args.ci_timeout_seconds) if args.ci_timeout_seconds else None),
+        ci_timeout_source=(args.ci_timeout_source or None),
+        ci_timeout_rejected=(args.ci_timeout_rejected or None),
         run_id=args.run_id, timestamp=args.timestamp,
     )
     comment = render_comment(record, note=(args.note or None))
@@ -429,7 +440,13 @@ def main(argv=None):
     p_r.add_argument("--main-tip-sha", default="")
     p_r.add_argument("--rollup-file", default="", help="JSON check rollup (for the normalized checks list)")
     p_r.add_argument("--ci-state", default="",
-                      help="overall CI rollup state (success/failure/timed_out/empty_after_grace)")
+                      help="overall CI rollup state (success/failure/timed_out/empty_after_grace/timeout_invalid)")
+    p_r.add_argument("--ci-timeout-seconds", default="",
+                      help="the bounded CI wait's effective window in seconds (issue #263); empty when rejected")
+    p_r.add_argument("--ci-timeout-source", default="", choices=("", "env", "manifest", "default"),
+                      help="where the effective ci-timeout came from")
+    p_r.add_argument("--ci-timeout-rejected", default="",
+                      help="the raw merge_ci_timeout manifest value, when it failed to parse as a positive integer")
     p_r.add_argument("--run-id", required=True)
     p_r.add_argument("--timestamp", required=True)
     p_r.add_argument("--out", default="", help="write the comment here (default: stdout)")

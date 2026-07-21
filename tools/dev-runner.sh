@@ -130,12 +130,46 @@ BASE_REPO="${BASE_REPO:-$YR_WORKSPACE/$NAME}"   # checkout convention: $YR_WORKS
 # checkout freshness/auto_merge are read from — the branch-keyed worktree ($WT) for a live build (set
 # right after $WT below), the base checkout ($BASE_REPO) for a re-evaluation (no worktree exists there).
 MERGE_CI_POLL_INTERVAL="${MERGE_CI_POLL_INTERVAL:-15}"   # poll cadence for in-flight CI (seconds)
-MERGE_CI_TIMEOUT="${MERGE_CI_TIMEOUT:-600}"              # bounded wait for in-flight CI (seconds); timeout = fail
+# MERGE_CI_TIMEOUT (issue #263): the bounded in-flight CI wait. Left UNSET here on purpose — an eager
+# default here would make an operator's env override indistinguishable from "unset", which is exactly
+# the signal read_ci_timeout (below) needs to apply the precedence env > manifest > default correctly.
+# read_ci_timeout resolves the EFFECTIVE value into this same var before every shadow_ci call.
+CI_TIMEOUT_DEFAULT=1200
 # An empty rollup read moments after `gh pr create` can be a real repo's CI not having registered yet
 # (GitHub Actions registers check runs asynchronously) rather than zero configured checks -- so an empty
 # read gets its OWN bounded registration grace, distinct from and much shorter than the in-flight wait above.
 MERGE_CI_REG_POLL_INTERVAL="${MERGE_CI_REG_POLL_INTERVAL:-5}"  # poll cadence during the registration grace (seconds)
 MERGE_CI_REG_GRACE="${MERGE_CI_REG_GRACE:-10}"                 # bounded wait for a check to register (seconds)
+
+# (0) ci_timeout — resolves MERGE_CI_TIMEOUT at DECISION time, same precedence/read shape as (5a)
+#     read_auto_merge below: explicit env override > the manifest's `merge_ci_timeout` (read from the
+#     base ref's CURRENT tip, MERGE_GIT_DIR, never a start-of-run copy) > CI_TIMEOUT_DEFAULT. A present
+#     manifest value that does not parse as a positive integer is NOT environmental — it is a config
+#     error the caller must block on, never silently fall back from: sets CI_TIMEOUT_REJECTED to the raw
+#     value (and leaves MERGE_CI_TIMEOUT unset) instead of defaulting. Returns 2 only on an environmental
+#     git-show/parse failure (mirrors read_auto_merge).
+read_ci_timeout(){   # sets MERGE_CI_TIMEOUT + CI_TIMEOUT_SOURCE (env|manifest|default), or CI_TIMEOUT_REJECTED.
+  CI_TIMEOUT_REJECTED=""
+  if [ -n "${MERGE_CI_TIMEOUT:-}" ]; then CI_TIMEOUT_SOURCE=env; return 0; fi
+  # Called BEFORE shadow_ci (i.e. before shadow_freshness's own decision-time re-fetch runs), so this
+  # needs its OWN fresh fetch of origin/$BASE_BRANCH -- it cannot rely on the ordering read_auto_merge does.
+  local raw parsed
+  "$GIT_BIN" -C "$MERGE_GIT_DIR" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
+  raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
+  if [ -z "$raw" ]; then MERGE_CI_TIMEOUT="$CI_TIMEOUT_DEFAULT"; CI_TIMEOUT_SOURCE=default; return 0; fi
+  parsed="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
+try: d=tomllib.loads(sys.stdin.read())
+except Exception: print("__error__"); sys.exit(0)
+v=d.get("merge_ci_timeout")
+print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  [ "$parsed" = "__error__" ] && return 2
+  if [ "$parsed" = "__absent__" ]; then MERGE_CI_TIMEOUT="$CI_TIMEOUT_DEFAULT"; CI_TIMEOUT_SOURCE=default; return 0; fi
+  case "$parsed" in
+    ''|*[!0-9]*) CI_TIMEOUT_REJECTED="$parsed"; CI_TIMEOUT_SOURCE=manifest; return 0 ;;
+  esac
+  if [ "$parsed" -le 0 ]; then CI_TIMEOUT_REJECTED="$parsed"; CI_TIMEOUT_SOURCE=manifest; return 0; fi
+  MERGE_CI_TIMEOUT="$parsed"; CI_TIMEOUT_SOURCE=manifest
+}
 
 # (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); a rollup still empty
 #     after its own bounded registration grace fails fast, WITHOUT the (much longer) in-flight wait.
@@ -239,6 +273,8 @@ emit_and_post(){
     --terminal-approval "$APPROVE_RESULT" --rank-gate "$RANK_RESULT" \
     --bundle "$BUNDLE" --base-sha "$BASE_SHA" --head-sha "$PR_HEAD_SHA" --main-tip-sha "${MAIN_TIP:-}" \
     --rollup-file "$RUN_DIR/check-rollup.json" --ci-state "$CI_STATE" \
+    --ci-timeout-seconds "${MERGE_CI_TIMEOUT:-}" --ci-timeout-source "${CI_TIMEOUT_SOURCE:-}" \
+    --ci-timeout-rejected "${CI_TIMEOUT_REJECTED:-}" \
     --run-id "$(basename "$RUN_DIR")" --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --auto-merge "${AUTO_MERGE:-false}" --out "$body" "$@" || return 2
   "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$body" >/dev/null 2>&1 || return 2
@@ -415,7 +451,14 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
   REVIEW_PROVIDER="${_roles[3]:-}"; REVIEW_RANK="${_roles[4]:-}"; REVIEW_RANKED="${_roles[5]:-0}"
 
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
-  shadow_ci || reeval_refuse "environmental failure reading CI status for PR #$pr — retry later, no record posted"
+  CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""
+  read_ci_timeout || reeval_refuse "environmental failure reading merge_ci_timeout for $REPO — retry later, no record posted"
+  if [ -n "$CI_TIMEOUT_REJECTED" ]; then
+    CI_STATE=timeout_invalid                   # malformed manifest value -> fail-closed, never a silent default
+    echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
+  else
+    shadow_ci || reeval_refuse "environmental failure reading CI status for PR #$pr — retry later, no record posted"
+  fi
   shadow_freshness || reeval_refuse "environmental failure reading $BASE_BRANCH's current tip — retry later, no record posted"
   shadow_terminal_approval
   shadow_rank_gate
@@ -1598,7 +1641,14 @@ unrecoverable_remote_rewrite_block(){
 terminal_step(){
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
   SENTINEL_STATE=ok; SHADOW_DONE=false; SHADOW_PROGRESS=""; MERGE_COMMIT=""; REBASE_REWROTE_REMOTE=0
-  shadow_ci || return 2                        # bounded CI wait (env gh/parse failure -> skip)
+  CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""
+  read_ci_timeout || return 2                  # decision-time resolve of the bounded CI wait (env>manifest>default)
+  if [ -n "$CI_TIMEOUT_REJECTED" ]; then
+    CI_STATE=timeout_invalid                   # malformed manifest value -> fail-closed, never a silent default
+    echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
+  else
+    shadow_ci || return 2                      # bounded CI wait (env gh/parse failure -> skip)
+  fi
   shadow_freshness || return 2                 # decision-time fetch of main's tip (env fetch failure -> skip)
   shadow_terminal_approval; shadow_rank_gate
   read_auto_merge || return 2                  # decision-time read of auto_merge from the base ref tip
@@ -1634,7 +1684,14 @@ terminal_step(){
   [ -z "$blk" ] && { [ "$RANK_RESULT" = pass ] || blk=rank_gate; }
   [ -z "$blk" ] && { [ "$CI_RESULT" = pass ] || blk=ci_green; }
   if [ -n "$blk" ]; then
-    armed_block "$blk" "the merge condition '$blk' failed — see the YR-MERGE record on the PR" || return 2
+    local detail="the merge condition '$blk' failed — see the YR-MERGE record on the PR"
+    if [ "$blk" = ci_green ]; then
+      case "$CI_STATE" in
+        timed_out) detail="in-flight CI did not conclude within the bounded wait (${MERGE_CI_TIMEOUT}s, source: ${CI_TIMEOUT_SOURCE}) — see the YR-MERGE record on the PR" ;;
+        timeout_invalid) detail="the manifest's merge_ci_timeout ('${CI_TIMEOUT_REJECTED}') does not parse as a positive integer — merge_ci_timeout must declare a positive integer number of seconds, and a rejected value never silently falls back to the default (${CI_TIMEOUT_DEFAULT}s) — fix the manifest and re-evaluate" ;;
+      esac
+    fi
+    armed_block "$blk" "$detail" || return 2
     return 0
   fi
 
