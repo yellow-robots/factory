@@ -48,7 +48,8 @@ replacer. An ideas-folder note may close its backward pair with `crossed_to: own
 hard finding, neither key stays the standing advisory. Findings split into **hard** (exit 1) — anything reachable from a `supersedes` declaration
 (unresolved/not-yet-superseded target, missing/wrong back-pointer, an unjustified empty declaration,
 down-flow incompleteness under a doc that itself declares `supersedes`) plus any indeterminate
-(unclassifiable) case anywhere — and **advisory** (exit 0) — a `superseded_by` replacer that carries no
+(unclassifiable) case anywhere, and a superseded ideas-note whose `crossed_to` is malformed — and
+**advisory** (exit 0) — a `superseded_by` replacer that carries no
 `supersedes` key at all (a pre-grammar pairing, predating this convention), a superseded doc with no
 `superseded_by`, down-flow gaps under such a pre-grammar replacer, a spine-typed doc sitting inside a
 governed cross-cutting home instead of an iteration, and every active doc whose any `source_*` resolves

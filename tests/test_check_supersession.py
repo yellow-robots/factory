@@ -1113,3 +1113,23 @@ def test_sweep_ideas_superseded_by_present_takes_the_normal_path_over_crossed_to
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
     assert failed is False
     assert not any("idea-both" in l for l in lines if l.startswith(("advisory:", "error:")))
+
+
+def test_sweep_ideas_superseded_with_nonstring_crossed_to_is_hard(tmp_path):
+    # A YAML block list parses to a Python list — never a silent accept, never a crash.
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-listref.md",
+                _doc(type_="note", status="superseded",
+                     extra_lines=["crossed_to:", '  - "yellow-robots/factory#225"']))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any(l.startswith("error:") and "malformed crossed_to" in l and "idea-listref" in l
+               for l in lines)
+
+
+def test_sweep_ideas_superseded_with_empty_crossed_to_is_hard(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-emptyref.md",
+                _doc(type_="note", status="superseded", extra_lines=['crossed_to: ""']))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any(l.startswith("error:") and "malformed crossed_to" in l and "idea-emptyref" in l
+               for l in lines)
