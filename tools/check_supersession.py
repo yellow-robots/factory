@@ -43,10 +43,13 @@ an `ideas/` segment) runs the ideas-backlog contract instead of the spine one fo
 transitional tolerance), and `summary`/`value`/`effort` join its closed keys, so they never surface as
 alien-key observations. Pair integrity runs both directions — forward
 from a `supersedes` declaration to its target, and backward from a `superseded` doc to its `superseded_by`
-replacer. Findings split into **hard** (exit 1) — anything reachable from a `supersedes` declaration
+replacer. An ideas-folder note may close its backward pair with `crossed_to: owner/repo#N` instead of
+`superseded_by` (the task-delivered arm, ruled 2026-07-21): well-formed completes the pair, malformed is a
+hard finding, neither key stays the standing advisory. Findings split into **hard** (exit 1) — anything reachable from a `supersedes` declaration
 (unresolved/not-yet-superseded target, missing/wrong back-pointer, an unjustified empty declaration,
 down-flow incompleteness under a doc that itself declares `supersedes`) plus any indeterminate
-(unclassifiable) case anywhere — and **advisory** (exit 0) — a `superseded_by` replacer that carries no
+(unclassifiable) case anywhere, and a superseded ideas-note whose `crossed_to` is malformed — and
+**advisory** (exit 0) — a `superseded_by` replacer that carries no
 `supersedes` key at all (a pre-grammar pairing, predating this convention), a superseded doc with no
 `superseded_by`, down-flow gaps under such a pre-grammar replacer, a spine-typed doc sitting inside a
 governed cross-cutting home instead of an iteration, and every active doc whose any `source_*` resolves
@@ -93,6 +96,9 @@ IDEAS_EXTRA_CLOSED_KEYS = {"summary", "value", "effort"}
 
 _NOTHING_RE = re.compile(r"^\*\*Supersedes:\*\*\s*nothing\b(.*)$", re.IGNORECASE)
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+# The task-delivered arm's ref grammar (ideas-notes only, ruled 2026-07-21): the task Issue as
+# `owner/repo#N` — the same shape `crossed_to` carries on a spec that crossed to an epic.
+_CROSSED_TO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#\d+$")
 
 DocRecord = namedtuple("DocRecord", "path rel meta body legacy_reason")
 
@@ -484,6 +490,18 @@ def _pair_backward_findings(d, index, vault_root):
     """(hard, advisory) findings reachable backward from one already-`superseded` doc `d`."""
     back = d.meta.get("superseded_by")
     if not back:
+        # The task-delivered arm (ideas-notes only, ruled 2026-07-21): a seed whose intent shipped
+        # through a standalone task pairs via `crossed_to: owner/repo#N` — the task Issue — instead
+        # of a vault-side `superseded_by`. Well-formed completes the pair; malformed is hard (a ref
+        # that cannot be read is a defect, never an executed lifecycle); absent stays the standing
+        # advisory it always was.
+        if _is_ideas_note(d.path, vault_root):
+            crossed = d.meta.get("crossed_to")
+            if crossed is not None:
+                if isinstance(crossed, str) and _CROSSED_TO_RE.match(crossed.strip()):
+                    return [], []
+                return [f"{d.rel}: superseded with malformed crossed_to {crossed!r} — "
+                        f"expected owner/repo#N"], []
         return [], [f"{d.rel}: superseded with no superseded_by"]
     ok, detail = _resolve_target(back, vault_root)
     if not ok:

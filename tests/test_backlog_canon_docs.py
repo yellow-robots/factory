@@ -244,8 +244,13 @@ def test_ideas_backlog_custody_not_progress():
     assert re.search(r"`?open`?\s+is\s+the\s+folder.s", body, re.IGNORECASE), (
         "ideas-backlog section does not state open is the folder's custody"
     )
-    assert re.search(r"`?superseded`?\s+is\s+a\s+named\s+spec.s", body, re.IGNORECASE), (
-        "ideas-backlog section does not state superseded is a named spec's"
+    assert re.search(r"`?superseded`?\s+is\s+its\s+replacer.s", body, re.IGNORECASE), (
+        "ideas-backlog section does not state superseded is its replacer's"
+    )
+    assert re.search(r"a\s+named\s+spec,\s+a\s+consolidating\s+seed,\s+or\s+the\s+delivering\s+task",
+                     body, re.IGNORECASE), (
+        "ideas-backlog section does not name the three replacer kinds (spec / consolidating seed / "
+        "delivering task — the 2026-07-21 ruling)"
     )
     assert re.search(r"`?rejected`?\s+is\s+nobody.s", body, re.IGNORECASE), (
         "ideas-backlog section does not state rejected is nobody's"
