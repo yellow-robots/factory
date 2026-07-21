@@ -1052,3 +1052,64 @@ def test_sweep_completed_promotion_pair_missing_back_pointer_is_still_hard(tmp_p
                 _doc(type_="note", status="superseded"))
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
     assert failed is True
+
+
+# =====================================================================================
+# the task-delivered arm — superseded + crossed_to on ideas-notes (ruling 2026-07-21)
+# =====================================================================================
+# A seed delivered by a standalone task has no vault-side absorber: its backward pair is
+# `crossed_to: owner/repo#N` (the task Issue) instead of `superseded_by`. Ideas-notes only.
+
+def test_sweep_ideas_superseded_with_wellformed_crossed_to_completes_pair(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-delivered.md",
+                _doc(type_="note", status="superseded",
+                     extra_lines=['crossed_to: "yellow-robots/factory#225"']))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert not any("idea-delivered" in l for l in lines if l.startswith(("advisory:", "error:")))
+
+
+def test_sweep_ideas_superseded_with_malformed_crossed_to_is_hard(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-badref.md",
+                _doc(type_="note", status="superseded",
+                     extra_lines=['crossed_to: "PR 227"']))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any(l.startswith("error:") and "malformed crossed_to" in l and "idea-badref" in l
+               for l in lines)
+
+
+def test_sweep_ideas_superseded_with_neither_key_stays_advisory(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-bare.md",
+                _doc(type_="note", status="superseded"))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert any(l.startswith("advisory:") and "superseded with no superseded_by" in l
+               and "idea-bare" in l for l in lines)
+
+
+def test_sweep_non_ideas_superseded_with_crossed_to_still_advisory(tmp_path):
+    # The arm is per-location: outside ideas/, crossed_to records a crossing but never closes
+    # the backward pair — the advisory stands exactly as before the ruling.
+    _vault_file(tmp_path, "proj/compA/iterations/doc-crossed.md",
+                _doc(type_="task", status="superseded",
+                     extra_lines=['crossed_to: "yellow-robots/factory#225"']))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert any(l.startswith("advisory:") and "superseded with no superseded_by" in l
+               and "doc-crossed" in l for l in lines)
+
+
+def test_sweep_ideas_superseded_by_present_takes_the_normal_path_over_crossed_to(tmp_path):
+    # Both keys present: superseded_by is the pair that verifies (the arms are alternatives,
+    # and a resolving wikilink pair is the stricter check).
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea-both.md",
+                _doc(type_="note", status="superseded",
+                     superseded_by="[[proj/compA/iterations/ideas/absorber]]",
+                     extra_lines=['crossed_to: "yellow-robots/factory#225"']))
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/absorber.md",
+                _doc(type_="note", status="open",
+                     supersedes=['"[[proj/compA/iterations/ideas/idea-both]]"']))
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert not any("idea-both" in l for l in lines if l.startswith(("advisory:", "error:")))
