@@ -40,10 +40,9 @@ n8n is in Docker; it reaches the host over the **bridge gateway IP**, not `127.0
 ```bash
 # find n8n's network + gateway
 docker inspect <n8n-container> --format '{{range .NetworkSettings.Networks}}{{.Gateway}} {{end}}'
-# n8n is on caddy_caddy-net here → gateway 172.19.0.1; set DISPATCH_BIND to it, then allow ONLY that subnet:
-sudo ufw allow from 172.19.0.0/16 to any port 8770 proto tcp   # the n8n subnet only — never 172.0.0.0/8
+# the gateway printed above is DISPATCH_BIND; then allow ONLY that network's subnet:
+sudo ufw allow from <n8n-docker-subnet> to any port 8770 proto tcp   # the n8n subnet only — never 172.0.0.0/8
 ```
-(Same pattern as the Joam TG webhook: container → `172.19.0.1:<port>` + a ufw rule.)
 
 **Smoke test** (use a throwaway `Status=Ready` issue, watched):
 ```bash
