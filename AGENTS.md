@@ -115,8 +115,11 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   authoritative).
 - **Workspace & manifest:** checkout is `$YR_WORKSPACE/<name>` (default `factory/../..`); per-repo
   `.yr/factory.toml` sets `check_cmd`, `model`/`review_model`, `base_ref`, `auto_merge` (default false),
-  precedence env > manifest > default. `auto_merge` re-reads the base ref's tip at decision time, never a
-  start value. The **sentinel** kill switch (host file) blocks any merge if present — see
+  `merge_ci_timeout` (the merge evaluator's bounded in-flight CI wait in seconds; `MERGE_CI_TIMEOUT` env
+  override, default 1200), precedence env > manifest > default. `auto_merge`/`merge_ci_timeout` both
+  re-read the base ref's tip at decision time, never a start value; a `merge_ci_timeout` present but not
+  a positive integer blocks fail-closed (`timeout_invalid`) rather than silently falling back to the
+  default. The **sentinel** kill switch (host file) blocks any merge if present — see
   [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
 - **Commits** credit the authoring model, never a hardcoded name: the runner stamps the body
   (`dev-runner, <model-id>`); an attended commit ends with

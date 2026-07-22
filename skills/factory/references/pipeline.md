@@ -110,6 +110,15 @@ for a rollup that reads empty:
 - Once a rollup carries checks (whether registered immediately or after the grace), the evaluator polls
   (`MERGE_CI_POLL_INTERVAL`) until nothing is in-flight, bounded by `MERGE_CI_TIMEOUT`.
 
+`MERGE_CI_TIMEOUT` (issue #263) is resolved at DECISION time, same precedence as every other manifest
+key: an explicit `MERGE_CI_TIMEOUT` env override > the repo's `.yr/factory.toml` key `merge_ci_timeout`
+(an integer number of seconds, read from the base ref's CURRENT tip, never a start-of-run copy) > a
+built-in default of `1200`. A `merge_ci_timeout` present in the manifest but not a positive integer is
+**not** treated as absent — the evaluator never silently falls back to the default; it blocks fail-closed
+(`check_rollup: timeout_invalid`, below) with the rejected value and the governing rule (`merge_ci_timeout`
+must be a positive integer number of seconds) named in the record. The record also carries the effective
+window and its source as `ci_timeout_seconds` / `ci_timeout_source` (`env` | `manifest` | `default`).
+
 The record's `check_rollup` field carries the terminal state as one of:
 
 | `check_rollup` | Meaning |
@@ -119,6 +128,7 @@ The record's `check_rollup` field carries the terminal state as one of:
 | `timed_out` | checks were still in-flight when the bounded wait (`MERGE_CI_TIMEOUT`) expired. |
 | `empty` | a transient read, not a persisted value — zero total checks on a poll, the condition that starts the registration grace. Never itself the value recorded on a PR; superseded by whichever state the grace resolves to. |
 | `empty_after_grace` | the rollup was still zero total checks when the registration grace expired — recorded as a `ci_green` failure. |
+| `timeout_invalid` | the manifest's `merge_ci_timeout` value failed to parse as a positive integer — recorded as a `ci_green` failure, `ci_timeout_rejected` carrying the raw value; the bounded wait itself never ran. |
 
 **A repo with no server CI configured at all cannot pass `ci_green`.** Every PR on such a repo reads a
 zero-total rollup, pays the registration grace (nothing ever registers), and fails with
