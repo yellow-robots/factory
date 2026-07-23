@@ -188,12 +188,13 @@ def test_armed_reads_auto_merge_from_base_ref_tip_not_working_tree(tmp_path):
     the ref (the base checkout's working tree has drifted behind and no longer has it), and the factory
     still arms and merges. Proves the decision reads the ref, never a mutable/stale working-tree copy."""
     work, origin = td._make_repo(tmp_path)
-    (work / ".yr" / "factory.toml").write_text("auto_merge = true\n")
+    (work / ".yr" / "factory.toml").write_text('check_cmd = "true"\nauto_merge = true\n')
     td._git(["add", "-A"], work); td._git(["commit", "-q", "-m", "arm the repo"], work)
     td._git(["push", "-q", "origin", "main"], work)
     td._git(["reset", "--hard", "HEAD~1"], work)                  # working tree drifts: manifest gone locally
-    # the seed's bare (key-less) manifest is what's left locally — present (never un-onboarded), but it
-    # does NOT carry auto_merge: proves the ref tip, not the stale working tree, is what arms the merge.
+    # the seed's own manifest (check_cmd declared, required by issue #275) is what's left locally —
+    # present (never un-onboarded), but it does NOT carry auto_merge: proves the ref tip, not the stale
+    # working tree, is what arms the merge.
     assert "auto_merge" not in (work / ".yr" / "factory.toml").read_text()
     binp = tmp_path / "bin"; _stubs(binp)
     # auto_merge=None => do NOT set MERGE_AUTO_MERGE, so arming can only come from the ref manifest.

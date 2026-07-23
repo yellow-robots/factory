@@ -62,8 +62,10 @@ def _stubs_surface(binp):
 
 def _commit_manifest(work, content):
     """Commit+push a `.yr/factory.toml` with the given raw TOML content to origin/main — read by the
-    runner's `git show origin/main:...` manifest lookup for a real (non-dry-run) run."""
-    (work / ".yr" / "factory.toml").write_text(content)
+    runner's `git show origin/main:...` manifest lookup for a real (non-dry-run) run. check_cmd is
+    required (issue #275, no built-in fallback) — prepended so the test_paths/artifact_globs content
+    under test is unaffected while the manifest still satisfies the required-ness gate."""
+    (work / ".yr" / "factory.toml").write_text('check_cmd = "true"\n' + content)
     td._git(["add", "-A"], work)
     td._git(["commit", "-q", "-m", "set test surface manifest"], work)
     td._git(["push", "-q", "origin", "main"], work)
@@ -72,10 +74,12 @@ def _commit_manifest(work, content):
 def _manifest_only_repo(tmp, content, name="repo"):
     """A minimal, non-git repo dir carrying a `.yr/factory.toml` — the runner's manifest read falls back
     to the working-tree file when `git show` yields nothing (no git repo at all), the same shape
-    test_dev_runner.py's `_manifest_repo` relies on for its own dry-run/needs-info manifest fixtures."""
+    test_dev_runner.py's `_manifest_repo` relies on for its own dry-run/needs-info manifest fixtures.
+    check_cmd is prepended (required, issue #275) so a malformed test_paths/artifact_globs value is the
+    ONLY needs-info reason these fixtures produce."""
     repo = tmp / name
     (repo / ".yr").mkdir(parents=True)
-    (repo / ".yr" / "factory.toml").write_text(content)
+    (repo / ".yr" / "factory.toml").write_text('check_cmd = "true"\n' + content)
     return repo
 
 

@@ -44,7 +44,9 @@ import merge_shadow  # noqa: E402
 # ---- env builders -----------------------------------------------------------------------------------
 
 def _write_manifest(work, content):
-    (work / ".yr" / "factory.toml").write_text(content)
+    # check_cmd is required (issue #275, no built-in fallback) — prepended so every caller's own
+    # merge_ci_timeout content is unaffected while the manifest still satisfies the required-ness gate.
+    (work / ".yr" / "factory.toml").write_text('check_cmd = "true"\n' + content)
     td._git(["add", "-A"], work)
     td._git(["commit", "-q", "-m", "set merge_ci_timeout"], work)
     td._git(["push", "-q", "origin", "main"], work)

@@ -640,7 +640,14 @@ for x in v:
     out.write(x.encode() + b"\x00")
 ' "$1" 2>/dev/null
 }
-MF_TESTPATHS_NEEDS_INFO=""; MF_ARTIFACTGLOBS_NEEDS_INFO=""
+MF_TESTPATHS_NEEDS_INFO=""; MF_ARTIFACTGLOBS_NEEDS_INFO=""; MF_CHECKCMD_NEEDS_INFO=""
+# check_cmd is required (issue #275): the built-in pytest fallback is gone, so a manifest that declares
+# no check_cmd bounces here rather than silently guessing a test command. Judged on the manifest ALONE —
+# an environment CHECK_CMD is a session override of a DECLARED gate, never a substitute for registration
+# (checked further below, before the value the env can override even exists). Only fires when a manifest
+# was actually found — an entirely unonboarded repo already bounces via MF_ONBOARD_MSG above.
+[ -n "$MF_RAW" ] && [ -z "$MF_CHECK_CMD" ] \
+  && MF_CHECKCMD_NEEDS_INFO="manifest key 'check_cmd' is not declared — check_cmd is required (issue #275: the silent pytest fallback is removed, so an undeclared gate is a loud refusal, never a misdiagnosed environment hold). Declare check_cmd in .yr/factory.toml, then set Status back to Ready to resume."
 TEST_PATHS=("tests/"); TEST_PATHS_SOURCE=default
 ARTIFACT_GLOBS=("__pycache__/" "*.pyc"); ARTIFACT_GLOBS_SOURCE=default
 mapfile -d '' -t _tp < <(_read_manifest_array test_paths)
@@ -657,7 +664,12 @@ case "${_ag[0]:-ABSENT}" in
 esac
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
-CHECK_CMD="${CHECK_CMD:-${MF_CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest tests/ -q}}"
+# check_cmd (issue #275): NO built-in fallback — required-ness is judged on the manifest alone (an
+# undeclared key bounces above via MF_CHECKCMD_NEEDS_INFO, regardless of any env CHECK_CMD). Where the
+# manifest DOES declare check_cmd, today's precedence holds: an env CHECK_CMD still overrides it for the
+# session, logged here so the run's log names the effective source actually used.
+if [ -n "${CHECK_CMD:-}" ]; then CHECK_CMD_SOURCE=env; else CHECK_CMD="$MF_CHECK_CMD"; CHECK_CMD_SOURCE=manifest; fi
+[ -n "$CHECK_CMD" ] && log "check_cmd: '$CHECK_CMD' (source: $CHECK_CMD_SOURCE)"
 # lint tier (issue #213): NO built-in default — an absent key leaves LINT_CMD/LINT_FIX_CMD empty, and an
 # empty LINT_CMD is off (byte-identical to today: no probe, no output). env overrides manifest as ever.
 LINT_CMD="${LINT_CMD:-${MF_LINT_CMD:-}}"
@@ -734,6 +746,7 @@ NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$TYPE_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$TYPE_NEEDS_INFO"
 [ -n "$MF_TESTPATHS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_TESTPATHS_NEEDS_INFO"
 [ -n "$MF_ARTIFACTGLOBS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_ARTIFACTGLOBS_NEEDS_INFO"
+[ -n "$MF_CHECKCMD_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKCMD_NEEDS_INFO"
 
 # ---- slug + branch ----
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \

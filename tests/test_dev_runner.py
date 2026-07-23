@@ -155,10 +155,17 @@ def _git(args, cwd):
 
 def _seed_manifest(work):
     """Every repo this harness builds is onboarded by default (issue #125's admission wall bounces any
-    repo with NO `.yr/factory.toml` at the base ref before claim) — a bare, key-less manifest so its mere
-    PRESENCE satisfies the wall while every per-key default this suite already exercises stays untouched."""
+    repo with NO `.yr/factory.toml` at the base ref before claim) — a near-key-less manifest so its mere
+    PRESENCE satisfies the wall while every per-key default this suite already exercises stays untouched.
+    check_cmd is the one declared key: it's required (issue #275, no built-in fallback), so an
+    undeclared check_cmd would bounce every E2E run this harness drives before any stage runs — the
+    placeholder value is never actually exercised since _base_env sets CHECK_CMD in the environment,
+    which still overrides it for the session (today's precedence, unchanged)."""
     (work / ".yr").mkdir(parents=True, exist_ok=True)
-    (work / ".yr" / "factory.toml").write_text("# seeded by the test harness — no keys, per-key defaults apply\n")
+    (work / ".yr" / "factory.toml").write_text(
+        "# seeded by the test harness — check_cmd declared (required), no other keys\n"
+        'check_cmd = "true"\n'
+    )
 
 
 def _make_repo(tmp):
@@ -878,16 +885,24 @@ def test_tester_boundary_guard_checkpoint_is_after_implementer(tmp_path):
 # These exercise resolution/precedence via --dry-run, which reports the resolved config and exits
 # before any git op — so no real repo is ever touched.
 
-def _manifest_repo(tmp, *, check_cmd=None, model=None, base_ref=None, lint_cmd=None,
+NO_CHECK_CMD = object()  # sentinel (issue #275): the ONE caller that deliberately wants no check_cmd
+                          # key at all — every other caller gets the default declared value below, since
+                          # check_cmd is now required and an absent key bounces before dry-run's JSON report.
+
+
+def _manifest_repo(tmp, *, check_cmd="true", model=None, base_ref=None, lint_cmd=None,
                    lint_fix_cmd=None, lens_cmd=None, name="repo"):
     """A minimal repo dir carrying a .yr/factory.toml (no git needed — dry-run never touches git). A
     leading comment line is always present — with no keys at all, `"\\n".join([]) + "\\n"` is just a
     newline, and `$(cat ...)` strips an all-whitespace read down to an EMPTY string, which the admission
-    wall (issue #125) can't tell apart from no manifest at all."""
+    wall (issue #125) can't tell apart from no manifest at all. check_cmd defaults to a declared
+    placeholder ("true") rather than an absent key: check_cmd is required (issue #275), so callers that
+    don't care about its value still need one declared, or the run bounces before dry-run's JSON report
+    even gets emitted. Pass NO_CHECK_CMD to omit the key deliberately (the one required-ness pin)."""
     repo = tmp / name
     (repo / ".yr").mkdir(parents=True)
     lines = ["# seeded by the test harness"]
-    if check_cmd is not None:    lines.append(f'check_cmd = "{check_cmd}"')
+    if check_cmd is not NO_CHECK_CMD: lines.append(f'check_cmd = "{check_cmd}"')
     if model is not None:        lines.append(f'model = "{model}"')
     if base_ref is not None:     lines.append(f'base_ref = "{base_ref}"')
     if lint_cmd is not None:     lines.append(f'lint_cmd = "{lint_cmd}"')
@@ -915,7 +930,7 @@ def test_dryrun_resolves_base_repo_from_workspace(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     binp = tmp_path / "bin"; _stubs(binp)
     (ws / "repo" / ".yr").mkdir(parents=True)
-    (ws / "repo" / ".yr" / "factory.toml").write_text("# seeded by the test harness\n")
+    (ws / "repo" / ".yr" / "factory.toml").write_text('# seeded by the test harness\ncheck_cmd = "true"\n')
     env = _env(tmp_path, binp); env["YR_WORKSPACE"] = str(ws)
     r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
@@ -1068,9 +1083,11 @@ def test_missing_manifest_bounce_is_not_rescued_by_an_env_override(tmp_path):
 
 
 def test_sparse_manifest_present_but_key_less_proceeds_on_defaults(tmp_path):
-    """The OTHER branch of the same fork: a manifest that EXISTS (even with no keys at all) is NOT the
-    un-onboarded case — the run proceeds exactly as today, on the documented built-in defaults."""
-    work, _ = _make_repo(tmp_path)                             # _make_repo's own seeded manifest: key-less
+    """The OTHER branch of the same fork: a manifest that EXISTS (declaring only the now-required
+    check_cmd, no other keys) is NOT the un-onboarded case — the run proceeds on every OTHER key's
+    documented built-in default (issue #275 removed check_cmd's own built-in fallback, so it's the one
+    key every manifest must declare; it no longer stays key-less)."""
+    work, _ = _make_repo(tmp_path)                             # _make_repo's own seeded manifest: declares only check_cmd
     binp = tmp_path / "bin"; _stubs(binp)
     env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Sparse manifest"), work)
     env["STUB_CLAUDE_CHANGE"] = "1"
@@ -3904,7 +3921,7 @@ def test_lint_cmd_declared_in_manifest_runs_end_to_end(tmp_path):
     binp = _lint_bin(tmp_path)
     lint_marker = tmp_path / "manifest_lint_ran"
     _exec(binp / "mlint.sh", f'#!/usr/bin/env bash\n: > "{lint_marker}"\nexit 0\n')
-    (work / ".yr" / "factory.toml").write_text(f'lint_cmd = "bash {binp / "mlint.sh"}"\n')
+    (work / ".yr" / "factory.toml").write_text(f'check_cmd = "true"\nlint_cmd = "bash {binp / "mlint.sh"}"\n')
     _git(["add", "-A"], work); _git(["commit", "-q", "-m", "declare lint"], work)
     _git(["push", "-q", "origin", "main"], work)
     env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Manifest lint"), work)
