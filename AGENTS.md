@@ -119,8 +119,13 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   override, default 1200), precedence env > manifest > default. `auto_merge`/`merge_ci_timeout` both
   re-read the base ref's tip at decision time, never a start value; a `merge_ci_timeout` present but not
   a positive integer blocks fail-closed (`timeout_invalid`) rather than silently falling back to the
-  default. The **sentinel** kill switch (host file) blocks any merge if present — see
-  [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
+  default. `server_ci` (`required` | `none`, default `required`; issue #274) declares the repo's
+  server-CI stance, also re-read at decision time: `none` passes the evaluator's `ci_green` condition by
+  declaration (`not_required_declared`, never a bare empty rollup), but `server_ci = none` on an armed
+  repo (`auto_merge = true`) is a conflicting pair — no independent CI to gate an autonomous merge on —
+  and refuses fail-closed (`server_ci_none_armed`) naming both declarations; any other declared value
+  blocks fail-closed naming the rejected value. The **sentinel** kill switch (host file) blocks any merge
+  if present — see [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
 - **Commits** credit the authoring model, never a hardcoded name: the runner stamps the body
   (`dev-runner, <model-id>`); an attended commit ends with
   `Co-Authored-By: <authoring model> <noreply@anthropic.com>`.

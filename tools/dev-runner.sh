@@ -171,6 +171,33 @@ print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
   MERGE_CI_TIMEOUT="$parsed"; CI_TIMEOUT_SOURCE=manifest
 }
 
+# (0b) server_ci — resolves the repo's declared server-CI stance at DECISION time (issue #274), same
+#      read shape as read_ci_timeout above: the manifest key `server_ci` (`required`|`none`), read from
+#      the base ref's CURRENT tip (MERGE_GIT_DIR), never a start-of-run copy. An absent key or missing
+#      manifest defaults to `required` — today's behavior, unchanged. A present value that is neither
+#      `required` nor `none` is NOT environmental — it is a config error the caller must block on: sets
+#      SERVER_CI_REJECTED to the raw value (and leaves SERVER_CI unset) instead of defaulting. Called
+#      BEFORE shadow_ci (same reasoning as read_ci_timeout), so this needs its OWN fresh fetch. Returns 2
+#      only on an environmental git-show/parse failure (mirrors read_ci_timeout/read_auto_merge).
+read_server_ci(){   # sets SERVER_CI (required|none) + SERVER_CI_SOURCE (manifest|default), or SERVER_CI_REJECTED.
+  SERVER_CI_REJECTED=""
+  local raw parsed
+  "$GIT_BIN" -C "$MERGE_GIT_DIR" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
+  raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
+  if [ -z "$raw" ]; then SERVER_CI=required; SERVER_CI_SOURCE=default; return 0; fi
+  parsed="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
+try: d=tomllib.loads(sys.stdin.read())
+except Exception: print("__error__"); sys.exit(0)
+v=d.get("server_ci")
+print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  [ "$parsed" = "__error__" ] && return 2
+  if [ "$parsed" = "__absent__" ]; then SERVER_CI=required; SERVER_CI_SOURCE=default; return 0; fi
+  case "$parsed" in
+    required|none) SERVER_CI="$parsed"; SERVER_CI_SOURCE=manifest ;;
+    *) SERVER_CI_REJECTED="$parsed"; SERVER_CI_SOURCE=manifest ;;
+  esac
+}
+
 # (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); a rollup still empty
 #     after its own bounded registration grace fails fast, WITHOUT the (much longer) in-flight wait.
 #     Server CI is distinct from and additional to the in-build check_cmd.
@@ -275,6 +302,8 @@ emit_and_post(){
     --rollup-file "$RUN_DIR/check-rollup.json" --ci-state "$CI_STATE" \
     --ci-timeout-seconds "${MERGE_CI_TIMEOUT:-}" --ci-timeout-source "${CI_TIMEOUT_SOURCE:-}" \
     --ci-timeout-rejected "${CI_TIMEOUT_REJECTED:-}" \
+    --server-ci "${SERVER_CI:-}" --server-ci-source "${SERVER_CI_SOURCE:-}" \
+    --server-ci-rejected "${SERVER_CI_REJECTED:-}" \
     --run-id "$(basename "$RUN_DIR")" --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --auto-merge "${AUTO_MERGE:-false}" --out "$body" "$@" || return 2
   "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body-file "$body" >/dev/null 2>&1 || return 2
@@ -451,10 +480,17 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
   REVIEW_PROVIDER="${_roles[3]:-}"; REVIEW_RANK="${_roles[4]:-}"; REVIEW_RANKED="${_roles[5]:-0}"
 
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
-  CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""
+  CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""; SERVER_CI=""; SERVER_CI_SOURCE=""; SERVER_CI_REJECTED=""
   read_ci_timeout || reeval_refuse "environmental failure reading merge_ci_timeout for $REPO — retry later, no record posted"
+  read_server_ci || reeval_refuse "environmental failure reading server_ci for $REPO — retry later, no record posted"
   if [ -n "$CI_TIMEOUT_REJECTED" ]; then
     CI_STATE=timeout_invalid                   # malformed manifest value -> fail-closed, never a silent default
+    echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
+  elif [ -n "$SERVER_CI_REJECTED" ]; then
+    CI_STATE=server_ci_invalid                 # malformed manifest value -> fail-closed, never a silent default
+    echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
+  elif [ "$SERVER_CI" = none ]; then
+    CI_RESULT=pass; CI_STATE=not_required_declared   # declared no server CI -> pass by declaration, never a rollup poll
     echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
   else
     shadow_ci || reeval_refuse "environmental failure reading CI status for PR #$pr — retry later, no record posted"
@@ -482,6 +518,18 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
 
   if [ "$AUTO_MERGE" != true ]; then
     emit_and_post "$RUN_DIR/merge-shadow-reeval.md" --mode shadow --note "$note" \
+      || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
+    log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
+    echo "$PR_URL"
+    return
+  fi
+
+  # Armed + declared server_ci=none is a conflicting pair (issue #274): no independent CI to gate an
+  # autonomous merge on, so refuse fail-closed rather than merge on declaration alone — same wall
+  # terminal_step applies below.
+  if [ "$SERVER_CI" = none ]; then
+    emit_and_post "$RUN_DIR/merge-record-reeval.md" --mode armed --decision BLOCKED --block-reason server_ci_none_armed \
+      --sentinel ok --note "$note" \
       || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
     log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
     echo "$PR_URL"
@@ -1727,10 +1775,17 @@ unrecoverable_remote_rewrite_block(){
 terminal_step(){
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
   SENTINEL_STATE=ok; SHADOW_DONE=false; SHADOW_PROGRESS=""; MERGE_COMMIT=""; REBASE_REWROTE_REMOTE=0
-  CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""
+  CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""; SERVER_CI=""; SERVER_CI_SOURCE=""; SERVER_CI_REJECTED=""
   read_ci_timeout || return 2                  # decision-time resolve of the bounded CI wait (env>manifest>default)
+  read_server_ci || return 2                   # decision-time resolve of the server-CI stance (manifest>default)
   if [ -n "$CI_TIMEOUT_REJECTED" ]; then
     CI_STATE=timeout_invalid                   # malformed manifest value -> fail-closed, never a silent default
+    echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
+  elif [ -n "$SERVER_CI_REJECTED" ]; then
+    CI_STATE=server_ci_invalid                 # malformed manifest value -> fail-closed, never a silent default
+    echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
+  elif [ "$SERVER_CI" = none ]; then
+    CI_RESULT=pass; CI_STATE=not_required_declared   # declared no server CI -> pass by declaration, never a rollup poll
     echo '{}' >"$RUN_DIR/check-rollup.json"     # shadow_ci never ran -- emit_and_post still reads this path
   else
     shadow_ci || return 2                      # bounded CI wait (env gh/parse failure -> skip)
@@ -1744,6 +1799,15 @@ terminal_step(){
   # Not armed -> plain shadow (issue #37): the loud YR-MERGE-SHADOW record, then stop for the human.
   if [ "$AUTO_MERGE" != true ]; then
     emit_and_post "$shadow_body" --mode shadow || return 2
+    return 0
+  fi
+
+  # Armed + declared server_ci=none is a conflicting pair (issue #274): no independent CI to gate an
+  # autonomous merge on, so refuse fail-closed rather than merge on declaration alone.
+  if [ "$SERVER_CI" = none ]; then
+    armed_block server_ci_none_armed \
+      "the manifest declares both server_ci = none (no server CI) and auto_merge = true (armed) — an armed repo needs server CI as ci_green's independent gate, so these two declarations conflict and the merge refuses fail-closed; set server_ci = required (or remove the key) to keep arming, or auto_merge = false to keep the repo CI-less" \
+      || return 2
     return 0
   fi
 
@@ -1775,6 +1839,7 @@ terminal_step(){
       case "$CI_STATE" in
         timed_out) detail="in-flight CI did not conclude within the bounded wait (${MERGE_CI_TIMEOUT}s, source: ${CI_TIMEOUT_SOURCE}) — see the YR-MERGE record on the PR" ;;
         timeout_invalid) detail="the manifest's merge_ci_timeout ('${CI_TIMEOUT_REJECTED}') does not parse as a positive integer — merge_ci_timeout must declare a positive integer number of seconds, and a rejected value never silently falls back to the default (${CI_TIMEOUT_DEFAULT}s) — fix the manifest and re-evaluate" ;;
+        server_ci_invalid) detail="the manifest's server_ci ('${SERVER_CI_REJECTED}') is neither 'required' nor 'none' — server_ci must declare one of those two values, and a rejected value never silently falls back to the default (required) — fix the manifest and re-evaluate" ;;
       esac
     fi
     armed_block "$blk" "$detail" || return 2

@@ -19,7 +19,11 @@ The four base conditions, in evaluation order (their ids are the WOULD-BLOCK / B
                        reviewer is never weaker).
 For an armed repo two more gate the merge: `sentinel` (the host kill switch is not thrown) and shadow
 completion (below). A moved main (freshness fail) on an otherwise-armed pass is REMEDIATED by the runner
-(rebase + re-green), not blocked.
+(rebase + re-green), not blocked. A repo that declares `server_ci = none` (issue #274) passes `ci_green`
+by declaration (recorded as `not_required_declared`, never a bare empty rollup) — but an armed repo
+(`auto_merge = true`) declaring `server_ci = none` is a conflicting pair with no independent CI to gate
+an autonomous merge on, so it refuses fail-closed at the arming wall (`server_ci_none_armed`), separate
+from the four base conditions.
 
 Three stdlib-only subcommands (like tools/review_bundle.py / tools/registry.py):
   classify-checks  — reduce a PR statusCheckRollup to `<total> <in_flight> <failed>`, the fields the
@@ -126,7 +130,8 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
                  run_id, timestamp, mode="shadow", decision=None, failed_condition=_UNSET,
                  merge_commit=None, auto_merge=None, shadow_complete=None, shadow_progress=None,
                  sentinel=None, ci_timeout_seconds=None, ci_timeout_source=None,
-                 ci_timeout_rejected=None):
+                 ci_timeout_rejected=None, server_ci=None, server_ci_source=None,
+                 server_ci_rejected=None):
     """The yr-merge-record/1 object — the exact fields fixed by the epic (shadow-completion computes over
     it, so it is machine-parseable, not prose). `decision`/`failed_condition` are DERIVED from the
     conditions when not supplied (shadow: WOULD-MERGE/WOULD-BLOCK); a caller with an out-of-band reason
@@ -135,7 +140,11 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
     `ci_timeout_seconds`/`ci_timeout_source` (issue #263) name the bounded CI wait's effective window
     (seconds) and its precedence source (`env`|`manifest`|`default`); `ci_timeout_rejected` is set
     instead of `ci_timeout_seconds` when the manifest's `merge_ci_timeout` failed to parse as a positive
-    integer — the raw rejected value, never silently replaced by the default."""
+    integer — the raw rejected value, never silently replaced by the default. `server_ci`/
+    `server_ci_source` (issue #274) name the repo's declared server-CI stance (`required`|`none`) and its
+    precedence source (`manifest`|`default`); `server_ci_rejected` is set instead of `server_ci` when the
+    manifest's `server_ci` failed to parse as one of those two values — the raw rejected value, never
+    silently replaced by the default."""
     if failed_condition is _UNSET:
         failed_condition = first_failed(results)
     if decision is None:
@@ -165,6 +174,9 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
         "ci_timeout_seconds": ci_timeout_seconds,
         "ci_timeout_source": ci_timeout_source,
         "ci_timeout_rejected": ci_timeout_rejected,
+        "server_ci": server_ci,
+        "server_ci_source": server_ci_source,
+        "server_ci_rejected": server_ci_rejected,
         "checks": checks,
         "review_verdict": review_verdict,
         "rounds": len(rounds),
@@ -372,6 +384,9 @@ def _cli_record(args):
         ci_timeout_seconds=(int(args.ci_timeout_seconds) if args.ci_timeout_seconds else None),
         ci_timeout_source=(args.ci_timeout_source or None),
         ci_timeout_rejected=(args.ci_timeout_rejected or None),
+        server_ci=(args.server_ci or None),
+        server_ci_source=(args.server_ci_source or None),
+        server_ci_rejected=(args.server_ci_rejected or None),
         run_id=args.run_id, timestamp=args.timestamp,
     )
     comment = render_comment(record, note=(args.note or None))
@@ -440,13 +455,20 @@ def main(argv=None):
     p_r.add_argument("--main-tip-sha", default="")
     p_r.add_argument("--rollup-file", default="", help="JSON check rollup (for the normalized checks list)")
     p_r.add_argument("--ci-state", default="",
-                      help="overall CI rollup state (success/failure/timed_out/empty_after_grace/timeout_invalid)")
+                      help="overall CI rollup state (success/failure/timed_out/empty_after_grace/"
+                           "timeout_invalid/not_required_declared/server_ci_invalid)")
     p_r.add_argument("--ci-timeout-seconds", default="",
                       help="the bounded CI wait's effective window in seconds (issue #263); empty when rejected")
     p_r.add_argument("--ci-timeout-source", default="", choices=("", "env", "manifest", "default"),
                       help="where the effective ci-timeout came from")
     p_r.add_argument("--ci-timeout-rejected", default="",
                       help="the raw merge_ci_timeout manifest value, when it failed to parse as a positive integer")
+    p_r.add_argument("--server-ci", default="", choices=("", "required", "none"),
+                      help="the repo's declared server-CI stance (issue #274); empty when rejected")
+    p_r.add_argument("--server-ci-source", default="", choices=("", "manifest", "default"),
+                      help="where the effective server_ci came from")
+    p_r.add_argument("--server-ci-rejected", default="",
+                      help="the raw server_ci manifest value, when it failed to parse as required|none")
     p_r.add_argument("--run-id", required=True)
     p_r.add_argument("--timestamp", required=True)
     p_r.add_argument("--out", default="", help="write the comment here (default: stdout)")
