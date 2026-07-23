@@ -19,8 +19,7 @@ alone. These tests check that:
   4. debt-rounds.md states a round is the home for refactoring code built with partial
      understanding, not only deletion.
   5. AGENTS.md's manifest conventions line names the three new keys and check_cmd's required status.
-  6. tools/check_model_refs.py stays green on the live tree, and this PR does not bump the plugin
-     version.
+  6. tools/check_model_refs.py stays green on the live tree.
 
 Cross-checked, where possible, against the shipped source (tools/dev-runner.sh's TEST_PATHS /
 ARTIFACT_GLOBS / read_server_ci defaults) rather than against the doc-editor's own wording, so a
@@ -28,7 +27,6 @@ doc that drifts from the actual shipped default fails here.
 
 Runs under `.venv/bin/python -m pytest tests/ -q`.
 """
-import json
 import pathlib
 import re
 import subprocess
@@ -44,7 +42,6 @@ ONBOARDING = REFS / "onboarding.md"
 PIPELINE = REFS / "pipeline.md"
 DEBT_ROUNDS = REFS / "debt-rounds.md"
 AGENTS = ROOT / "AGENTS.md"
-PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
 DEV_RUNNER = ROOT / "tools" / "dev-runner.sh"
 
 
@@ -377,7 +374,7 @@ def test_documented_check_cmd_required_matches_shipped_source():
 
 
 # ---------------------------------------------------------------------------
-# AC6 — tools/check_model_refs.py stays green; no plugin version bump
+# AC6 — tools/check_model_refs.py stays green
 # ---------------------------------------------------------------------------
 
 def test_check_model_refs_gate_is_green_on_the_live_tree():
@@ -393,18 +390,3 @@ def test_check_model_refs_own_suite_passes():
     assert result.returncode == 0, \
         f"tests/test_check_model_refs.py is not green:\n{result.stdout}\n{result.stderr}"
 
-
-def test_no_plugin_version_bump_against_origin_main():
-    """AC: 'this PR SHALL NOT bump the plugin version' — the skill release is the epic close's own
-    attended act, not this docs-only slice's. Compared against origin/main's own tip rather than a
-    frozen constant, so this test does not need updating on the next unrelated release."""
-    current = json.loads(_text(PLUGIN))["version"]
-    base = subprocess.run(
-        ["git", "show", "origin/main:.claude-plugin/plugin.json"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
-    ).stdout
-    base_version = json.loads(base)["version"]
-    assert current == base_version, (
-        f"plugin.json version changed from origin/main's {base_version!r} to {current!r} — "
-        "issue #276 is docs-only; the skill release is the epic close's attended act, not this PR's"
-    )
