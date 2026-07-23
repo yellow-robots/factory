@@ -566,6 +566,47 @@ print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null)" \
   mapfile -t _mf <<<"$_mf_out"
   MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"; MF_LINT_CMD="${_mf[4]:-}"; MF_LINT_FIX_CMD="${_mf[5]:-}"; MF_LENS_CMD="${_mf[6]:-}"; MF_AUTO_MERGE="${_mf[7]:-false}"
 fi
+# test_paths / artifact_globs (issue #273): the tester's legal write surface + the boundary guard's
+# build-artifact forgiveness set. Both are TOML arrays of strings — read through a DEDICATED NUL-delimited
+# channel (mapfile -d '' straight off the python3 pipe, never staged through a bash variable in between,
+# since bash strings can't carry an embedded NUL byte) rather than folded into the scalar mapfile above.
+# Emits ABSENT (key missing -> caller applies the default), OK + elements (declared, valid), or
+# MALFORMED:<repr> (declared but rejected -> caller fails closed via NEEDS_INFO, never a silent
+# fallback). A manifest that fails to parse at all yields no stdout, so the caller's mapfile is empty and
+# ${arr[0]:-ABSENT} reads as ABSENT — same silent-default precedent as the scalar keys above.
+_read_manifest_array(){   # $1 = key name
+  printf '%s' "$MF_RAW" | python3 -c '
+import sys, tomllib
+key = sys.argv[1]
+d = tomllib.loads(sys.stdin.read())
+out = sys.stdout.buffer
+if key not in d:
+    out.write(b"ABSENT\x00"); sys.exit(0)
+v = d[key]
+def bad(x):
+    return not isinstance(x, str) or x == "" or x.startswith("/") or any(part == ".." for part in x.split("/"))
+if not isinstance(v, list) or not v or any(bad(x) for x in v):
+    out.write(("MALFORMED:" + repr(v)).encode() + b"\x00"); sys.exit(0)
+out.write(b"OK\x00")
+for x in v:
+    out.write(x.encode() + b"\x00")
+' "$1" 2>/dev/null
+}
+MF_TESTPATHS_NEEDS_INFO=""; MF_ARTIFACTGLOBS_NEEDS_INFO=""
+TEST_PATHS=("tests/"); TEST_PATHS_SOURCE=default
+ARTIFACT_GLOBS=("__pycache__/" "*.pyc"); ARTIFACT_GLOBS_SOURCE=default
+mapfile -d '' -t _tp < <(_read_manifest_array test_paths)
+case "${_tp[0]:-ABSENT}" in
+  ABSENT) : ;;   # keep the default
+  MALFORMED:*) MF_TESTPATHS_NEEDS_INFO="manifest key 'test_paths' is rejected (value: ${_tp[0]#MALFORMED:}) — test_paths must be a non-empty TOML array of non-empty, repo-relative path-prefix strings: none absolute (no leading '/'), none containing a '..' path component, no empty-string element" ;;
+  OK) TEST_PATHS=("${_tp[@]:1}"); TEST_PATHS_SOURCE=manifest ;;
+esac
+mapfile -d '' -t _ag < <(_read_manifest_array artifact_globs)
+case "${_ag[0]:-ABSENT}" in
+  ABSENT) : ;;   # keep the default
+  MALFORMED:*) MF_ARTIFACTGLOBS_NEEDS_INFO="manifest key 'artifact_globs' is rejected (value: ${_ag[0]#MALFORMED:}) — artifact_globs must be a non-empty TOML array of non-empty glob-pattern strings: none absolute (no leading '/'), none containing a '..' path component, no empty-string element" ;;
+  OK) ARTIFACT_GLOBS=("${_ag[@]:1}"); ARTIFACT_GLOBS_SOURCE=manifest ;;
+esac
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
 CHECK_CMD="${CHECK_CMD:-${MF_CHECK_CMD:-$BASE_REPO/.venv/bin/python -m pytest tests/ -q}}"
@@ -643,6 +684,8 @@ NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$(printf '%s' "$AC" | tr -dc '[:alnum:]')" ] \
   || NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }the acceptance-criteria section is empty"
 [ -n "$TYPE_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$TYPE_NEEDS_INFO"
+[ -n "$MF_TESTPATHS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_TESTPATHS_NEEDS_INFO"
+[ -n "$MF_ARTIFACTGLOBS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_ARTIFACTGLOBS_NEEDS_INFO"
 
 # ---- slug + branch ----
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
@@ -1154,8 +1197,17 @@ else
 fi
 
 # tester — independent cold process: tests derived from the CRITERIA, not the implementation (builder≠verifier).
-# Writes to tests/** only — enforced below by diffing against IMPL_TREE (block-and-raise, no silent revert).
+# Writes to the declared TEST_PATHS surface only — enforced below by diffing against IMPL_TREE
+# (block-and-raise, no silent revert). TEST_PATHS/its source are resolved once, at manifest-parse time
+# (test_paths / artifact_globs above), so both the charter and the guard below judge the SAME surface.
+TEST_SURFACE_STR="$(IFS=', '; echo "${TEST_PATHS[*]}")"
+# Default wording stays byte-identical to today's (pinned by test_dev_runner.py's byte-exact charter
+# test, which reconstructs this literal line straight from the shell source, unexpanded) — the
+# declared-surface wording only takes over once a manifest actually declares test_paths.
 TEST_SYS="You are the TESTER stage, independent of the implementer. Write automated tests that verify the ACCEPTANCE CRITERIA below, against the code now in this repository. Derive the tests from the CRITERIA (the spec), NOT from the implementation's internals. Do NOT modify production code — only add or extend tests. Your only legal write surface is the repo-root tests/ directory — not a same-named directory nested inside a deliverable (e.g. qa/tests/), which is outside it."
+if [ "$TEST_PATHS_SOURCE" = manifest ]; then
+  TEST_SYS="You are the TESTER stage, independent of the implementer. Write automated tests that verify the ACCEPTANCE CRITERIA below, against the code now in this repository. Derive the tests from the CRITERIA (the spec), NOT from the implementation's internals. Do NOT modify production code — only add or extend tests. Your only legal write surface is this repo's manifest-declared test_paths: $TEST_SURFACE_STR — not a same-named directory nested inside a deliverable (e.g. qa/tests/), which is outside it."
+fi
 if stage_done 02-test; then
   log "resume: skipping test (02-test.done present)"
 else
@@ -1167,22 +1219,56 @@ else
     fail_blocked "$(stage_fail_msg "tester" "$RUN_DIR/test.log" "$TEST_RC" "$LAST_STAGE_GROUP_REFUSED")"
   fi
 
-  # tester boundary guard: block if tester modified anything outside tests/**
+  # tester boundary guard: block if tester modified anything outside the declared TEST_PATHS surface.
   # Block-and-raise (no auto-revert) so the violation is visible for diagnosis.
   "$GIT_BIN" -C "$WT" add -A
   TESTER_TREE="$("$GIT_BIN" -C "$WT" write-tree)"
   TESTER_DIFF="$("$GIT_BIN" -C "$WT" diff-tree --no-commit-id -r --name-only "$IMPL_TREE" "$TESTER_TREE")"
-  # Build artifacts (e.g. __pycache__/*.pyc from running the gate) are compiled FROM source the tester
-  # cannot change, so they can't smuggle an implementation change past builder≠verifier — exclude them
-  # from the offender set rather than false-block on them (a repo's .gitignore is the first line; this
-  # is the backstop so a repo that forgets it still builds).
-  TESTER_OFFENDERS="$(printf '%s' "$TESTER_DIFF" | grep -v '^tests/' | grep -vE '(^|/)__pycache__/|\.pyc$' || true)"
+  # Judge each changed path against EVERY declared TEST_PATHS prefix (directory-anchored: a declared
+  # prefix is normalized to a trailing slash before comparison, so `src/tests` never matches
+  # `src/tests_extra/...`), minus the declared ARTIFACT_GLOBS forgiveness set — build artifacts (e.g.
+  # __pycache__/*.pyc from running the gate) are compiled FROM source the tester cannot change, so they
+  # can't smuggle an implementation change past builder≠verifier. The default globs
+  # (__pycache__/ + *.pyc) reproduce today's `(^|/)__pycache__/|\.pyc$` judgment exactly, root-level
+  # __pycache__/ included — a directory-glob (trailing `/`) matches any path COMPONENT anywhere in the
+  # path, so it isn't tripped by the anchored-regex gap a naive `**/__pycache__/**` fnmatch would hit.
+  TESTER_OFFENDERS="$(printf '%s' "$TESTER_DIFF" | python3 -c '
+import sys, fnmatch
+diff = sys.stdin.read().splitlines()
+test_paths = sys.argv[1].split("\n") if sys.argv[1] else []
+artifact_globs = sys.argv[2].split("\n") if sys.argv[2] else []
+
+def in_surface(path):
+    for p in test_paths:
+        prefix = p if p.endswith("/") else p + "/"
+        if path.startswith(prefix):
+            return True
+    return False
+
+def is_artifact(path):
+    parts = path.split("/")
+    base, dirs = parts[-1], parts[:-1]
+    for g in artifact_globs:
+        if g.endswith("/"):
+            if any(fnmatch.fnmatchcase(d, g[:-1]) for d in dirs):
+                return True
+        elif "/" in g:
+            if fnmatch.fnmatchcase(path, g):
+                return True
+        elif fnmatch.fnmatchcase(base, g):
+            return True
+    return False
+
+for path in diff:
+    if path and not in_surface(path) and not is_artifact(path):
+        print(path)
+' "$(printf '%s\n' "${TEST_PATHS[@]}")" "$(printf '%s\n' "${ARTIFACT_GLOBS[@]}")" 2>/dev/null || true)"
   if [ -n "$TESTER_OFFENDERS" ]; then
     OFFENDER_LIST="$(printf '%s\n' "$TESTER_OFFENDERS" | tr '\n' ' ' | sed 's/ *$//')"
     # preserve WHAT the tester changed (not just which files) before fail_blocked cleans the
     # worktree — so a blocked run stays diagnosable ("understand the why").
     "$GIT_BIN" -C "$WT" diff "$IMPL_TREE" "$TESTER_TREE" > "$RUN_DIR/boundary-violation.diff" 2>/dev/null || true
-    fail_blocked "tester modified files outside tests/: $OFFENDER_LIST (diff: $RUN_DIR/boundary-violation.diff)"
+    fail_blocked "tester modified files outside the declared test surface ($TEST_PATHS_SOURCE: $TEST_SURFACE_STR): $OFFENDER_LIST (diff: $RUN_DIR/boundary-violation.diff)"
   fi
   mark_stage 02-test
 fi
