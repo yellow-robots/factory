@@ -128,8 +128,13 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   #275): required-ness is judged on the manifest alone — an undeclared key refuses the work before
   claim/worktree/any stage, naming the missing key, regardless of any environment `CHECK_CMD`; where the
   manifest DOES declare `check_cmd`, an environment `CHECK_CMD` still overrides it for the session, and
-  the run's log names the effective source. The **sentinel** kill switch (host file) blocks any merge
-  if present — see [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
+  the run's log names the effective source. `test_paths` / `artifact_globs` (issue #273) let a repo
+  declare its own shape rather than conform to the factory's own: `test_paths` (default `["tests/"]`) is
+  the tester stage's only legal write surface, `artifact_globs` (default `["__pycache__/", "*.pyc"]`) is
+  the boundary guard's build-artifact forgiveness set — both TOML arrays of non-empty, repo-relative
+  strings (none absolute, none containing `..`), a rejected declared value blocking fail-closed naming
+  the value, never silently falling back to the default. The **sentinel** kill switch (host file) blocks
+  any merge if present — see [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
 - **Commits** credit the authoring model, never a hardcoded name: the runner stamps the body
   (`dev-runner, <model-id>`); an attended commit ends with
   `Co-Authored-By: <authoring model> <noreply@anthropic.com>`.
