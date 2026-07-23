@@ -80,24 +80,52 @@ document:
 The tester's boundary guard is structural, not a prompt: the runner diffs the tester's stage against
 the implementer's tree and computes offenders as that diff **minus** two exclusions —
 
-1. anything under the repo-root `tests/` directory (path prefix `tests/`) — the tester's actual
-   working tree, and
-2. build artifacts anywhere in the tree — `__pycache__/` directories and `*.pyc` files, compiled from
-   source the tester cannot itself change, so they can't smuggle an implementation change past
-   builder ≠ verifier. A repo's `.gitignore` is the first line of defense against these showing up at
-   all; the exclusion is the backstop for a repo that forgets it.
+1. anything under the repo's **declared test surface** (the manifest key `test_paths`, issue #273) — a
+   TOML array of repo-relative path prefixes, each directory-anchored (normalized to a trailing slash
+   before matching, so a declared `src/tests` never matches `src/tests_extra/`); absent, this defaults
+   to `["tests/"]` — today's repo-root `tests/` behavior, byte-identical, and
+2. build artifacts anywhere in the tree — the manifest key `artifact_globs` (issue #273), a TOML array
+   of glob patterns; absent, this defaults to `["__pycache__/", "*.pyc"]` — `__pycache__/` directories
+   and `*.pyc` files anywhere in the path, compiled from source the tester cannot itself change, so they
+   can't smuggle an implementation change past builder ≠ verifier. A repo's `.gitignore` is the first
+   line of defense against these showing up at all; the exclusion is the backstop for a repo that
+   forgets it.
+
+Both keys, when declared, must be a non-empty array of non-empty strings: none absolute (no leading
+`/`), none containing a `..` path component — a declared value that fails this bounces the task
+`Needs-info` naming the rejected value, never a silent fallback to the default. The charter text the
+tester stage receives names the actual resolved surface and its source (`manifest` or `default`) — so a
+repo that declares `test_paths` sees its own tree named in the prompt, not the factory's `tests/`.
 
 Anything left after both exclusions is a boundary violation: the stage fails `Blocked`, the offending
-diff is saved (`boundary-violation.diff`) for diagnosis, and there is no auto-revert. This is why a
-legitimate tester file under, say, `app/src/` or `app/tests/` (not the repo-root `tests/` tree) blocks
-— the guard has no concept of "looks like a test file," only "is it under `tests/`."
+diff is saved (`boundary-violation.diff`) for diagnosis, and there is no auto-revert. The block message
+also names the resolved surface and its source, so a legitimate tester file under, say, `app/src/` (not
+declared as part of `test_paths`) is diagnosable from the message alone — the guard has no concept of
+"looks like a test file," only "is it under the declared surface."
 
 ## The ci_green model
 
 The merge evaluator's `ci_green` condition requires **every configured check on the PR head to
 conclude successfully** — not a check_cmd run in the worktree (that's the separate, in-build check
-gate), but the PR's actual GitHub check rollup. The evaluation is a bounded poll with one extra wrinkle
-for a rollup that reads empty:
+gate), but the PR's actual GitHub check rollup. That default requirement is itself a **declared
+stance**: the manifest key `server_ci` (`required` | `none`, issue #274), read at DECISION time from
+the base ref's current tip, same precedence shape as `MERGE_CI_TIMEOUT` env override > the manifest
+key `merge_ci_timeout` below (absent or missing manifest defaults to `required` — today's
+rollup-polling behavior, unchanged). `server_ci = none`
+declares that the repo genuinely has no server CI wired up: `ci_green` then passes **by declaration**
+(`check_rollup: not_required_declared`) rather than polling an empty rollup through the registration
+grace below. A declared value that is neither `required` nor `none` is a config error, not an
+environmental one: it blocks fail-closed (`check_rollup: server_ci_invalid`) naming the rejected value,
+same shape as an invalid `merge_ci_timeout`. `server_ci = none` paired with an **armed** repo
+(`auto_merge = true`) is a conflicting declaration — an armed merge needs `ci_green` as its own
+independent gate, so this pair refuses fail-closed at the arming wall (`server_ci_none_armed`, named in
+the block record) rather than merging on declaration alone; `server_ci = required` (or removing the key)
+or `auto_merge = false` resolves the conflict. The record carries the resolved stance and its source as
+`server_ci` / `server_ci_source` (`manifest` | `default`), and the rejected raw value (when invalid) as
+`server_ci_rejected`.
+
+Absent a `none` declaration, the evaluation is a bounded poll with one extra wrinkle for a rollup that
+reads empty:
 
 - A rollup that reads **zero total checks** is ambiguous the moment a PR opens — a real repo's checks
   can still be registering (GitHub Actions registers check runs asynchronously) rather than the repo
@@ -129,14 +157,17 @@ The record's `check_rollup` field carries the terminal state as one of:
 | `empty` | a transient read, not a persisted value — zero total checks on a poll, the condition that starts the registration grace. Never itself the value recorded on a PR; superseded by whichever state the grace resolves to. |
 | `empty_after_grace` | the rollup was still zero total checks when the registration grace expired — recorded as a `ci_green` failure. |
 | `timeout_invalid` | the manifest's `merge_ci_timeout` value failed to parse as a positive integer — recorded as a `ci_green` failure, `ci_timeout_rejected` carrying the raw value; the bounded wait itself never ran. |
+| `not_required_declared` | the manifest declares `server_ci = none` — `ci_green` passes by declaration; the rollup poll never ran. |
+| `server_ci_invalid` | the manifest's `server_ci` value is neither `required` nor `none` — recorded as a `ci_green` failure, `server_ci_rejected` carrying the raw value; the rollup poll never ran. |
 
-**A repo with no server CI configured at all cannot pass `ci_green`.** Every PR on such a repo reads a
-zero-total rollup, pays the registration grace (nothing ever registers), and fails with
-`empty_after_grace` — so every PR records `YR-MERGE-SHADOW: WOULD-BLOCK — ci_green` /
+**A repo with no server CI configured, and no `server_ci = none` declared, cannot pass `ci_green`.**
+Every PR on such a repo reads a zero-total rollup, pays the registration grace (nothing ever registers),
+and fails with `empty_after_grace` — so every PR records `YR-MERGE-SHADOW: WOULD-BLOCK — ci_green` /
 `YR-MERGE: BLOCKED — ci_green` with `check_rollup: empty_after_grace` and an empty `checks` list. That
-record states a **fact about the repo** — it has no server CI wired up — not a CI run that failed.
-Diagnosing it means adding server CI (a GitHub Actions workflow or equivalent) to the repo, not
-debugging a broken check.
+record states a **fact about the repo** — it has no server CI wired up and hasn't declared that fact —
+not a CI run that failed. Diagnosing it means either adding server CI (a GitHub Actions workflow or
+equivalent) to the repo, or declaring `server_ci = none` if the repo genuinely runs no server CI by
+design — never debugging a broken check.
 
 ## To run by hand
 

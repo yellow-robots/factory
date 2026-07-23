@@ -10,8 +10,11 @@
 
 ## The walls
 
-A tech-debt round removes code under these walls — each a rule with the reason it exists, not a
-formality.
+A tech-debt round's home is broader than deletion: it is where code built with **partial
+understanding** — the shape that was right for the first slice's knowledge, wrong once later slices
+revealed more — gets refactored to match what's now known, not only where dead code gets removed. The
+walls below still hold for either kind of item: a round removes or reshapes code under these walls —
+each a rule with the reason it exists, not a formality.
 
 1. **Census with a reachability ledger.** The round opens on a `research` doc (see
    [`documentation-model.md`](documentation-model.md) — *The document types*) enumerating every entry
