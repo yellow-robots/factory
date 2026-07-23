@@ -26,8 +26,8 @@ def test_plugin_version_is_current():
     """The single canonical plugin-version pin (issue #149) — a plugin release
     edits this one assertion, not one per doc-test file."""
     data = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    assert data["version"] == "0.9.8", \
-        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.8'"
+    assert data["version"] == "0.9.9", \
+        f".claude-plugin/plugin.json version is {data['version']!r}, expected '0.9.9'"
 
 
 def test_repo_ships_no_mcp_json_at_root():
