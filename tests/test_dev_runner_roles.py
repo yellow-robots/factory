@@ -96,7 +96,9 @@ def _env(tmp, binp, **kw):
     that sets its own BASE_REPO (explicitly, or via `base._real`) right after, since that simply
     overwrites this default."""
     env = base._env(tmp, binp, **kw)
-    env.setdefault("BASE_REPO", str(_write_manifest(tmp, name="mrepo-default")))
+    # check_cmd is required (issue #275, no built-in fallback) — the shared default manifest below must
+    # declare SOME value, or every dry-run/bounce test in this module would bounce on that alone.
+    env.setdefault("BASE_REPO", str(_write_manifest(tmp, name="mrepo-default", check_cmd="true")))
     return env
 
 
@@ -244,7 +246,7 @@ def test_dryrun_review_selector_case_insensitive(tmp_path):
 def test_dryrun_manifest_review_model_selects_review_role(tmp_path):
     """The repo manifest's `review_model` sets the review role (sonnet here, distinct from the
     default opus) when nothing per-task overrides it."""
-    repo = _write_manifest(tmp_path, review_model="sonnet")
+    repo = _write_manifest(tmp_path, review_model="sonnet", check_cmd="true")
     binp = tmp_path / "bin"; base._stubs(binp)
     env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
@@ -256,7 +258,7 @@ def test_dryrun_manifest_review_model_selects_review_role(tmp_path):
 
 def test_dryrun_manifest_model_selects_build_role(tmp_path):
     """The repo manifest's `model` sets the build role (opus here)."""
-    repo = _write_manifest(tmp_path, model="opus")
+    repo = _write_manifest(tmp_path, model="opus", check_cmd="true")
     binp = tmp_path / "bin"; base._stubs(binp)
     env = _env(tmp_path, binp); env["BASE_REPO"] = str(repo)
     r = base._run(["7", "--repo", "test/repo", "--dry-run"], env)
@@ -269,7 +271,7 @@ def test_dryrun_manifest_model_selects_build_role(tmp_path):
 
 def test_dryrun_task_review_beats_manifest_review(tmp_path):
     """Per-task `review_model:` (opus) wins over the manifest `review_model` (sonnet)."""
-    repo = _write_manifest(tmp_path, review_model="sonnet")
+    repo = _write_manifest(tmp_path, review_model="sonnet", check_cmd="true")
     binp = tmp_path / "bin"; base._stubs(binp)
     env = _env(tmp_path, binp, body="### Acceptance criteria\n- [ ] x\n\nreview_model: opus\n")
     env["BASE_REPO"] = str(repo)

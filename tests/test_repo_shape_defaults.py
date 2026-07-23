@@ -14,9 +14,10 @@ qa/lens.py species 1):
       tools/merge_shadow.py:164,371) — the registration grace, then failure recorded as
       empty_after_grace in the durable record's check_rollup field.
   (c) gate-command resolution precedence (tools/dev-runner.sh:569-571) — env CHECK_CMD over
-      manifest check_cmd over the built-in pytest fallback, today's behavior verbatim (a later
-      slice of this epic deliberately updates the fallback pin, by name, in its own PR — see
-      test_gate_resolution_falls_back_to_builtin_pytest_default below).
+      manifest check_cmd, today's behavior verbatim. The built-in pytest fallback pin below
+      (test_gate_resolution_falls_back_to_builtin_pytest_default) was deliberately updated by
+      issue #275, in that PR: check_cmd is now required — an undeclared key bounces before any
+      stage runs rather than falling back to a guessed pytest command.
 
 Tests-only, accretive: no production code changes. Reuses the shared harness only (tests/harness/
 CLAUDE_STUB, GH_STUB, consumed via test_dev_runner.py's fixtures, and test_ci_registration_grace.py's
@@ -178,14 +179,13 @@ def test_gate_resolution_manifest_overrides_builtin_default(tmp_path):
 
 
 def test_gate_resolution_falls_back_to_builtin_pytest_default(tmp_path):
-    """PIN, BY NAME: with neither an env CHECK_CMD nor a manifest check_cmd, the runner falls back to
-    its built-in default, `$BASE_REPO/.venv/bin/python -m pytest tests/ -q` — today's fallback,
-    verbatim. A later slice of this epic deliberately updates this exact pin, by this exact test
-    name, in its own PR; until then this is the byte-for-byte fallback command."""
-    repo = td._manifest_repo(tmp_path)   # no check_cmd key at all
+    """PIN, BY NAME, DELIBERATELY UPDATED (issue #275): the built-in pytest fallback this test used to
+    pin is REMOVED — with neither an env CHECK_CMD nor a manifest check_cmd, the runner no longer
+    guesses a test command. It refuses before any stage runs (DoR refusal shape, exit 3), naming the
+    missing 'check_cmd' key and the governing rule, regardless of dry-run's read-only reporting intent."""
+    repo = td._manifest_repo(tmp_path, check_cmd=td.NO_CHECK_CMD)   # no check_cmd key at all
     binp = tmp_path / "bin"; td._stubs(binp)
     env = td._env(tmp_path, binp); env["BASE_REPO"] = str(repo); del env["CHECK_CMD"]
     r = td._run(["7", "--repo", "test/repo", "--dry-run"], env)
-    assert r.returncode == 0, r.stderr
-    import json
-    assert json.loads(r.stdout)["check_cmd"] == f"{repo}/.venv/bin/python -m pytest tests/ -q"
+    assert r.returncode == 3
+    assert "check_cmd" in r.stderr and "not declared" in r.stderr

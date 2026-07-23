@@ -124,7 +124,11 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   declaration (`not_required_declared`, never a bare empty rollup), but `server_ci = none` on an armed
   repo (`auto_merge = true`) is a conflicting pair — no independent CI to gate an autonomous merge on —
   and refuses fail-closed (`server_ci_none_armed`) naming both declarations; any other declared value
-  blocks fail-closed naming the rejected value. The **sentinel** kill switch (host file) blocks any merge
+  blocks fail-closed naming the rejected value. `check_cmd` is **required** (no built-in fallback; issue
+  #275): required-ness is judged on the manifest alone — an undeclared key refuses the work before
+  claim/worktree/any stage, naming the missing key, regardless of any environment `CHECK_CMD`; where the
+  manifest DOES declare `check_cmd`, an environment `CHECK_CMD` still overrides it for the session, and
+  the run's log names the effective source. The **sentinel** kill switch (host file) blocks any merge
   if present — see [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
 - **Commits** credit the authoring model, never a hardcoded name: the runner stamps the body
   (`dev-runner, <model-id>`); an attended commit ends with

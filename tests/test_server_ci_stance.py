@@ -48,7 +48,9 @@ import merge_shadow  # noqa: E402
 # ---- manifest writer ---------------------------------------------------------------------------------
 
 def _write_manifest(work, content):
-    (work / ".yr" / "factory.toml").write_text(content)
+    # check_cmd is required (issue #275, no built-in fallback) — prepended so every caller's own
+    # server_ci content is unaffected while the manifest still satisfies the required-ness gate.
+    (work / ".yr" / "factory.toml").write_text('check_cmd = "true"\n' + content)
     td._git(["add", "-A"], work)
     td._git(["commit", "-q", "-m", "set server_ci"], work)
     td._git(["push", "-q", "origin", "main"], work)
