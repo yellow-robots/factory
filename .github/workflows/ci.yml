@@ -1,8 +1,14 @@
 name: ci
 on:
   pull_request:
-  push:
-    branches: [main]
+
+# One certification per PR head: cancel a superseded in-flight run when a new head is
+# pushed. The group is namespaced by workflow and keyed by ref, so it only ever cancels
+# this PR's own older run — never another PR's, another ref's, or another workflow's. A
+# superseded head's verdict has no reader (it-25).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -16,5 +22,9 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         run: pip install -r requirements-dev.txt
+      # Parallel across the runner's cores (-n auto). The suite is process-isolated by
+      # construction (per-test tmp_path homes, ephemeral ports, no shared mutable
+      # fixtures), so a parallel run returns the same verdict as a serial one. Scoped to
+      # tests/ so xdist never collects a stray worktree copy.
       - name: Tests
-        run: pytest tests/ -v
+        run: pytest tests/ -n auto -q
