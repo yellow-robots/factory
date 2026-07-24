@@ -3,10 +3,11 @@ on:
   pull_request:
 
 # One certification per PR head: cancel a superseded in-flight run when a new head is
-# pushed. Keyed by ref, so it only ever cancels this PR's own older run, never another
-# PR's or ref's. A superseded head's verdict has no reader (it-25).
+# pushed. The group is namespaced by workflow and keyed by ref, so it only ever cancels
+# this PR's own older run — never another PR's, another ref's, or another workflow's. A
+# superseded head's verdict has no reader (it-25).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -53,11 +53,12 @@ def test_requirements_dev_still_pins_ruff_0_15_21():
     )
 
 
-def test_requirements_dev_carries_exactly_two_pins():
-    # AC: pytest is bumped and ruff rides unchanged, with no other pin added or removed.
+def test_requirements_dev_carries_exactly_the_expected_pins():
+    # AC (#269): pytest bumped, ruff rides unchanged. it-25 adds pytest-xdist — the plugin the
+    # parallel certification suite (`pytest tests/ -n auto`) needs — as the only further pin.
     lines = [line for line in REQUIREMENTS_DEV.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert set(lines) == {"pytest==9.0.3", "ruff==0.15.21"}, (
-        f"requirements-dev.txt should carry exactly the pytest and ruff pins, got: {lines}"
+    assert set(lines) == {"pytest==9.0.3", "pytest-xdist==3.8.0", "ruff==0.15.21"}, (
+        f"requirements-dev.txt should carry exactly the pytest, pytest-xdist, and ruff pins, got: {lines}"
     )
 
 
