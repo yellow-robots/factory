@@ -34,7 +34,9 @@ def _ci_text():
 def test_post_merge_push_run_is_retired():
     """One certification per task: the post-merge push:main re-run — a verdict no reader consumes
     — is retired. The workflow must NOT declare a `push` trigger."""
-    assert not re.search(r"(?m)^\s*push:\s*$", _ci_text()), (
+    # Not end-anchored: also catch an inline re-introduction (`push: {branches: [main]}`,
+    # `push:  # ...`), not only the block form that was removed.
+    assert not re.search(r"(?m)^\s*push:", _ci_text()), (
         "ci.yml must NOT trigger on push — the post-merge run was retired at it-25 (one "
         "certification per task, on the PR head the evaluator reads)"
     )

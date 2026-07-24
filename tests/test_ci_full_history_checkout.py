@@ -69,8 +69,9 @@ def _checkout_step_body(text):
 def test_ci_workflow_checkout_step_fetches_full_history():
     """The checkout step SHALL declare `fetch-depth: 0` (full history). A shallow default
     (`fetch-depth: 1`) ships a single commit with no history, so `git diff <pinned-sha>
-    <pinned-sha>` over the fixed range dies with exit 128 'bad object' on a push-to-main run —
-    the diagnosed cause of the standing red."""
+    <pinned-sha>` over the fixed range dies with exit 128 'bad object' on the pull_request
+    certification run — the class #225 diagnosed (originally on the since-retired push-to-main
+    run)."""
     step_body = _checkout_step_body(_text())
     assert re.search(r"(?m)^\s*with:\s*$", step_body), (
         "the checkout step has no `with:` block — fetch-depth: 0 must be declared under it"
