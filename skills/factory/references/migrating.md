@@ -44,8 +44,8 @@ doc. If no, the why is worth keeping.
 Two distinct cases — do not confuse them:
 
 - **Migrated** (content re-homed, decision unchanged) → **delete it.** Its content now lives at the
-  new path; the bytes survive in `.trash` / git. Do not tombstone — nothing superseded it. A
-  `renameFile` already *is* this operation.
+  new path; the bytes survive in `.trash` / git. Do not tombstone — nothing superseded it. A CLI
+  `rename` / `move` already *is* this operation.
 - **Superseded** (a newer design invalidates it) → retire **in place**: set `status: superseded` +
   `superseded_by` / `crossed_to`; the file stays for lineage. **Never `mv` a superseded file** — a
   filesystem rename silently breaks backlinks across the vault.
