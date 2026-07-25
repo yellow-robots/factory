@@ -223,6 +223,44 @@ def test_ideas_backlog_typed_write_caveat():
     )
 
 
+def test_ideas_backlog_prose_scalar_rule():
+    """The 19th carried item: `summary` is prose, and prose is hostile to bare YAML.
+
+    Pinned because the rule's whole point is that the OBVIOUS fix is wrong — an
+    earlier draft of this canon prescribed hand-quoting with double quotes, which
+    would have broken 8 of the 9 live summaries containing a quote. If a later
+    edit softens this back to "just quote it", that regression must fail here.
+    """
+    body = _ideas_backlog_section()
+    assert re.search(r"never hand-write", body, re.IGNORECASE), (
+        "ideas-backlog section does not forbid hand-writing the summary scalar"
+    )
+    # The hazard must be stated as wider than the colon that first exposed it.
+    assert re.search(r"trailing\W*colon", body, re.IGNORECASE), (
+        "ideas-backlog section does not name the trailing-colon hazard"
+    )
+    assert re.search(r"mis-parses?\s+silently|silently\s+mis-parses?", body, re.IGNORECASE), (
+        "ideas-backlog section does not state that a bare scalar can mis-parse SILENTLY "
+        "(the comment and anchor cases), which no parse check can catch"
+    )
+    # Hand-quoting must be named as a trap, not offered as the remedy.
+    assert re.search(r"hand-quoting is not the fix", body, re.IGNORECASE), (
+        "ideas-backlog section offers hand-quoting as the remedy; it is the same trap "
+        "one layer down (embedded quotes, apostrophes, escape sequences)"
+    )
+    assert "processFrontMatter" in body, (
+        "ideas-backlog section does not point at a serializer as the write path"
+    )
+    # The failure is total, and its visibility is asymmetric — both load-bearing.
+    assert re.search(r"every.{0,12}key is lost|no properties", body, re.IGNORECASE), (
+        "ideas-backlog section does not state that a broken block loses every key"
+    )
+    assert re.search(r"invisible to a headless writer", body, re.IGNORECASE), (
+        "ideas-backlog section does not state that the failure is loud in the app but "
+        "invisible to a headless writer — the reason three seeds sat broken"
+    )
+
+
 def test_ideas_backlog_scoring_conduct():
     body = _ideas_backlog_section()
     assert re.search(r"capturing\s+session\s+proposes", body, re.IGNORECASE), (
