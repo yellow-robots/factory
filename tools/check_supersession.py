@@ -36,7 +36,8 @@ notes) and every non-component child (no `iterations/` child of its own) except 
 excluded by folder name — the sweep still prints that one skip line so the exclusion stays visible rather
 than silent. Every doc in the scanned space is classified: legacy (alien type, alien
 status, or no frontmatter
-keys extracted — aggregated per folder, never itemized) or conformant (alien frontmatter keys
+keys extracted — aggregated per folder, never itemized, each folder's census line breaking the
+count down by reason) or conformant (alien frontmatter keys
 surfaced as one observation line per key, never blocking). An ideas-folder note (vault-relative path with
 an `ideas/` segment) runs the ideas-backlog contract instead of the spine one for this classification:
 `open`/`rejected`/`superseded` are its known statuses (`draft` is alien status there, by design — no
@@ -101,6 +102,10 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 _CROSSED_TO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#\d+$")
 
 DocRecord = namedtuple("DocRecord", "path rel meta body legacy_reason")
+
+# The pinned order the census line and `_legacy_reason` agree on — also the docstring's own
+# vocabulary order ("alien type, alien status, or no frontmatter keys extracted").
+LEGACY_REASONS = ("alien type", "alien status", "no frontmatter keys extracted")
 
 
 # --- shared primitives (frontmatter classification, wikilink resolution) --------------------------
@@ -191,8 +196,9 @@ def _walk_md(root):
 
 
 def _downflow_findings(spec_path, disposed_paths, vault_root):
-    """(gaps, indeterminate) — undispositioned active-spine children of `spec_path`, and children whose
-    own frontmatter this check cannot classify (always fail-loud, regardless of caller context)."""
+    """(gaps, indeterminate) — undispositioned active-spine children of `spec_path`, and (path, reason)
+    pairs for children whose own frontmatter this check cannot classify (always fail-loud, regardless
+    of caller context)."""
     spec_resolved = spec_path.resolve()
     gaps, indeterminate = [], []
     for p in _walk_md(vault_root):
@@ -208,7 +214,7 @@ def _downflow_findings(spec_path, disposed_paths, vault_root):
             continue
         reason = _legacy_reason(meta)
         if reason:
-            indeterminate.append(str(p))
+            indeterminate.append((str(p), reason))
             continue
         if meta.get("type") not in SPINE_TYPES or meta.get("status") != "active":
             continue
@@ -286,8 +292,8 @@ def _check_supersedes_required(meta, body, vault_root):
             for g in gaps:
                 errors.append(f"undispositioned child of {target_path.name}: {g} — name it in the "
                               f"declaration or cite it in the body")
-            for g in indeterminate:
-                errors.append(f"indeterminate child of {target_path.name} (cannot classify): {g}")
+            for g, reason in indeterminate:
+                errors.append(f"indeterminate child of {target_path.name} ({reason}): {g}")
     return errors
 
 
@@ -481,8 +487,8 @@ def _pair_forward_errors(d, raw, index, vault_root):
         gaps, indeterminate = _downflow_findings(target.path, disposed, vault_root)
         for g in gaps:
             errors.append(f"{d.rel}: undispositioned child of {target.rel}: {g}")
-        for g in indeterminate:
-            errors.append(f"{d.rel}: indeterminate child of {target.rel} (cannot classify): {g}")
+        for g, reason in indeterminate:
+            errors.append(f"{d.rel}: indeterminate child of {target.rel} ({reason}): {g}")
     return errors
 
 
@@ -520,8 +526,8 @@ def _pair_backward_findings(d, index, vault_root):
             gaps, indeterminate = _downflow_findings(d.path, disposed, vault_root)
             for g in gaps:
                 advisory.append(f"{d.rel}: down-flow gap under pre-grammar replacer {replacer.rel}: {g}")
-            for g in indeterminate:
-                hard.append(f"{d.rel}: indeterminate child (cannot classify) under pre-grammar "
+            for g, reason in indeterminate:
+                hard.append(f"{d.rel}: indeterminate child ({reason}) under pre-grammar "
                             f"replacer {replacer.rel}: {g}")
         return hard, advisory
 
@@ -562,13 +568,21 @@ def _spine_in_home_advisory(docs, in_iterations):
 
 
 def _legacy_aggregate(docs, vault_root):
+    """One census line per folder holding legacy docs — the total doc(s) count plus a per-reason
+    breakdown (pinned order, zero-count reasons omitted), never itemized by file."""
     by_folder = {}
     for d in docs:
         if not d.legacy_reason:
             continue
         folder = str(d.path.parent.relative_to(vault_root))
-        by_folder[folder] = by_folder.get(folder, 0) + 1
-    return [f"legacy: {folder}: {n} doc(s)" for folder, n in sorted(by_folder.items())]
+        counts = by_folder.setdefault(folder, {})
+        counts[d.legacy_reason] = counts.get(d.legacy_reason, 0) + 1
+    lines = []
+    for folder, counts in sorted(by_folder.items()):
+        total = sum(counts.values())
+        reason_str = ", ".join(f"{reason} {counts[reason]}" for reason in LEGACY_REASONS if counts.get(reason))
+        lines.append(f"legacy: {folder}: {total} doc(s) ({reason_str})")
+    return lines
 
 
 def _alien_key_observations(docs, vault_root):
