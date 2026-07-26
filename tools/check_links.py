@@ -130,6 +130,12 @@ def main(argv=None):
     errors = check_links(text, vault_root=pathlib.Path(args.vault_root), resolve_ref=resolve)
     for e in errors:
         print(f"{args.file}: {e}")
+    # Frontmatter outside split_frontmatter's parseable subset is surfaced advisory-only — it never
+    # becomes an error and never moves the exit code (a source_* it does not parse is simply not
+    # checked, not failed). It only reaches stderr so an attended run can see the unparsed shape.
+    meta, _ = split_frontmatter(text)
+    for note in getattr(meta, "out_of_subset", ()):
+        print(f"{args.file}: note: frontmatter outside the parseable subset — {note}", file=sys.stderr)
     return 1 if errors else 0
 
 
