@@ -598,6 +598,20 @@ def _alien_key_observations(docs, vault_root):
             for k, n in sorted(counts.items())]
 
 
+def _out_of_subset_observations(docs):
+    """One observation line per doc whose frontmatter carried a shape outside split_frontmatter's
+    declared subset (block scalar, nested mapping, continuation, …). Census/observation class,
+    never a hard finding — the splitter reports these instead of guessing, so they never surface
+    as fabricated alien keys; this is where the sweep makes that report visible."""
+    lines = []
+    for d in sorted(docs, key=lambda d: d.rel):
+        oos = getattr(d.meta, "out_of_subset", ())
+        if oos:
+            lines.append(f"observation: {d.rel}: frontmatter outside the parseable subset — "
+                         + "; ".join(oos))
+    return lines
+
+
 def check_sweep(*, vault_root, scope):
     """(lines, failed) — lines to print (census headline first), failed ⇒ any hard finding."""
     docs, component_of, in_iterations = _sweep_docs(vault_root, scope)
@@ -633,6 +647,7 @@ def check_sweep(*, vault_root, scope):
 
     legacy_lines = _legacy_aggregate(docs, vault_root)
     observations = _alien_key_observations(docs, vault_root)
+    observations += _out_of_subset_observations(docs)
     total, spine_active, legacy = _census(docs, component_of, in_iterations)
 
     lines = [_format_census(scope, total, spine_active, legacy)]
