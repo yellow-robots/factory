@@ -255,9 +255,17 @@ def test_ideas_backlog_prose_scalar_rule():
     assert re.search(r"every.{0,12}key is lost|no properties", body, re.IGNORECASE), (
         "ideas-backlog section does not state that a broken block loses every key"
     )
-    assert re.search(r"invisible to a headless writer", body, re.IGNORECASE), (
-        "ideas-backlog section does not state that the failure is loud in the app but "
-        "invisible to a headless writer — the reason three seeds sat broken"
+    # Corrected 2026-07-26: the original pin asserted "invisible to a headless writer",
+    # which was measured false. The stamping plugin hooks modify/rename/delete and NOT
+    # create, so a note broken at BIRTH signals to nobody — not the agent, not the app.
+    # A later modify does notify, and a human editing sees Obsidian's own banner. Pin the
+    # corrected asymmetry, since getting this backwards is what let three seeds sit broken.
+    assert re.search(r"no signal at all", body, re.IGNORECASE), (
+        "ideas-backlog section does not state that a note broken at birth gets no signal"
+    )
+    assert re.search(r"not `create`", body), (
+        "ideas-backlog section does not name the missing `create` hook — the reason a "
+        "newly written malformed note notifies nobody"
     )
 
 
