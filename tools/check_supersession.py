@@ -18,7 +18,7 @@ target still errors exactly as any other non-conformant target. When
 a target is a `product-spec`, every *active* spine doc (the four spine types) whose `source_spec`
 resolves to it must be named in the draft's own declaration or cited as a `[[wikilink]]` in the draft's
 body — an undispositioned child is an error, and a child this check cannot classify (alien type/status,
-no frontmatter) is an error too, never silently skipped. Any other draft type passes outright, with
+no frontmatter keys extracted) is an error too, never silently skipped. Any other draft type passes outright, with
 `supersedes`/`superseded_by` grammar-checked only if present (no presence/resolution requirement).
 
 **Sweep mode** (`--sweep --scope REL [--vault-root DIR]`) audits the governed vault space instead of
@@ -35,8 +35,8 @@ the scope's own basename: it covers the parent root's own loose docs (the org ti
 notes) and every non-component child (no `iterations/` child of its own) except `archive/`, which stays
 excluded by folder name — the sweep still prints that one skip line so the exclusion stays visible rather
 than silent. Every doc in the scanned space is classified: legacy (alien type, alien
-status, or no
-no frontmatter keys — aggregated per folder, never itemized) or conformant (alien frontmatter keys
+status, or no frontmatter
+keys extracted — aggregated per folder, never itemized) or conformant (alien frontmatter keys
 surfaced as one observation line per key, never blocking). An ideas-folder note (vault-relative path with
 an `ideas/` segment) runs the ideas-backlog contract instead of the spine one for this classification:
 `open`/`rejected`/`superseded` are its known statuses (`draft` is alien status there, by design — no
@@ -106,11 +106,11 @@ DocRecord = namedtuple("DocRecord", "path rel meta body legacy_reason")
 # --- shared primitives (frontmatter classification, wikilink resolution) --------------------------
 
 def _legacy_reason(meta, is_ideas=False):
-    """Why a doc is legacy-class (alien type / alien status / no keys extracted) — None if conformant.
+    """Why a doc is legacy-class (alien type / alien status / no frontmatter keys extracted) — None if conformant.
     `is_ideas` swaps in the ideas-folder status vocabulary in place of the spine one; the type
     vocabulary is shared either way (the discriminator is the path, never the type)."""
     if not meta:
-        return "no frontmatter keys"
+        return "no frontmatter keys extracted"
     t = meta.get("type")
     if not isinstance(t, str) or t not in KNOWN_TYPES:
         return "alien type"
