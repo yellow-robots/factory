@@ -259,6 +259,17 @@ def test_indeterminate_child_still_fails_even_if_named_in_declaration(tmp_path):
     assert any("child-weird" in e and "indeterminate" in e.lower() for e in errors)
 
 
+def test_draft_indeterminate_child_names_specific_reason(tmp_path):
+    # the draft-mode down-flow finding names the specific legacy reason, never a bare "cannot classify"
+    _vault_file(tmp_path, "spec/target-spec.md", _doc(type_="product-spec", status="active"))
+    _vault_file(tmp_path, "spec/child-weird.md",
+                '---\nsource_spec: "[[spec/target-spec]]"\ntype: mystery\nstatus: active\n---\nbody\n')
+    text = _doc(type_="feature-rfc", supersedes=["[[spec/target-spec]]"])
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("alien type" in e and "child-weird" in e for e in errors)
+    assert not any("cannot classify" in e for e in errors)
+
+
 def test_draft_status_child_not_required(tmp_path):
     # only ACTIVE spine children are required to be dispositioned
     _vault_file(tmp_path, "spec/target-spec.md", _doc(type_="product-spec", status="active"))
@@ -539,6 +550,23 @@ def test_sweep_downflow_indeterminate_child_is_hard(tmp_path):
     assert failed is True
 
 
+def test_sweep_downflow_indeterminate_child_names_specific_reason(tmp_path):
+    # the sweep-forward down-flow finding (from a live `supersedes` declaration) names the specific
+    # legacy reason, never a bare "cannot classify"
+    _vault_file(tmp_path, "proj/compA/iterations/new-spec.md",
+                _doc(type_="product-spec", status="active",
+                     supersedes=["[[proj/compA/iterations/old-spec]]"]))
+    _vault_file(tmp_path, "proj/compA/iterations/old-spec.md",
+                _doc(type_="product-spec", status="superseded",
+                     superseded_by="[[proj/compA/iterations/new-spec]]"))
+    _vault_file(tmp_path, "proj/compA/iterations/mystery-child.md",
+                '---\nsource_spec: "[[proj/compA/iterations/old-spec]]"\ntype: mystery\nstatus: active\n---\nbody\n')
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("alien type" in l and "mystery-child" in l for l in lines)
+    assert not any("cannot classify" in l for l in lines)
+
+
 def test_sweep_downflow_gap_under_pregrammar_replacer_is_advisory_not_hard(tmp_path):
     _vault_file(tmp_path, "proj/compA/iterations/old-spec.md",
                 _doc(type_="product-spec", status="superseded",
@@ -550,6 +578,21 @@ def test_sweep_downflow_gap_under_pregrammar_replacer_is_advisory_not_hard(tmp_p
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
     assert failed is False
     assert any("orphan-child" in l for l in lines)
+
+
+def test_sweep_downflow_indeterminate_child_under_pregrammar_replacer_names_reason(tmp_path):
+    # the pre-grammar-replacer arm's indeterminate finding also names the specific legacy reason
+    _vault_file(tmp_path, "proj/compA/iterations/old-spec.md",
+                _doc(type_="product-spec", status="superseded",
+                     superseded_by="[[proj/compA/iterations/new-spec]]"))
+    _vault_file(tmp_path, "proj/compA/iterations/new-spec.md",
+                _doc(type_="product-spec", status="active"))  # no supersedes key at all
+    _vault_file(tmp_path, "proj/compA/iterations/mystery-child.md",
+                '---\nsource_spec: "[[proj/compA/iterations/old-spec]]"\ntype: mystery\nstatus: active\n---\nbody\n')
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("alien type" in l and "mystery-child" in l for l in lines)
+    assert not any("cannot classify" in l for l in lines)
 
 
 # =====================================================================================
@@ -605,6 +648,69 @@ def test_sweep_legacy_alien_status_counts_as_legacy(tmp_path):
                 "---\ntype: task\nstatus: something-else\n---\nbody\n")
     lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
     assert "1 legacy" in lines[0]
+
+
+def test_sweep_legacy_census_line_pins_two_reason_breakdown(tmp_path):
+    # a folder with two different legacy reasons prints the pinned combined shape
+    _vault_file(tmp_path, "proj/compA/iterations/alien-type.md",
+                "---\ntype: something-else\nstatus: active\n---\nbody\n")
+    _vault_file(tmp_path, "proj/compA/iterations/alien-status.md",
+                "---\ntype: task\nstatus: something-else\n---\nbody\n")
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    legacy_lines = [l for l in lines if l.startswith("legacy: ")]
+    assert legacy_lines == ["legacy: proj/compA/iterations: 2 doc(s) (alien type 1, alien status 1)"]
+
+
+def test_sweep_legacy_census_line_single_reason_omits_others(tmp_path):
+    # a single-reason folder's line names only that reason — the other two counts are omitted
+    _vault_file(tmp_path, "proj/compA/iterations/alien-status.md",
+                "---\ntype: task\nstatus: something-else\n---\nbody\n")
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    legacy_lines = [l for l in lines if l.startswith("legacy: ")]
+    assert legacy_lines == ["legacy: proj/compA/iterations: 1 doc(s) (alien status 1)"]
+
+
+def test_sweep_legacy_census_line_no_frontmatter_reason(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/no-fm.md", "no frontmatter here\n")
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    legacy_lines = [l for l in lines if l.startswith("legacy: ")]
+    assert legacy_lines == ["legacy: proj/compA/iterations: 1 doc(s) (no frontmatter keys extracted 1)"]
+
+
+def test_sweep_legacy_census_line_all_three_reasons_pinned_order_and_counts(tmp_path):
+    # all three reasons in one folder, with distinct counts, pins both the fixed vocabulary
+    # order (alien type, alien status, no frontmatter keys extracted) and per-reason counts
+    _vault_file(tmp_path, "proj/compA/iterations/alien-type-1.md",
+                "---\ntype: something-else\nstatus: active\n---\nbody\n")
+    _vault_file(tmp_path, "proj/compA/iterations/alien-type-2.md",
+                "---\ntype: something-else\nstatus: active\n---\nbody\n")
+    _vault_file(tmp_path, "proj/compA/iterations/alien-type-3.md",
+                "---\ntype: something-else\nstatus: active\n---\nbody\n")
+    _vault_file(tmp_path, "proj/compA/iterations/alien-status.md",
+                "---\ntype: task\nstatus: something-else\n---\nbody\n")
+    _vault_file(tmp_path, "proj/compA/iterations/no-fm-1.md", "no frontmatter here\n")
+    _vault_file(tmp_path, "proj/compA/iterations/no-fm-2.md", "no frontmatter here too\n")
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    legacy_lines = [l for l in lines if l.startswith("legacy: ")]
+    assert legacy_lines == [
+        "legacy: proj/compA/iterations: 6 doc(s) "
+        "(alien type 3, alien status 1, no frontmatter keys extracted 2)"
+    ]
+
+
+def test_sweep_legacy_census_line_two_folders_each_own_line(tmp_path):
+    # two different folders each with legacy docs get their own aggregated line, sorted by folder
+    _vault_file(tmp_path, "proj/compA/iterations/alien.md",
+                "---\ntype: something-else\nstatus: active\n---\nbody\n")
+    _vault_file(tmp_path, "proj/compB/iterations/no-fm.md", "no frontmatter here\n")
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    legacy_lines = [l for l in lines if l.startswith("legacy: ")]
+    assert legacy_lines == [
+        "legacy: proj/compA/iterations: 1 doc(s) (alien type 1)",
+        "legacy: proj/compB/iterations: 1 doc(s) (no frontmatter keys extracted 1)",
+    ]
 
 
 def test_sweep_alien_frontmatter_key_is_one_observation_line_not_itemized(tmp_path):
