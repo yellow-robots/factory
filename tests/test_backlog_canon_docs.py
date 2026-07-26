@@ -223,6 +223,39 @@ def test_ideas_backlog_typed_write_caveat():
     )
 
 
+def _editing_safely_section():
+    """The `## Editing safely` section body. Added 2026-07-26: the vault-write mechanics
+    bullet lives here and was outside every pin in the repo, so three new claims — one of
+    them wrong — shipped with zero coverage."""
+    text = _text(MODEL)
+    start = text.index("## Editing safely")
+    rest = text[start + len("## Editing safely"):]
+    end = rest.find("\n## ")
+    return rest if end == -1 else rest[:end]
+
+
+def test_editing_safely_write_mechanics():
+    """The verified write mechanics, pinned. Every claim here was measured against
+    Obsidian's own frontmatter editor after an earlier draft asserted a concurrency race
+    that the code structurally prevents."""
+    body = _editing_safely_section()
+    assert re.search(r"metadata cache is the authority", body, re.IGNORECASE), (
+        "Editing safely does not name the metadata cache as the authority on whether a "
+        "note has properties"
+    )
+    assert re.search(r"not.{0,20}key this check on `processFrontMatter`", body, re.IGNORECASE), (
+        "Editing safely does not warn against keying the parse confirm on processFrontMatter"
+    )
+    assert re.search(r"prepends a second block", body, re.IGNORECASE), (
+        "Editing safely does not state that an unrecognised block gets a second block "
+        "prepended — the actual mechanism behind lost properties"
+    )
+    assert re.search(r"not a concurrency effect", body, re.IGNORECASE), (
+        "Editing safely does not rule out the concurrency explanation; without it a reader "
+        "mitigates by spacing calls out, which does not help"
+    )
+
+
 def test_ideas_backlog_prose_scalar_rule():
     """The 19th carried item: `summary` is prose, and prose is hostile to bare YAML.
 
@@ -255,9 +288,23 @@ def test_ideas_backlog_prose_scalar_rule():
     assert re.search(r"every.{0,12}key is lost|no properties", body, re.IGNORECASE), (
         "ideas-backlog section does not state that a broken block loses every key"
     )
-    assert re.search(r"invisible to a headless writer", body, re.IGNORECASE), (
-        "ideas-backlog section does not state that the failure is loud in the app but "
-        "invisible to a headless writer — the reason three seeds sat broken"
+    # Corrected 2026-07-26: the original pin asserted "invisible to a headless writer",
+    # which was measured false. The stamping plugin hooks modify/rename/delete and NOT
+    # create, so a note broken at BIRTH signals to nobody — not the agent, not the app.
+    # A later modify does notify, and a human editing sees Obsidian's own banner. Pin the
+    # corrected asymmetry, since getting this backwards is what let three seeds sit broken.
+    # The write path reports success — the fact an agent must know first.
+    assert re.search(r"write itself never tells you", body, re.IGNORECASE), (
+        "ideas-backlog section does not state that the write itself reports success"
+    )
+    # Loosened from a case-sensitive literal: any phrasing naming the absent hook passes.
+    assert re.search(r"no\s+.{0,4}create.{0,4}\s+hook", body, re.IGNORECASE), (
+        "ideas-backlog section does not name the missing `create` hook"
+    )
+    # The one channel a headless writer can actually read. Pinned because an earlier
+    # draft asserted there was no signal at all, which was not measured and not true.
+    assert "console.error" in body, (
+        "ideas-backlog section does not name console.error as the headless-readable signal"
     )
 
 
