@@ -36,7 +36,7 @@ notes) and every non-component child (no `iterations/` child of its own) except 
 excluded by folder name — the sweep still prints that one skip line so the exclusion stays visible rather
 than silent. Every doc in the scanned space is classified: legacy (alien type, alien
 status, or no
-parseable frontmatter — aggregated per folder, never itemized) or conformant (alien frontmatter keys
+no frontmatter keys — aggregated per folder, never itemized) or conformant (alien frontmatter keys
 surfaced as one observation line per key, never blocking). An ideas-folder note (vault-relative path with
 an `ideas/` segment) runs the ideas-backlog contract instead of the spine one for this classification:
 `open`/`rejected`/`superseded` are its known statuses (`draft` is alien status there, by design — no
@@ -106,11 +106,11 @@ DocRecord = namedtuple("DocRecord", "path rel meta body legacy_reason")
 # --- shared primitives (frontmatter classification, wikilink resolution) --------------------------
 
 def _legacy_reason(meta, is_ideas=False):
-    """Why a doc is legacy-class (alien type / alien status / unparseable) — None if conformant.
+    """Why a doc is legacy-class (alien type / alien status / no keys extracted) — None if conformant.
     `is_ideas` swaps in the ideas-folder status vocabulary in place of the spine one; the type
     vocabulary is shared either way (the discriminator is the path, never the type)."""
     if not meta:
-        return "no parseable frontmatter"
+        return "no frontmatter keys"
     t = meta.get("type")
     if not isinstance(t, str) or t not in KNOWN_TYPES:
         return "alien type"
