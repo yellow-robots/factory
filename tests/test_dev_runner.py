@@ -2420,6 +2420,11 @@ def test_charter_appended_to_every_stage_and_states_required_clauses(tmp_path):
         "pkill -f",                                    # pattern-kills named and forbidden
         "pgrep -f",                                    # pattern-kills named and forbidden
         "own command environment can contain the task text",  # why: argv/env can echo the task text
+        "explicit, generous timeout",                  # issue #306: the lever, not a hard-coded number
+        "the lever, not a hard-coded number",
+        "observed terminal state before the stage ends its turn",
+        "never ends its turn with a live background task",
+        "structurally void",                           # why: a one-shot stage's notification promise
     ]
     for stage, calls in by_stage.items():
         for call in calls:
@@ -2490,7 +2495,11 @@ def test_repair_prompt_templates_unchanged(tmp_path):
     literals are load-bearing stub routing, unrelated to the charter dedupe (they're task prompts, not
     the shared role/charter system prompt). The check-repair prompt gained one appended sentence scoping
     the repair to the failing tests and noting the runner re-runs the full check suite afterward; that
-    sentence must survive intact and the pinned routing fragment must stay contiguous around it."""
+    sentence must survive intact and the pinned routing fragment must stay contiguous around it.
+    Issue #306 revises this "left untouched" contract further: both the check-repair and review-repair
+    prompts gained their own new terminal-state sentence (end the repair verified green in the
+    foreground, or an explicit reasoned no-fix — never "waiting"), fragment-pinned the same way as the
+    existing check_repair_scoping sentence, never loosened."""
     binp = tmp_path / "bin"; _stubs(binp)
     env = _all_stages_env(tmp_path, binp, "Repair templates unchanged")
     r = _run(["5", "--repo", "test/repo"], env)
@@ -2499,14 +2508,22 @@ def test_repair_prompt_templates_unchanged(tmp_path):
 
     check_repair_fragment = "The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests."
     check_repair_scoping = "Reproduce with the failing tests only; the runner re-runs the full check suite after this stage."
+    check_repair_terminal_state = ("End this repair with the targeted reproduction verified green in the "
+                                    "foreground, or an explicit reasoned no-fix — waiting on anything is "
+                                    "not a terminal state.")
     for call in by_stage["REPAIR"]:
         assert check_repair_fragment in call
         assert check_repair_scoping in call
+        assert check_repair_terminal_state in call
 
     review_repair_fragment = ("A reviewer REQUESTED CHANGES. Fix the blocking findings "
                                "(production code; only touch a test if the test itself is wrong).")
+    review_repair_terminal_state = ("End this repair with the blocking findings' targeted reproduction "
+                                     "verified green in the foreground, or an explicit reasoned no-fix — "
+                                     "waiting on anything is not a terminal state.")
     for call in by_stage["REVIEWFIX"]:
         assert review_repair_fragment in call
+        assert review_repair_terminal_state in call
 
 
 # ============ Issue #121: SPEC via stdin, per-stage process-group reap, signal-terminated legibility ==
@@ -4125,7 +4142,9 @@ def _all_stdin(tmp):
 def test_lint_repair_prompt_text_pinned(tmp_path):
     """A NEW pin fixing the lint-repair prompt's text: it names the failing lint COMMAND, confines the
     fix to exactly the flagged files (test or production), forbids changing a test's assertions, and
-    carries the lint output — distinct from the tests-frozen check-repair prompt."""
+    carries the lint output — distinct from the tests-frozen check-repair prompt. Issue #306 adds its
+    own terminal-state sentence here too (end the repair with the lint command verified green in the
+    foreground, or an explicit reasoned no-fix — never "waiting")."""
     env, work, binp = _lint_env(tmp_path, title="Lint prompt pin")
     env["STUB_LINT_FAIL"] = "1"; env["STUB_FIX_NOHEAL"] = "1"   # force the LLM lint-repair to fire
     r = _run(["5", "--repo", "test/repo"], env)
@@ -4136,6 +4155,8 @@ def test_lint_repair_prompt_text_pinned(tmp_path):
     assert f"The lint gate FAILS (command: bash {binp / 'lint.sh'})." in prompt   # names the lint command
     assert ("Fix ONLY what the lint output flags, in exactly the files it names, test or production; "
             "change no test's assertions; make the linter pass, nothing else.") in prompt
+    assert ("End this repair with the lint command verified green in the foreground, or an explicit "
+            "reasoned no-fix — waiting on anything is not a terminal state.") in prompt
     assert "Lint output:" in prompt
 
 

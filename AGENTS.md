@@ -100,6 +100,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/stage_usage.py`, `tools/textutil.py` | PR usage-summary comment; shared text helpers |
 | `models.toml` + `tools/registry.py` | the model registry + loader/CLI |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
+| `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tests/` | the pytest suite |
 | `qa/` | consumer quality content (e.g. `qa/lens.py`) — distinct from the platform machinery in `tools/` |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |

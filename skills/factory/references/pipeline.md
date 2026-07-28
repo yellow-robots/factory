@@ -57,10 +57,10 @@ shadow streak.
 
 ## Stage conduct
 
-Every stage prompt carries one confinement contract — the **stage charter** (`tools/dev-runner.sh:695`),
+Every stage prompt carries one confinement contract — the **stage charter** (`tools/dev-runner.sh:1276`),
 appended by `run_stage` to each stage's role prompt so a stage building a foreign repo gets it too, not
 just the factory's own. It is the enforcing surface; this reference states its intent, not its text.
-Three of its rules bear directly on how a stage's own behavior should be read against the rest of this
+Four of its rules bear directly on how a stage's own behavior should be read against the rest of this
 document:
 
 - **Verification is scoped; the gate owns the suite.** A stage's own verification exercises only the
@@ -71,6 +71,14 @@ document:
 - **Foreground only.** A stage never polls, watches, or sleeps on state outside its own run; when it
   can't proceed, it stops rather than wait. A `Blocked` run is that stop's correct shape, not a failure
   to route around — see *environmental vs code failure*, above.
+- **No live background task at turn end** (issue #306). A long-running command of a stage's own runs in
+  the foreground with an explicit, generous timeout, not the tool's own default; if the environment
+  converts it to a background task anyway, the stage kills it or brings it to an observed terminal state
+  before ending its turn — a one-shot stage's turn ending kills any task it left running, silently, so
+  the harness's completion-notification promise is structurally void here. The runner backs this with a
+  transcript scan (`archive_stage_transcript`) for a structurally-matched, never-resolved conversion,
+  gated on positive session-attributed evidence only — its one blind spot is the CLI's own conversion
+  text: if that ever drifts from today's wording, the scan fail-softly no-ops rather than false-gating.
 - **The task slice is the whole context.** A stage reasons from the acceptance criteria in front of it;
   standing documents — this reference included — inform the human and the pipeline's own code, never a
   stage's working context.
