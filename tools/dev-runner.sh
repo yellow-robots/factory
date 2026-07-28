@@ -1062,7 +1062,7 @@ wt_slug(){ printf '%s' "$WT" | tr '/.' '-'; }
 # to the newest .jsonl in the CLI project slug dir (stages serialize per worktree, so "newest at stage
 # end" IS this stage's own transcript) — logged either way. Fail-soft: never blocks or fails the run.
 archive_stage_transcript(){   # $1 = stage log file
-  local log="$1" base stage n=2 out slug_dir result
+  local log="$1" base stage n=2 out slug_dir result status method
   base="$(basename "$log")"; base="${base%.*}"
   stage="$base"
   while [ -e "$RUN_DIR/transcript-$stage.jsonl" ]; do stage="$base-$n"; n=$((n + 1)); done
@@ -1070,6 +1070,40 @@ archive_stage_transcript(){   # $1 = stage log file
   slug_dir="$HOME/.claude/projects/$(wt_slug)"
   result="$(python3 "$SELF_DIR/ledger.py" archive --log "$log" --slug-dir "$slug_dir" --out "$out" 2>&1)" || true
   log "transcript archive ($stage): $result"
+  # bg_scan (issue #306): scan THIS call's own landed transcript for an unresolved CLI-managed
+  # background-task conversion — dedup-suffixed rounds (review-2, ...) scan their own file, never a
+  # prior round's, because `out` above is freshly recomputed every call. Gated on POSITIVE,
+  # session-attributed evidence only: a heuristic-newest attribution proves nothing about which session
+  # this stage actually ran, and a failed/skipped archive leaves no file to scan at all — both log and
+  # continue rather than gate on their own absence.
+  LAST_STAGE_BG_UNRESOLVED=0
+  LAST_STAGE_BG_REASON=""
+  # One python3 call for both fields (same multi-line-stdout + mapfile shape as _set_role_from_json
+  # above) rather than two — mapfile never trips `set -e` even if the process substitution's python3
+  # crashes on unparseable input (verified: unlike a failing `$(...)` assignment), so garbage in `$result`
+  # degrades to an empty array, i.e. status/method both "", i.e. the skip branch below — never a hard stop.
+  local _af
+  mapfile -t _af < <(printf '%s' "$result" | python3 -c 'import json,sys
+try: d = json.load(sys.stdin)
+except Exception: d = {}
+print(d.get("status","") or ""); print(d.get("method","") or "")')
+  status="${_af[0]:-}"; method="${_af[1]:-}"
+  if [ "$status" = archived ] && [ "$method" = session_id ]; then
+    local scan_json _sf unresolved
+    scan_json="$(python3 "$SELF_DIR/bg_scan.py" scan --transcript "$out" 2>&1)" || true
+    mapfile -t _sf < <(printf '%s' "$scan_json" | python3 -c 'import json,sys
+try: d = json.load(sys.stdin)
+except Exception: d = {}
+print(",".join(d.get("unresolved", [])) if d.get("parsed") else "")')
+    unresolved="${_sf[0]:-}"
+    if [ -n "$unresolved" ]; then
+      LAST_STAGE_BG_UNRESOLVED=1
+      LAST_STAGE_BG_REASON="unresolved background-task conversion (task id(s): $unresolved) — its archived transcript ($out) shows the CLI converted a command to a background task that was never brought to an observed terminal state or killed before the stage ended its turn, per the stage charter's background-task rule"
+      log "transcript scan ($stage): unresolved background-task conversion — $unresolved"
+    fi
+  else
+    log "transcript scan ($stage): skipped (archive status=$status method=$method) — positive, session-attributed evidence only, never gates on its own absence"
+  fi
 }
 
 # capture_stage_usage (issue #48): on a stage's clean exit, best-effort extract the CLI's JSON result
@@ -1125,6 +1159,16 @@ STAGE_REFUSAL_RC=124
 # equal to STAGE_REFUSAL_RC could in principle also be a genuine future CLI exit code (set -u: initialize
 # before the first read, in case a caller ever inspects it before any stage has run).
 LAST_STAGE_GROUP_REFUSED=0
+# LAST_STAGE_BG_UNRESOLVED / LAST_STAGE_BG_REASON (issue #306): set by archive_stage_transcript on every
+# call (never left over from a prior one) to whether THIS stage's own just-archived transcript shows an
+# unresolved CLI-managed background-task conversion — the complementary case to LAST_STAGE_GROUP_REFUSED
+# above: a task the CLI itself backgrounded and then killed at session exit, invisible to process-group
+# inspection by the time anything looks. Gated on POSITIVE, session-attributed evidence only (see
+# archive_stage_transcript) — a missing/unparseable/heuristically-attributed transcript leaves this 0.
+# Each caller decides its own disposition (implement/test fail the stage; a repair stage disposes after
+# its salvage+re-check; a review round treats it as not a clean APPROVE) — this only carries the fact.
+LAST_STAGE_BG_UNRESOLVED=0
+LAST_STAGE_BG_REASON=""
 
 # wait_group_or_refuse: after the stage leader has exited, poll (once a second) for up to
 # STAGE_GROUP_GRACE seconds for its process group to empty out on its own. Returns 0 immediately if the
@@ -1232,7 +1276,7 @@ SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 # `case` match on the combined argv+stdin capture: TESTER, REVIEWER — still argv, in the role system-prompt
 # — and "tests FAIL", "REQUESTED CHANGES" — on stdin since issue #121, in the task prompt) — a leaked
 # literal here would misroute every stage, not just its own.
-STAGE_CHARTER="You are one stage of an automated pipeline, running in one fresh worktree cut from the base ref. The pipeline holds builder ≠ verifier: the implementer writes production code and never authors the committed test suite; the tester writes tests only, derived from the acceptance criteria and never from the implementation's internals; the reviewer changes nothing. Write only inside this worktree — never the host. Make no git or board writes; the runner owns them (the reviewer's read-only git, e.g. diffing staged changes, is the one carve-out). Never weaken a gate: do not edit checks, CI configuration, .yr/factory.toml, or any test you were told not to touch. Manage processes by PID only — pattern-kills such as PKILL -f or PGREP -f are forbidden, because a stage's own command environment can contain the task text, and a pattern match can hit and kill the stage's own process instead of its intended target. If the task cannot be done within these rules, stop and say so — a Blocked run is a correct outcome, not a failure to route around. This pipeline produces a pull request only; deploy and host work are never a stage's. In-stage verification exercises only the scope this stage's change touches, with targeted tests; the repo's full check suite belongs to the deterministic check gate and server CI, never an in-stage inner loop. A stage works in the foreground only: it never polls, watches, or sleeps on external state, and when it cannot proceed it stops and says so. The task in front of it is self-contained by design; standing documents are not this stage's context."
+STAGE_CHARTER="You are one stage of an automated pipeline, running in one fresh worktree cut from the base ref. The pipeline holds builder ≠ verifier: the implementer writes production code and never authors the committed test suite; the tester writes tests only, derived from the acceptance criteria and never from the implementation's internals; the reviewer changes nothing. Write only inside this worktree — never the host. Make no git or board writes; the runner owns them (the reviewer's read-only git, e.g. diffing staged changes, is the one carve-out). Never weaken a gate: do not edit checks, CI configuration, .yr/factory.toml, or any test you were told not to touch. Manage processes by PID only — pattern-kills such as PKILL -f or PGREP -f are forbidden, because a stage's own command environment can contain the task text, and a pattern match can hit and kill the stage's own process instead of its intended target. If the task cannot be done within these rules, stop and say so — a Blocked run is a correct outcome, not a failure to route around. This pipeline produces a pull request only; deploy and host work are never a stage's. In-stage verification exercises only the scope this stage's change touches, with targeted tests; the repo's full check suite belongs to the deterministic check gate and server CI, never an in-stage inner loop. A stage works in the foreground only: it never polls, watches, or sleeps on external state, and when it cannot proceed it stops and says so. A long-running command of its own runs in the foreground with an explicit, generous timeout — the lever, not a hard-coded number — rather than the tool's own default; a command the environment converts to a background task anyway is killed or brought to an observed terminal state before the stage ends its turn, because a stage never ends its turn with a live background task: in a one-shot stage the promise that it will be notified when the task completes is structurally void — ending the turn ends the process, killing the task silently. The task in front of it is self-contained by design; standing documents are not this stage's context."
 
 # implementer — production code only
 IMPL_SYS="You are the IMPLEMENTER stage of an automated dev pipeline. Implement the task so it satisfies every acceptance criterion. Write PRODUCTION CODE ONLY — do not author the committed test suite (an independent tester stage does that)."
@@ -1245,10 +1289,18 @@ else
   log "implement: $(basename "$CLAUDE_BIN") [$BUILD_ID] in $WT"
   IMPL_RC=0
   run_stage "$IMPL_SYS" "$(printf 'Implement the task below against its acceptance criteria. Make the minimal, clean change.\n\n%s' "$SPEC")" "$RUN_DIR/implement.log" || IMPL_RC=$?
+  # bg_scan (issue #306): capture immediately — named alongside the rc-based message below when BOTH
+  # fire at once (a killed/errored stage that also left a live background task), so the true cause is
+  # never dropped from the one Blocked message that reaches the run.
+  IMPL_BG_SUFFIX=""
+  [ "$LAST_STAGE_BG_UNRESOLVED" -eq 1 ] && IMPL_BG_SUFFIX="  Also: $LAST_STAGE_BG_REASON"
   if [ "$IMPL_RC" -ne 0 ]; then
     [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/implement.log" && llm_quota_hold "implement" "$RUN_DIR/implement.log"
-    fail_blocked "$(stage_fail_msg "implement" "$RUN_DIR/implement.log" "$IMPL_RC" "$LAST_STAGE_GROUP_REFUSED")"
+    fail_blocked "$(stage_fail_msg "implement" "$RUN_DIR/implement.log" "$IMPL_RC" "$LAST_STAGE_GROUP_REFUSED")$IMPL_BG_SUFFIX"
   fi
+  # the implement stage's own transcript shows a live background task it never brought to a terminal
+  # state — fail the stage instead of advancing, same caller-gated shape as the group-refusal check above.
+  [ "$LAST_STAGE_BG_UNRESOLVED" -eq 1 ] && fail_blocked "implement stage ended its turn with a live background task: $LAST_STAGE_BG_REASON"
 
   # checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
   # detect violations structurally (confinement principle — not advisory / prompt-only).
@@ -1275,10 +1327,15 @@ else
   log "test: independent tester stage"
   TEST_RC=0
   run_stage "$TEST_SYS" "$(printf 'Write tests that verify the acceptance criteria below.\n\n%s' "$SPEC")" "$RUN_DIR/test.log" || TEST_RC=$?
+  TEST_BG_SUFFIX=""
+  [ "$LAST_STAGE_BG_UNRESOLVED" -eq 1 ] && TEST_BG_SUFFIX="  Also: $LAST_STAGE_BG_REASON"
   if [ "$TEST_RC" -ne 0 ]; then
     [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/test.log" && llm_quota_hold "test" "$RUN_DIR/test.log"
-    fail_blocked "$(stage_fail_msg "tester" "$RUN_DIR/test.log" "$TEST_RC" "$LAST_STAGE_GROUP_REFUSED")"
+    fail_blocked "$(stage_fail_msg "tester" "$RUN_DIR/test.log" "$TEST_RC" "$LAST_STAGE_GROUP_REFUSED")$TEST_BG_SUFFIX"
   fi
+  # bg_scan (issue #306): same rule as the implementer above — a live background task at stage end fails
+  # the stage instead of advancing.
+  [ "$LAST_STAGE_BG_UNRESOLVED" -eq 1 ] && fail_blocked "tester stage ended its turn with a live background task: $LAST_STAGE_BG_REASON"
 
   # tester boundary guard: block if tester modified anything outside the declared TEST_PATHS surface.
   # Block-and-raise (no auto-revert) so the violation is visible for diagnosis.
@@ -1389,11 +1446,20 @@ else
   if [ "$CHECK_RC" -ne 0 ]; then
     log "checks failed (exit $CHECK_RC) — one repair attempt [$CHECK_REPAIR_ID]"
     REPAIR_RC=0
-    run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Reproduce with the failing tests only; the runner re-runs the full check suite after this stage. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || REPAIR_RC=$?
+    run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Reproduce with the failing tests only; the runner re-runs the full check suite after this stage. End this repair with the targeted reproduction verified green in the foreground, or an explicit reasoned no-fix — waiting on anything is not a terminal state. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || REPAIR_RC=$?
+    CHECK_REPAIR_BG_UNRESOLVED="$LAST_STAGE_BG_UNRESOLVED"; CHECK_REPAIR_BG_REASON="$LAST_STAGE_BG_REASON"
     if [ "$REPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/repair.log"; then llm_quota_hold "check repair" "$RUN_DIR/repair.log"; fi
     CHECK_RC=0; run_checks || CHECK_RC=$?
     if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the repair attempt"; fi
-    [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)"
+    # bg_scan (issue #306): salvage/re-check ordering is untouched (there is none to preserve here — the
+    # check-repair path has no artifact salvage step); the scan only changes the terminal disposition.
+    # A live background task at the repair's own stage end names the unresolved conversion alongside a
+    # failing re-check, and blocks even a re-check that came back green — the kill window of an abandoned
+    # task overlaps the re-check, so a green read over that window is not trustworthy.
+    CHECK_REPAIR_BG_SUFFIX=""
+    [ "$CHECK_REPAIR_BG_UNRESOLVED" -eq 1 ] && CHECK_REPAIR_BG_SUFFIX="  Also: $CHECK_REPAIR_BG_REASON"
+    [ "$CHECK_RC" -eq 0 ] || fail_blocked "checks still failing after one repair (log: $RUN_DIR/checks.log)$CHECK_REPAIR_BG_SUFFIX"
+    [ "$CHECK_REPAIR_BG_UNRESOLVED" -eq 1 ] && fail_blocked "check-repair stage ended its turn with a live background task, so the green re-check is not trustworthy: $CHECK_REPAIR_BG_REASON"
   fi
 
   # ---- lint tier (issue #213): a manifest-declared, BLOCKING lint gate, run only AFTER check_cmd passes.
@@ -1406,6 +1472,8 @@ else
   # tests-frozen check-repair prompt so neither failure can trigger the other's stage.
   if [ -n "$LINT_CMD" ]; then
     LINT_MUTATED=0
+    LINT_REPAIR_BG_UNRESOLVED=0
+    LINT_REPAIR_BG_REASON=""
     LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
     if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" ""; fi
     if [ "$LINT_RC" -ne 0 ]; then
@@ -1422,19 +1490,27 @@ else
       if [ "$LINT_RC" -ne 0 ]; then
         log "lint still failing — one LLM repair attempt [$CHECK_REPAIR_ID]"
         LINT_REPAIR_RC=0
-        run_stage "$IMPL_SYS" "$(printf 'The lint gate FAILS (command: %s). Fix ONLY what the lint output flags, in exactly the files it names, test or production; change no test'"'"'s assertions; make the linter pass, nothing else. Lint output:\n\n%s\n\nTask:\n%s' "$LINT_CMD" "$(tail -n 40 "$RUN_DIR/lint.log")" "$SPEC")" "$RUN_DIR/lint-repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || LINT_REPAIR_RC=$?
+        run_stage "$IMPL_SYS" "$(printf 'The lint gate FAILS (command: %s). Fix ONLY what the lint output flags, in exactly the files it names, test or production; change no test'"'"'s assertions; make the linter pass, nothing else. End this repair with the lint command verified green in the foreground, or an explicit reasoned no-fix — waiting on anything is not a terminal state. Lint output:\n\n%s\n\nTask:\n%s' "$LINT_CMD" "$(tail -n 40 "$RUN_DIR/lint.log")" "$SPEC")" "$RUN_DIR/lint-repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || LINT_REPAIR_RC=$?
+        LINT_REPAIR_BG_UNRESOLVED="$LAST_STAGE_BG_UNRESOLVED"; LINT_REPAIR_BG_REASON="$LAST_STAGE_BG_REASON"
         if [ "$LINT_REPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/lint-repair.log"; then llm_quota_hold "lint repair" "$RUN_DIR/lint-repair.log"; fi
         LINT_MUTATED=1
       fi
     fi
     # (3) after ANY repair-path mutation, re-run BOTH gates against the shipped tree. Either failing → Blocked.
     if [ "$LINT_MUTATED" -eq 1 ]; then
+      LINT_REPAIR_BG_SUFFIX=""
+      [ "$LINT_REPAIR_BG_UNRESOLVED" -eq 1 ] && LINT_REPAIR_BG_SUFFIX="  Also: $LINT_REPAIR_BG_REASON"
       CHECK_RC=0; run_checks || CHECK_RC=$?
       if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the lint repair"; fi
-      [ "$CHECK_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (checks failed after the lint fix; log: $RUN_DIR/checks.log)"
+      [ "$CHECK_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (checks failed after the lint fix; log: $RUN_DIR/checks.log)$LINT_REPAIR_BG_SUFFIX"
       LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
       if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the lint repair"; fi
-      [ "$LINT_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (log: $RUN_DIR/lint.log)"
+      [ "$LINT_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (log: $RUN_DIR/lint.log)$LINT_REPAIR_BG_SUFFIX"
+      # bg_scan (issue #306): a live background task at the lint-repair's own stage end blocks even a
+      # re-check that came back green — the kill window of an abandoned task overlaps the re-check, so a
+      # green read over that window is not trustworthy (same rule as the check-repair path above; a pure
+      # deterministic autofix never runs an LLM stage, so LINT_REPAIR_BG_UNRESOLVED stays 0 there).
+      [ "$LINT_REPAIR_BG_UNRESOLVED" -eq 1 ] && fail_blocked "lint-repair stage ended its turn with a live background task, so the green re-check is not trustworthy: $LINT_REPAIR_BG_REASON"
     fi
   fi
 
@@ -1496,10 +1572,26 @@ shadow_review_round(){
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
                 local rc=0
                 run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID" || rc=$?
+                # bg_scan (issue #306): capture THIS round's own scan result before shadow_review_round
+                # below runs its own run_stage call and overwrites LAST_STAGE_BG_UNRESOLVED/_REASON. NOT
+                # `local` — the caller reads REVIEW_ROUND_BG_UNRESOLVED/_REASON after every review_stage
+                # call (first round AND the post-repair verification round) to name this round's own
+                # cause in whatever message it builds, rather than leaving it stranded in this function's
+                # own `log` line below.
+                REVIEW_ROUND_BG_UNRESOLVED="$LAST_STAGE_BG_UNRESOLVED"
+                REVIEW_ROUND_BG_REASON="$LAST_STAGE_BG_REASON"
                 if [ "$rc" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/review.md"; then llm_quota_hold "review" "$RUN_DIR/review.md"; fi
                 python3 "$SELF_DIR/review_bundle.py" record-verdict --bundle "$BUNDLE" --file "$RUN_DIR/review.md" \
                   || fail_blocked "review bundle record-verdict failed"
                 shadow_review_round   # non-gating second opinion (issue #165) — never affects the verdict below
+                # bg_scan: an unresolved conversion in the reviewer's OWN transcript is treated as not a
+                # clean APPROVE — the existing fail-closed verdict path below takes over (a first-round hit
+                # sends this to review-repair; a second-round hit blocks) — logged, but the verdict record
+                # above already captured what the round actually said.
+                if [ "$REVIEW_ROUND_BG_UNRESOLVED" -eq 1 ]; then
+                  log "review round transcript scan: unresolved background-task conversion — treating the verdict as not a clean APPROVE ($REVIEW_ROUND_BG_REASON)"
+                  return 1
+                fi
                 # fail-closed: the LAST verdict line must be exactly "VERDICT: APPROVE" (only trailing whitespace
                 # trimmed) — a hedge ("APPROVE" then "REQUEST_CHANGES"), trailing junk, or a mangled token does NOT pass.
                 # Shared grammar: verdict_line() above.
@@ -1509,9 +1601,12 @@ if stage_done 04-review; then
   log "resume: skipping review (04-review.done present)"
 else
   if ! review_stage; then
-    log "review requested changes — one repair attempt [$REVIEW_REPAIR_ID]"
+    ROUND1_BG_SUFFIX=""
+    [ "$REVIEW_ROUND_BG_UNRESOLVED" -eq 1 ] && ROUND1_BG_SUFFIX="  Also: $REVIEW_ROUND_BG_REASON"
+    log "review requested changes — one repair attempt [$REVIEW_REPAIR_ID]$ROUND1_BG_SUFFIX"
     REVIEWREPAIR_RC=0
-    run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || REVIEWREPAIR_RC=$?
+    run_stage "$IMPL_SYS" "$(printf 'A reviewer REQUESTED CHANGES. Fix the blocking findings (production code; only touch a test if the test itself is wrong). End this repair with the blocking findings'"'"' targeted reproduction verified green in the foreground, or an explicit reasoned no-fix — waiting on anything is not a terminal state. Reviewer notes:\n\n%s\n\nTask:\n%s' "$(cat "$RUN_DIR/review.md")" "$SPEC")" "$RUN_DIR/review-repair.log" "Read Edit Write Bash" "$REVIEW_REPAIR_ID" || REVIEWREPAIR_RC=$?
+    REVIEWREPAIR_BG_UNRESOLVED="$LAST_STAGE_BG_UNRESOLVED"; REVIEWREPAIR_BG_REASON="$LAST_STAGE_BG_REASON"
     if [ "$REVIEWREPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/review-repair.log"; then llm_quota_hold "review repair" "$RUN_DIR/review-repair.log"; fi
     # ---- persist the post-repair diff (issue #172) ----
     # Capture the repair's edits BEFORE the check re-run below, regardless of the repair's own exit
@@ -1519,11 +1614,26 @@ else
     # repair stage itself stages nothing, so stage the worktree here first. This pins the artifact ahead
     # of BOTH blocked-after-repair paths (checks failing after repair; the second review round blocking),
     # so a teardown on either path still leaves the final tree recoverable from $RUN_DIR/final.patch —
-    # unlike diff.patch above, which is the PRE-repair snapshot.
+    # unlike diff.patch above, which is the PRE-repair snapshot. bg_scan (issue #306) changes only the
+    # terminal disposition below, never this ordering: salvage lands, then the deterministic re-check,
+    # then the scan's own verdict.
     "$GIT_BIN" -C "$WT" add -A
     "$GIT_BIN" -C "$WT" diff --cached > "$RUN_DIR/final.patch"
-    run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)"
-    review_stage || fail_blocked "reviewer still requests changes after one repair"
+    REVIEWREPAIR_BG_SUFFIX=""
+    [ "$REVIEWREPAIR_BG_UNRESOLVED" -eq 1 ] && REVIEWREPAIR_BG_SUFFIX="  Also: $REVIEWREPAIR_BG_REASON"
+    run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)$REVIEWREPAIR_BG_SUFFIX"
+    if ! review_stage; then
+      # this SECOND review_stage call just refreshed REVIEW_ROUND_BG_UNRESOLVED/_REASON with ITS OWN
+      # scan result (the re-review's transcript, distinct from the review-repair LLM stage's own above)
+      # — name both causes if both fired, so the Blocked comment never drops either one.
+      ROUND2_BG_SUFFIX=""
+      [ "$REVIEW_ROUND_BG_UNRESOLVED" -eq 1 ] && ROUND2_BG_SUFFIX="  Also: $REVIEW_ROUND_BG_REASON"
+      fail_blocked "reviewer still requests changes after one repair$REVIEWREPAIR_BG_SUFFIX$ROUND2_BG_SUFFIX"
+    fi
+    # a live background task at the review-repair's own stage end blocks even a clean re-check/re-review —
+    # the kill window of an abandoned task overlaps the re-check, so a green read over that window is not
+    # trustworthy (same rule as the check-repair/lint-repair paths above).
+    [ "$REVIEWREPAIR_BG_UNRESOLVED" -eq 1 ] && fail_blocked "review-repair stage ended its turn with a live background task, so the green re-check/re-review is not trustworthy: $REVIEWREPAIR_BG_REASON"
   fi
   mark_stage 04-review
 fi

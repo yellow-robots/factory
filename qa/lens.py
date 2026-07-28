@@ -139,6 +139,19 @@ def _in_compares(test_node):
             yield node
 
 
+def _identifier_tokens(node):
+    """Every Name/Attribute identifier reachable from `node`, excluding string-constant content —
+    a file-path literal like `"transcript-review-2.jsonl"` names an artifact, it doesn't name a
+    captured argv/transcript handle, so it must not feed the same regex as an identifier would."""
+    tokens = []
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name):
+            tokens.append(n.id)
+        elif isinstance(n, ast.Attribute):
+            tokens.append(n.attr)
+    return tokens
+
+
 def _scan_raw_argv_transport_grep(path, source, asserts):
     findings = []
     for a in asserts:
@@ -154,8 +167,7 @@ def _scan_raw_argv_transport_grep(path, source, asserts):
             # the captured argv/transcript text", so subscripts are excluded from the name match.
             if isinstance(right, ast.Subscript):
                 continue
-            right_src = ast.get_source_segment(source, right) or ""
-            if _TRANSPORT_NAME_RE.search(right_src):
+            if any(_TRANSPORT_NAME_RE.search(tok) for tok in _identifier_tokens(right)):
                 findings.append(Finding(path, a.lineno, "raw-argv-transport-grep"))
     return findings
 
