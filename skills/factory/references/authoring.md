@@ -111,6 +111,13 @@ back into the governing design doc. For the review discipline that feeds this ga
 
 One GitHub Issue via the Task DoR form, from `templates/task.md`.
 
+**The direct lane.** A task need not descend from a technical-rfc slice — an ideas-backlog seed may
+draft straight to a task, skipping a governing design, when the idea clears the earned-test (small,
+single-slice, not worth arguing over). See
+[`documentation-model.md`](documentation-model.md) → *The ideas-backlog* for the lane itself, the
+earned-test for when a governing design is required instead, and the task-delivered arm it stamps at
+filing.
+
 **Required sections:** Goal · Acceptance (EARS criteria as `- [ ]`) · Context & links (paste the
 technical-RFC slice — self-contained) · Test expectations · Constraints / out of scope · Size.
 

@@ -906,3 +906,201 @@ def test_pipeline_md_status_as_claim_line_untouched():
         "pipeline.md Judgment points missing the Status=In Progress claim statement"
     assert "per-task lock" in section, \
         "pipeline.md Judgment points missing the 'Status is the per-task lock' framing"
+
+
+# ---------------------------------------------------------------------------
+# Issue #321 — the canon: direct lane, sanctioned write paths, release.
+#
+# Derived from the Issue #321 acceptance criteria (the spec), not from the
+# implementation's own prose. Verifies: (1) documentation-model.md's
+# ideas-backlog section names the direct seed-to-task lane and reconciles it
+# with the standing "an idea earns a task only once a spec mines it" line;
+# (2) authoring.md carries the lane at its task step without restating it;
+# (3) Editing safely holds the one canonical sanctioned-write-paths statement
+# plus the mandatory after-write parse verification, pointing at the
+# integrity check as the standing detector; (4) no reference restates
+# another's content (thin files, routed depth).
+# ---------------------------------------------------------------------------
+
+def _doc_model_text():
+    return (REFS / "documentation-model.md").read_text(encoding="utf-8")
+
+
+def _doc_model_ideas_backlog_section():
+    """Return documentation-model.md's '## The ideas-backlog' section only, from its
+    heading up to the next '## ' heading."""
+    text = _doc_model_text()
+    start = text.find("## The ideas-backlog")
+    assert start != -1, "documentation-model.md is missing a '## The ideas-backlog' heading"
+    next_heading = text.find("\n## ", start + len("## The ideas-backlog"))
+    end = next_heading if next_heading != -1 else len(text)
+    return text[start:end]
+
+
+def _doc_model_editing_safely_section():
+    """Return documentation-model.md's 'Editing safely' section only, from its
+    '## Editing safely' heading to the next '## ' heading or end of file."""
+    text = _doc_model_text()
+    start = text.find("## Editing safely")
+    assert start != -1, "documentation-model.md is missing an '## Editing safely' heading"
+    next_heading = text.find("\n## ", start + len("## Editing safely"))
+    end = next_heading if next_heading != -1 else len(text)
+    return text[start:end]
+
+
+def test_doc_model_ideas_backlog_names_the_direct_lane_steps():
+    """The ideas-backlog section must name the direct seed-to-task lane's five stops, in
+    order: seed, drafted task, independent adversarial review with dispositions on the
+    trail, file + task-delivered arm stamp, human promote."""
+    section = _doc_model_ideas_backlog_section()
+    lower = _normalized(section)
+
+    assert "direct lane" in lower, \
+        "documentation-model.md ideas-backlog section missing 'the direct lane'"
+
+    for phrase in [
+        "drafted task",
+        "independent adversarial review",
+        "dispositions on the trail",
+        "task-delivered arm stamp",
+        "human promote",
+    ]:
+        assert phrase in lower, \
+            f"documentation-model.md direct-lane text missing the '{phrase}' stop"
+
+    # Ordering: each stop must appear no earlier than the previous one, so the lane
+    # reads seed -> drafted task -> review -> file+stamp -> human promote.
+    stops = ["drafted task", "independent adversarial review", "dispositions on the trail",
+             "task-delivered arm stamp", "human promote"]
+    positions = [lower.index(s) for s in stops]
+    assert positions == sorted(positions), \
+        f"documentation-model.md direct-lane stops are out of order: {stops} at {positions}"
+
+
+def test_doc_model_ideas_backlog_names_governing_design_earned_instead():
+    """The ideas-backlog section must state when a governing design is earned instead of the
+    direct lane: multi-slice shape, cross-repo reach, or an approach worth arguing over."""
+    section = _doc_model_ideas_backlog_section()
+    lower = _normalized(section)
+
+    assert "governing design" in lower, \
+        "documentation-model.md direct-lane text missing 'a governing design is earned instead'"
+    assert "multi-slice" in lower, \
+        "documentation-model.md direct-lane text missing the multi-slice-shape trigger"
+    assert "cross-repo" in lower, \
+        "documentation-model.md direct-lane text missing the cross-repo-reach trigger"
+    assert "worth arguing" in lower, \
+        "documentation-model.md direct-lane text missing the worth-arguing-over trigger"
+
+
+def test_doc_model_reconciles_earns_a_task_line_with_task_delivered_arm():
+    """The section must reconcile the standing 'an idea earns a task only once a spec mines
+    it' line with the task-delivered arm — the direct lane is the named exception, not a
+    silent contradiction."""
+    section = _doc_model_ideas_backlog_section()
+    lower = _normalized(section)
+
+    assert "an idea earns a task only once a spec mines it" in lower, \
+        "documentation-model.md missing the standing 'an idea earns a task only once a " \
+        "spec mines it' line"
+    assert "task-delivered arm" in lower, \
+        "documentation-model.md direct-lane text does not name the task-delivered arm " \
+        "it is reconciling against"
+    assert "reconcile" in lower, \
+        "documentation-model.md does not state that the direct lane reconciles the " \
+        "earns-a-task line with the task-delivered arm"
+
+
+def test_doc_model_earns_a_task_line_names_direct_lane_as_the_exception():
+    """The 'Not a backlog of tasks' bullet itself must point at the direct lane as the
+    alternate route, not leave the two statements to silently coexist."""
+    section = _doc_model_ideas_backlog_section()
+    lower = _normalized(section)
+    marker = "not a backlog of tasks"
+    idx = lower.index(marker)
+    tail = lower[idx:idx + 300]
+    assert "an idea earns a task only once a spec mines it" in tail, \
+        "documentation-model.md's 'Not a backlog of tasks' bullet is missing the " \
+        "earns-a-task-only-once-a-spec-mines-it line"
+    assert "direct lane" in tail, \
+        "documentation-model.md's 'Not a backlog of tasks' bullet does not point at the " \
+        "direct lane as the alternate route"
+
+
+def test_authoring_task_step_carries_the_direct_lane():
+    """authoring.md's task-authoring step (step 4) must carry the direct lane, citing
+    documentation-model.md's ideas-backlog section rather than silently omitting it."""
+    section = _authoring_task_step_text()
+    lower = _normalized(section)
+    assert "direct lane" in lower, \
+        "authoring.md step 4 missing the direct lane"
+    assert "ideas-backlog" in lower, \
+        "authoring.md step 4 does not point at documentation-model.md's ideas-backlog section"
+    assert "documentation-model.md" in section, \
+        "authoring.md step 4 direct-lane text does not cite documentation-model.md"
+
+
+def test_authoring_task_step_does_not_restate_the_lane_verbatim():
+    """Thin files, routed depth: authoring.md cites the lane, it does not restate
+    documentation-model.md's own stop-by-stop wording."""
+    section = _authoring_task_step_text()
+    lower = _normalized(section)
+    for phrase in ["independent adversarial review", "dispositions on the trail"]:
+        assert phrase not in lower, \
+            f"authoring.md step 4 restates documentation-model.md's direct-lane wording " \
+            f"('{phrase}') instead of citing it"
+
+
+def test_editing_safely_has_one_canonical_sanctioned_write_paths_statement():
+    """Editing safely must hold the one canonical statement of the sanctioned brain write
+    paths, and it must be findable exactly once in documentation-model.md (never restated
+    by another reference)."""
+    marker = "one canonical statement of the sanctioned brain write paths"
+    section = _doc_model_editing_safely_section()
+    assert marker in _normalized(section), \
+        "documentation-model.md Editing safely section missing the canonical " \
+        "sanctioned-write-paths statement"
+
+    full_lower = _normalized(_doc_model_text())
+    assert full_lower.count(marker) == 1, \
+        "documentation-model.md states the canonical sanctioned-write-paths marker more " \
+        "than once — it must be the one canonical statement"
+
+    for ref in REQUIRED_REFS:
+        ref_path = REFS / ref
+        if not ref_path.exists():
+            continue
+        ref_lower = _normalized(ref_path.read_text(encoding="utf-8"))
+        assert marker not in ref_lower, \
+            f"references/{ref} restates the canonical sanctioned-write-paths statement " \
+            f"instead of citing documentation-model.md's Editing safely section"
+
+
+def test_editing_safely_mandates_after_write_parse_verification():
+    """Editing safely must state the after-write parse-verification confirm as mandatory,
+    not merely advisory."""
+    section = _doc_model_editing_safely_section()
+    lower = _normalized(section)
+    assert "confirm the write parsed" in lower, \
+        "documentation-model.md Editing safely section missing the 'confirm the write " \
+        "parsed' instruction"
+    assert "mandatory after every write" in lower, \
+        "documentation-model.md Editing safely section does not state the parse-confirm " \
+        "is mandatory after every write"
+
+
+def test_editing_safely_points_at_integrity_check_as_standing_detector():
+    """Editing safely must point at the brain-integrity check (slice 8) as the standing
+    detector for writes that bypass the mandatory per-write confirm."""
+    section = _doc_model_editing_safely_section()
+    lower = _normalized(section)
+    assert "standing detector" in lower, \
+        "documentation-model.md Editing safely section missing the 'standing detector' framing"
+    assert "check_supersession.py --integrity" in section or "--integrity" in section, \
+        "documentation-model.md Editing safely section does not name the --integrity " \
+        "brain-integrity check invocation"
+    assert "does not replace the per-write confirm" in lower or (
+        "per-write confirm" in lower and "standing detector" in lower
+    ), \
+        "documentation-model.md Editing safely section does not relate the standing " \
+        "detector back to the mandatory per-write confirm"
