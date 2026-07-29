@@ -70,6 +70,13 @@ def transcript_clean():
     return _event("assistant", [{"type": "text", "text": "all good, nothing backgrounded"}]) + "\n"
 
 
+def transcript_near_miss(tid):
+    """The conversion phrase present but not structurally qualifying as a true conversion (mid-text,
+    not at the start of the block) — a drift-canary near miss (#320), never a true unresolved hit."""
+    text = "noise before it\n" + MARKER.format(tid=tid) + "\nnoise after it"
+    return _event("user", [_tool_result(text)]) + "\n"
+
+
 def _write(tmp_path, name, content):
     p = tmp_path / name
     p.write_text(content)
@@ -217,6 +224,73 @@ def test_resolved_conversion_via_kill_tool_use_does_not_block(tmp_path):
     r = base._run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
     assert "https://stub/pr/1" in r.stdout
+
+
+# ============ the near-miss drift canary (issue #320): logged per stage, never gates ============
+
+def test_near_miss_logged_with_count_and_first_index_and_never_blocks(tmp_path):
+    """A stage whose OWN transcript contains the conversion phrase mid-text (a near miss, not a true
+    conversion) must build clean through to a PR exactly like a stage with no marker at all — the
+    canary rides the envelope but never disposes on anything — while the runner's own log still states
+    the near-miss count and first event index for that stage."""
+    env, work, binp = _bg_setup(tmp_path, "Near miss never blocks")
+    env["STUB_BG_CONTENT_IMPL"] = str(_write(tmp_path, "impl_near_miss.jsonl", transcript_near_miss("bgtasknear")))
+    r = base._run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    tl = base._timeline(tmp_path)
+    assert tl.count("IMPL") == 1 and "TEST" in tl   # advanced normally, exactly as an unmarked run would
+    comments = " ".join(base._comments(tl))
+    assert "bgtasknear" not in comments             # never surfaced as a blocking finding
+    assert "unresolved background-task conversion" not in r.stderr.lower()
+    stderr_lower = r.stderr.lower()
+    assert "near-miss" in stderr_lower or "near miss" in stderr_lower
+    assert "implement" in stderr_lower
+    assert "count=1" in r.stderr or "count: 1" in stderr_lower
+    assert "first_index=0" in r.stderr or "first index: 0" in stderr_lower or "index=0" in stderr_lower
+
+
+def test_zero_near_misses_logged_as_count_zero_when_stage_is_clean(tmp_path):
+    """A clean stage (no marker text anywhere) still gets a per-stage canary log line, stating a zero
+    count — the log fires on every scan, not only when something was found."""
+    env, work, binp = _bg_setup(tmp_path, "Clean stage still logs canary")
+    r = base._run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    stderr_lower = r.stderr.lower()
+    assert "near-miss" in stderr_lower or "near miss" in stderr_lower
+    assert "count=0" in r.stderr or "count: 0" in stderr_lower
+
+
+def test_multiple_near_misses_in_one_stage_report_count_and_first_index(tmp_path):
+    """Two near misses in the same stage's transcript: the log states the total count and the FIRST
+    event index only (not every index) — a compact per-stage summary line, not an enumeration."""
+    env, work, binp = _bg_setup(tmp_path, "Multiple near misses one stage")
+    two_near = transcript_near_miss("bgtaska") + transcript_near_miss("bgtaskb")
+    env["STUB_BG_CONTENT_TEST"] = str(_write(tmp_path, "test_two_near.jsonl", two_near))
+    r = base._run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    stderr_lower = r.stderr.lower()
+    assert "count=2" in r.stderr or "count: 2" in stderr_lower
+    assert "first_index=0" in r.stderr or "first index: 0" in stderr_lower or "index=0" in stderr_lower
+
+
+def test_review_round_near_miss_never_triggers_repair_or_touches_verdict(tmp_path):
+    """The most sensitive site: a review round's own transcript carries a near miss. The verdict and
+    disposition (a single clean APPROVE, no review-repair round) must be byte-unaffected — exactly the
+    same shape as a review round with no marker text at all."""
+    env, work, binp = _bg_setup(tmp_path, "Review round near miss never gates")
+    env["STUB_BG_CONTENT_REVIEW_ROUND1"] = str(_write(tmp_path, "review_near_miss.jsonl", transcript_near_miss("bgtaskreviewnear")))
+    r = base._run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    tl = base._timeline(tmp_path)
+    assert tl.count("REVIEW") == 1 and "REVIEWFIX" not in tl   # a single clean round, no repair triggered
+    rd = base._run_dir(tmp_path, 5)
+    review_md = (rd / "review.md").read_text()
+    assert "VERDICT: APPROVE" in review_md
+    assert "unresolved background-task conversion" not in r.stderr.lower()
 
 
 # ============ check-repair: salvage/re-check ordering preserved, then dispose fail-closed ============

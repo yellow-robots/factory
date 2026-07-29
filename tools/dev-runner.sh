@@ -1271,18 +1271,27 @@ except Exception: d = {}
 print(d.get("status","") or ""); print(d.get("method","") or "")')
   status="${_af[0]:-}"; method="${_af[1]:-}"
   if [ "$status" = archived ] && [ "$method" = session_id ]; then
-    local scan_json _sf unresolved
+    local scan_json _sf unresolved near_count near_first
     scan_json="$(python3 "$SELF_DIR/bg_scan.py" scan --transcript "$out" 2>&1)" || true
     mapfile -t _sf < <(printf '%s' "$scan_json" | python3 -c 'import json,sys
 try: d = json.load(sys.stdin)
 except Exception: d = {}
-print(",".join(d.get("unresolved", [])) if d.get("parsed") else "")')
+parsed = bool(d.get("parsed"))
+print(",".join(d.get("unresolved", [])) if parsed else "")
+near = d.get("near_misses", []) if parsed else []
+print(len(near))
+print(near[0] if near else "")')
     unresolved="${_sf[0]:-}"
+    near_count="${_sf[1]:-0}"
+    near_first="${_sf[2]:-}"
     if [ -n "$unresolved" ]; then
       LAST_STAGE_BG_UNRESOLVED=1
       LAST_STAGE_BG_REASON="unresolved background-task conversion (task id(s): $unresolved) — its archived transcript ($out) shows the CLI converted a command to a background task that was never brought to an observed terminal state or killed before the stage ended its turn, per the stage charter's background-task rule"
       log "transcript scan ($stage): unresolved background-task conversion — $unresolved"
     fi
+    # near-miss drift canary (issue #320): logged every scan, independent of $unresolved above — an
+    # aggregate signal for a human to eyeball over time, never a gate (see tools/bg_scan.py docstring).
+    log "transcript scan ($stage): near-miss drift canary — count=$near_count first_index=${near_first:-none}"
   else
     log "transcript scan ($stage): skipped (archive status=$status method=$method) — positive, session-attributed evidence only, never gates on its own absence"
   fi
