@@ -13,7 +13,7 @@
 | `check_links` | An artifact's `source_*` crossing-links resolve: `[[wikilink]]` → vault FS; `#issue` / URL → format, `gh` when online. Scope = the artifact, not the vault. | `python3 tools/check_links.py <draft.md> [--no-gh]` — exit 1 = stop |
 | `check_task` | Task is self-contained: context slice present; no `[[wikilink]]` / `obsidian://` in build-critical sections; every backtick-cited repo path exists at the base ref. | `python3 tools/check_task.py <task.md> --repo-root <repo> --base-ref origin/main` |
 | `check_supersession` | Declaration grammar and empty-justification on a `product-spec`/`feature-rfc` draft; pair integrity both directions (`supersedes` ↔ `superseded_by`); down-flow disposition of every active spine doc under a superseded target. | Draft mode: `python3 tools/check_supersession.py <draft.md> [--vault-root DIR]`. Sweep: `python3 tools/check_supersession.py --sweep --scope REL [--vault-root DIR]` |
-| `check_cmd` | The repo's own check (from `.yr/factory.toml`) — runs in the worktree with `.venv/bin` + `node_modules/.bin` on PATH. | The runner runs it. One repair attempt on a code failure; **no repair** on an environment failure (exit 126/127). |
+| `check_cmd` | The repo's own check (from `.yr/factory.toml`) — runs in the worktree with `.venv/bin` + `node_modules/.bin` on PATH, bounded by `check_timeout` (default 1200s). | The runner runs it. One repair attempt on a code failure; **no repair** on an environment failure (exit 126/127). |
 | `lint_cmd` | Manifest-declared lint tier: runs at stage `03-check`, immediately after `check_cmd` passes. Absent = off, byte-identical to today. Shares `check_cmd`'s 126/127 environment-failure discipline — an unexecutable lint (or autofix) command is `Blocked`, no repair attempt. | The runner runs it; **blocking**. Ruled repair scope: see *Judgment points* below. |
 | Review verdict | An independent reviewer emits `VERDICT: APPROVE` or `REQUEST_CHANGES`. | The runner gates the PR on a clean `APPROVE`. Fail-closed: anything but a clean `APPROVE` blocks. |
 | Merge evaluator | Deterministic terminal step (no LLM): CI-green · freshness vs `main`'s tip · terminal clean `APPROVE` · review-rank >= build-rank (the reviewer is never weaker), in order, indeterminate = failed. | The runner runs it after the PR opens. Armed repo: all-pass squash-merges, any fail posts `YR-MERGE: BLOCKED`; otherwise a `YR-MERGE-SHADOW` record and the human merges. |
@@ -39,6 +39,14 @@ artifact instead of halting the run.
 - **Environment vs. code failure:** if `check_cmd` exits 126 or 127, the toolchain is broken — the
   runner reports `Blocked` without a repair attempt. Investigate the environment; don't paper over it
   with a repair.
+- **The local gate is bounded (issue #308):** every `check_cmd`/`lint_cmd`/`lens_cmd` invocation (the
+  armed re-green included) runs under `check_timeout` (env `CHECK_TIMEOUT` > manifest `check_timeout` >
+  1200s default, resolved once at start-of-run), a wedged process tree killed with no survivor. An
+  OBSERVED expiry — the wrapper itself firing, never inferred from the exit code alone (a suite that
+  internally exits 124, or a kernel OOM 137, disposes as today's plain code failure) — disposes as a code
+  failure whose log tail names the expiry and the window, so the site's existing disposition (one repair,
+  then `Blocked`) engages unchanged; the lens folds an expiry into its advisory note instead, same as any
+  other non-zero exit.
 - **One repair attempt:** on a code failure, the runner makes one repair attempt. If the second run
   still fails, the run is `Blocked`.
 - **Review verdict is fail-closed:** anything other than a clean `APPROVE` blocks the PR. One repair

@@ -129,8 +129,14 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   #275): required-ness is judged on the manifest alone — an undeclared key refuses the work before
   claim/worktree/any stage, naming the missing key, regardless of any environment `CHECK_CMD`; where the
   manifest DOES declare `check_cmd`, an environment `CHECK_CMD` still overrides it for the session, and
-  the run's log names the effective source. `test_paths` / `artifact_globs` (issue #273) let a repo
-  declare its own shape rather than conform to the factory's own: `test_paths` (default `["tests/"]`) is
+  the run's log names the effective source. `check_timeout` (the local gate's bounded window in seconds,
+  default 1200; `CHECK_TIMEOUT` env override; issue #308) is resolved once, at this same start-of-run
+  point, precedence env > manifest > default, and a manifest value present but not a positive integer
+  bounces `Needs-info` naming the rejected value before any claim, never silently defaulting — every
+  check/lint/lens invocation (including the armed re-green) runs under it, an OBSERVED expiry (never
+  inferred from the exit code alone) disposing as a code failure through that site's existing repair/Block
+  path, the lens folding it into its advisory note instead. `test_paths` / `artifact_globs` (issue #273)
+  let a repo declare its own shape rather than conform to the factory's own: `test_paths` (default `["tests/"]`) is
   the tester stage's only legal write surface, `artifact_globs` (default `["__pycache__/", "*.pyc"]`) is
   the boundary guard's build-artifact forgiveness set — both TOML arrays of non-empty, repo-relative
   strings (none absolute, none containing `..`), a rejected declared value blocking fail-closed naming
