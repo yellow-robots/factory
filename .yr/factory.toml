@@ -24,3 +24,14 @@ lint_fix_cmd = "ruff check --fix tools/ tests/"
 # factory's own repo-owned lens content — consumer rules living in qa/, legibly separate from the
 # platform machinery in tools/ (the copyable exemplar other repos' own qa/ dirs follow).
 lens_cmd = "python3 qa/lens.py"
+
+# Per-repo stage conduct (issue #312): this repo's own command numbers, delivered to every build
+# stage on the task-prompt/stdin channel. Durations measured from gate-durations records, runs
+# 315-1979656 / 309-2395443 (2026-07-29): full suite 761–812 s on the build host. Re-measure when
+# gate timings drift materially — numbers rot (the adoption PR's review record is the provenance).
+stage_conduct = [
+  "The full suite `pytest tests/ -q` runs 761-812 s (~13-14 min) on this host - THE command that trips the 120 s background auto-conversion seam. The deterministic check gate owns the full suite; never run it inline in a stage.",
+  "The inner loop is a scoped run - `pytest tests/test_<area>.py -q` - but the big runner suites (tests/test_dev_runner.py and kin) can exceed 120 s on their own: pass the Bash TOOL-level timeout parameter (up to 600000 ms) on any pytest invocation. A shell `timeout N` command prefix does NOT move the 120 s conversion threshold (run 309-2395443's repair fell exactly there: `timeout 900` plus a scoped file still converted).",
+  "If a command converts to a background task anyway, bring EVERY converted task id to an observed terminal state - a status read showing it exited, or a kill by PID (never a pattern kill) - before ending the turn: a one-shot stage is never resumed when a background task completes.",
+  "Never read an exit code through a pipe (`cmd | tail` reports tail's status) - capture RC=$? before piping whenever the code gates a next step.",
+]
