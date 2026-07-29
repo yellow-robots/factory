@@ -5,7 +5,7 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.check_supersession import check_draft, check_sweep, _governed_components
+from tools.check_supersession import check_draft, check_sweep, check_integrity, _governed_components
 
 
 def _vault_file(root, relpath, content):
@@ -1239,3 +1239,276 @@ def test_sweep_ideas_superseded_with_empty_crossed_to_is_hard(tmp_path):
     assert failed is True
     assert any(l.startswith("error:") and "malformed crossed_to" in l and "idea-emptyref" in l
                for l in lines)
+
+
+# =====================================================================================
+# integrity mode — raw duplicate-key scan (never a YAML parse; catches what last-wins masks)
+# (issue #318)
+# =====================================================================================
+
+def test_integrity_duplicate_key_caught_by_raw_scan(tmp_path):
+    # a YAML parse (last-wins) would silently collapse this to one `created` value -- the raw,
+    # column-0 scan over the frontmatter text is what actually catches the duplicate.
+    text = "---\ntype: task\nstatus: active\ncreated: 2026-01-01\ncreated: 2026-06-01\n---\nbody\n"
+    _vault_file(tmp_path, "proj/compA/iterations/dup.md", text)
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/dup.md" in l and "duplicate" in l.lower() and "created" in l
+               for l in lines)
+
+
+def test_sweep_mode_does_not_catch_the_duplicate_key_yaml_would_mask(tmp_path):
+    # the same fixture is silently accepted by sweep mode -- exactly the masking the integrity
+    # mode's raw scan exists to catch instead of a YAML-style parse.
+    text = "---\ntype: task\nstatus: active\ncreated: 2026-01-01\ncreated: 2026-06-01\n---\nbody\n"
+    _vault_file(tmp_path, "proj/compA/iterations/dup.md", text)
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert failed is False
+    assert not any("duplicate" in l.lower() for l in lines)
+
+
+def test_integrity_quoted_key_line_flagged_nonstandard_not_parsed(tmp_path):
+    text = '---\ntype: task\nstatus: active\n"quoted_key": foo\n---\nbody\n'
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", text)
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/doc.md" in l and "nonstandard" in l.lower() for l in lines)
+
+
+def test_integrity_tab_prefixed_key_line_flagged_nonstandard_not_parsed(tmp_path):
+    text = "---\ntype: task\nstatus: active\n\ttabbed_key: foo\n---\nbody\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", text)
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/doc.md" in l and "nonstandard" in l.lower() for l in lines)
+
+
+def test_integrity_block_scalar_continuation_not_flagged(tmp_path):
+    # an indented continuation line is neither a duplicate key nor nonstandard -- it's skipped,
+    # same as split_frontmatter treats it.
+    text = ("---\ntype: task\nstatus: active\nretired_reason: |\n  a very long\n  multi-line reason\n"
+            "---\nbody\n")
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", text)
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is False
+
+
+# =====================================================================================
+# integrity mode — property-less governed notes, listed by path (issue #318)
+# =====================================================================================
+
+def test_integrity_property_less_note_listed_by_path(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/no-fm.md", "no frontmatter here\n")
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/no-fm.md" in l and "property-less" in l.lower() for l in lines)
+
+
+def test_integrity_multiple_property_less_notes_each_listed_by_own_path(tmp_path):
+    # sweep mode aggregates these into one per-folder count; integrity mode itemizes every one.
+    _vault_file(tmp_path, "proj/compA/iterations/no-fm-1.md", "no frontmatter here\n")
+    _vault_file(tmp_path, "proj/compA/iterations/no-fm-2.md", "also no frontmatter\n")
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("no-fm-1.md" in l and "property-less" in l.lower() for l in lines)
+    assert any("no-fm-2.md" in l and "property-less" in l.lower() for l in lines)
+
+
+# =====================================================================================
+# integrity mode — vocabulary conformance (alien type/status/key), listed by path (issue #318)
+# =====================================================================================
+
+def test_integrity_alien_type_listed_by_path(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/alien-type.md",
+                "---\ntype: something-else\nstatus: active\n---\nbody\n")
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/alien-type.md" in l and "alien type" in l for l in lines)
+
+
+def test_integrity_alien_status_listed_by_path(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/alien-status.md",
+                "---\ntype: task\nstatus: something-else\n---\nbody\n")
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/alien-status.md" in l and "alien status" in l for l in lines)
+
+
+def test_integrity_alien_frontmatter_key_listed_by_path(tmp_path):
+    # sweep mode folds this into one aggregate observation line; integrity mode names the doc.
+    _vault_file(tmp_path, "proj/compA/iterations/weird.md",
+                _doc(status="active", extra_lines=["weird_key: foo"]))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/weird.md" in l and "weird_key" in l for l in lines)
+
+
+def test_integrity_ideas_scoring_keys_not_flagged_inside_ideas_folder(tmp_path):
+    # summary/value/effort join the closed set only inside ideas/ -- a location-aware vocabulary
+    # check, not a single global closed-key set.
+    _vault_file(tmp_path, "proj/compA/iterations/ideas/idea.md",
+                _doc(type_="note", status="open",
+                     extra_lines=["summary: a neat idea", "value: high", "effort: low"]))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is False
+
+
+def test_integrity_value_key_outside_ideas_folder_is_alien(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/spec.md",
+                _doc(type_="product-spec", status="active", extra_lines=["value: high"]))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/spec.md" in l and "value" in l for l in lines)
+
+
+# =====================================================================================
+# integrity mode + draft gate — dead `§`-style section anchors, on BOTH surfaces (issue #318)
+# =====================================================================================
+
+def test_integrity_section_anchor_flagged_by_path(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md",
+                _doc(status="active", body="# Body\n\nSee §4 for details.\n"))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("proj/compA/iterations/doc.md" in l and "§4" in l for l in lines)
+
+
+def test_integrity_section_anchor_steer_names_native_anchor_forms(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md",
+                _doc(status="active", body="# Body\n\nSee §4 for details.\n"))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert any("[[Note#Heading]]" in l and "[[Note#^blockid]]" in l for l in lines)
+
+
+def test_draft_gate_section_anchor_flagged(tmp_path):
+    text = _doc(type_="task", body="# Body\n\nSee §4 for details.\n")
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("§4" in e for e in errors)
+
+
+def test_draft_gate_section_anchor_steer_names_native_anchor_forms(tmp_path):
+    text = _doc(type_="task", body="# Body\n\nSee §4 for details.\n")
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("[[Note#Heading]]" in e and "[[Note#^blockid]]" in e for e in errors)
+
+
+def test_draft_gate_no_section_anchor_reference_passes_clean(tmp_path):
+    text = _doc(type_="task", body="# Body\n\nNothing dead-referenced here.\n")
+    assert check_draft(text, vault_root=tmp_path) == []
+
+
+def test_integrity_distinct_section_anchors_each_listed_once(tmp_path):
+    body = "# Body\n\nSee §4 and §7. Also again §4.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    anchor4_lines = [l for l in lines if "§4" in l]
+    assert len(anchor4_lines) == 1
+    assert any("§7" in l for l in lines)
+
+
+# =====================================================================================
+# integrity mode — exit-code matrix and census headline (issue #318)
+# =====================================================================================
+
+def test_integrity_clean_scope_exits_zero(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is False
+
+
+def test_integrity_any_finding_at_all_exits_nonzero(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/no-fm.md", "no frontmatter here\n")
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+
+
+def test_integrity_census_headline_printed(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert lines[0].startswith("census ")
+
+
+# =====================================================================================
+# sweep mode's own aggregate output stays byte-stable — untouched by integrity mode (issue #318)
+# =====================================================================================
+
+def test_sweep_mode_unaffected_by_duplicate_keys_and_dead_anchors(tmp_path):
+    # sweep mode's own aggregate output (census format, findings vocabulary) is pinned: neither
+    # duplicate-key nor dead-anchor findings -- both integrity-mode-only classes -- ever surface
+    # there, and the existing census line format is unchanged.
+    text = ("---\ntype: task\nstatus: active\ncreated: 2026-01-01\ncreated: 2026-06-01\n"
+            "---\n# Body\n\nSee §4 for details.\n")
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", text)
+    lines, failed = check_sweep(vault_root=tmp_path, scope="proj")
+    assert lines[0] == "census [proj]: 1 docs / 1 spine-active (compA 1) / 0 legacy"
+    assert failed is False
+    assert not any("duplicate" in l.lower() for l in lines)
+    assert not any("§" in l for l in lines)
+
+
+# =====================================================================================
+# CLI — integrity mode (issue #318)
+# =====================================================================================
+
+def test_cli_integrity_mode_passes_clean_tree(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--integrity", "--vault-root", str(tmp_path), "--scope", "proj"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert "census" in r.stdout.lower()
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_integrity_mode_fails_loud_on_duplicate_key_naming_path(tmp_path):
+    text = "---\ntype: task\nstatus: active\ncreated: 2026-01-01\ncreated: 2026-06-01\n---\nbody\n"
+    _vault_file(tmp_path, "proj/compA/iterations/dup.md", text)
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--integrity", "--vault-root", str(tmp_path), "--scope", "proj"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "dup.md" in r.stdout
+    assert "duplicate" in r.stdout.lower()
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_integrity_mode_fails_loud_on_dead_section_anchor(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md",
+                _doc(status="active", body="# Body\n\nSee §4 for details.\n"))
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--integrity", "--vault-root", str(tmp_path), "--scope", "proj"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "§4" in r.stdout
+    assert "[[Note#Heading]]" in r.stdout
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_integrity_requires_scope_naming_component_roots(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--integrity", "--vault-root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "proj" in r.stdout
+    assert "census" not in r.stdout.lower()
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_sweep_and_integrity_are_mutually_exclusive(tmp_path):
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active"))
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_supersession.py"),
+         "--sweep", "--integrity", "--vault-root", str(tmp_path), "--scope", "proj"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode != 0
+    assert "Traceback" not in (r.stdout + r.stderr)

@@ -58,10 +58,28 @@ to a superseded doc (the pair-adjacent signal). A census headline — the scope 
 spine-active per component (the four spine types, status exactly `active`, counted inside `iterations/`
 subtrees), legacy count — always prints, computed under the same pinned rule the sweep scopes by.
 
+**Integrity mode** (`--integrity --scope REL [--vault-root DIR]`) is a third, on-demand mode over the
+same governed sweep space (`--scope` required, exactly as sweep mode's): where sweep mode aggregates
+and gates only on pair integrity, integrity mode exists purely to detect and list — every finding is
+reported BY PATH, never counted or folded into a per-folder line, and any finding at all fails the run
+(detection is this mode's whole purpose; sweep mode's own aggregate output is untouched by this mode's
+existence). Four finding classes: (1) a raw, column-0 duplicate-key scan of each doc's frontmatter block
+— never a YAML parse, because PyYAML's last-wins would silently mask exactly the kind of duplicate this
+scan exists to catch, and Obsidian itself refuses to open a note with one; a block-scalar continuation
+is indented and skipped, and a quoted or tab-prefixed key line is flagged as nonstandard rather than
+parsed (it could be a duplicate or could not be — never guessed); (2) property-less governed notes (the
+sweep's own "no frontmatter keys extracted" legacy class), listed by path instead of counted; (3) a
+per-path vocabulary check — alien type, alien status, or an alien frontmatter key outside
+`_closed_keys_for`'s set for the doc's location; (4) a `§`-style section-anchor reference in a doc's
+body — a dead reference the brain cannot resolve — steering toward the two native anchor forms Obsidian
+actually resolves: a heading link (`[[Note#Heading]]`) or a block reference (`[[Note#^blockid]]`). This
+fourth class is wired into BOTH surfaces: integrity mode's sweep, and the single-doc draft gate below.
+
 This is an attended-session check like its siblings: advisory-first, wired into nothing.
 
 Usage: check_supersession.py <draft.md> [--vault-root DIR]
        check_supersession.py --sweep --scope REL [--vault-root DIR]
+       check_supersession.py --integrity --scope REL [--vault-root DIR]
 Exit 0 clean; 1 (with `<file>: <message>` lines) on any hard finding.
 """
 import argparse
@@ -124,6 +142,23 @@ def _legacy_reason(meta, is_ideas=False):
     if not isinstance(s, str) or s not in statuses:
         return "alien status"
     return None
+
+
+_SECTION_ANCHOR_RE = re.compile(r"§\d+")
+_ANCHOR_STEER = ("dead reference the brain cannot resolve — use a native anchor instead: a heading "
+                  "link ([[Note#Heading]]) or a block reference ([[Note#^blockid]])")
+
+
+def _section_anchor_findings(body):
+    """One message per distinct `§N`-style anchor reference in `body` (regex over body text — these
+    are never resolvable, so every occurrence is a defect), steering toward the two native anchor
+    forms Obsidian actually resolves. Shared by both surfaces: the draft gate and integrity mode."""
+    seen = []
+    for m in _SECTION_ANCHOR_RE.finditer(body):
+        ref = m.group(0)
+        if ref not in seen:
+            seen.append(ref)
+    return [f"§-style anchor reference {ref!r} — {_ANCHOR_STEER}" for ref in seen]
 
 
 def _is_ideas_note(path, vault_root):
@@ -302,8 +337,11 @@ def check_draft(text, *, vault_root):
     meta, body = split_frontmatter(text)
     doc_type = meta.get("type", "")
     if doc_type in REQUIRES_SUPERSEDES:
-        return _check_supersedes_required(meta, body, vault_root)
-    return _grammar_check_pair_keys(meta)
+        errors = _check_supersedes_required(meta, body, vault_root)
+    else:
+        errors = _grammar_check_pair_keys(meta)
+    errors.extend(_section_anchor_findings(body))
+    return errors
 
 
 # --- sweep mode -------------------------------------------------------------------------------------
@@ -661,6 +699,103 @@ def check_sweep(*, vault_root, scope):
     return lines, bool(hard)
 
 
+# --- integrity mode ---------------------------------------------------------------------------------
+
+_RAW_KEY_RE = re.compile(r"^([A-Za-z0-9_.-]+):")
+_QUOTED_KEY_RE = re.compile(r"^[\"']([^\"']+)[\"']\s*:")
+
+
+def _raw_frontmatter_scan(text):
+    """(keys, nonstandard) — a raw, never-YAML-parsed scan of one doc's frontmatter block. `keys`
+    is every column-0 `key:` line's key, duplicates preserved in first-seen order: the PyYAML-free
+    cousin of `_legacy_reason`'s parse, built to catch exactly what a YAML parser's last-wins would
+    silently mask (Obsidian itself refuses to open a note with a duplicate key). `nonstandard` is
+    every column-0 line that reads as a key but is quoted or tab-prefixed — flagged rather than
+    parsed, since it can neither be trusted as a real key nor safely folded into a duplicate count.
+    A block-scalar continuation (any indented line) is neither — silently skipped, same as
+    `split_frontmatter` treats it.
+    """
+    if not text.startswith("---\n") and not text.startswith("---\r\n"):
+        return [], []
+    lines = text.split("\n")
+    close = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            close = i
+            break
+    if close is None:
+        return [], []
+    keys, nonstandard = [], []
+    for line in lines[1:close]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line[:1] == "\t":
+            nonstandard.append(stripped)
+            continue
+        if line[:1] == " ":
+            continue
+        if _QUOTED_KEY_RE.match(line):
+            nonstandard.append(stripped)
+            continue
+        m = _RAW_KEY_RE.match(line)
+        if m:
+            keys.append(m.group(1))
+    return keys, nonstandard
+
+
+def _duplicate_keys(keys):
+    """Keys occurring more than once in `keys`, each listed once, first-seen order."""
+    counts = {}
+    for k in keys:
+        counts[k] = counts.get(k, 0) + 1
+    return [k for k in dict.fromkeys(keys) if counts[k] > 1]
+
+
+def check_integrity(*, vault_root, scope):
+    """(lines, failed) — every duplicate-key, property-less, alien-vocabulary, and dead-anchor
+    finding across the governed `--scope`, each listed BY PATH (detection is this mode's whole
+    purpose, so nothing is aggregated the way sweep mode's legacy/observation lines are). `failed`
+    is true on any finding at all — unlike sweep mode's hard/advisory split, there is no advisory
+    tier here."""
+    docs, component_of, in_iterations = _sweep_docs(vault_root, scope)
+    findings = []
+
+    for d in docs:
+        text = d.path.read_text(encoding="utf-8", errors="replace")
+        keys, nonstandard = _raw_frontmatter_scan(text)
+        for k in _duplicate_keys(keys):
+            findings.append(f"{d.rel}: duplicate frontmatter key {k!r}")
+        for line in nonstandard:
+            findings.append(f"{d.rel}: nonstandard frontmatter key line, not parsed "
+                            f"(quoted or tab-prefixed): {line!r}")
+
+    for d in docs:
+        if d.legacy_reason == "no frontmatter keys extracted":
+            findings.append(f"{d.rel}: property-less governed note (no frontmatter keys extracted)")
+        elif d.legacy_reason == "alien type":
+            findings.append(f"{d.rel}: alien type {d.meta.get('type')!r}")
+        elif d.legacy_reason == "alien status":
+            findings.append(f"{d.rel}: alien status {d.meta.get('status')!r}")
+
+    for d in docs:
+        if d.legacy_reason:
+            continue
+        closed = _closed_keys_for(d.path, vault_root)
+        for k in d.meta:
+            if k not in closed:
+                findings.append(f"{d.rel}: alien frontmatter key {k!r}")
+
+    for d in docs:
+        for msg in _section_anchor_findings(d.body):
+            findings.append(f"{d.rel}: {msg}")
+
+    total, spine_active, legacy = _census(docs, component_of, in_iterations)
+    lines = [_format_census(scope, total, spine_active, legacy)]
+    lines += [f"error: {f}" for f in findings]
+    return lines, bool(findings)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Verify supersession declarations, pair integrity, and down-flow disposition.")
@@ -668,28 +803,39 @@ def main(argv=None):
     ap.add_argument("--vault-root", default=DEFAULT_VAULT, help="Obsidian vault root")
     ap.add_argument("--sweep", action="store_true",
                     help="sweep the governed vault space instead of checking one draft")
+    ap.add_argument("--integrity", action="store_true",
+                    help="on-demand integrity scan (duplicate keys, property-less notes, alien "
+                         "vocabulary, dead §-anchors) over the governed scope, by path")
     ap.add_argument("--scope", default=None,
-                    help="sweep scope, vault-relative — required for --sweep, no implicit default")
+                    help="sweep/integrity scope, vault-relative — required for --sweep/--integrity, "
+                         "no implicit default")
     args = ap.parse_args(argv)
     vault_root = pathlib.Path(args.vault_root)
 
-    if args.sweep:
+    if args.sweep and args.integrity:
+        ap.error("--sweep and --integrity are mutually exclusive")
+
+    if args.sweep or args.integrity:
+        mode_flag = "--integrity" if args.integrity else "--sweep"
         if not args.scope:
             roots = _visible_component_roots(vault_root)
             if roots:
-                print("error: --sweep requires --scope — component roots visible under "
+                print(f"error: {mode_flag} requires --scope — component roots visible under "
                       f"{vault_root}: " + ", ".join(roots))
             else:
-                print(f"error: --sweep requires --scope — no component roots (iterations/ child) "
+                print(f"error: {mode_flag} requires --scope — no component roots (iterations/ child) "
                       f"found under {vault_root}")
             return 1
-        lines, failed = check_sweep(vault_root=vault_root, scope=args.scope)
+        if args.integrity:
+            lines, failed = check_integrity(vault_root=vault_root, scope=args.scope)
+        else:
+            lines, failed = check_sweep(vault_root=vault_root, scope=args.scope)
         for line in lines:
             print(line)
         return 1 if failed else 0
 
     if not args.file:
-        ap.error("a draft file is required unless --sweep is given")
+        ap.error("a draft file is required unless --sweep/--integrity is given")
     text = pathlib.Path(args.file).read_text(encoding="utf-8")
     errors = check_draft(text, vault_root=vault_root)
     for e in errors:
