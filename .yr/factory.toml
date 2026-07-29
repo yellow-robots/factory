@@ -26,12 +26,13 @@ lint_fix_cmd = "ruff check --fix tools/ tests/"
 lens_cmd = "python3 qa/lens.py"
 
 # Per-repo stage conduct (issue #312): this repo's own command numbers, delivered to every build
-# stage on the task-prompt/stdin channel. Durations measured from gate-durations records, runs
-# 315-1979656 / 309-2395443 (2026-07-29): full suite 761–812 s on the build host. Re-measure when
-# gate timings drift materially — numbers rot (the adoption PR's review record is the provenance).
+# stage on the task-prompt/stdin channel. Durations measured from the check gate's own
+# gate-durations records, runs 315-1979656 / 309-2395443 (2026-07-29): full suite 761–812 s
+# (12:40–13:32). Re-measure when gate timings drift materially — the undeclared check_timeout
+# default (1200 s) is the ceiling drift eats into; numbers rot (PR #328's review record is the
+# provenance for both the numbers and the wording).
 stage_conduct = [
-  "The full suite `pytest tests/ -q` runs 761-812 s (~13-14 min) on this host - THE command that trips the 120 s background auto-conversion seam. The deterministic check gate owns the full suite; never run it inline in a stage.",
-  "The inner loop is a scoped run - `pytest tests/test_<area>.py -q` - but the big runner suites (tests/test_dev_runner.py and kin) can exceed 120 s on their own: pass the Bash TOOL-level timeout parameter (up to 600000 ms) on any pytest invocation. A shell `timeout N` command prefix does NOT move the 120 s conversion threshold (run 309-2395443's repair fell exactly there: `timeout 900` plus a scoped file still converted).",
-  "If a command converts to a background task anyway, bring EVERY converted task id to an observed terminal state - a status read showing it exited, or a kill by PID (never a pattern kill) - before ending the turn: a one-shot stage is never resumed when a background task completes.",
-  "Never read an exit code through a pipe (`cmd | tail` reports tail's status) - capture RC=$? before piping whenever the code gates a next step.",
+  "The full suite `pytest tests/ -q` runs 761-812 s (~13 min) on this host - the worst offender against the 120 s background auto-conversion seam, though not the only one (next line). The deterministic check gate owns the full suite; never run it inline in a stage - even the Bash tool's timeout ceiling (600000 ms) cannot cover it.",
+  "The inner loop is a scoped run - `pytest tests/test_<area>.py -q` - but the big runner suites (tests/test_dev_runner.py and kin) can exceed 120 s on their own: pass the Bash tool's own `timeout` input field (e.g. timeout: 600000), never a shell `timeout N` prefix - the prefix does NOT move the 120 s conversion threshold (runs 309-2395443 and 327-3290247 both fell exactly there). If a call converts anyway, the conversion message names an output FILE: poll that file with short foreground reads until the suite's own summary line appears, and do not end the turn before it does - a one-shot stage is never resumed when a background task completes, and ending the turn kills the task silently.",
+  "There is no `.venv` in the cut build worktree: AGENTS.md's `.venv/bin/python` convention belongs to the attended workspace checkout, not here - use `python3 -m pytest` or bare `pytest` (what the check gate itself runs); a `.venv/bin/python` attempt dead-ends (runs 315/309 burned three turns on it).",
 ]
