@@ -6,7 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import tools.check_task as check_task_module
-from tools.check_task import check_task
+from tools.check_task import check_task, pin_collision_warnings
 
 
 def _task(goal="Do the thing.",
@@ -389,3 +389,246 @@ def test_cli_passes_self_contained_task(tmp_path):
         capture_output=True, text=True)
     assert r.returncode == 0
     assert "Traceback" not in (r.stdout + r.stderr)
+
+
+# --- pin-collision advisory: literal extraction ------------------------------------------------------
+
+def test_pin_literals_catches_dot_prefixed_short_literal():
+    literals = check_task_module._pin_literals("- [ ] the gap SHALL be `.05` inches")
+    assert literals == [".05"]
+
+
+def test_pin_literals_catches_multi_value_percentage_span():
+    literals = check_task_module._pin_literals("- [ ] breakpoints SHALL be `70% 46%` wide")
+    assert literals == ["70% 46%"]
+
+
+def test_pin_literals_catches_colon_dash_percent_literal():
+    literals = check_task_module._pin_literals("- [ ] the overlay SHALL use `inset:-40%`")
+    assert literals == ["inset:-40%"]
+
+
+def test_pin_literals_skips_plain_prose_words():
+    # `system`, `criteria`, `thing` are ordinary letters-only backtick spans — never candidates
+    literals = check_task_module._pin_literals(
+        "- [ ] the `system` SHALL extract candidate `criteria` from the `thing`")
+    assert literals == []
+
+
+def test_pin_literals_skips_spans_under_length_three():
+    literals = check_task_module._pin_literals("- [ ] a lone `%` does not count")
+    assert literals == []
+
+
+def test_pin_literals_requires_at_least_one_non_letter_char():
+    # a plain identifier of length >= 3, all letters, is prose — not a pin candidate
+    literals = check_task_module._pin_literals("- [ ] rename `foo` to `bar` everywhere")
+    assert literals == []
+
+
+def test_pin_literals_dedupes_preserving_first_seen_order():
+    literals = check_task_module._pin_literals(
+        "- [ ] gap is `.05` then later still `.05` again, also `1.5%` once")
+    assert literals == [".05", "1.5%"]
+
+
+def test_pin_literals_only_reads_the_acceptance_criteria_section(tmp_path):
+    # a literal quoted in Context & links (not Acceptance criteria) is not a pin candidate at all
+    _repo_with(tmp_path, "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    text = _task(criteria="- [ ] it works", context="See `.05` in the design notes.")
+    assert pin_collision_warnings(text, repo_root=tmp_path) == []
+
+
+# --- pin-collision advisory: grep against the declared test surface ----------------------------------
+
+def test_pin_collision_warns_when_test_file_hits_literal_and_body_never_names_it(tmp_path):
+    _repo_with(tmp_path, "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("def test_gap():\n    assert gap == .05\n",
+                                                      encoding="utf-8")
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches",
+                 context="Edit `tools/validate.py` to add the branch.")
+    warnings = pin_collision_warnings(text, repo_root=tmp_path)
+    assert len(warnings) == 1
+    assert "tests/test_gap.py" in warnings[0]
+    assert ".05" in warnings[0]
+    assert "WARNING" in warnings[0]
+
+
+def test_pin_collision_silent_when_body_names_the_colliding_file(tmp_path):
+    _repo_with(tmp_path, "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches",
+                 context="Update `tests/test_gap.py` to match the new `.05` gap.")
+    assert pin_collision_warnings(text, repo_root=tmp_path) == []
+
+
+def test_pin_collision_silent_when_no_criteria_literals(tmp_path):
+    _repo_with(tmp_path, "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    text = _task(criteria="- [ ] it works")
+    assert pin_collision_warnings(text, repo_root=tmp_path) == []
+
+
+def test_pin_collision_silent_when_literal_absent_from_test_surface(tmp_path):
+    _repo_with(tmp_path, "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .10\n", encoding="utf-8")
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches")
+    assert pin_collision_warnings(text, repo_root=tmp_path) == []
+
+
+def test_pin_collision_silent_when_no_test_surface_files_exist(tmp_path):
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches")
+    assert pin_collision_warnings(text, repo_root=tmp_path) == []
+
+
+def test_pin_collision_ignores_files_outside_declared_test_surface(tmp_path):
+    # a hit in a random repo file (not under tests/ or qa/) is not this pass's concern
+    _repo_with(tmp_path, "src/gap.py")
+    (tmp_path / "src" / "gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches")
+    assert pin_collision_warnings(text, repo_root=tmp_path) == []
+
+
+def test_pin_collision_includes_qa_directory_when_present(tmp_path):
+    _repo_with(tmp_path, "qa/lens_test.py")
+    (tmp_path / "qa" / "lens_test.py").write_text("assert threshold == .05\n", encoding="utf-8")
+    text = _task(criteria="- [ ] the threshold SHALL be `.05`")
+    warnings = pin_collision_warnings(text, repo_root=tmp_path)
+    assert len(warnings) == 1
+    assert "qa/lens_test.py" in warnings[0]
+
+
+def test_pin_collision_respects_manifest_declared_test_paths(tmp_path):
+    _repo_with(tmp_path, "spec/test_gap.py", "tests/test_other.py")
+    (tmp_path / "spec" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_other.py").write_text("assert gap == .05\n", encoding="utf-8")
+    yr = tmp_path / ".yr"
+    yr.mkdir()
+    (yr / "factory.toml").write_text('test_paths = ["spec/"]\n', encoding="utf-8")
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches")
+    warnings = pin_collision_warnings(text, repo_root=tmp_path)
+    assert len(warnings) == 1
+    assert "spec/test_gap.py" in warnings[0]
+    assert not any("tests/test_other.py" in w for w in warnings)
+
+
+def test_pin_collision_multiple_literals_and_files_all_reported(tmp_path):
+    # website#122 run 122-888903-style: several undispositioned pin suites at once
+    _repo_with(tmp_path,
+               "tests/test_layout.py", "tests/test_spacing.py",
+               "tests/test_overlay.py", "tests/test_grid.py")
+    (tmp_path / "tests" / "test_layout.py").write_text("assert w == 70 and h == 46  # 70% 46%\n",
+                                                         encoding="utf-8")
+    (tmp_path / "tests" / "test_spacing.py").write_text("GAP = .05\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_overlay.py").write_text("INSET = 'inset:-40%'\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_grid.py").write_text("COL = 1.5  # unrelated\n", encoding="utf-8")
+    text = _task(criteria=(
+        "- [ ] breakpoints SHALL be `70% 46%` wide\n"
+        "- [ ] the gap SHALL be `.05`\n"
+        "- [ ] the overlay SHALL use `inset:-40%`"
+    ), context="Edit `tools/validate.py` to add the branch.")
+    warnings = pin_collision_warnings(text, repo_root=tmp_path)
+    assert len(warnings) == 3
+    assert any("test_layout.py" in w and "70% 46%" in w for w in warnings)
+    assert any("test_spacing.py" in w and ".05" in w for w in warnings)
+    assert any("test_overlay.py" in w and "inset:-40%" in w for w in warnings)
+    assert not any("test_grid.py" in w for w in warnings)
+
+
+def test_pin_collision_via_base_ref(tmp_path):
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.com"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    _repo_with(tmp_path, "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "seed"], check=True)
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches")
+    warnings = pin_collision_warnings(text, repo_root=tmp_path, base_ref="HEAD")
+    assert len(warnings) == 1
+    assert "tests/test_gap.py" in warnings[0]
+
+
+def test_pin_collision_read_file_injection(tmp_path):
+    # the file surface (which paths exist under tests/) still comes from the real repo tree;
+    # read_file only substitutes how each surfaced file's *content* is read
+    _repo_with(tmp_path, "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("this on-disk content has no pin literal\n",
+                                                      encoding="utf-8")
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches")
+    warnings = pin_collision_warnings(
+        text, repo_root=tmp_path,
+        read_file=lambda p: "assert gap == .05" if p == "tests/test_gap.py" else None)
+    assert len(warnings) == 1
+    assert "tests/test_gap.py" in warnings[0]
+
+
+# --- pin-collision advisory: exit code (advisory vs --strict) ----------------------------------------
+
+def test_check_task_errors_are_unaffected_by_pin_collision_warnings(tmp_path):
+    # self-containedness errors and the advisory pass are independent — a clean self-contained
+    # task can still carry a pin-collision warning without check_task() itself reporting anything
+    _repo_with(tmp_path, "tools/validate.py", "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    text = _task(criteria="- [ ] the gap SHALL be `.05` inches",
+                 context="Edit `tools/validate.py` to add the branch.")
+    assert check_task(text, repo_root=tmp_path) == []
+    assert len(pin_collision_warnings(text, repo_root=tmp_path)) == 1
+
+
+def test_cli_prints_warning_and_exits_0_without_strict(tmp_path):
+    _repo_with(tmp_path, "tools/validate.py", "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    task = tmp_path / "task.md"
+    task.write_text(_task(criteria="- [ ] the gap SHALL be `.05` inches",
+                           context="Edit `tools/validate.py` to add the branch."),
+                     encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_task.py"),
+         str(task), "--repo-root", str(tmp_path)],
+        capture_output=True, text=True)
+    assert r.returncode == 0
+    assert "WARNING" in r.stdout
+    assert "test_gap.py" in r.stdout
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_strict_upgrades_warning_to_exit_1(tmp_path):
+    _repo_with(tmp_path, "tools/validate.py", "tests/test_gap.py")
+    (tmp_path / "tests" / "test_gap.py").write_text("assert gap == .05\n", encoding="utf-8")
+    task = tmp_path / "task.md"
+    task.write_text(_task(criteria="- [ ] the gap SHALL be `.05` inches",
+                           context="Edit `tools/validate.py` to add the branch."),
+                     encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_task.py"),
+         str(task), "--repo-root", str(tmp_path), "--strict"],
+        capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "WARNING" in r.stdout
+    assert "Traceback" not in (r.stdout + r.stderr)
+
+
+def test_cli_strict_is_still_exit_0_when_no_warnings(tmp_path):
+    _repo_with(tmp_path, "tools/validate.py")
+    task = tmp_path / "task.md"
+    task.write_text(_task(context="Edit `tools/validate.py`."), encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_task.py"),
+         str(task), "--repo-root", str(tmp_path), "--strict"],
+        capture_output=True, text=True)
+    assert r.returncode == 0
+    assert "WARNING" not in r.stdout
+
+
+def test_cli_strict_still_exits_1_on_self_containedness_error_regardless_of_warnings(tmp_path):
+    # a genuine self-containedness failure exits 1 with or without --strict
+    task = tmp_path / "task.md"
+    task.write_text(_task(context="Edit `tools/ghost.py`."), encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_task.py"),
+         str(task), "--repo-root", str(tmp_path), "--strict"],
+        capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "ghost.py" in r.stdout
