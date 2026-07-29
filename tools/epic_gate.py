@@ -32,6 +32,10 @@ leaving Status=In Progress with no Reason forever — neither in flight nor off-
 wait on it forever. The sweep raises such a claim (`Reason=Blocked` + an explanatory comment) once it has
 stood past a staleness bound with no open PR and no live build holding `dispatch.py`'s lock for THIS
 CLAIM'S OWN REPO (`dispatch.repo_lock_path`, imported as the sibling module — never a host-global lock).
+The SAME dead-claim shape can happen to a standalone Task (no governing epic) — `_sweep_standalone_stranded`
+widens the exact same check (reusing `_is_stranded`/`_stranded_body`) as an independent pass straight over
+the board, keyed off GitHub's own `parent` field (present on an epic child, absent on a standalone claim)
+so the per-epic pass's own algorithm stays untouched.
 
 Board intake (a third, independent pass over the same sweep): GitHub's Projects auto-add workflow is
 one-per-project with a single repository/filter on this org's plan, so it can't serve a board spanning
@@ -101,9 +105,14 @@ query($org: String!, $project: Int!) {
       items(first: 100) {
         nodes {
           id
-          content { ... on Issue { number state issueType { name } repository { nameWithOwner } } }
+          content {
+            ... on Issue {
+              number state issueType { name } repository { nameWithOwner }
+              parent { number }
+            }
+          }
           status: fieldValueByName(name: "Status") {
-            ... on ProjectV2ItemFieldSingleSelectValue { name }
+            ... on ProjectV2ItemFieldSingleSelectValue { name updatedAt }
           }
           reason: fieldValueByName(name: "Reason") {
             ... on ProjectV2ItemFieldSingleSelectValue { name }
@@ -290,6 +299,42 @@ def _stranded_body(age_min):
         "hard runner death (see `deploy/DISPATCH.md`). Recover: clear the Reason and re-Ready if the fix "
         "warrants."
     )
+
+
+# --- standalone stranded-claim detection: the same check, widened off the board directly ----------------
+def _sweep_standalone_stranded(gh, nodes, reason_field_id, reason_opt, now, build_lock_held,
+                                stranded_after_min):
+    """The standalone twin of `_process_epic`'s per-epic stranded-claim check, reusing `_is_stranded` /
+    `_stranded_body` verbatim so the raise itself is identical either way. Scans the board directly (never
+    an epic's `subIssues`) for an OPEN, Type=Task item with NO `parent` (GitHub's own sub-issues
+    relationship — an epic child always carries one) whose Status is In Progress with no Reason; on a
+    stranded verdict it sets Reason=Blocked and posts the same comment. A child WITH a parent is always
+    skipped here — that keeps this pass strictly additive: `_process_epic`'s own algorithm and its
+    characterization pins stay byte-stable, untouched by this function."""
+    actions = []
+    for item in nodes:
+        content = item.get("content") or {}
+        if not content:                                                     # non-issue / draft item
+            continue
+        if (content.get("state") or "").upper() != "OPEN":
+            continue
+        if ((content.get("issueType") or {}).get("name") or "").lower() != "task":
+            continue
+        if content.get("parent"):                        # an epic child — the per-epic pass's own turf
+            continue
+        item_id = item.get("id")
+        status = _fv_name(item.get("status"))
+        reason = _fv_name(item.get("reason"))
+        if status != "In Progress" or reason or not item_id:
+            continue
+        stranded, age_min = _is_stranded(gh, content, item, now, build_lock_held, stranded_after_min)
+        if not stranded:
+            continue
+        repo = (content.get("repository") or {}).get("nameWithOwner") or ""
+        _set_field(gh, item_id, reason_field_id, reason_opt["Blocked"])
+        _comment(gh, repo, content["number"], _stranded_body(age_min))
+        actions.append({"item": content["number"], "action": "raise-standalone", "reason": "Blocked"})
+    return actions
 
 
 # --- the standing-approval record: a comment on the epic carrying the sentinel + both fields ----------
@@ -862,12 +907,14 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
                 status_opt=None, reason_opt=None,
                 now=None, build_lock_held=None, stranded_after_min=None,
                 repos=None):
-    """Run one sweep of the org board. First, board intake over `repos` (see `_sweep_intake`). Then, for
-    each OPEN, `Status=Ready` item: a `Type=Feature` epic (candidates, interleaved with no prioritization)
-    gets the per-epic algorithm; any other OPEN Ready item — a standalone task, or an epic child already
-    Ready — gets the admission wall directly (see below). Then run the per-repo debt counter over the
-    distinct repositories holding any Type=Feature issue on the board (any state, any Status). Returns the
-    list of actions taken.
+    """Run one sweep of the org board. First, board intake over `repos` (see `_sweep_intake`). Second, the
+    standalone stranded-claim pass over the whole board (see `_sweep_standalone_stranded`) — independent of
+    the Ready filter below, since a stranded claim is always In Progress, never Ready. Then, for each OPEN,
+    `Status=Ready` item: a `Type=Feature` epic (candidates, interleaved with no prioritization) gets the
+    per-epic algorithm; any other OPEN Ready item — a standalone task, or an epic child already Ready —
+    gets the admission wall directly (see below). Then run the per-repo debt counter over the distinct
+    repositories holding any Type=Feature issue on the board (any state, any Status). Returns the list of
+    actions taken.
 
     The sweep only ever *sets* Status/Reason and posts comments — it never clears a Reason (clearing is
     the human's explicit resume act), never builds, and never sets any Status but `Ready` (promotion) or,
@@ -904,6 +951,8 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
 
     manifest_cache = {}
     actions = _sweep_intake(gh, repos, nodes, project_number=project_number, org=org)
+    actions += _sweep_standalone_stranded(gh, nodes, reason_field_id, reason_opt, now, build_lock_held,
+                                          stranded_after_min)
     for item in nodes:
         content = item.get("content") or {}
         if not content:                                                   # non-issue / draft item
@@ -969,6 +1018,8 @@ def main(argv=None):
             print(f"epic-gate: held epic #{a['epic']} (debt epic awaiting a ledger verdict)")
         elif a["action"] == "bounce-standalone":
             print(f"epic-gate: bounced #{a['item']} to Backlog/Needs-info (repo not onboarded)")
+        elif a["action"] == "raise-standalone":
+            print(f"epic-gate: raised stranded standalone claim #{a['item']} (Reason={a['reason']})")
         elif a["action"] == "probe-error" and "child" in a:
             print(f"epic-gate: probe failure under epic #{a['epic']} on child #{a['child']} — "
                   f"skipped, will re-probe next sweep: {a.get('error', '')}")

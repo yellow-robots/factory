@@ -82,8 +82,13 @@ def _select(name):
     return {"name": name} if name else None
 
 
-def _item(number, *, item_id, itype, state="OPEN", status=None, reason=None, repo=REPO):
-    """A board (projectV2) item node, as BOARD_QUERY returns it."""
+def _item(number, *, item_id, itype, state="OPEN", status=None, reason=None, repo=REPO,
+          updated_at=None, parent=None):
+    """A board (projectV2) item node, as BOARD_QUERY returns it. `updated_at` sets the Status field
+    value's `updatedAt` (the standalone stranded-claim pass reads its clock straight off the board item,
+    unlike the per-epic pass which reads a child's own issue-side projectItems). `parent` sets
+    `content.parent.number` — GitHub's own sub-issues relationship, present on an epic child, absent
+    (null) on a standalone claim, which is exactly how the standalone pass tells the two apart."""
     return {
         "id": item_id,
         "content": {
@@ -91,8 +96,9 @@ def _item(number, *, item_id, itype, state="OPEN", status=None, reason=None, rep
             "state": state,
             "issueType": _select(itype),
             "repository": {"nameWithOwner": repo},
+            "parent": {"number": parent} if parent is not None else None,
         },
-        "status": _select(status),
+        "status": _status_select(status, updated_at),
         "reason": _select(reason),
     }
 
@@ -1168,6 +1174,107 @@ def test_stranded_raise_is_idempotent_across_ticks():
     _sweep(fake, now=_now, build_lock_held=_lock_free)                 # identical second tick
     assert fake.edits == edits_after_1                                 # no re-raise edit
     assert fake.comments == comments_after_1                           # no duplicate comment
+
+
+# ============================================================================
+# #316 — stranded claims: standalone coverage beside the epic pass. An In-Progress `Task` item with NO
+# parent epic (GitHub's own sub-issues `parent` field absent) gets the exact same stranded raise as an
+# epic child: past the staleness bound, no open PR, no live build holding its OWN repo's lock ->
+# Reason=Blocked + the fact-stating comment. The per-epic pass (tested above) stays untouched.
+# ============================================================================
+
+def _run_standalone_stranded_candidate(*, age_min, reason=None, open_prs=None,
+                                        build_lock_held=_lock_free, stranded_after_min=None,
+                                        parent=None, itype="Task", status="In Progress"):
+    """A single standalone board item (default: no parent, Type=Task, In Progress) with the given
+    age/Reason/PR/lock state, run through one sweep. No epic detail is registered at all, so ANY write
+    the sweep makes here can only have come from the new standalone pass."""
+    board = [_item(101, item_id="PI-101", itype=itype, status=status, reason=reason,
+                    updated_at=_iso(age_min), parent=parent)]
+    fake = FakeGh(board, {}, open_prs=open_prs)
+    _sweep(fake, now=_now, build_lock_held=build_lock_held, stranded_after_min=stranded_after_min)
+    return fake
+
+
+def test_standalone_stranded_claim_raised_past_bound_no_pr_lock_free():
+    """A standalone (no-parent) Task, In Progress, no Reason, no PR, age > 45min (default bound), lock
+    free -> Reason=Blocked + the same fact-stating comment the per-epic pass posts."""
+    fake = _run_standalone_stranded_candidate(age_min=60)
+
+    assert ("PI-101", REASON_FIELD, "Blocked") in fake.edits
+    comments = [c for c in fake.comments if c[1] == "101"]
+    assert len(comments) == 1
+    body = comments[0][2].lower()
+    assert "stranded" in body
+    assert "60" in comments[0][2]                  # the age is reported in the comment
+    assert "no live build" in body
+    assert "dispatch.md" in body
+
+
+def test_standalone_raise_uses_the_identical_comment_body_as_the_epic_child_raise():
+    """"The same stranded raise" is not just similar wording — it is the SAME shared body function, so a
+    standalone claim's comment is byte-identical to what the per-epic pass would post for the same age."""
+    fake = _run_standalone_stranded_candidate(age_min=60)
+    comments = [c for c in fake.comments if c[1] == "101"]
+    assert comments[0][2] == epic_gate._stranded_body(60.0)
+
+
+def test_standalone_raise_sets_reason_only_no_status_flip():
+    """The raise is the termination surface: Reason -> Blocked, but Status is never touched (no flip)."""
+    fake = _run_standalone_stranded_candidate(age_min=60)
+    assert _status_ready_edits(fake) == []
+    assert _reason_edits(fake) == [("PI-101", REASON_FIELD, "Blocked")]
+
+
+def test_standalone_no_raise_under_staleness_bound():
+    """Age under the (default 45 min) bound -> not yet suspect, no raise."""
+    fake = _run_standalone_stranded_candidate(age_min=20)
+    assert fake.edits == [] and fake.comments == []
+
+
+def test_standalone_no_raise_while_build_lock_held():
+    """A build is live for this claim's own repo (lock held) -> the sweep defers."""
+    fake = _run_standalone_stranded_candidate(age_min=60, build_lock_held=_lock_held)
+    assert fake.edits == [] and fake.comments == []
+
+
+def test_standalone_no_raise_when_open_pr_exists():
+    """An open `task/101-…` PR exists -> a completed build that only missed the In Review status write;
+    do not false-raise it."""
+    fake = _run_standalone_stranded_candidate(age_min=60, open_prs=["task/101-fix-thing"])
+    assert fake.edits == [] and fake.comments == []
+
+
+def test_standalone_pass_never_touches_an_epic_child():
+    """An In-Progress, stale, PR-less, lock-free Task WITH a parent (an epic child in shape) is skipped
+    by the standalone pass — `parent` is exactly the marker that tells the two apart. No epic is
+    registered to engage this item either, so any write here would prove the standalone pass wrongly
+    reached across the boundary into the per-epic pass's own turf."""
+    fake = _run_standalone_stranded_candidate(age_min=60, parent=100)
+    assert fake.edits == [] and fake.comments == []
+
+
+def test_standalone_raise_is_idempotent_across_ticks():
+    """Tick 1 raises #101 (Reason -> Blocked, applied back by the fake). Tick 2 sees #101 already
+    carrying Blocked -> no double-raise, no duplicate comment."""
+    board = [_item(101, item_id="PI-101", itype="Task", status="In Progress", updated_at=_iso(60))]
+    fake = FakeGh(board, {}, open_prs=[])
+    _sweep(fake, now=_now, build_lock_held=_lock_free)
+    edits_after_1, comments_after_1 = list(fake.edits), list(fake.comments)
+    assert ("PI-101", REASON_FIELD, "Blocked") in edits_after_1
+
+    _sweep(fake, now=_now, build_lock_held=_lock_free)                 # identical second tick
+    assert fake.edits == edits_after_1                                 # no re-raise edit
+    assert fake.comments == comments_after_1                           # no duplicate comment
+
+
+def test_board_query_status_projection_gains_updated_at():
+    """BOARD_QUERY's Status field-value projection must request `updatedAt` — the standalone stranded
+    pass has no per-issue projectItems fallback the way the per-epic pass does; it reads the staleness
+    clock straight off the board item's own Status field value."""
+    m = re.search(r'status:\s*fieldValueByName\(name:\s*"Status"\)\s*\{[^}]*\}', epic_gate.BOARD_QUERY)
+    assert m, "BOARD_QUERY has no Status fieldValueByName selection"
+    assert "updatedAt" in m.group(0)
 
 
 # ============================================================================
