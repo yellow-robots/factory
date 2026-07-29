@@ -1015,6 +1015,7 @@ fail_blocked(){ local extra=""
                  [ -f "$RUN_DIR/final.patch" ] && extra="  Post-repair artifact: $RUN_DIR/final.patch (the tree after the review-repair round — salvage from this, not diff.patch)."
                  set_reason Blocked; comment "dev-runner: **Blocked** — $1$extra"
                  ledger_append blocked ""
+                 salvage_wt
                  cleanup_wt; die "$1"; }
 
 # ---- run dir (per-pid), worktree (repo+branch-keyed, stable), per-repo-branch stage-completion state
@@ -1050,6 +1051,20 @@ cleanup_wt(){ "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/nu
               "$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true
               rm -rf "$STATE_DIR"
               rm -rf "$RUN_TMPDIR"; }
+# salvage_wt: fail_blocked's catch-all salvage (issue #315) — generalizes final.patch (issue #172) to
+# EVERY hard block, not just the review-repair round. Stages the worktree and writes the staged diff to
+# $RUN_DIR/block-salvage.patch BEFORE cleanup_wt discards the tree, whenever a worktree exists (a
+# failure before `worktree add` succeeds has nothing to stage). Rides alongside any named diff a
+# specific block path already wrote (final.patch, boundary-violation.diff) — never replaces one, never a
+# resume mechanism, artifact only. An empty staged diff writes no file, just a log line.
+salvage_wt(){ [ -d "$WT" ] || return 0
+              "$GIT_BIN" -C "$WT" add -A 2>/dev/null || return 0
+              if "$GIT_BIN" -C "$WT" diff --cached --quiet 2>/dev/null; then
+                log "block salvage: staged diff empty, no block-salvage.patch written"
+              else
+                "$GIT_BIN" -C "$WT" diff --cached > "$RUN_DIR/block-salvage.patch"
+                log "block salvage: staged diff written to $RUN_DIR/block-salvage.patch"
+              fi; }
 # run.json: the resume manifest (branch, base ref, resolved models, worktree path), written when a hold
 # is recorded so the preserved state is self-describing.
 write_run_json(){ mkdir -p "$STATE_DIR"
