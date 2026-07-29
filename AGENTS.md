@@ -132,10 +132,18 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   the run's log names the effective source. `check_timeout` (the local gate's bounded window in seconds,
   default 1200; `CHECK_TIMEOUT` env override; issue #308) is resolved once, at this same start-of-run
   point, precedence env > manifest > default, and a manifest value present but not a positive integer
-  bounces `Needs-info` naming the rejected value before any claim, never silently defaulting — every
-  check/lint/lens invocation (including the armed re-green) runs under it, an OBSERVED expiry (never
-  inferred from the exit code alone) disposing as a code failure through that site's existing repair/Block
-  path, the lens folding it into its advisory note instead. `test_paths` / `artifact_globs` (issue #273)
+  bounces `Needs-info` naming the rejected value before any claim, never silently defaulting. A gate is
+  judged by LIVENESS, not the absolute clock (issue #314): `check_idle_timeout` (default 300s;
+  `CHECK_IDLE_TIMEOUT` env override) shares `check_timeout`'s resolution point, precedence, and
+  malformed-value bounce discipline — it is the window a check/lint/lens invocation's log (including the
+  armed re-green) may sit at zero byte growth before the wrapper kills its process group, an OBSERVED
+  expiry (never inferred from the exit code alone) disposing as a code failure whose tail names the idle
+  duration, total elapsed, and both windows, through that site's existing repair/Block path, the lens
+  folding it into its advisory note instead. `check_timeout` expiring while output is STILL flowing no
+  longer kills anything: it is a one-time loud advisory — a run-log line plus one issue-trail comment
+  naming the process group, elapsed time, both windows, and that output is flowing — and the run
+  continues; the advisory only informs, it never gates (owner ruling 2026-07-29: a chatty live loop holds
+  its slot until a human looks). `test_paths` / `artifact_globs` (issue #273)
   let a repo declare its own shape rather than conform to the factory's own: `test_paths` (default `["tests/"]`) is
   the tester stage's only legal write surface, `artifact_globs` (default `["__pycache__/", "*.pyc"]`) is
   the boundary guard's build-artifact forgiveness set — both TOML arrays of non-empty, repo-relative

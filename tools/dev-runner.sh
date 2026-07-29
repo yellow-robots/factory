@@ -746,6 +746,36 @@ if [ -n "$CHECK_TIMEOUT_REJECTED" ]; then
 else
   log "check_timeout: ${CHECK_TIMEOUT}s (source: $CHECK_TIMEOUT_SOURCE)"
 fi
+# check_idle_timeout (issue #314): a gate is judged by LIVENESS, not the absolute clock — the wait loop
+# (below, run_checks/run_lint/run_lens) watches each invocation's log for byte growth; no growth for this
+# many seconds kills the process group and disposes an observed expiry, while check_timeout above no
+# longer kills anything by itself (an expiry with output still flowing becomes a loud advisory instead —
+# see the wait loop). Resolved at this SAME start-of-run point, same precedence and typed-emission
+# discipline as check_timeout: env CHECK_IDLE_TIMEOUT > manifest key check_idle_timeout (a positive
+# integer number of seconds) > CHECK_IDLE_TIMEOUT_DEFAULT.
+CHECK_IDLE_TIMEOUT_DEFAULT=300
+CHECK_IDLE_TIMEOUT_REJECTED=""
+if [ -n "${CHECK_IDLE_TIMEOUT:-}" ]; then
+  CHECK_IDLE_TIMEOUT_SOURCE=env
+else
+  _cit_parsed="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
+try: d=tomllib.loads(sys.stdin.read())
+except Exception: print("__error__"); sys.exit(0)
+v=d.get("check_idle_timeout")
+print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  case "$_cit_parsed" in
+    __error__|__absent__) CHECK_IDLE_TIMEOUT="$CHECK_IDLE_TIMEOUT_DEFAULT"; CHECK_IDLE_TIMEOUT_SOURCE=default ;;
+    ''|*[!0-9]*) CHECK_IDLE_TIMEOUT_REJECTED="$_cit_parsed"; CHECK_IDLE_TIMEOUT_SOURCE=manifest ;;
+    *) if [ "$_cit_parsed" -gt 0 ]; then CHECK_IDLE_TIMEOUT="$_cit_parsed"; CHECK_IDLE_TIMEOUT_SOURCE=manifest
+       else CHECK_IDLE_TIMEOUT_REJECTED="$_cit_parsed"; CHECK_IDLE_TIMEOUT_SOURCE=manifest; fi ;;
+  esac
+fi
+MF_CHECKIDLETIMEOUT_NEEDS_INFO=""
+if [ -n "$CHECK_IDLE_TIMEOUT_REJECTED" ]; then
+  MF_CHECKIDLETIMEOUT_NEEDS_INFO="manifest key 'check_idle_timeout' is rejected (value: $CHECK_IDLE_TIMEOUT_REJECTED) — check_idle_timeout must be a positive integer number of seconds, and a rejected value never silently falls back to the default (${CHECK_IDLE_TIMEOUT_DEFAULT}s)"
+else
+  log "check_idle_timeout: ${CHECK_IDLE_TIMEOUT}s (source: $CHECK_IDLE_TIMEOUT_SOURCE)"
+fi
 # lint tier (issue #213): NO built-in default — an absent key leaves LINT_CMD/LINT_FIX_CMD empty, and an
 # empty LINT_CMD is off (byte-identical to today: no probe, no output). env overrides manifest as ever.
 LINT_CMD="${LINT_CMD:-${MF_LINT_CMD:-}}"
@@ -824,6 +854,7 @@ NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$MF_ARTIFACTGLOBS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_ARTIFACTGLOBS_NEEDS_INFO"
 [ -n "$MF_CHECKCMD_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKCMD_NEEDS_INFO"
 [ -n "$MF_CHECKTIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKTIMEOUT_NEEDS_INFO"
+[ -n "$MF_CHECKIDLETIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKIDLETIMEOUT_NEEDS_INFO"
 [ -n "$MF_STAGECONDUCT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_STAGECONDUCT_NEEDS_INFO"
 
 # ---- slug + branch ----
@@ -1482,23 +1513,72 @@ fi
 # git identity passed here on host config but failed in CI with no identity). A check that genuinely
 # needs git identity/config must set it up in its own fixtures, same as CI. This is scoped to the check
 # child only — LLM stages and the runner's own git operations (worktree/commit/push) keep full host config.
-# check_timeout (issue #308): every local-gate child below is bounded by CHECK_TIMEOUT (resolved once,
-# start-of-run, above) via GNU `timeout` INSIDE the existing subshell, wrapped directly around the
-# `bash -c` child — the three confinement shapes (worktree cd, PATH, neutralized git config) stay
-# otherwise byte-equal. `timeout`'s DEFAULT (non --foreground) mode is the required tree-kill: it puts
-# the child in its OWN process group and, on expiry, signals that whole group — a check_cmd that spawns
-# children leaves no survivor. CHECK_TIMEOUT_KILL_AFTER is a fixed grace before escalating from the
-# initial TERM to KILL for a child that ignores TERM — not itself manifest-configurable (issue #308
-# declares exactly one key). A `setsid`-escaping grandchild survives even the group KILL — accepted
-# residue (see AGENTS.md): the run itself still unwedges, since `timeout` always returns once its own
-# child (the process it forked) has exited.
+# check_timeout / check_idle_timeout (issues #308, #314): every local-gate child below runs bounded by
+# BOTH windows (resolved once, start-of-run, above), judged by LIVENESS rather than the absolute clock.
+# _gate_monitor (below) backgrounds the child via `setsid` — its own new session, hence its own process
+# group (pgid == its own pid), the same tree-kill guarantee `timeout`'s non-foreground mode gave — then
+# polls its log for byte growth. No growth for CHECK_IDLE_TIMEOUT kills the whole group (a check_cmd that
+# spawns children leaves no survivor) and disposes an OBSERVED expiry. CHECK_TIMEOUT elapsing while the
+# log is STILL growing no longer kills anything: it fires exactly one loud advisory (a run-log line plus
+# one issue-trail comment naming the pgid, elapsed time, both windows, and that output is flowing) and the
+# wait continues — a chatty live loop holds the slot until a human looks (owner ruling 2026-07-29;
+# supersedes #308's absolute-window kill). CHECK_TIMEOUT_KILL_AFTER is a fixed grace before escalating from
+# the initial TERM to KILL for a child that ignores TERM on an idle-window kill — not itself
+# manifest-configurable. A `setsid`-escaping grandchild survives even the group KILL — accepted residue
+# (see AGENTS.md): the run itself still unwedges, since the monitor always returns once the process it
+# backgrounded has exited (or been killed).
 CHECK_TIMEOUT_KILL_AFTER=10
-# _log_has_expiry: the OBSERVED-expiry discriminator. `timeout --verbose` diagnoses to stderr ONLY when
-# IT is the one that sent a signal because the window elapsed — a child that independently exits 124/137
-# on its own (the false-124 fixture; a kernel OOM kill) never writes this line, so grepping the child's
-# own captured stderr for it — rather than reading the exit code alone — is what lets the disposal below
-# tell an observed expiry apart from a same-valued exit code the child produced by itself.
-_log_has_expiry(){ grep -q '^timeout: sending signal' "$1" 2>/dev/null; }
+# _GATE_SLEEP_BIN: an ABSOLUTE path to the real system `sleep`, resolved once against fixed well-known
+# locations — NEVER a PATH search, so a test/manifest PATH override (e.g. a `sleep` stub prepended to
+# observe the PR-stage retry backoff's OWN bare `sleep` calls) can never redirect it. _gate_monitor's
+# poll/grace waits invoke it by this absolute path (a name containing '/' also never touches bash's
+# command-hash cache for the bare name "sleep", so it can't poison later bare `sleep` lookups either) —
+# this loop's internal polling cadence is an implementation detail, never meant to be observed or stubbed.
+_GATE_SLEEP_BIN=/bin/sleep
+[ -x "$_GATE_SLEEP_BIN" ] || _GATE_SLEEP_BIN=/usr/bin/sleep
+[ -x "$_GATE_SLEEP_BIN" ] || _GATE_SLEEP_BIN=sleep   # last-resort PATH fallback for an exotic host
+# _gate_monitor: the liveness-judged wait loop shared by run_checks/run_lint/run_lens. $1 = pid of the
+# already-backgrounded (`setsid`'d) invocation, $2 = primary log file to poll for growth, $3 = secondary
+# log file (optional, "" if none — lens's separate stdout/stderr pair; either growing counts as alive),
+# $4 = label for the advisory log line/comment (e.g. "check_cmd"). The OBSERVED-expiry discipline holds:
+# _GM_EXPIRED is set ONLY when this loop itself decides to kill the group for being idle — a child that
+# independently exits 124/137 on its own (the false-124 fixture; a kernel OOM kill) never sets it, so the
+# disposal below tells an observed expiry apart from a same-valued exit code the child produced by itself.
+# Sets: _GM_RC, _GM_EXPIRED (1 = idle-killed), _GM_IDLE_ELAPSED, _GM_TOTAL_ELAPSED, _GM_PGID.
+_gate_monitor(){
+  local pid="$1" f1="$2" f2="$3" label="$4"
+  local t0; t0=$(date +%s)
+  local last_size=0 last_growth=$t0 advised=0
+  _GM_EXPIRED=0; _GM_PGID="$pid"; _GM_IDLE_ELAPSED=0
+  while kill -0 "$pid" 2>/dev/null; do
+    "$_GATE_SLEEP_BIN" 0.05
+    local now; now=$(date +%s)
+    local s1=0 s2=0
+    [ -f "$f1" ] && s1=$(wc -c <"$f1" 2>/dev/null || echo 0)
+    [ -n "$f2" ] && [ -f "$f2" ] && s2=$(wc -c <"$f2" 2>/dev/null || echo 0)
+    local size=$(( s1 + s2 ))
+    if [ "$size" -gt "$last_size" ]; then last_size="$size"; last_growth="$now"; fi
+    local idle=$(( now - last_growth )) total=$(( now - t0 ))
+    if [ "$idle" -ge "$CHECK_IDLE_TIMEOUT" ]; then
+      kill -TERM -- "-$pid" 2>/dev/null
+      local waited=0
+      while [ "$waited" -lt "$CHECK_TIMEOUT_KILL_AFTER" ] && kill -0 "$pid" 2>/dev/null; do
+        "$_GATE_SLEEP_BIN" 1; waited=$((waited+1))
+      done
+      kill -0 "$pid" 2>/dev/null && kill -KILL -- "-$pid" 2>/dev/null
+      _GM_EXPIRED=1; _GM_IDLE_ELAPSED="$idle"
+      break
+    fi
+    if [ "$advised" -eq 0 ] && [ "$total" -ge "$CHECK_TIMEOUT" ]; then
+      advised=1
+      log "live-gate advisory — $label has run ${total}s, past check_timeout (${CHECK_TIMEOUT}s; check_idle_timeout=${CHECK_IDLE_TIMEOUT}s) — output is still flowing (pgid $pid), so it is NOT killed; only idle output triggers a kill. The run continues."
+      comment "dev-runner: **live-gate advisory** — \`$label\` has run ${total}s, past its check_timeout window (check_timeout=${CHECK_TIMEOUT}s, check_idle_timeout=${CHECK_IDLE_TIMEOUT}s, pgid $pid) — output is still flowing, so it is not killed; the absolute window informs, it never gates. Only idle output (no growth for check_idle_timeout) kills a gate. The run continues."
+    fi
+  done
+  wait "$pid" 2>/dev/null
+  _GM_RC=$?
+  _GM_TOTAL_ELAPSED=$(( $(date +%s) - t0 ))
+}
 # gate-durations.json (issue #313): a run-dir artifact, one entry per run_checks/run_lint/run_lens
 # invocation — {site, elapsed_seconds, disposition}, informing tools/ledger.py's window calibration only
 # (folded into the row as a top-level `gates` list; never gates anything here or there). GATE_DURATIONS
@@ -1513,9 +1593,9 @@ record_gate_duration(){   # $1 = site, $2 = elapsed_seconds, $3 = disposition
   local joined; joined="$(IFS=,; echo "${GATE_DURATIONS[*]}")"
   printf '[%s]' "$joined" >"$RUN_DIR/gate-durations.json"
 }
-# _gate_disposition: the shared {pass, fail, timeout, env_failure} vocabulary — an observed check_timeout
-# expiry (the $2 expired flag, e.g. CHECK_EXPIRED) outranks the exit code (a timeout-killed child's own rc
-# is incidental), then the 126/127 env-failure exit codes (same test env_hold/lint_env_hold gate on), then
+# _gate_disposition: the shared {pass, fail, timeout, env_failure} vocabulary — an observed idle-timeout
+# expiry (the $2 expired flag, e.g. CHECK_EXPIRED) outranks the exit code (a killed child's own rc is
+# incidental), then the 126/127 env-failure exit codes (same test env_hold/lint_env_hold gate on), then
 # rc==0 vs anything else.
 _gate_disposition(){   # $1 = rc, $2 = expired (0/1)
   if [ "$2" -eq 1 ]; then echo timeout
@@ -1527,49 +1607,51 @@ _gate_disposition(){   # $1 = rc, $2 = expired (0/1)
 run_checks(){   # $1 = site (defaults to "check"), named for gate-durations.json (issue #313)
   local site="${1:-check}"
   local _t0; _t0=$(date +%s)
-  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1
-  local rc=$?
-  CHECK_EXPIRED=0
-  if _log_has_expiry "$RUN_DIR/checks.log"; then
-    CHECK_EXPIRED=1
-    printf '\ndev-runner: check_timeout expired after %ss (check_cmd) — process group killed, no observed survivor\n' "$CHECK_TIMEOUT" >>"$RUN_DIR/checks.log"
+  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null exec setsid bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1 &
+  _gate_monitor "$!" "$RUN_DIR/checks.log" "" "check_cmd"
+  local rc="$_GM_RC"
+  CHECK_EXPIRED="$_GM_EXPIRED"
+  if [ "$CHECK_EXPIRED" -eq 1 ]; then
+    printf '\ndev-runner: check_idle_timeout expired after %ss idle (check_cmd) — total elapsed %ss — process group killed, no observed survivor (check_timeout=%ss, check_idle_timeout=%ss)\n' \
+      "$_GM_IDLE_ELAPSED" "$_GM_TOTAL_ELAPSED" "$CHECK_TIMEOUT" "$CHECK_IDLE_TIMEOUT" >>"$RUN_DIR/checks.log"
   fi
   record_gate_duration "$site" "$(( $(date +%s) - _t0 ))" "$(_gate_disposition "$rc" "$CHECK_EXPIRED")"
   return "$rc"
 }
 # run_lint (issue #213): the lint tier's runner, cloned from run_checks — same confinement (worktree cd,
-# the venv + node bin dirs on PATH, host git config neutralized) plus the same check_timeout bound, output
-# to lint.log in the run dir. $1 is an OPAQUE command run verbatim: python repos declare ruff, node repos
-# eslint — no lint-output parsing, no language assumption anywhere. Used for both LINT_CMD (the probe /
-# re-run) and LINT_FIX_CMD (the autofix, non-gating but bounded too — issue #308). $2 = site (issue #313).
+# the venv + node bin dirs on PATH, host git config neutralized) plus the same liveness-judged bound,
+# output to lint.log in the run dir. $1 is an OPAQUE command run verbatim: python repos declare ruff, node
+# repos eslint — no lint-output parsing, no language assumption anywhere. Used for both LINT_CMD (the probe
+# / re-run) and LINT_FIX_CMD (the autofix, non-gating but bounded too — issue #308). $2 = site (issue #313).
 run_lint(){
   local site="${2:-lint}"
   local _t0; _t0=$(date +%s)
-  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1
-  local rc=$?
-  LINT_EXPIRED=0
-  if _log_has_expiry "$RUN_DIR/lint.log"; then
-    LINT_EXPIRED=1
-    printf '\ndev-runner: check_timeout expired after %ss — process group killed, no observed survivor\n' "$CHECK_TIMEOUT" >>"$RUN_DIR/lint.log"
+  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null exec setsid bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1 &
+  _gate_monitor "$!" "$RUN_DIR/lint.log" "" "lint_cmd"
+  local rc="$_GM_RC"
+  LINT_EXPIRED="$_GM_EXPIRED"
+  if [ "$LINT_EXPIRED" -eq 1 ]; then
+    printf '\ndev-runner: check_idle_timeout expired after %ss idle (lint_cmd) — total elapsed %ss — process group killed, no observed survivor (check_timeout=%ss, check_idle_timeout=%ss)\n' \
+      "$_GM_IDLE_ELAPSED" "$_GM_TOTAL_ELAPSED" "$CHECK_TIMEOUT" "$CHECK_IDLE_TIMEOUT" >>"$RUN_DIR/lint.log"
   fi
   record_gate_duration "$site" "$(( $(date +%s) - _t0 ))" "$(_gate_disposition "$rc" "$LINT_EXPIRED")"
   return "$rc"
 }
 # run_lens (issue #214): the advisory lens tier's runner — the run_checks/run_lint confinement shape
-# (worktree cd, the venv + node bin dirs on PATH, host git config neutralized, the same check_timeout
+# (worktree cd, the venv + node bin dirs on PATH, host git config neutralized, the same liveness-judged
 # bound) with two DELIBERATE deviations: (1) stdout -> the run dir's lens.md and stderr -> lens.log are
-# SEPARATE, never the shape's merged 2>&1 — a stderr traceback must never land in the PR-trail comment;
-# and (2) YR_BASE_REF="$BASE_REF" is exported so a lens can be diff-aware. $1 is an OPAQUE command run
-# verbatim — any stack's lens works, no lens-output parsing, no language assumption. $2 = site (issue
-# #313). The exit code is READ BUT NEVER GATES (see below) — expiry included, since `timeout --verbose`'s
-# diagnostic lands in lens.log (never lens.md), the same separation the exit code itself already gets.
+# SEPARATE, never the shape's merged 2>&1 — a stderr traceback must never land in the PR-trail comment
+# (either stream growing counts toward liveness); and (2) YR_BASE_REF="$BASE_REF" is exported so a lens
+# can be diff-aware. $1 is an OPAQUE command run verbatim — any stack's lens works, no lens-output parsing,
+# no language assumption. $2 = site (issue #313). The exit code is READ BUT NEVER GATES (see below) — an
+# idle-window expiry included, since the caller's expiry tail lands in lens.md (never mixed with lens.log).
 run_lens(){
   local site="${2:-lens}"
   local _t0; _t0=$(date +%s)
-  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null YR_BASE_REF="$BASE_REF" timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lens.md" 2>"$RUN_DIR/lens.log"
-  local rc=$?
-  LENS_EXPIRED=0
-  _log_has_expiry "$RUN_DIR/lens.log" && LENS_EXPIRED=1
+  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null YR_BASE_REF="$BASE_REF" exec setsid bash -c "$1" ) >"$RUN_DIR/lens.md" 2>"$RUN_DIR/lens.log" &
+  _gate_monitor "$!" "$RUN_DIR/lens.md" "$RUN_DIR/lens.log" "lens_cmd"
+  local rc="$_GM_RC"
+  LENS_EXPIRED="$_GM_EXPIRED"; LENS_IDLE_ELAPSED="$_GM_IDLE_ELAPSED"; LENS_TOTAL_ELAPSED="$_GM_TOTAL_ELAPSED"
   record_gate_duration "$site" "$(( $(date +%s) - _t0 ))" "$(_gate_disposition "$rc" "$LENS_EXPIRED")"
   return "$rc"
 }
@@ -1677,15 +1759,16 @@ else
   # ---- lens tier (issue #214): a manifest-declared, purely ADVISORY tier, run only AFTER check_cmd (and
   # lint_cmd, when declared) both pass. Absent LENS_CMD = off, byte-identical to today (no run, no
   # artifact, no comment). The lens exit code is READ BUT NEVER GATES — a non-zero exit (126/127 included,
-  # a check_timeout expiry included — issue #308) becomes a one-line legible note appended to lens.md, and
-  # the run's terminal state is IDENTICAL to the same run with a passing lens (no fail_blocked, no env
-  # hold, no repair). The artifact lands on the PR trail as its own comment after the PR exists (below);
-  # it never enters PR_BODY or the review bundle.
+  # an idle-timeout expiry included — issues #308/#314) becomes a one-line legible note appended to
+  # lens.md, and the run's terminal state is IDENTICAL to the same run with a passing lens (no
+  # fail_blocked, no env hold, no repair). The artifact lands on the PR trail as its own comment after the
+  # PR exists (below); it never enters PR_BODY or the review bundle.
   if [ -n "$LENS_CMD" ]; then
     LENS_RC=0; run_lens "$LENS_CMD" lens || LENS_RC=$?
     if [ "$LENS_RC" -ne 0 ]; then
       if [ "$LENS_EXPIRED" -eq 1 ]; then
-        printf '\nlens did not run cleanly (exit %s) — check_timeout expired after %ss, process group killed\n' "$LENS_RC" "$CHECK_TIMEOUT" >> "$RUN_DIR/lens.md"
+        printf '\nlens did not run cleanly (exit %s) — check_idle_timeout expired after %ss idle, total elapsed %ss, process group killed (check_timeout=%ss, check_idle_timeout=%ss)\n' \
+          "$LENS_RC" "$LENS_IDLE_ELAPSED" "$LENS_TOTAL_ELAPSED" "$CHECK_TIMEOUT" "$CHECK_IDLE_TIMEOUT" >> "$RUN_DIR/lens.md"
       else
         printf '\nlens did not run cleanly (exit %s)\n' "$LENS_RC" >> "$RUN_DIR/lens.md"
       fi
