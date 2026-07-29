@@ -582,15 +582,39 @@ if [ -n "$REEVAL_PR" ]; then
   exit 0
 fi
 
+# ---- run-start fetch (issue #327): freshen origin BEFORE the manifest read below, so the manifest and
+# the worktree this run later cuts (the claim/worktree section, far below) come from one snapshot — never
+# a ref left behind by a PREVIOUS run's own fetch, which today runs later than this read. Broad shape (no
+# refspec — same as the claim/worktree section's own `fetch origin`), so a manifest-declared base_ref
+# branch is freshened by this same fetch. Skipped, not environmental, when the checkout isn't a git repo
+# or carries no origin remote: the ref read below then yields nothing and the working-tree manifest
+# fallback applies, unchanged (the dry-run and never-pushed shapes existing fixtures build on). Bounded +
+# prompt-free (mirrors the factory self-freshness fetch further below): unbounded here would hold
+# dispatch's repo flock and a capacity slot for a network hang. This runs BEFORE claim (indeed before the
+# DoR/NEEDS_INFO gate), so a real failure/timeout is NOT fail_blocked/env_hold (both assume a claim
+# already happened) — it is a plain environmental `die`: no board write, task stays Ready for the next poll.
+MANIFEST_FETCH_TIMEOUT="${MANIFEST_FETCH_TIMEOUT:-15}"
+if [ -d "$BASE_REPO/.git" ] && "$GIT_BIN" -C "$BASE_REPO" remote get-url origin >/dev/null 2>&1; then
+  GIT_TERMINAL_PROMPT=0 timeout "$MANIFEST_FETCH_TIMEOUT" "$GIT_BIN" -C "$BASE_REPO" fetch -q origin \
+    || die "run-start fetch of origin failed or timed out (bound: ${MANIFEST_FETCH_TIMEOUT}s) for $BASE_REPO — environmental, task stays Ready for the next poll"
+fi
+
 # Per-repo build config lives in the repo, not the factory: .yr/factory.toml (check_cmd / model / base_ref).
 MANIFEST="$BASE_REPO/.yr/factory.toml"
-# Read the manifest from the build's base ref (origin/main), NOT the base checkout's working tree:
-# the worktree is cut from that ref, so the manifest must come from there too — a drifted/dirty
-# checkout (e.g. one doubling as a live dev workspace) then can't feed a stale or missing manifest.
-# Fall back to the working-tree file when the ref read yields nothing (a repo not yet pushed; or the
-# dry-run's non-git manifest dir).
+# Read the manifest from a SHA pinned off the build's base ref (origin/main) by the run-start fetch just
+# above, NOT the base checkout's working tree: a drifted/dirty checkout (e.g. one doubling as a live dev
+# workspace) then can't feed a stale or missing manifest. Resolving to a single sha (rather than showing
+# the moving ref directly) is what lets the claim/worktree section below cut its worktree from that exact
+# same snapshot whenever base_ref names this same ref (one freshness moment for config and code — issue
+# #327) — a divergent manifest-declared base_ref still dates from this same run-start fetch (read-time
+# freshness holds), it just isn't the ref the worktree is cut from (out of scope here). Fall back to the
+# working-tree file when the ref/sha read yields nothing (a repo not yet pushed; or the dry-run's non-git
+# manifest dir).
 MANIFEST_REF="${MANIFEST_REF:-origin/main}"
-MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_REF:.yr/factory.toml" 2>/dev/null || true)"
+MANIFEST_SHA="$("$GIT_BIN" -C "$BASE_REPO" rev-parse "$MANIFEST_REF" 2>/dev/null || true)"
+MF_RAW=""
+[ -n "$MANIFEST_SHA" ] && MF_RAW="$("$GIT_BIN" -C "$BASE_REPO" show "$MANIFEST_SHA:.yr/factory.toml" 2>/dev/null || true)"
+[ -n "$MANIFEST_SHA" ] && log "manifest sha: $MANIFEST_SHA (source: $MANIFEST_REF)"
 [ -z "$MF_RAW" ] && [ -f "$MANIFEST" ] && MF_RAW="$(cat "$MANIFEST")"
 # The admission wall: raw still empty after BOTH reads above means this repo carries no manifest
 # anywhere — never onboarded, as opposed to one whose manifest exists but is merely sparse (individual
@@ -708,6 +732,14 @@ case "${_sc[0]:-ABSENT}" in
 esac
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
+# One snapshot, both reads (issue #327): whenever the base ref names the SAME ref as MANIFEST_REF (the
+# default, and every repo shipped today), the worktree below is cut from the manifest's own pinned sha —
+# never a ref name that, in principle, could have moved since the run-start fetch above. WT_CUT_REF is
+# used ONLY at the worktree-add call below; BASE_REF/BASE_BRANCH keep naming the ref everywhere else
+# (freshness checks, run.json, logging) — unchanged. A divergent manifest base_ref still cuts from
+# BASE_REF itself (freshened by the same run-start fetch); reconciling which ref a manifest SHOULD come
+# from in that shape is a separate, seeded question.
+if [ "$BASE_REF" = "$MANIFEST_REF" ] && [ -n "$MANIFEST_SHA" ]; then WT_CUT_REF="$MANIFEST_SHA"; else WT_CUT_REF="$BASE_REF"; fi
 # check_cmd (issue #275): NO built-in fallback — required-ness is judged on the manifest alone (an
 # undeclared key bounces above via MF_CHECKCMD_NEEDS_INFO, regardless of any env CHECK_CMD). Where the
 # manifest DOES declare check_cmd, today's precedence holds: an env CHECK_CMD still overrides it for the
@@ -1112,7 +1144,7 @@ else
   "$GIT_BIN" -C "$BASE_REPO" fetch -q origin || fail_blocked "git fetch failed"
   [ -e "$WT" ] && { "$GIT_BIN" -C "$BASE_REPO" worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"; }
   "$GIT_BIN" -C "$BASE_REPO" branch -D "$BRANCH" 2>/dev/null || true
-  "$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$BASE_REF" || fail_blocked "worktree add failed"
+  "$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$WT_CUT_REF" || fail_blocked "worktree add failed"
 fi
 
 # ---- factory self-freshness (issue #58): a stale deployment must never run invisibly. Best-effort only —
