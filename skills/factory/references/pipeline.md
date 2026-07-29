@@ -83,6 +83,20 @@ document:
   standing documents — this reference included — inform the human and the pipeline's own code, never a
   stage's working context.
 
+The charter above states the pipeline's own, generic conduct rules — the same for every repo. A repo's
+own command NUMBERS (its real per-command durations — how long its own check/lint/build commands
+actually take) are a separate, per-repo declaration: the manifest key `stage_conduct` (issue #312, a
+TOML array of non-empty strings), ending the per-task conduct-addendum stopgap a repo used to need to
+restate by hand in every task body. When declared, the table is appended to the **task prompt**, under a
+one-line header naming the source manifest (`.yr/factory.toml`) — and only there: it travels on stdin
+with the rest of `$SPEC`, never on argv (issue #121's channel contract — a conduct table names commands
+by design, so it must land on the channel the harness already treats as inert repo-authored text, never
+one it pattern-matches as its own command line). A declared line containing one of the shared test
+harness's four routed stub literals (`tests/harness/contract.md`: `TESTER`, `REVIEWER`, `tests FAIL`,
+`REQUESTED CHANGES`) would misroute the harness's own stage classification, not just its own — so the
+ban is enforced at parse time, fail-closed to `Needs-info` naming the offending line, never left
+advisory. Absent key: stage prompts are byte-identical to today, pinned.
+
 ## The legal test tree
 
 The tester's boundary guard is structural, not a prompt: the runner diffs the tester's stage against
