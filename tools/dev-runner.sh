@@ -1392,6 +1392,47 @@ stage_fail_msg(){   # $1 = stage label, $2 = log file, $3 = exit code, $4 = 1 if
       "$label" "$rc" "$log" "$HOME/.claude/projects/$(wt_slug)"
   fi
 }
+
+# stage_blocked_reason (issue #309): reads a stage's log AS PLAIN TEXT at disposition time — after
+# run_stage has returned and capture_stage_usage has already rewritten a clean default-format log to the
+# envelope's `.result` text in place — for the STAGE-BLOCKED escalation sentinel. Fires ONLY on a strict
+# grammar: the log's LAST non-empty line is EXACTLY "STAGE-BLOCKED: <reason>" with a non-empty reason —
+# deliberately stricter than verdict_line's last-anchored-line-wins rule (a mid-text mention or trailing
+# prose after the sentinel line never fires it). No envelope parsing anywhere: a log a failed/skipped
+# extraction left un-rewritten is a raw JSON line that cannot match this literal grammar, so it degrades
+# to "doesn't fire" — the safe direction. $1 = the stage log file. Prints the reason (verbatim, untrimmed)
+# and returns 0 on a fire; prints nothing and returns 1 otherwise.
+stage_blocked_reason(){
+  local log="$1" last
+  [ -f "$log" ] || return 1
+  last="$(grep -v '^[[:space:]]*$' "$log" 2>/dev/null | tail -n1)" || true
+  [ -n "$last" ] || return 1
+  case "$last" in
+    "STAGE-BLOCKED: "?*) printf '%s' "${last#STAGE-BLOCKED: }"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# stage_blocked_dispose (issue #309): routes a fired STAGE-BLOCKED sentinel to the existing Blocked
+# terminal (fail_blocked) — quoting the stage's stated reason verbatim and stating the worktree's diff
+# state. $1 = stage label ("implement"|"tester"), $2 = the reason stage_blocked_reason returned, $3 = the
+# diff text to state/preserve, computed and passed in by the CALLER before this runs (fail_blocked's
+# cleanup_wt destroys the worktree the diff describes — implement diffs against the branch point, tester
+# against the implementer's IMPL_TREE checkpoint). A non-empty diff is additionally preserved as a run-dir
+# artifact (escalation-residual.diff, the boundary-violation.diff precedent) so the message's "residual
+# edits" claim survives the teardown it describes; an empty diff is stated as a clean revert, no artifact
+# written. Always routes to Blocked (never Needs-info) — redistribution stays the human's.
+stage_blocked_dispose(){
+  local stage="$1" reason="$2" diff="$3" state
+  if [ -n "$diff" ]; then
+    printf '%s' "$diff" > "$RUN_DIR/escalation-residual.diff"
+    state="residual edits remain in the worktree — preserved at $RUN_DIR/escalation-residual.diff"
+  else
+    state="the worktree is a clean revert — no residual diff"
+  fi
+  fail_blocked "the $stage stage escalated via its own STAGE-BLOCKED sentinel — reason (verbatim): \"$reason\" — $state"
+}
+
 SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 # stage_conduct (issue #312): appended to the task prompt (never argv — issue #121's channel contract),
 # so every `claude -p` stage below (implement/test/repair/review — all built from $SPEC) receives it on
@@ -1404,7 +1445,7 @@ SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
 # `case` match on the combined argv+stdin capture: TESTER, REVIEWER — still argv, in the role system-prompt
 # — and "tests FAIL", "REQUESTED CHANGES" — on stdin since issue #121, in the task prompt) — a leaked
 # literal here would misroute every stage, not just its own.
-STAGE_CHARTER="You are one stage of an automated pipeline, running in one fresh worktree cut from the base ref. The pipeline holds builder ≠ verifier: the implementer writes production code and never authors the committed test suite; the tester writes tests only, derived from the acceptance criteria and never from the implementation's internals; the reviewer changes nothing. Write only inside this worktree — never the host. Make no git or board writes; the runner owns them (the reviewer's read-only git, e.g. diffing staged changes, is the one carve-out). Never weaken a gate: do not edit checks, CI configuration, .yr/factory.toml, or any test you were told not to touch. Manage processes by PID only — pattern-kills such as PKILL -f or PGREP -f are forbidden, because a stage's own command environment can contain the task text, and a pattern match can hit and kill the stage's own process instead of its intended target. If the task cannot be done within these rules, stop and say so — a Blocked run is a correct outcome, not a failure to route around. This pipeline produces a pull request only; deploy and host work are never a stage's. In-stage verification exercises only the scope this stage's change touches, with targeted tests; the repo's full check suite belongs to the deterministic check gate and server CI, never an in-stage inner loop. A stage works in the foreground only: it never polls, watches, or sleeps on external state, and when it cannot proceed it stops and says so. A long-running command of its own runs in the foreground with an explicit, generous timeout — the lever, not a hard-coded number — rather than the tool's own default; a command the environment converts to a background task anyway is killed or brought to an observed terminal state before the stage ends its turn, because a stage never ends its turn with a live background task: in a one-shot stage the promise that it will be notified when the task completes is structurally void — ending the turn ends the process, killing the task silently. The task in front of it is self-contained by design; standing documents are not this stage's context."
+STAGE_CHARTER="You are one stage of an automated pipeline, running in one fresh worktree cut from the base ref. The pipeline holds builder ≠ verifier: the implementer writes production code and never authors the committed test suite; the tester writes tests only, derived from the acceptance criteria and never from the implementation's internals; the reviewer changes nothing. Write only inside this worktree — never the host. Make no git or board writes; the runner owns them (the reviewer's read-only git, e.g. diffing staged changes, is the one carve-out). Never weaken a gate: do not edit checks, CI configuration, .yr/factory.toml, or any test you were told not to touch. Manage processes by PID only — pattern-kills such as PKILL -f or PGREP -f are forbidden, because a stage's own command environment can contain the task text, and a pattern match can hit and kill the stage's own process instead of its intended target. If the task cannot be done within these rules, stop and say so — a Blocked run is a correct outcome, not a failure to route around. In the implement or test stage specifically, state that conclusion by ending your final reply's last non-empty line with exactly STAGE-BLOCKED: <reason> (a non-empty reason) — this routes straight to that Blocked outcome, quoting your reason, and skips every remaining stage; a repair or review round has no such channel and must never emit it. This pipeline produces a pull request only; deploy and host work are never a stage's. In-stage verification exercises only the scope this stage's change touches, with targeted tests; the repo's full check suite belongs to the deterministic check gate and server CI, never an in-stage inner loop. A stage works in the foreground only: it never polls, watches, or sleeps on external state, and when it cannot proceed it stops and says so. A long-running command of its own runs in the foreground with an explicit, generous timeout — the lever, not a hard-coded number — rather than the tool's own default; a command the environment converts to a background task anyway is killed or brought to an observed terminal state before the stage ends its turn, because a stage never ends its turn with a live background task: in a one-shot stage the promise that it will be notified when the task completes is structurally void — ending the turn ends the process, killing the task silently. The task in front of it is self-contained by design; standing documents are not this stage's context."
 
 # implementer — production code only
 IMPL_SYS="You are the IMPLEMENTER stage of an automated dev pipeline. Implement the task so it satisfies every acceptance criterion. Write PRODUCTION CODE ONLY — do not author the committed test suite (an independent tester stage does that)."
@@ -1429,6 +1470,18 @@ else
   # the implement stage's own transcript shows a live background task it never brought to a terminal
   # state — fail the stage instead of advancing, same caller-gated shape as the group-refusal check above.
   [ "$LAST_STAGE_BG_UNRESOLVED" -eq 1 ] && fail_blocked "implement stage ended its turn with a live background task: $LAST_STAGE_BG_REASON"
+
+  # STAGE-BLOCKED sentinel (issue #309): the implementer's own judgment that the task cannot ship —
+  # read from its plain-text log at disposition time (stage_blocked_reason). Diffs against the branch
+  # point (HEAD in $WT is still the base ref's commit; no commit has happened yet) BEFORE fail_blocked's
+  # cleanup_wt tears the worktree down, so the block message's diff-state claim survives the teardown.
+  IMPL_BLOCKED_REASON=""
+  IMPL_BLOCKED_REASON="$(stage_blocked_reason "$RUN_DIR/implement.log")" || true
+  if [ -n "$IMPL_BLOCKED_REASON" ]; then
+    "$GIT_BIN" -C "$WT" add -A
+    IMPL_ESCALATION_DIFF="$("$GIT_BIN" -C "$WT" diff --cached 2>/dev/null || true)"
+    stage_blocked_dispose implement "$IMPL_BLOCKED_REASON" "$IMPL_ESCALATION_DIFF"
+  fi
 
   # checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
   # detect violations structurally (confinement principle — not advisory / prompt-only).
@@ -1516,6 +1569,19 @@ for path in diff:
     "$GIT_BIN" -C "$WT" diff "$IMPL_TREE" "$TESTER_TREE" > "$RUN_DIR/boundary-violation.diff" 2>/dev/null || true
     fail_blocked "tester modified files outside the declared test surface ($TEST_PATHS_SOURCE: $TEST_SURFACE_STR): $OFFENDER_LIST (diff: $RUN_DIR/boundary-violation.diff)"
   fi
+
+  # STAGE-BLOCKED sentinel (issue #309): the tester's own judgment that the task cannot ship — read
+  # from its plain-text log at disposition time, after the boundary guard above (a boundary violation
+  # takes priority; it already exited via fail_blocked if it fired). Diffs against IMPL_TREE (the
+  # implementer's own checkpoint, not the base ref) — $TESTER_TREE above already reflects this stage's
+  # `git add -A`, so no extra staging is needed here.
+  TEST_BLOCKED_REASON=""
+  TEST_BLOCKED_REASON="$(stage_blocked_reason "$RUN_DIR/test.log")" || true
+  if [ -n "$TEST_BLOCKED_REASON" ]; then
+    TEST_ESCALATION_DIFF="$("$GIT_BIN" -C "$WT" diff "$IMPL_TREE" "$TESTER_TREE" 2>/dev/null || true)"
+    stage_blocked_dispose tester "$TEST_BLOCKED_REASON" "$TEST_ESCALATION_DIFF"
+  fi
+
   mark_stage 02-test
 fi
 

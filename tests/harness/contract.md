@@ -116,6 +116,7 @@ ordering assertion in the consuming suites is built on. The tester arm can addit
 | `STUB_TESTER_PROD_CHANGE` | write a production file (`tester_prod.txt`) — for the boundary guard |
 | `STUB_TESTER_TEST_CHANGE` | write a test file under `tests/` |
 | `STUB_TESTER_ARTIFACT_CHANGE` | write a build artifact under `tools/__pycache__/` |
+| `STUB_TESTER_RESULT_TEXT` | print this literal value (newline-preserving) as the arm's stdout tail — issue #309's STAGE-BLOCKED sentinel grammar test knob (see below) |
 
 `STUB_TESTER_PROD_CHANGE`/`STUB_TESTER_TEST_CHANGE` are deliberately separate from the implement arm's
 `STUB_CLAUDE_CHANGE`, so the boundary guard (tester must not touch production files) can be exercised
@@ -141,6 +142,19 @@ independently of the happy-path implement change.
 | `STUB_IMPL_QUOTA` | print this to stderr and exit 1 |
 | `STUB_IMPL_FAIL` | print this to stderr and exit 1 (a distinct failure reason) |
 | `STUB_CLAUDE_CHANGE` | write `feature.txt` — the stand-in for "the implementer changed something" |
+| `STUB_IMPL_RESULT_TEXT` | print this literal value (newline-preserving) as the arm's stdout tail — issue #309's STAGE-BLOCKED sentinel grammar test knob (see below) |
+
+### the STAGE-BLOCKED sentinel test knob (issue #309)
+
+`STUB_IMPL_RESULT_TEXT` / `STUB_TESTER_RESULT_TEXT` print their exact value, embedded newlines intact,
+as the last thing the arm writes to stdout — rc stays 0 (whatever the arm's other flags decided), so
+these compose with `STUB_CLAUDE_CHANGE` / `STUB_TESTER_TEST_CHANGE` / etc. This is deliberately a single
+raw-text knob rather than a dedicated "fire the sentinel" flag: `tools/dev-runner.sh`'s
+`stage_blocked_reason` grammar is strict (the log's LAST non-empty line must be exactly
+`STAGE-BLOCKED: <reason>`), and a suite proving that strictness needs to construct an exact fire, a
+mid-text mention, trailing prose after the sentinel line, and an empty reason — all just different
+values of the same flag, e.g. `STUB_IMPL_RESULT_TEXT=$'STAGE-BLOCKED: cannot ship\nmore prose'` for the
+trailing-prose case.
 
 ## The gh fake
 

@@ -40,8 +40,8 @@ below).
 | **DoR gate** | Open + on board + `Status=Ready` + `Type=Task` + non-empty acceptance criteria + both model roles resolve from the registry with a non-inverted, same-provider ranked pair. No LLM call before this passes. | Refusal, no writes — or `Status=Backlog` + `Reason=Needs-info` for content/model bounces. |
 | **Claim** | Sets `Status=In Progress` (single-flight lock — drops the task from the Ready poll). | — |
 | **Worktree** | Fresh `git worktree` off `origin/main` of the target repo. Reads code *and* `.yr/factory.toml` from the base ref — never a mutable working tree. Resume-aware: an environmental hold from a prior run reuses its preserved worktree and completed-stage checkpoints instead of tearing them down. | — |
-| **Implement** | Build-role model writes the minimal change against the acceptance criteria. `--permission-mode bypassPermissions` (the worktree + scoped creds are the walls). | `Blocked` |
-| **Test** | Independent cold process derives tests from the **acceptance criteria** (not the implementation). Boundary guard: any change outside the legal test tree (below) → `Blocked`, offending diff saved, no auto-revert. | `Blocked` |
+| **Implement** | Build-role model writes the minimal change against the acceptance criteria. `--permission-mode bypassPermissions` (the worktree + scoped creds are the walls). | `Blocked` (early escalation included — below) |
+| **Test** | Independent cold process derives tests from the **acceptance criteria** (not the implementation). Boundary guard: any change outside the legal test tree (below) → `Blocked`, offending diff saved, no auto-revert. | `Blocked` (early escalation included — below) |
 | **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`, bounded by `check_timeout` (issue #308; env > manifest > 1200s default, resolved once at start-of-run — the armed re-green reuses it). One repair attempt on a code failure (at the registry's `check_repair` stage tier when set, else the build model); no repair on an environment failure (exit 126/127). An OBSERVED expiry (the wrapper itself firing, never inferred from the exit code alone) disposes as a code failure through this same path — a wedged process tree is killed with no survivor. | `Blocked` |
 | **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
 | **PR** | Commit, push `task/<id>-<slug>`, open PR, post the review. | — |
@@ -82,6 +82,13 @@ document:
 - **The task slice is the whole context.** A stage reasons from the acceptance criteria in front of it;
   standing documents — this reference included — inform the human and the pipeline's own code, never a
   stage's working context.
+- **A self-judged can't-ship conclusion escalates, it doesn't get rediscovered** (issue #309). Only the
+  implement and test stages carry this: if either one decides mid-task that the work can't ship, it says
+  so as the closing line of its own reply, and the runner — reading that line at disposition time, once
+  the usual output rewrite has already happened — routes straight to the same `Blocked` terminal any other
+  stage failure reaches, naming the stage's own stated reason and the worktree's leftover diff state,
+  instead of spending a later stage's cycle re-deriving a block the first stage already proved. A repair
+  or review round carries no such channel.
 
 The charter above states the pipeline's own, generic conduct rules — the same for every repo. A repo's
 own command NUMBERS (its real per-command durations — how long its own check/lint/build commands

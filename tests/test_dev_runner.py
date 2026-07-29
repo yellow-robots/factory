@@ -984,6 +984,199 @@ def test_salvage_no_behavior_change_on_clean_runs(tmp_path):
     assert _wt_dir(tmp_path) is None                                 # worktree torn down as usual
 
 
+# ============ STAGE-BLOCKED sentinel: builder escalation is terminal (issue #309) ============
+# An implement/test stage that concludes mid-task the work can't ship states so as the last non-empty
+# line of its own reply — "STAGE-BLOCKED: <reason>" — and the runner reads that line, AS PLAIN TEXT, off
+# the stage's own log at disposition time (after run_stage/capture_stage_usage have already run) and
+# routes straight to the existing fail_blocked terminal, instead of running the remaining stages only to
+# have a later one re-derive the same block. `STUB_IMPL_RESULT_TEXT`/`STUB_TESTER_RESULT_TEXT`
+# (tests/harness/claude_fake.py, tests/harness/contract.md) print their literal value, newlines intact,
+# as the arm's own stdout tail — the knob these tests use to construct the sentinel's exact grammar.
+
+def test_implement_sentinel_fires_blocks_and_skips_every_remaining_stage(tmp_path):
+    """A sentinel-bearing implement result (no other change — a clean revert) routes to Blocked with the
+    reason quoted verbatim, and no later stage (tester/check/review) ever runs."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Implement escalates"), work)
+    env["STUB_IMPL_RESULT_TEXT"] = "STAGE-BLOCKED: a global @view-transition opt-in hard-wedges the QA chromium"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    stages_ran = [l for l in tl if l in ("IMPL", "TEST", "CHECK", "REPAIR", "REVIEW", "REVIEWFIX")]
+    assert stages_ran == ["IMPL"]                                    # nothing past the implementer ran
+    edits = " ".join(_edits(tl))
+    assert "REASONFIELD" in edits and "Blocked" in edits
+    comments = " ".join(_comments(tl))
+    assert "escalated via its own STAGE-BLOCKED sentinel" in comments
+    assert "a global @view-transition opt-in hard-wedges the QA chromium" in comments   # reason, verbatim
+    assert "clean revert" in comments
+    assert "https://stub/pr/1" not in r.stdout                       # no PR opened
+
+    rows = _ledger_rows(tmp_path)
+    assert len(rows) == 1 and rows[0]["outcome"] == {"type": "blocked", "decision": None}
+
+
+def test_implement_sentinel_with_residual_diff_preserves_artifact_before_teardown(tmp_path):
+    """When the implementer's own revert left residual edits, the block message says so and the diff is
+    preserved as escalation-residual.diff — written BEFORE fail_blocked's cleanup_wt tears the worktree
+    down, so it survives even though the worktree itself is gone by the time the run exits."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Implement escalates with residue"), work)
+    env.update({
+        "STUB_CLAUDE_CHANGE": "1",
+        "STUB_IMPL_RESULT_TEXT": "STAGE-BLOCKED: cannot ship, reverting only most of the change",
+    })
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert _wt_dir(tmp_path) is None                                 # worktree torn down (cleanup_wt ran)
+
+    rd = _run_dir(tmp_path, 5)
+    diff = rd / "escalation-residual.diff"
+    assert diff.exists()
+    content = diff.read_text()
+    assert "feature.txt" in content and "hello" in content
+    comments = " ".join(_comments(_timeline(tmp_path)))
+    assert "residual edits remain" in comments and str(diff) in comments
+
+
+def test_tester_sentinel_fires_diffs_against_impl_tree_not_base_ref(tmp_path):
+    """The tester's own STAGE-BLOCKED sentinel routes to Blocked the same way, but its diff/residual
+    state is computed against the implementer's IMPL_TREE checkpoint, not the base ref: the implementer's
+    own file must never appear in the tester's escalation diff, only what the tester itself added."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Tester escalates with residue"), work)
+    env.update({
+        "STUB_CLAUDE_CHANGE": "1",             # implementer writes feature.txt (captured in IMPL_TREE)
+        "STUB_TESTER_TEST_CHANGE": "1",        # tester adds tests/test_stub_output.py after the checkpoint
+        "STUB_TESTER_RESULT_TEXT": "STAGE-BLOCKED: the acceptance criteria contradict each other",
+    })
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    tl = _timeline(tmp_path)
+    stages_ran = [l for l in tl if l in ("IMPL", "TEST", "CHECK", "REPAIR", "REVIEW", "REVIEWFIX")]
+    assert stages_ran == ["IMPL", "TEST"]
+    comments = " ".join(_comments(tl))
+    assert "escalated via its own STAGE-BLOCKED sentinel" in comments
+    assert "the acceptance criteria contradict each other" in comments
+    assert "residual edits remain" in comments
+    assert "https://stub/pr/1" not in r.stdout
+
+    rd = _run_dir(tmp_path, 5)
+    diff = rd / "escalation-residual.diff"
+    assert diff.exists()
+    content = diff.read_text()
+    assert "test_stub_output.py" in content            # the tester's own addition IS in the diff
+    assert "feature.txt" not in content                # the implementer's file (pre-checkpoint) is NOT
+
+
+def test_tester_sentinel_clean_revert_writes_no_residual_artifact(tmp_path):
+    """A tester sentinel with no tester-added files (a clean revert relative to IMPL_TREE) is stated as
+    such, and no escalation-residual.diff is written."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Tester escalates cleanly"), work)
+    env.update({
+        "STUB_CLAUDE_CHANGE": "1",
+        "STUB_TESTER_RESULT_TEXT": "STAGE-BLOCKED: the test surface itself cannot express this criterion",
+    })
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    comments = " ".join(_comments(_timeline(tmp_path)))
+    assert "the worktree is a clean revert" in comments
+    rd = _run_dir(tmp_path, 5)
+    assert not (rd / "escalation-residual.diff").exists()
+
+
+def test_sentinel_ignored_when_stage_exits_nonzero(tmp_path):
+    """A rc-non-zero stage keeps its existing stage_fail_msg path untouched even when the sentinel
+    grammar appears in its log — the rc check runs first, and stage_blocked_reason is only consulted
+    after a clean (rc 0) exit."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Implement crashes with sentinel text"), work)
+    env["STUB_IMPL_FAIL"] = "STAGE-BLOCKED: this looks like the sentinel but the stage crashed"
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    comments = " ".join(_comments(_timeline(tmp_path)))
+    assert "implement stage failed" in comments                      # stage_fail_msg's own wording
+    assert "escalated via its own STAGE-BLOCKED sentinel" not in comments
+
+
+def _no_fire_env(tmp_path, work, binp, *, title, result_text):
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title=title), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_IMPL_RESULT_TEXT": result_text})
+    return env
+
+
+def test_sentinel_grammar_mid_text_mention_does_not_fire(tmp_path):
+    """The grammar is strict: a mention of the sentinel text that is NOT the log's last non-empty line
+    never fires it — the run proceeds normally to a PR."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _no_fire_env(tmp_path, work, binp, title="Mid-text mention",
+                       result_text="the acceptance criteria mention STAGE-BLOCKED: foo as an example\nImplementation complete.")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+    assert not (_run_dir(tmp_path, 5) / "escalation-residual.diff").exists()
+
+
+def test_sentinel_grammar_trailing_prose_does_not_fire(tmp_path):
+    """Trailing prose AFTER an otherwise-exact sentinel line means the last non-empty line is that
+    prose, not the sentinel — so it does not fire either."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _no_fire_env(tmp_path, work, binp, title="Trailing prose after sentinel",
+                       result_text="STAGE-BLOCKED: cannot ship\none more sentence after it")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+
+def test_sentinel_grammar_empty_reason_does_not_fire(tmp_path):
+    """A bare `STAGE-BLOCKED:` with no reason text (empty or all-whitespace after the colon) never
+    fires — the grammar requires a non-empty reason."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _no_fire_env(tmp_path, work, binp, title="Empty reason",
+                       result_text="STAGE-BLOCKED: ")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+
+def test_sentinel_grammar_exact_last_non_empty_line_fires_despite_trailing_blank_lines(tmp_path):
+    """The strict grammar still fires when the sentinel line is followed only by blank lines (the log's
+    LAST NON-EMPTY line, not strictly its final line) — proving the "non-empty" qualifier is honored."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _no_fire_env(tmp_path, work, binp, title="Exact fire with trailing blank lines",
+                       result_text="Investigated thoroughly.\n\nSTAGE-BLOCKED: definitively cannot ship\n\n\n")
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    comments = " ".join(_comments(_timeline(tmp_path)))
+    assert "definitively cannot ship" in comments
+    assert "https://stub/pr/1" not in r.stdout
+
+
+def test_sentinel_free_run_is_byte_identical_to_today(tmp_path):
+    """No sentinel anywhere in either stage's log: the ordinary success path (through tester, check, and
+    review to an opened PR) is completely unaffected — no escalation-residual.diff, no early exit."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Ordinary sentinel-free run"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_TESTER_TEST_CHANGE": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    tl = _timeline(tmp_path)
+    assert "IMPL" in tl and "TEST" in tl and "CHECK" in tl and "REVIEW" in tl
+    assert "https://stub/pr/1" in r.stdout
+    assert not (_run_dir(tmp_path, 5) / "escalation-residual.diff").exists()
+
+
 # ============ Step B: repo-agnostic routing (workspace anchor + per-repo manifest) ============
 # These exercise resolution/precedence via --dry-run, which reports the resolved config and exits
 # before any git op — so no real repo is ever touched.
@@ -2528,6 +2721,9 @@ def test_charter_appended_to_every_stage_and_states_required_clauses(tmp_path):
         "observed terminal state before the stage ends its turn",
         "never ends its turn with a live background task",
         "structurally void",                           # why: a one-shot stage's notification promise
+        "stage-blocked:",                              # issue #309: the escalation sentinel's grammar
+        "last non-empty line",                         # the sentinel's strict line-anchoring
+        "skips every remaining stage",                 # what firing the sentinel routes to
     ]
     for stage, calls in by_stage.items():
         for call in calls:
