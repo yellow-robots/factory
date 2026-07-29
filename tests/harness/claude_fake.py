@@ -21,6 +21,11 @@ pattern used to layer shadow-awareness on top of it.
 # STUB_TESTER_TEST_CHANGE) so the boundary guard can be exercised independently of the
 # implementer's STUB_CLAUDE_CHANGE, and the happy-path tests don't inadvertently violate
 # the boundary by writing a prod file from the tester stage.
+# issue #309: STUB_IMPL_RESULT_TEXT / STUB_TESTER_RESULT_TEXT print their literal (newline-preserving)
+# value as the arm's stdout tail — the one knob that gives a test full control over a stage log's exact
+# trailing content, so the STAGE-BLOCKED sentinel's strict last-non-empty-line grammar can be exercised
+# byte-for-byte (an exact fire, a mid-text mention, trailing prose, an empty reason — all constructed
+# from this one flag rather than a dedicated one per scenario).
 CLAUDE_STUB = '''#!/usr/bin/env bash
 # Capture stdin byte-exactly: `$(cat)` strips ALL trailing newlines, so append a sentinel before the
 # command substitution and strip it after — the byte-exact stdin pin (issue #121) must be able to see a
@@ -63,7 +68,8 @@ case "$args" in
                         if [ -n "${STUB_LINGER_PIDFILE:-}" ]; then
                           child_pid="$(cat "$STUB_LINGER_PIDFILE" 2>/dev/null)"
                           [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null && echo LINGERING >> "$STUB_TIMELINE"
-                        fi ;;
+                        fi
+                        [ -n "${STUB_TESTER_RESULT_TEXT:-}" ] && printf '%s\\n' "$STUB_TESTER_RESULT_TEXT" ;;
   *"lint gate FAILS"*)  echo LINTREPAIR >> "$STUB_TIMELINE"
                         [ -n "${STUB_LINTREPAIR_HEAL:-}" ] && : > lint_ok ;;
   *"tests FAIL"*)       echo REPAIR >> "$STUB_TIMELINE"
@@ -76,7 +82,8 @@ case "$args" in
                         [ -n "${STUB_LINGER_PIDFILE:-}" ] && { ( exec sleep 5 ) & echo $! > "$STUB_LINGER_PIDFILE"; }
                         if [ -n "${STUB_IMPL_GROUP_CHILD_SLEEP:-}" ]; then
                           ( sleep "${STUB_IMPL_GROUP_CHILD_SLEEP}"; echo GROUP-CHILD-DONE ) &
-                        fi ;;
+                        fi
+                        [ -n "${STUB_IMPL_RESULT_TEXT:-}" ] && printf '%s\\n' "$STUB_IMPL_RESULT_TEXT" ;;
 esac
 exit 0
 '''
