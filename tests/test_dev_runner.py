@@ -881,6 +881,109 @@ def test_tester_boundary_guard_checkpoint_is_after_implementer(tmp_path):
     assert "feature.txt" not in comments     # implementer's file is NOT flagged (already in checkpoint)
 
 
+# ============ every hard block lands a salvage diff (issue #315) ============
+# fail_blocked stages the worktree and writes $RUN_DIR/block-salvage.patch BEFORE cleanup_wt tears the
+# worktree down, whenever a worktree exists — generalizing issue #172's final.patch (review-repair only)
+# and the boundary guard's own boundary-violation.diff to every hard-block path. An empty staged diff
+# writes no file. Named diffs an existing block path already writes stay exactly as they are; the
+# generic patch just rides alongside them. Never a resume mechanism — artifact only.
+
+def test_salvage_patch_written_before_teardown_on_a_plain_code_block(tmp_path):
+    """A hard block with no named-diff path of its own (an unrepairable check failure) still lands
+    block-salvage.patch, and it survives even though the worktree that produced it is torn down by the
+    time the run exits — proof the patch was written BEFORE cleanup_wt, not after (a post-cleanup
+    attempt would find no worktree to diff and produce nothing)."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Cannot fix"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_CHECK_FAIL": "1", "STUB_REPAIR_NOFIX": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
+
+    assert _wt_dir(tmp_path) is None                                # worktree torn down (cleanup_wt ran)
+    rd = _run_dir(tmp_path, 5)
+    patch = rd / "block-salvage.patch"
+    assert patch.exists()                                           # yet the salvage artifact survived it
+    content = patch.read_text()
+    assert "feature.txt" in content and "hello" in content           # the implementer's uncommitted change
+    assert not (rd / "final.patch").exists()                        # no review-repair round ran
+    assert not (rd / "boundary-violation.diff").exists()             # no boundary violation here
+
+
+def test_salvage_empty_diff_writes_no_file_and_logs(tmp_path):
+    """When the staged diff is empty (no changes produced anywhere), no block-salvage.patch is written
+    — just a log line saying so."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Produces nothing"), work)  # no STUB_CLAUDE_CHANGE
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0 and "no changes" in r.stderr.lower()
+    assert "Blocked" in " ".join(_edits(_timeline(tmp_path)))
+
+    rd = _run_dir(tmp_path, 5)
+    assert not (rd / "block-salvage.patch").exists()
+    assert "block salvage: staged diff empty" in r.stderr            # the fact is logged
+
+
+def test_salvage_rides_alongside_boundary_violation_diff(tmp_path):
+    """A boundary-violation block lands BOTH its own named diff (byte-unaffected — still the offending
+    file's content) AND the generic block-salvage.patch alongside it."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Boundary guard prod"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_TESTER_PROD_CHANGE": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+
+    rd = _run_dir(tmp_path, 5)
+    boundary = rd / "boundary-violation.diff"
+    salvage = rd / "block-salvage.patch"
+    assert boundary.exists() and salvage.exists()
+    boundary_text = boundary.read_text()
+    assert "tester_prod.txt" in boundary_text and "by tester" in boundary_text   # named diff intact
+    salvage_text = salvage.read_text()
+    assert "tester_prod.txt" in salvage_text and "by tester" in salvage_text     # generic patch rides along
+
+
+def test_salvage_rides_alongside_final_patch_after_review_repair_block(tmp_path):
+    """A block after an unfixable review-repair round (issue #172's final.patch) still lands the
+    generic block-salvage.patch alongside it — final.patch itself byte-unaffected."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Unfixable review"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1", "STUB_REVIEW_BLOCK": "1", "STUB_REVIEW_NOFIX": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode != 0 and "still requests changes" in r.stderr.lower()
+
+    rd = _run_dir(tmp_path, 5)
+    final = rd / "final.patch"
+    salvage = rd / "block-salvage.patch"
+    assert final.exists() and salvage.exists()
+    final_text = final.read_text()
+    assert "feature.txt" in final_text
+    # nothing touches the tree between final.patch's own capture and the salvage capture in this
+    # scenario (the re-check/re-review neither stage edits files), so the two artifacts agree byte-for-byte
+    # — proof salvage_wt rode alongside final.patch rather than perturbing it.
+    assert salvage.read_text() == final_text
+
+
+def test_salvage_no_behavior_change_on_clean_runs(tmp_path):
+    """A successful run (no block reached) never writes block-salvage.patch, and the worktree is torn
+    down exactly as it always was."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _real(tmp_path, _env(tmp_path, binp, number=5, title="Clean run"), work)
+    env.update({"STUB_CLAUDE_CHANGE": "1"})
+    r = _run(["5", "--repo", "test/repo"], env)
+    assert r.returncode == 0, r.stderr
+    assert "https://stub/pr/1" in r.stdout
+
+    rd = _run_dir(tmp_path, 5)
+    assert not (rd / "block-salvage.patch").exists()
+    assert _wt_dir(tmp_path) is None                                 # worktree torn down as usual
+
+
 # ============ Step B: repo-agnostic routing (workspace anchor + per-repo manifest) ============
 # These exercise resolution/precedence via --dry-run, which reports the resolved config and exits
 # before any git op — so no real repo is ever touched.
