@@ -670,6 +670,38 @@ BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#ori
 # session, logged here so the run's log names the effective source actually used.
 if [ -n "${CHECK_CMD:-}" ]; then CHECK_CMD_SOURCE=env; else CHECK_CMD="$MF_CHECK_CMD"; CHECK_CMD_SOURCE=manifest; fi
 [ -n "$CHECK_CMD" ] && log "check_cmd: '$CHECK_CMD' (source: $CHECK_CMD_SOURCE)"
+# check_timeout (issue #308): the local gate's bounded window, resolved ONCE per run at this SAME
+# start-of-run point as check_cmd above — never re-read at decision time, so the armed re-green site
+# (rebase_onto_tip's run_checks call, far below) reuses this exact start-of-run value, same as CHECK_CMD
+# itself. Precedence: env CHECK_TIMEOUT (unvalidated — same as MERGE_CI_TIMEOUT's env branch in
+# read_ci_timeout above) > manifest key check_timeout (a positive integer number of seconds) >
+# CHECK_TIMEOUT_DEFAULT. Parsed through the read_ci_timeout __absent__/__error__ typed-emission
+# protocol — never the bare str(d.get(k) or "") scalar channel the check_cmd/model parse above uses,
+# which would read a declared 0 (and a whole-manifest parse failure) as absent and silently default on
+# exactly the values the next gate must bounce.
+CHECK_TIMEOUT_DEFAULT=1200
+CHECK_TIMEOUT_REJECTED=""
+if [ -n "${CHECK_TIMEOUT:-}" ]; then
+  CHECK_TIMEOUT_SOURCE=env
+else
+  _ct_parsed="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
+try: d=tomllib.loads(sys.stdin.read())
+except Exception: print("__error__"); sys.exit(0)
+v=d.get("check_timeout")
+print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  case "$_ct_parsed" in
+    __error__|__absent__) CHECK_TIMEOUT="$CHECK_TIMEOUT_DEFAULT"; CHECK_TIMEOUT_SOURCE=default ;;
+    ''|*[!0-9]*) CHECK_TIMEOUT_REJECTED="$_ct_parsed"; CHECK_TIMEOUT_SOURCE=manifest ;;
+    *) if [ "$_ct_parsed" -gt 0 ]; then CHECK_TIMEOUT="$_ct_parsed"; CHECK_TIMEOUT_SOURCE=manifest
+       else CHECK_TIMEOUT_REJECTED="$_ct_parsed"; CHECK_TIMEOUT_SOURCE=manifest; fi ;;
+  esac
+fi
+MF_CHECKTIMEOUT_NEEDS_INFO=""
+if [ -n "$CHECK_TIMEOUT_REJECTED" ]; then
+  MF_CHECKTIMEOUT_NEEDS_INFO="manifest key 'check_timeout' is rejected (value: $CHECK_TIMEOUT_REJECTED) — check_timeout must be a positive integer number of seconds, and a rejected value never silently falls back to the default (${CHECK_TIMEOUT_DEFAULT}s)"
+else
+  log "check_timeout: ${CHECK_TIMEOUT}s (source: $CHECK_TIMEOUT_SOURCE)"
+fi
 # lint tier (issue #213): NO built-in default — an absent key leaves LINT_CMD/LINT_FIX_CMD empty, and an
 # empty LINT_CMD is off (byte-identical to today: no probe, no output). env overrides manifest as ever.
 LINT_CMD="${LINT_CMD:-${MF_LINT_CMD:-}}"
@@ -747,6 +779,7 @@ NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$MF_TESTPATHS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_TESTPATHS_NEEDS_INFO"
 [ -n "$MF_ARTIFACTGLOBS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_ARTIFACTGLOBS_NEEDS_INFO"
 [ -n "$MF_CHECKCMD_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKCMD_NEEDS_INFO"
+[ -n "$MF_CHECKTIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKTIMEOUT_NEEDS_INFO"
 
 # ---- slug + branch ----
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
@@ -1400,19 +1433,60 @@ fi
 # git identity passed here on host config but failed in CI with no identity). A check that genuinely
 # needs git identity/config must set it up in its own fixtures, same as CI. This is scoped to the check
 # child only — LLM stages and the runner's own git operations (worktree/commit/push) keep full host config.
-run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1; }
+# check_timeout (issue #308): every local-gate child below is bounded by CHECK_TIMEOUT (resolved once,
+# start-of-run, above) via GNU `timeout` INSIDE the existing subshell, wrapped directly around the
+# `bash -c` child — the three confinement shapes (worktree cd, PATH, neutralized git config) stay
+# otherwise byte-equal. `timeout`'s DEFAULT (non --foreground) mode is the required tree-kill: it puts
+# the child in its OWN process group and, on expiry, signals that whole group — a check_cmd that spawns
+# children leaves no survivor. CHECK_TIMEOUT_KILL_AFTER is a fixed grace before escalating from the
+# initial TERM to KILL for a child that ignores TERM — not itself manifest-configurable (issue #308
+# declares exactly one key). A `setsid`-escaping grandchild survives even the group KILL — accepted
+# residue (see AGENTS.md): the run itself still unwedges, since `timeout` always returns once its own
+# child (the process it forked) has exited.
+CHECK_TIMEOUT_KILL_AFTER=10
+# _log_has_expiry: the OBSERVED-expiry discriminator. `timeout --verbose` diagnoses to stderr ONLY when
+# IT is the one that sent a signal because the window elapsed — a child that independently exits 124/137
+# on its own (the false-124 fixture; a kernel OOM kill) never writes this line, so grepping the child's
+# own captured stderr for it — rather than reading the exit code alone — is what lets the disposal below
+# tell an observed expiry apart from a same-valued exit code the child produced by itself.
+_log_has_expiry(){ grep -q '^timeout: sending signal' "$1" 2>/dev/null; }
+run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1
+  local rc=$?
+  CHECK_EXPIRED=0
+  if _log_has_expiry "$RUN_DIR/checks.log"; then
+    CHECK_EXPIRED=1
+    printf '\ndev-runner: check_timeout expired after %ss (check_cmd) — process group killed, no observed survivor\n' "$CHECK_TIMEOUT" >>"$RUN_DIR/checks.log"
+  fi
+  return "$rc"
+}
 # run_lint (issue #213): the lint tier's runner, cloned from run_checks — same confinement (worktree cd,
-# the venv + node bin dirs on PATH, host git config neutralized), output to lint.log in the run dir. $1 is
-# an OPAQUE command run verbatim: python repos declare ruff, node repos eslint — no lint-output parsing, no
-# language assumption anywhere. Used for both LINT_CMD (the probe / re-run) and LINT_FIX_CMD (the autofix).
-run_lint(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1; }
+# the venv + node bin dirs on PATH, host git config neutralized) plus the same check_timeout bound, output
+# to lint.log in the run dir. $1 is an OPAQUE command run verbatim: python repos declare ruff, node repos
+# eslint — no lint-output parsing, no language assumption anywhere. Used for both LINT_CMD (the probe /
+# re-run) and LINT_FIX_CMD (the autofix, non-gating but bounded too — issue #308).
+run_lint(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1
+  local rc=$?
+  LINT_EXPIRED=0
+  if _log_has_expiry "$RUN_DIR/lint.log"; then
+    LINT_EXPIRED=1
+    printf '\ndev-runner: check_timeout expired after %ss — process group killed, no observed survivor\n' "$CHECK_TIMEOUT" >>"$RUN_DIR/lint.log"
+  fi
+  return "$rc"
+}
 # run_lens (issue #214): the advisory lens tier's runner — the run_checks/run_lint confinement shape
-# (worktree cd, the venv + node bin dirs on PATH, host git config neutralized) with two DELIBERATE
-# deviations: (1) stdout -> the run dir's lens.md and stderr -> lens.log are SEPARATE, never the shape's
-# merged 2>&1 — a stderr traceback must never land in the PR-trail comment; and (2) YR_BASE_REF="$BASE_REF"
-# is exported so a lens can be diff-aware. $1 is an OPAQUE command run verbatim — any stack's lens works,
-# no lens-output parsing, no language assumption. The exit code is READ BUT NEVER GATES (see below).
-run_lens(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null YR_BASE_REF="$BASE_REF" bash -c "$1" ) >"$RUN_DIR/lens.md" 2>"$RUN_DIR/lens.log"; }
+# (worktree cd, the venv + node bin dirs on PATH, host git config neutralized, the same check_timeout
+# bound) with two DELIBERATE deviations: (1) stdout -> the run dir's lens.md and stderr -> lens.log are
+# SEPARATE, never the shape's merged 2>&1 — a stderr traceback must never land in the PR-trail comment;
+# and (2) YR_BASE_REF="$BASE_REF" is exported so a lens can be diff-aware. $1 is an OPAQUE command run
+# verbatim — any stack's lens works, no lens-output parsing, no language assumption. The exit code is
+# READ BUT NEVER GATES (see below) — expiry included, since `timeout --verbose`'s diagnostic lands in
+# lens.log (never lens.md), the same separation the exit code itself already gets.
+run_lens(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null YR_BASE_REF="$BASE_REF" timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lens.md" 2>"$RUN_DIR/lens.log"
+  local rc=$?
+  LENS_EXPIRED=0
+  _log_has_expiry "$RUN_DIR/lens.log" && LENS_EXPIRED=1
+  return "$rc"
+}
 # Distinguish a CODE failure (the harness ran and tests failed) from an ENVIRONMENT failure (the harness
 # could not execute at all: 127=command not found, 126=found-but-not-executable — e.g. a venv whose
 # console-script shebang points at a moved/rebuilt interpreter). An env failure is NOT the implementer's
@@ -1516,13 +1590,20 @@ else
 
   # ---- lens tier (issue #214): a manifest-declared, purely ADVISORY tier, run only AFTER check_cmd (and
   # lint_cmd, when declared) both pass. Absent LENS_CMD = off, byte-identical to today (no run, no
-  # artifact, no comment). The lens exit code is READ BUT NEVER GATES — a non-zero exit (126/127 included)
-  # becomes a one-line legible note appended to lens.md, and the run's terminal state is IDENTICAL to the
-  # same run with a passing lens (no fail_blocked, no env hold, no repair). The artifact lands on the PR
-  # trail as its own comment after the PR exists (below); it never enters PR_BODY or the review bundle.
+  # artifact, no comment). The lens exit code is READ BUT NEVER GATES — a non-zero exit (126/127 included,
+  # a check_timeout expiry included — issue #308) becomes a one-line legible note appended to lens.md, and
+  # the run's terminal state is IDENTICAL to the same run with a passing lens (no fail_blocked, no env
+  # hold, no repair). The artifact lands on the PR trail as its own comment after the PR exists (below);
+  # it never enters PR_BODY or the review bundle.
   if [ -n "$LENS_CMD" ]; then
     LENS_RC=0; run_lens "$LENS_CMD" || LENS_RC=$?
-    [ "$LENS_RC" -eq 0 ] || printf '\nlens did not run cleanly (exit %s)\n' "$LENS_RC" >> "$RUN_DIR/lens.md"
+    if [ "$LENS_RC" -ne 0 ]; then
+      if [ "$LENS_EXPIRED" -eq 1 ]; then
+        printf '\nlens did not run cleanly (exit %s) — check_timeout expired after %ss, process group killed\n' "$LENS_RC" "$CHECK_TIMEOUT" >> "$RUN_DIR/lens.md"
+      else
+        printf '\nlens did not run cleanly (exit %s)\n' "$LENS_RC" >> "$RUN_DIR/lens.md"
+      fi
+    fi
     log "lens ran (advisory, exit $LENS_RC) — never gating; artifact: $RUN_DIR/lens.md"
   fi
   mark_stage 03-check
