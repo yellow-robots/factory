@@ -84,12 +84,17 @@ def _first_build(tmp_path, *, number, title, checks=(td.CR_OK,), extra=None):
 
 # ---- a hand-built prior merge-record PR comment (what --re-evaluate must supersede) ----
 
-def _rec_comment(decision, *, run_id, failed_condition=None, mode="shadow", malformed=False):
+def _rec_comment(decision, *, run_id, failed_condition=None, mode="shadow", malformed=False,
+                  base_sha=None, head_sha=None):
     if malformed:
         block = "{ this is not valid json"
     else:
         d = {"schema": "yr-merge-record/1", "decision": decision, "run_id": run_id,
              "failed_condition": failed_condition, "mode": mode, "machinery_ok": True}
+        if base_sha is not None:
+            d["base_sha"] = base_sha
+        if head_sha is not None:
+            d["head_sha"] = head_sha
         block = json.dumps(d)
     prefix = "YR-MERGE" if mode == "armed" else "YR-MERGE-SHADOW"
     marker = f"{prefix}: {decision}" if failed_condition is None else f"{prefix}: {decision} — {failed_condition}"
@@ -222,6 +227,104 @@ def test_reevaluate_stale_base_posts_would_block_freshness(tmp_path):
     rec = td._shadow_block(body)
     assert rec["decision"] == "WOULD-BLOCK" and rec["failed_condition"] == "freshness"
     assert rec["main_tip_sha"] == "0" * 40
+
+
+# ================= issue #319: the recovery lane judges LIVE state, not a stale API/record view =========
+# Before judging anything, a freshly fetched task-branch tip must agree with the PR's live head already
+# read from the API — a disagreement (the API's headRefOid stale relative to a fresh fetch, e.g. a
+# force-push/rebase landing between the two reads) is refused loudly, naming BOTH shas, before any record
+# is posted (the seed's website#86/PR#93 exercise judged the pre-rebase head this way). Separately, a
+# prior record that PARSED cleanly can still carry the observed incident shape — its own recorded
+# base_sha equal to its own recorded head_sha, or a recorded base_sha that is not an ancestor of the PR's
+# live head — and must refuse as `malformed_record`, never be silently re-derived as a plausible
+# `freshness` (or any other) condition.
+
+def test_reevaluate_refuses_when_fetched_tip_disagrees_with_api_live_head_naming_both_shas(tmp_path):
+    """BEFORE judging, the just-fetched branch tip must agree with the PR's live head already read from
+    the API. A disagreement refuses loudly, naming BOTH shas, and posts no record at all."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=33, title="Live head disagreement")
+    stale_api_head = "e" * 40                       # disagrees with the actually-pushed branch tip
+    env2 = _reeval_env(tmp_path, env1, pr_number=320, head_ref=branch, head_oid=stale_api_head, comments=[])
+    r = _run_reeval(33, 320, env2)
+    assert r.returncode == 3
+    assert "RE-EVALUATE REFUSED" in r.stderr
+    assert head_oid in r.stderr                     # the fetched (real, current) tip
+    assert stale_api_head in r.stderr                # the API's reported (stale) live head
+    _no_writes(tmp_path, run_dir)
+
+
+def test_reevaluate_matching_head_does_not_trip_the_disagreement_refusal(tmp_path):
+    """Clean-path pin: when the fetched tip and the API's live head agree (the ordinary case, exactly
+    what every other test in this module already exercises), the new disagreement check never fires and
+    re-evaluation proceeds exactly as before issue #319."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=34, title="Live head agrees")
+    comments = [_rec_comment("WOULD-MERGE", run_id=run_dir.name)]
+    env2 = _reeval_env(tmp_path, env1, pr_number=321, head_ref=branch, head_oid=head_oid, comments=comments)
+    r = _run_reeval(34, 321, env2)
+    assert r.returncode == 0, r.stderr
+    assert "disagrees" not in r.stderr
+    body = _reeval_body(run_dir)
+    assert body is not None and body.splitlines()[0].startswith("YR-MERGE-SHADOW: WOULD-MERGE")
+
+
+def test_reevaluate_refuses_malformed_record_when_recorded_base_equals_head_sha(tmp_path):
+    """Issue #319, the PR#93 shape: a prior record whose OWN recorded base_sha equals its own recorded
+    head_sha is refused as malformed_record, naming the malformation — never re-derived as a plausible
+    `freshness` (or any other) condition, and no record is posted."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=35, title="Malformed record base==head")
+    same_sha = "a" * 40
+    comments = [_rec_comment("WOULD-MERGE", run_id=run_dir.name, base_sha=same_sha, head_sha=same_sha)]
+    env2 = _reeval_env(tmp_path, env1, pr_number=322, head_ref=branch, head_oid=head_oid, comments=comments)
+    r = _run_reeval(35, 322, env2)
+    assert r.returncode == 3
+    assert "RE-EVALUATE REFUSED" in r.stderr
+    assert "malformed_record" in r.stderr
+    assert same_sha in r.stderr
+    _no_writes(tmp_path, run_dir)   # never posted as a freshness (or any) record — a bare refusal only
+
+
+def test_reevaluate_refuses_malformed_record_when_recorded_base_is_not_an_ancestor_of_live_head(tmp_path):
+    """Issue #319: a prior record's recorded base_sha that is NOT an ancestor of the PR's live head is
+    refused as malformed_record, naming the malformation — never re-derived as a plausible `freshness`
+    condition. The base_sha here is a real, resolvable commit (main advanced AFTER the branch was cut),
+    not merely an unresolvable string — the genuinely-diverged shape, not just a typo'd sha."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=36, title="Malformed record non-ancestor base")
+    td._git(["checkout", "main"], work)
+    (work / "later_main.txt").write_text("later\n")
+    td._git(["add", "-A"], work)
+    td._git(["commit", "-q", "-m", "a later main commit, landed after the branch was cut"], work)
+    td._git(["push", "-q", "origin", "main"], work)
+    later_main_sha = subprocess.run(["git", "-C", str(work), "rev-parse", "HEAD"],
+                                    capture_output=True, text=True, check=True).stdout.strip()
+    comments = [_rec_comment("WOULD-MERGE", run_id=run_dir.name, base_sha=later_main_sha, head_sha="b" * 40)]
+    env2 = _reeval_env(tmp_path, env1, pr_number=323, head_ref=branch, head_oid=head_oid, comments=comments)
+    r = _run_reeval(36, 323, env2)
+    assert r.returncode == 3
+    assert "RE-EVALUATE REFUSED" in r.stderr
+    assert "malformed_record" in r.stderr
+    assert later_main_sha in r.stderr
+    _no_writes(tmp_path, run_dir)   # never posted as a freshness (or any) record — a bare refusal only
+
+
+def test_reevaluate_well_formed_base_and_head_sha_in_prior_record_does_not_refuse(tmp_path):
+    """Clean-path pin: a prior record whose base_sha genuinely IS an ancestor of the live head, and
+    differs from its head_sha (the ordinary, well-formed shape) must not trip either new malformed_record
+    check — re-evaluation proceeds to its normal shadow supersession exactly as before issue #319."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=37, title="Well-formed base/head sha")
+    real_base_sha = subprocess.run(["git", "-C", str(work), "rev-parse", f"{head_oid}^"],
+                                   capture_output=True, text=True, check=True).stdout.strip()
+    comments = [_rec_comment("WOULD-MERGE", run_id=run_dir.name, base_sha=real_base_sha, head_sha=head_oid)]
+    env2 = _reeval_env(tmp_path, env1, pr_number=324, head_ref=branch, head_oid=head_oid, comments=comments)
+    r = _run_reeval(37, 324, env2)
+    assert r.returncode == 0, r.stderr
+    assert "malformed_record" not in r.stderr
+    body = _reeval_body(run_dir)
+    assert body is not None and body.splitlines()[0].startswith("YR-MERGE-SHADOW: WOULD-MERGE")
 
 
 # ================= issue #239: a record-less, CI-green, review-approved PR is PROCESSED, not refused ===

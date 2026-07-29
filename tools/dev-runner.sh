@@ -433,6 +433,18 @@ re_evaluate(){
 
   "$GIT_BIN" -C "$BASE_REPO" fetch -q origin "$BASE_BRANCH" "$head_ref" 2>/dev/null \
     || reeval_refuse "git fetch of $BASE_BRANCH / $head_ref failed — cannot re-evaluate"
+
+  # BEFORE judging (issue #319): the just-fetched task-branch tip must agree with the PR's live head
+  # already read from the API above — a branch that moved (force-push/rebase) between that read and this
+  # fetch, or any other drift between the two views, must never be judged as if it were still current
+  # (the seed's website#86/PR#93 exercise judged the pre-rebase head). Disagreement refuses loudly,
+  # naming BOTH shas, before anything is evaluated and before any record is posted.
+  local fetched_tip
+  fetched_tip="$("$GIT_BIN" -C "$BASE_REPO" rev-parse "origin/$head_ref" 2>/dev/null || true)"
+  [ -n "$fetched_tip" ] || reeval_refuse "could not resolve the fetched tip of $head_ref — cannot re-evaluate"
+  [ "$fetched_tip" = "$head_oid" ] \
+    || reeval_refuse "PR #$pr's branch has moved: the fetched tip of $head_ref ($fetched_tip) disagrees with the PR's live head from the API ($head_oid) — refusing to judge a stale view"
+
   BASE_SHA="$("$GIT_BIN" -C "$BASE_REPO" rev-parse "${head_oid}^" 2>/dev/null || true)"
   [ -n "$BASE_SHA" ] || reeval_refuse "could not resolve the parent of the PR's current head ($head_oid) — is it a single-commit PR?"
 
@@ -440,6 +452,20 @@ re_evaluate(){
     # ---- a prior record exists: reuse ITS originating run, always a shadow supersession (issue #70;
     # unchanged — never a merge/rebase/board write, an armed repo included).
     [ "$(_json_field "$origrec" malformed)" != "true" ] || reeval_refuse "PR #$pr's last merge record is malformed — refusing to guess the originating run"
+
+    # A record that PARSED cleanly can still carry the observed incident shape (issue #319): its
+    # recorded base_sha equal to its recorded head_sha (PR #93's two records), or a recorded base_sha
+    # that is not an ancestor of the PR's live head. Either shape refuses as malformed_record, naming the
+    # malformation — never silently re-derived as a plausible `freshness` (or any other) condition.
+    local rec_base_sha rec_head_sha
+    rec_base_sha="$(_json_field "$origrec" base_sha)"; rec_head_sha="$(_json_field "$origrec" head_sha)"
+    if [ -n "$rec_base_sha" ] && [ -n "$rec_head_sha" ] && [ "$rec_base_sha" = "$rec_head_sha" ]; then
+      reeval_refuse "PR #$pr's last merge record is malformed_record: recorded base_sha equals recorded head_sha ($rec_base_sha) — refusing to re-derive a freshness condition from it"
+    fi
+    if [ -n "$rec_base_sha" ] \
+       && ! "$GIT_BIN" -C "$BASE_REPO" merge-base --is-ancestor "$rec_base_sha" "$head_oid" 2>/dev/null; then
+      reeval_refuse "PR #$pr's last merge record is malformed_record: recorded base_sha ($rec_base_sha) is not an ancestor of the PR's live head ($head_oid) — refusing to re-derive a freshness condition from it"
+    fi
 
     local run_id sup_decision sup_cond
     run_id="$(_json_field "$origrec" run_id)"; sup_decision="$(_json_field "$origrec" decision)"
@@ -1895,7 +1921,15 @@ fi
 # build/review pair — one canonical, hashed artifact (tools/review_bundle.py) that the reviewer reads
 # as input and each round's verdict is appended to.
 "$GIT_BIN" -C "$WT" add -A
-BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
+# env-hold resume past the commit stage (issue #319): this block re-runs unconditionally on every
+# invocation, including a resume. If 05-commit already committed in a PRIOR invocation (e.g. a PR-stage
+# hold after push/pr-create failed), WT's HEAD is now the single task commit — the branch tip, not the
+# cut point — so the true base is that commit's OWN parent, never HEAD itself.
+if stage_done 05-commit; then
+  BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD^)"
+else
+  BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
+fi
 HEAD_SHA="$("$GIT_BIN" -C "$WT" write-tree)"
 "$GIT_BIN" -C "$WT" diff --cached > "$RUN_DIR/diff.patch"
 printf '%s\n' "$AC" > "$RUN_DIR/acceptance-criteria.txt"
