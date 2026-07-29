@@ -1,7 +1,7 @@
-"""Unit tests for tools/bg_scan.py (issue #306) — the transcript scan for an unresolved CLI-managed
-background-task conversion, derived directly from the acceptance criteria and Context's structural
-grammar, never from the module's own internals. Hand-authored fixture transcripts only (minimal JSONL,
-no live CLI, no dev-runner.sh subprocess).
+"""Unit tests for tools/bg_scan.py (issues #306, #320) — the transcript scan for an unresolved
+CLI-managed background-task conversion, plus the near-miss drift canary, derived directly from the
+acceptance criteria and Context's structural grammar, never from the module's own internals.
+Hand-authored fixture transcripts only (minimal JSONL, no live CLI, no dev-runner.sh subprocess).
 
 Covered:
   * an unresolved conversion (no later reference to the task id at all) is reported unresolved;
@@ -15,7 +15,11 @@ Covered:
     start-anchored and block-scoped instead of a raw substring search;
   * a missing, empty, or unparseable transcript degrades to parsed=False (log-and-continue, never a
     gate) — positive, session-attributed evidence only;
-  * the CLI surface (`bg_scan.py scan --transcript ...`) dev-runner.sh actually shells out to.
+  * the CLI surface (`bg_scan.py scan --transcript ...`) dev-runner.sh actually shells out to;
+  * the near-miss drift canary (#320): a tool_result whose text contains the conversion phrase but
+    fails the strict start-anchor lands in the envelope's `near_misses` (by event index), a true
+    conversion is never itself counted as a near miss, the canary never moves `unresolved` or
+    `parsed`, and the envelope stays a single parseable JSON object throughout.
 """
 import json
 import pathlib
@@ -162,25 +166,122 @@ def test_json_quoted_cat_style_dump_does_not_self_match(tmp_path):
     assert result["unresolved"] == []
 
 
+# ============ the near-miss drift canary (issue #320) ============
+# A Bash tool_result whose text CONTAINS the conversion phrase but fails the strict start-anchor is a
+# near miss: recorded in the envelope's own `near_misses` (by event index), never as loose stdout/stderr
+# text, and never affecting `unresolved`/`parsed` — the canary is an aggregate signal, never a gate.
+
+def test_mid_text_phrase_lands_in_near_misses_while_verdict_stays_clean(tmp_path):
+    """The phrase appears mid-text (not at the start of the block) — fails CONVERSION_RE's strict
+    start-anchor, so it is not a true conversion, but it does contain the phrase, so it must be
+    recorded as a near miss. The verdict (`unresolved`) must stay untouched by this."""
+    text = "some preceding output\n" + MARKER.format(tid="bgtask1") + "\nmore output"
+    p = _write(tmp_path, "t.jsonl", [
+        _event("user", [_tool_result(text)]),
+    ])
+    result = bg_scan.scan(str(p))
+    assert result["parsed"] is True
+    assert result["unresolved"] == []
+    assert result["near_misses"] == [0]
+
+
+def test_true_conversion_is_unaffected_and_never_double_counted_as_a_near_miss(tmp_path):
+    """A structurally-true conversion must still be reported as unresolved exactly as before the
+    canary existed, and must NOT also show up in `near_misses` — the canary only records misses."""
+    p = _write(tmp_path, "t.jsonl", [
+        _conversion_line("bgtask1"),
+    ])
+    result = bg_scan.scan(str(p))
+    assert result["parsed"] is True
+    assert result["unresolved"] == ["bgtask1"]
+    assert result["near_misses"] == []
+
+
+def test_phrase_at_wrong_block_position_is_a_near_miss(tmp_path):
+    """The phrase sits exactly at the start of a tool_result's own text (would structurally qualify),
+    but that tool_result is not the FIRST content block of its event — a shifted block position, one
+    of the drift shapes the canary exists to catch."""
+    p = _write(tmp_path, "t.jsonl", [
+        _event("user", [_text("preamble"), _tool_result(MARKER.format(tid="bgtask1"))]),
+    ])
+    result = bg_scan.scan(str(p))
+    assert result["parsed"] is True
+    assert result["unresolved"] == []
+    assert result["near_misses"] == [0]
+
+
+def test_multiple_near_misses_recorded_by_event_index(tmp_path):
+    p = _write(tmp_path, "t.jsonl", [
+        _event("user", [_tool_result("noise " + MARKER.format(tid="a"))]),
+        _event("assistant", [_text("nothing here")]),
+        _event("user", [_tool_result("noise " + MARKER.format(tid="b"))]),
+    ])
+    result = bg_scan.scan(str(p))
+    assert result["near_misses"] == [0, 2]
+    assert result["unresolved"] == []
+
+
+def test_fixture_read_noise_is_accepted_into_near_misses(tmp_path):
+    """The self-match-defended shapes (a Read-style line-numbered dump, a cat-style JSON-quoted dump)
+    of a committed fixture transcript legitimately contain the phrase mid-text. Per the module
+    docstring, this noise is ACCEPTED by the canary (never filtered out) — it still lands in
+    `near_misses` even though it correctly never becomes a true `unresolved` conversion."""
+    dumped = "    42\t" + MARKER.format(tid="bgtask1")
+    p = _write(tmp_path, "t.jsonl", [
+        _event("user", [_tool_result(dumped)]),
+    ])
+    result = bg_scan.scan(str(p))
+    assert result["parsed"] is True
+    assert result["unresolved"] == []
+    assert result["near_misses"] == [0]
+
+
+def test_no_phrase_at_all_yields_no_near_misses(tmp_path):
+    p = _write(tmp_path, "t.jsonl", [
+        _event("assistant", [_text("all good, nothing backgrounded")]),
+    ])
+    result = bg_scan.scan(str(p))
+    assert result["near_misses"] == []
+
+
+def test_near_misses_key_always_present_and_envelope_stays_one_parseable_json_object(tmp_path):
+    """Regression for the loose-output failure mode the canary must never introduce: the runner
+    `json.load`s the scan's captured stdout, so the envelope must always be a single JSON object
+    with a `near_misses` list — never a bare extra stdout/stderr line appended alongside it."""
+    p = _write(tmp_path, "t.jsonl", [
+        _event("user", [_tool_result("noise " + MARKER.format(tid="a"))]),
+    ])
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "bg_scan.py"), "scan", "--transcript", str(p)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.count("\n") <= 1   # exactly one JSON line, nothing extra riding alongside it
+    parsed = json.loads(r.stdout)      # must not raise — the whole point of the canary's containment
+    assert set(parsed.keys()) == {"parsed", "unresolved", "near_misses"}
+    assert parsed["near_misses"] == [0]
+    assert parsed["unresolved"] == []
+
+
 # ============ missing / unparseable transcripts: log and continue, never gate on their own absence ====
 
 def test_missing_file_is_not_gating(tmp_path):
     result = bg_scan.scan(str(tmp_path / "does-not-exist.jsonl"))
-    assert result == {"parsed": False, "unresolved": []}
+    assert result == {"parsed": False, "unresolved": [], "near_misses": []}
 
 
 def test_unparseable_file_is_not_gating(tmp_path):
     p = tmp_path / "garbage.jsonl"
     p.write_text("not json at all\n{{{broken\n")
     result = bg_scan.scan(str(p))
-    assert result == {"parsed": False, "unresolved": []}
+    assert result == {"parsed": False, "unresolved": [], "near_misses": []}
 
 
 def test_empty_file_is_not_gating(tmp_path):
     p = tmp_path / "empty.jsonl"
     p.write_text("")
     result = bg_scan.scan(str(p))
-    assert result == {"parsed": False, "unresolved": []}
+    assert result == {"parsed": False, "unresolved": [], "near_misses": []}
 
 
 def test_partially_unparseable_file_still_scans_the_good_lines(tmp_path):
@@ -202,7 +303,7 @@ def test_cli_scan_prints_json_result(tmp_path):
         capture_output=True, text=True,
     )
     assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout) == {"parsed": True, "unresolved": ["bgtask1"]}
+    assert json.loads(r.stdout) == {"parsed": True, "unresolved": ["bgtask1"], "near_misses": []}
 
 
 def test_cli_scan_missing_transcript_reports_unparsed(tmp_path):
@@ -212,4 +313,4 @@ def test_cli_scan_missing_transcript_reports_unparsed(tmp_path):
         capture_output=True, text=True,
     )
     assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout) == {"parsed": False, "unresolved": []}
+    assert json.loads(r.stdout) == {"parsed": False, "unresolved": [], "near_misses": []}

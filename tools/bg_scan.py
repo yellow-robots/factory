@@ -24,6 +24,19 @@ prose) naming the id whose text does not read as still-running. An assistant tex
 id is never resolution (an intention or a description, not an observed terminal state); a status read
 that still says "running" is never resolution either.
 
+**Drift canary (issue #320).** The strict grammar above is deliberately narrow (start-anchored,
+content[0]-scoped), so a wording change, a shifted anchor, or a moved block position in a future CLI
+version would silently drop to zero true detections forever with nothing to notice it happened. As a
+guard, every `tool_result` block whose text CONTAINS the conversion phrase anywhere but does not
+structurally qualify as a true conversion is recorded in the scan's own JSON envelope as `near_misses`
+(a list of event indexes) — never a bare stdout/stderr line, since the runner `json.load`s this scan's
+captured output (fail-soft to `{}` on anything else), so loose text would silently no-op the very
+detection this canary guards. This is a loose, unfiltered check: it does not try to distinguish a real
+near-miss from fixture-read noise (a stage `Read`ing or `cat`ing a committed fixture transcript that
+itself legitimately contains the phrase mid-text) — that noise is accepted by design. `near_misses` is
+an aggregate drift signal for a human to eyeball over time, never an alert and never a gate: it never
+feeds `unresolved` or `parsed`, and no caller disposes on it.
+
 Stdlib only, like tools/ledger.py — invoked as a subprocess from tools/dev-runner.sh.
 """
 import argparse
@@ -35,6 +48,9 @@ import sys
 # marker text somewhere inside a larger tool_result (a Read's line-numbered dump, a cat's raw JSON) never
 # matches — only a tool_result block whose text is itself exactly this at its start.
 CONVERSION_RE = re.compile(r'^Command running in background with ID: ([a-z0-9]+)\. Output is being written to: ')
+# The same marker, unanchored — used only by the near-miss drift canary below, never by the gating
+# detection above.
+CONVERSION_PHRASE_RE = re.compile(r'Command running in background with ID: [a-z0-9]+\. Output is being written to: ')
 # A negated form ("no longer running", "not running") is a TERMINAL report, not a still-running one — it
 # must win over the bare STILL_RUNNING_RE match below, or a status read that says the task ENDED would be
 # misread as still-running simply for containing the word "running".
@@ -98,6 +114,34 @@ def _find_conversions(events):
     return found
 
 
+def _find_near_misses(events):
+    """`[event_index, ...]` — the drift canary: every `user` event holding a `tool_result` block whose
+    text CONTAINS the conversion phrase but does not structurally qualify as a true conversion (wrong
+    block position, or the phrase not exactly at the text's start). Loose and unfiltered by design —
+    see the module docstring's "Drift canary" section — never feeds `unresolved`."""
+    near = []
+    for i, ev in enumerate(events):
+        if not isinstance(ev, dict) or ev.get("type") != "user":
+            continue
+        message = ev.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for idx, block in enumerate(content):
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            text = _block_text(block)
+            if not CONVERSION_PHRASE_RE.search(text):
+                continue
+            if idx == 0 and CONVERSION_RE.match(text):
+                continue  # a true conversion, not a near miss
+            near.append(i)
+            break
+    return near
+
+
 def _iter_later_blocks(events, start_idx):
     """`(role, block)` for every content block in every event strictly after `start_idx` — `role` is the
     event's own `type` (`"assistant"`, `"user"`, or whatever else the transcript carries)."""
@@ -144,14 +188,17 @@ def _is_resolved(events, start_idx, task_id):
 
 
 def scan(path):
-    """Return `{"parsed": bool, "unresolved": [task_id, ...]}` for the transcript at `path`. `parsed` is
-    False only when the file could not be read or held nothing parseable at all — the caller treats that
-    as log-and-continue, never a gate (positive, session-attributed evidence only)."""
+    """Return `{"parsed": bool, "unresolved": [task_id, ...], "near_misses": [event_index, ...]}` for the
+    transcript at `path`. `parsed` is False only when the file could not be read or held nothing
+    parseable at all — the caller treats that as log-and-continue, never a gate (positive,
+    session-attributed evidence only). `near_misses` is the drift canary (see module docstring): it is
+    always present so the envelope shape never varies, and it never affects `unresolved`."""
     events, ok = _load_events(path)
     if not ok or not events:
-        return {"parsed": False, "unresolved": []}
+        return {"parsed": False, "unresolved": [], "near_misses": []}
     unresolved = [tid for idx, tid in _find_conversions(events) if not _is_resolved(events, idx, tid)]
-    return {"parsed": True, "unresolved": unresolved}
+    near_misses = _find_near_misses(events)
+    return {"parsed": True, "unresolved": unresolved, "near_misses": near_misses}
 
 
 def _cli_scan(args):
