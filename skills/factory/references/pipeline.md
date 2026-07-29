@@ -319,9 +319,26 @@ The cross-build usage meter (epic yellow-robots/factory#204) — `tools/ledger.p
 branch the run reaches (Needs-info bounce, `Blocked`, env-hold, or the success terminus). Each row carries
 census-weighted usage per stage (`tools/stage_usage.py`'s weights, unchanged), a per-stage `price`
 snapshot (`tools/registry.py`'s `input_price_per_mtok` for that stage's model, null when unregistered —
-never skips the row), `totals.shadow_cost_usd` (weighted-total × price, summed over the row's non-shadow,
-priced stages), outcome, repairs, wall-clock, and identity. The ledger **informs, never gates**: nothing
-here touches the review gate, the rank gate, or the merge evaluator.
+never skips the row), `totals.shadow_cost_usd` — (weighted-total × price) / 1,000,000, summed over the
+row's non-shadow, priced stages — true dollars (issue #313; the un-divided product is µ$), outcome,
+repairs, a top-level `gates` list (`gate-durations.json`, below), wall-clock, and identity. The ledger
+**informs, never gates**: nothing here touches the review gate, the rank gate, or the merge evaluator.
+
+**True units, self-describing eras** (issue #313): a row this module builds carries `totals.cost_unit:
+"usd"`. Disposition is READ-TIME, never a host rewrite of `rows.jsonl` (pure JSONL, no header — an
+in-file note would be invisible to `read_rows`'s own non-JSON-line skip): every reader treats an ABSENT
+`cost_unit` as the pre-#313 µ$ era and re-derives the true-dollar figure from that row's own `stages`
+(`weighted_total` × `price`, same non-shadow/priced filter, /1,000,000) rather than trusting the row's
+stored (wrong-unit) `shadow_cost_usd` — so a mixed-era `rows.jsonl` aggregates correctly forever, no
+migration, no file rewrite anywhere.
+
+**Gate durations** (issue #313): `tools/dev-runner.sh` writes a run-dir artifact `gate-durations.json` —
+one entry per `run_checks`/`run_lint`/`run_lens` invocation (`site`, `elapsed_seconds`, `disposition`),
+across every check-gate re-run site (the initial check, the check-repair recheck, the lint tier and its
+autofix/repair rechecks, the lens tier, the review-repair recheck, the pre-merge rebase recheck).
+`ledger.py append` folds it into the row as a top-level `gates` list, fail-soft — a missing or
+unparseable artifact yields an empty list, never blocking or failing the append. Informs window
+calibration (`check_timeout`, issue #308) only; never gates.
 
 `per-model`/`report` are read-only aggregations over the rows, answering four standing reads: (1) the
 close-time cost line — total and per-merged-task weighted cost for a repo/window; (2) the crossover cost

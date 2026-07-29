@@ -492,6 +492,8 @@ def test_build_ledger_row_basic_shape_and_schema(tmp_path):
     stage = row["stages"][0]
     assert stage["stage"] == "implement" and stage["source"] == "usage-file"
     assert "weighted_total" in stage
+    assert row["totals"]["cost_unit"] == "usd"   # issue #313: every new row is self-described as true $
+    assert row["gates"] == []   # no gate-durations.json artifact in this run dir
 
 
 def test_build_ledger_row_task_is_never_derived_from_run_dir(tmp_path):
@@ -510,6 +512,7 @@ def test_build_ledger_row_never_raises_on_missing_run_dir(tmp_path):
     assert row["schema"] == "yr-ledger-row/1"
     assert row["stages"] == []
     assert row["totals"]["weighted_total"] == 0
+    assert row["gates"] == []   # a missing run dir has no gate-durations.json either — never raises
 
 
 def test_build_ledger_row_weighted_totals_use_stage_usage_census_weights(tmp_path):
@@ -787,12 +790,14 @@ def test_build_ledger_row_append_never_skips_a_row_over_an_unpriceable_model(tmp
 
 
 def test_build_ledger_row_shadow_cost_usd_is_weighted_total_times_registry_price(tmp_path):
+    """issue #313: price is $/Mtok, so the true-dollar figure is the product divided by 1,000,000 — the
+    un-divided product is µ$, not $."""
     run_dir = tmp_path / "run"
     _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=100, output_tokens=10,
                 cache_write_tokens=8, cache_read_tokens=1000)
     row = _build_row(run_dir)
     weighted_total = row["stages"][0]["weighted_total"]
-    assert row["totals"]["shadow_cost_usd"] == weighted_total * 3.00
+    assert row["totals"]["shadow_cost_usd"] == weighted_total * 3.00 / 1_000_000
 
 
 def test_build_ledger_row_shadow_cost_usd_sums_multiple_priced_stages(tmp_path):
@@ -803,7 +808,8 @@ def test_build_ledger_row_shadow_cost_usd_sums_multiple_priced_stages(tmp_path):
                 cache_write_tokens=0, cache_read_tokens=0)
     row = _build_row(run_dir, outcome_type="in-review", outcome_decision="")
     stages = {s["stage"]: s for s in row["stages"]}
-    expected = stages["implement"]["weighted_total"] * 3.00 + stages["review"]["weighted_total"] * 5.00
+    expected = (stages["implement"]["weighted_total"] * 3.00
+                + stages["review"]["weighted_total"] * 5.00) / 1_000_000
     assert row["totals"]["shadow_cost_usd"] == expected
 
 
@@ -815,7 +821,7 @@ def test_build_ledger_row_shadow_cost_usd_excludes_unpriced_stage_but_keeps_its_
     stages = {s["stage"]: s for s in row["stages"]}
     assert stages["check"]["price"] is None
     # only the dollar figure excludes the unpriced stage — its raw tokens still land in totals.
-    assert row["totals"]["shadow_cost_usd"] == stages["implement"]["weighted_total"] * 3.00
+    assert row["totals"]["shadow_cost_usd"] == stages["implement"]["weighted_total"] * 3.00 / 1_000_000
     assert row["totals"]["input_tokens"] == 1000 + 5000
 
 
@@ -828,21 +834,30 @@ def test_build_ledger_row_shadow_cost_usd_excludes_shadow_review_seat_stage(tmp_
     row = _build_row(run_dir, shadow_model="claude-opus-4-8")
     stages = {s["stage"]: s for s in row["stages"]}
     assert "shadow-review" in stages
-    assert row["totals"]["shadow_cost_usd"] == stages["implement"]["weighted_total"] * 3.00
+    assert row["totals"]["shadow_cost_usd"] == stages["implement"]["weighted_total"] * 3.00 / 1_000_000
 
 
 def test_build_ledger_row_shadow_cost_recomputable_purely_from_the_rows_own_stored_fields(tmp_path):
     """"the price snapshot SHALL be stored beside the raw counts so rows re-weight as a read, not a
-    re-run": summing each non-shadow, priced stage's own stored price x weighted_total, straight off the
-    row already on disk, must reproduce totals.shadow_cost_usd exactly — no registry lookup, no
-    re-running the build."""
+    re-run": summing each non-shadow, priced stage's own stored price x weighted_total (/1,000,000 — issue
+    #313, true dollars), straight off the row already on disk, must reproduce totals.shadow_cost_usd
+    exactly — no registry lookup, no re-running the build."""
     run_dir = tmp_path / "run"
     _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=1000, output_tokens=50)
     _usage_file(run_dir, "review", model="claude-opus-4-8", input_tokens=10, output_tokens=5)
     row = _build_row(run_dir)
     recomputed = sum(s["weighted_total"] * s["price"] for s in row["stages"]
-                      if not s["stage"].startswith("shadow-review") and s.get("price") is not None)
+                      if not s["stage"].startswith("shadow-review") and s.get("price") is not None) / 1_000_000
     assert recomputed == row["totals"]["shadow_cost_usd"]
+
+
+def test_build_ledger_row_totals_carries_cost_unit_usd(tmp_path):
+    """issue #313: every row this module builds is self-described as true dollars — a reader must never
+    have to guess whether a stored shadow_cost_usd predates the /1e6 fix."""
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement", model="claude-sonnet-5")
+    row = _build_row(run_dir)
+    assert row["totals"]["cost_unit"] == "usd"
 
 
 # ============ issue #207: per_model_view — the per-model aggregate view, computable from rows alone ===
@@ -854,15 +869,202 @@ def test_build_ledger_row_shadow_cost_recomputable_purely_from_the_rows_own_stor
 def _row(*, repo="acme/widgets", build_model="claude-sonnet-5", outcome_type="merged",
          shadow_cost_usd=0.0, weighted_total=0, repairs_check=0, repairs_review=0,
          ts_end="2026-01-01T00:00:00Z"):
+    """A post-#313, new-era row fixture: `cost_unit: "usd"` means the given `shadow_cost_usd` is trusted
+    as stored, straight-line (these tests exercise per_model_view/close_time_cost/crossover_cost_axis
+    aggregation itself, not era-detection — see `_legacy_row` below for that)."""
     return {
         "schema": "yr-ledger-row/1",
         "repo": repo,
         "models": {"build": build_model, "review": "claude-opus-4-8"},
         "outcome": {"type": outcome_type, "decision": None},
-        "totals": {"shadow_cost_usd": shadow_cost_usd, "weighted_total": weighted_total},
+        "totals": {"shadow_cost_usd": shadow_cost_usd, "weighted_total": weighted_total,
+                   "cost_unit": "usd"},
         "repairs": {"check": repairs_check, "review": repairs_review},
         "ts_end": ts_end,
     }
+
+
+def _legacy_row(*, repo="acme/widgets", build_model="claude-sonnet-5", outcome_type="merged",
+                 stages=None, repairs_check=0, repairs_review=0, ts_end="2026-01-01T00:00:00Z"):
+    """A pre-#313, µ$-era row fixture: no `cost_unit` key at all — exactly what a row written by the old
+    code looks like on disk forever (rows.jsonl is never rewritten). `totals.shadow_cost_usd` still holds
+    the OLD, un-divided (wrong-unit) product a pre-fix append would have stored, so a test using this
+    fixture proves the reader ignores that stored figure and re-derives true dollars from `stages`
+    instead."""
+    stages = stages or []
+    weighted_total = sum(s["weighted_total"] for s in stages)
+    legacy_micro_dollar_cost = sum(s["weighted_total"] * s["price"] for s in stages
+                                    if s.get("price") is not None)
+    return {
+        "schema": "yr-ledger-row/1",
+        "repo": repo,
+        "models": {"build": build_model, "review": "claude-opus-4-8"},
+        "outcome": {"type": outcome_type, "decision": None},
+        "totals": {"shadow_cost_usd": legacy_micro_dollar_cost, "weighted_total": weighted_total},
+        "stages": stages,
+        "repairs": {"check": repairs_check, "review": repairs_review},
+        "ts_end": ts_end,
+    }
+
+
+# ============ issue #313: true dollars + self-describing eras (_row_shadow_cost) ======================
+# Derived from the CRITERIA: a reader treats an absent `cost_unit` as the pre-#313 µ$ era and re-derives
+# the true cost from that row's own stage inputs — never trusting the stored (wrong-unit) figure — while
+# a row carrying `cost_unit: "usd"` is trusted as already-true-dollars, straight from storage. No file
+# rewrite anywhere: both kinds of row coexist in the same rows.jsonl and aggregate correctly together.
+
+def test_row_shadow_cost_trusts_the_stored_figure_when_cost_unit_is_usd():
+    row = _row(shadow_cost_usd=12.5)
+    assert ledger._row_shadow_cost(row) == 12.5
+
+
+def test_row_shadow_cost_rederives_from_stages_when_cost_unit_is_absent():
+    """A µ$-era row's own stored shadow_cost_usd (the un-divided product) must be IGNORED — the true
+    dollar figure is re-derived from `stages` (weighted_total x price / 1,000,000)."""
+    legacy = _legacy_row(stages=[{"stage": "implement", "weighted_total": 1_000_000, "price": 3.0}])
+    assert legacy["totals"]["shadow_cost_usd"] == 3_000_000   # the old, un-divided (wrong-unit) figure
+    assert "cost_unit" not in legacy["totals"]
+    assert ledger._row_shadow_cost(legacy) == 3.0   # 1_000_000 * 3.0 / 1_000_000, re-derived
+
+
+def test_row_shadow_cost_rederivation_excludes_unpriced_and_shadow_review_stages():
+    legacy = _legacy_row(stages=[
+        {"stage": "implement", "weighted_total": 500_000, "price": 3.0},
+        {"stage": "check", "weighted_total": 999_999, "price": None},
+        {"stage": "shadow-review", "weighted_total": 777_777, "price": 15.0},
+    ])
+    assert ledger._row_shadow_cost(legacy) == 1.5   # only the priced, non-shadow "implement" stage counts
+
+
+def test_row_shadow_cost_missing_totals_or_stages_never_raises():
+    assert ledger._row_shadow_cost({}) == 0
+    assert ledger._row_shadow_cost({"totals": {}}) == 0
+    assert ledger._row_shadow_cost({"totals": {}, "stages": []}) == 0
+
+
+def test_per_model_view_aggregates_correctly_across_mixed_era_rows():
+    """Acceptance: a µ$-era row (no cost_unit) and a new usd-era row aggregating correctly together —
+    no migration, no rewrite, in the very same rows list."""
+    legacy = _legacy_row(build_model="claude-sonnet-5", outcome_type="merged",
+                          stages=[{"stage": "implement", "weighted_total": 1_000_000, "price": 3.0}])
+    new = _row(build_model="claude-sonnet-5", outcome_type="merged", shadow_cost_usd=7.0)
+    view = ledger.per_model_view([legacy, new])
+    sonnet = view["claude-sonnet-5"]
+    assert sonnet["runs"] == 2
+    assert sonnet["merged"] == 2
+    assert sonnet["weighted_cost_per_merged_task"] == 5.0   # (3.0 legacy + 7.0 new) / 2
+
+
+def test_standing_read_close_time_cost_aggregates_correctly_across_mixed_era_rows():
+    legacy = _legacy_row(repo="acme/widgets", outcome_type="merged",
+                          stages=[{"stage": "implement", "weighted_total": 2_000_000, "price": 3.0}],
+                          ts_end="2026-01-01T00:00:00Z")
+    new = _row(repo="acme/widgets", outcome_type="merged", shadow_cost_usd=4.0,
+               ts_end="2026-01-02T00:00:00Z")
+    result = ledger.close_time_cost(ledger.filter_rows([legacy, new], repo="acme/widgets"))
+    assert result["total_shadow_cost_usd"] == 10.0   # (2_000_000 * 3.0 / 1e6 = 6.0) + 4.0
+    assert result["merged_count"] == 2
+    assert result["cost_per_merged_task"] == 5.0
+
+
+def test_cli_report_aggregates_correctly_across_mixed_era_rows_jsonl(tmp_path):
+    """The same mixed-era guarantee through the actual CLI + rows.jsonl file (never a rewrite: the legacy
+    line here is byte-identical to what a pre-#313 append would have written)."""
+    ledger_dir = tmp_path / "ledger"; ledger_dir.mkdir()
+    legacy = _legacy_row(repo="a/a", outcome_type="merged",
+                          stages=[{"stage": "implement", "weighted_total": 1_000_000, "price": 2.0}])
+    new = _row(repo="a/a", outcome_type="merged", shadow_cost_usd=1.0)
+    (ledger_dir / "rows.jsonl").write_text(json.dumps(legacy) + "\n" + json.dumps(new) + "\n")
+    r = _run_cli("report", "--kind", "close-time-cost", "--ledger-dir", str(ledger_dir), "--repo", "a/a")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["total_shadow_cost_usd"] == 3.0   # (1_000_000 * 2.0 / 1e6 = 2.0) + 1.0
+
+
+# ============ issue #313: gate-durations.json — load_gate_durations + build_ledger_row's `gates` list ===
+# Derived from the CRITERIA: a run-dir artifact, one entry per check/lint/lens invocation (site, elapsed
+# seconds, disposition); `ledger.py append` folds it into the row as a top-level `gates` list; fail-soft
+# throughout (a missing or unparseable artifact yields an empty list, never raises, never blocks/fails).
+
+def _gate_entry(site="check", elapsed_seconds=12, disposition="pass"):
+    return {"site": site, "elapsed_seconds": elapsed_seconds, "disposition": disposition}
+
+
+def test_load_gate_durations_returns_the_parsed_list(tmp_path):
+    entries = [_gate_entry("check", 10, "pass"), _gate_entry("lint", 3, "fail")]
+    (tmp_path / "gate-durations.json").write_text(json.dumps(entries))
+    assert ledger.load_gate_durations(tmp_path) == entries
+
+
+def test_load_gate_durations_missing_file_yields_empty_list(tmp_path):
+    assert ledger.load_gate_durations(tmp_path / "no-such-run-dir") == []
+
+
+def test_load_gate_durations_unparseable_json_yields_empty_list_fail_soft(tmp_path):
+    (tmp_path / "gate-durations.json").write_text("{not valid json,,,")
+    assert ledger.load_gate_durations(tmp_path) == []
+
+
+def test_load_gate_durations_non_list_top_level_yields_empty_list(tmp_path):
+    (tmp_path / "gate-durations.json").write_text(json.dumps({"site": "check"}))
+    assert ledger.load_gate_durations(tmp_path) == []
+
+
+def test_build_ledger_row_gates_populated_from_the_run_dir_artifact(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement")
+    entries = [_gate_entry("check", 42, "pass"), _gate_entry("lint", 7, "timeout")]
+    (run_dir / "gate-durations.json").write_text(json.dumps(entries))
+    row = _build_row(run_dir)
+    assert row["gates"] == entries
+
+
+def test_build_ledger_row_gates_empty_list_when_artifact_absent(tmp_path):
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement")
+    row = _build_row(run_dir)
+    assert row["gates"] == []
+
+
+def test_build_ledger_row_never_raises_when_gate_durations_json_is_malformed(tmp_path):
+    """Fail-soft (the ledger informs, never gates): a corrupt gate-durations.json must never raise or
+    block the row build — it just contributes nothing."""
+    run_dir = tmp_path / "run"
+    _usage_file(run_dir, "implement")
+    (run_dir / "gate-durations.json").write_bytes(b"\x00not json at all")
+    row = _build_row(run_dir)
+    assert row["gates"] == []
+    assert row["schema"] == "yr-ledger-row/1"   # the rest of the row is unaffected
+
+
+def test_cli_append_folds_gate_durations_into_the_appended_row(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    entries = [_gate_entry("check", 5, "pass")]
+    (run_dir / "gate-durations.json").write_text(json.dumps(entries))
+    ledger_dir = tmp_path / "ledger"
+    r = _run_cli("append", "--ledger-dir", str(ledger_dir), "--run-id", "9-1", "--task", "o/r#9",
+                 "--repo", "o/r", "--run-dir", str(run_dir), "--outcome-type", "merged",
+                 "--outcome-decision", "MERGED", "--ts-start", "t0", "--ts-end", "t1",
+                 "--wall-seconds", "1")
+    assert r.returncode == 0, r.stderr
+    row = json.loads((ledger_dir / "rows.jsonl").read_text().splitlines()[0])
+    assert row["gates"] == entries
+
+
+def test_cli_append_exits_zero_even_with_a_malformed_gate_durations_artifact(tmp_path):
+    """The informs-never-gates contract: a broken gate-durations.json must never turn `append` into a
+    blocking or failing path."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "gate-durations.json").write_text("[[[not json")
+    ledger_dir = tmp_path / "ledger"
+    r = _run_cli("append", "--ledger-dir", str(ledger_dir), "--run-id", "9-2", "--task", "o/r#9",
+                 "--repo", "o/r", "--run-dir", str(run_dir), "--outcome-type", "blocked",
+                 "--ts-start", "t0", "--ts-end", "t1", "--wall-seconds", "1")
+    assert r.returncode == 0, r.stderr
+    row = json.loads((ledger_dir / "rows.jsonl").read_text().splitlines()[0])
+    assert row["gates"] == []
 
 
 def test_per_model_view_separates_merged_from_shadow_would_merge():
@@ -1108,3 +1310,50 @@ def test_pipeline_md_gains_a_the_ledger_section_citing_the_tool_and_the_four_rea
     assert "close-time cost" in lowered
     assert "crossover cost" in lowered
     assert "concurrency headroom" in lowered
+
+
+# ============ issue #313: docs correct the shadow-cost formula sentence (same PR) =====================
+# Acceptance: THE SYSTEM SHALL correct the shadow-cost formula sentence in factory AGENTS.md and
+# skills/factory/references/pipeline.md -> "The ledger" -- the un-divided weighted-total x price product
+# is µ$, not $, and the docs must say so (the /1,000,000 correction), plus document the self-describing
+# cost_unit era split and the gate-durations.json artifact, in the same PR as the code fix.
+
+def test_agents_md_shadow_cost_formula_corrected_to_true_dollars():
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "1,000,000" in text
+    assert "true dollars" in text.lower()
+    # the un-divided (pre-#313) sentence must be gone, not merely supplemented
+    assert "weighted-total × the model's input $/mtok = the build's shadow" not in text.lower()
+
+
+def test_agents_md_documents_cost_unit_and_mixed_era_reads():
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert 'cost_unit: "usd"' in text
+    assert "µ$ era" in text or "mixed-era" in text.lower()
+
+
+def test_agents_md_documents_the_gate_durations_artifact():
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "gate-durations.json" in text
+    assert "gates" in text.lower()
+
+
+def test_pipeline_md_ledger_section_shadow_cost_formula_corrected_to_true_dollars():
+    text = (ROOT / "skills" / "factory" / "references" / "pipeline.md").read_text(encoding="utf-8")
+    section = text.split("## The ledger", 1)[1].split("\n## ", 1)[0]
+    assert "1,000,000" in section
+    assert "true dollars" in section.lower() or "µ$" in section
+
+
+def test_pipeline_md_ledger_section_documents_cost_unit_and_mixed_era_reads():
+    text = (ROOT / "skills" / "factory" / "references" / "pipeline.md").read_text(encoding="utf-8")
+    section = text.split("## The ledger", 1)[1].split("\n## ", 1)[0]
+    assert "cost_unit" in section
+    assert "mixed-era" in section.lower()
+
+
+def test_pipeline_md_ledger_section_documents_the_gate_durations_artifact():
+    text = (ROOT / "skills" / "factory" / "references" / "pipeline.md").read_text(encoding="utf-8")
+    section = text.split("## The ledger", 1)[1].split("\n## ", 1)[0]
+    assert "gate-durations.json" in section
+    assert "gates" in section.lower()

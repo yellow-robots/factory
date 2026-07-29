@@ -1499,27 +1499,60 @@ CHECK_TIMEOUT_KILL_AFTER=10
 # own captured stderr for it — rather than reading the exit code alone — is what lets the disposal below
 # tell an observed expiry apart from a same-valued exit code the child produced by itself.
 _log_has_expiry(){ grep -q '^timeout: sending signal' "$1" 2>/dev/null; }
-run_checks(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1
+# gate-durations.json (issue #313): a run-dir artifact, one entry per run_checks/run_lint/run_lens
+# invocation — {site, elapsed_seconds, disposition}, informing tools/ledger.py's window calibration only
+# (folded into the row as a top-level `gates` list; never gates anything here or there). GATE_DURATIONS
+# accumulates the JSON object for each invocation this run; record_gate_duration rewrites the artifact
+# from the FULL array on every call (never a partial/interrupted write) so the file is complete at
+# whichever terminal branch the run reaches, no matter how many gate invocations preceded it. `site` /
+# `disposition` are always one of this file's own fixed vocabulary (never interpolated user input), so a
+# plain printf is a safe, dependency-free JSON encoder here.
+GATE_DURATIONS=()
+record_gate_duration(){   # $1 = site, $2 = elapsed_seconds, $3 = disposition
+  GATE_DURATIONS+=("$(printf '{"site":"%s","elapsed_seconds":%s,"disposition":"%s"}' "$1" "$2" "$3")")
+  local joined; joined="$(IFS=,; echo "${GATE_DURATIONS[*]}")"
+  printf '[%s]' "$joined" >"$RUN_DIR/gate-durations.json"
+}
+# _gate_disposition: the shared {pass, fail, timeout, env_failure} vocabulary — an observed check_timeout
+# expiry (the $2 expired flag, e.g. CHECK_EXPIRED) outranks the exit code (a timeout-killed child's own rc
+# is incidental), then the 126/127 env-failure exit codes (same test env_hold/lint_env_hold gate on), then
+# rc==0 vs anything else.
+_gate_disposition(){   # $1 = rc, $2 = expired (0/1)
+  if [ "$2" -eq 1 ]; then echo timeout
+  elif [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then echo env_failure
+  elif [ "$1" -eq 0 ]; then echo pass
+  else echo fail
+  fi
+}
+run_checks(){   # $1 = site (defaults to "check"), named for gate-durations.json (issue #313)
+  local site="${1:-check}"
+  local _t0; _t0=$(date +%s)
+  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$CHECK_CMD" ) >"$RUN_DIR/checks.log" 2>&1
   local rc=$?
   CHECK_EXPIRED=0
   if _log_has_expiry "$RUN_DIR/checks.log"; then
     CHECK_EXPIRED=1
     printf '\ndev-runner: check_timeout expired after %ss (check_cmd) — process group killed, no observed survivor\n' "$CHECK_TIMEOUT" >>"$RUN_DIR/checks.log"
   fi
+  record_gate_duration "$site" "$(( $(date +%s) - _t0 ))" "$(_gate_disposition "$rc" "$CHECK_EXPIRED")"
   return "$rc"
 }
 # run_lint (issue #213): the lint tier's runner, cloned from run_checks — same confinement (worktree cd,
 # the venv + node bin dirs on PATH, host git config neutralized) plus the same check_timeout bound, output
 # to lint.log in the run dir. $1 is an OPAQUE command run verbatim: python repos declare ruff, node repos
 # eslint — no lint-output parsing, no language assumption anywhere. Used for both LINT_CMD (the probe /
-# re-run) and LINT_FIX_CMD (the autofix, non-gating but bounded too — issue #308).
-run_lint(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1
+# re-run) and LINT_FIX_CMD (the autofix, non-gating but bounded too — issue #308). $2 = site (issue #313).
+run_lint(){
+  local site="${2:-lint}"
+  local _t0; _t0=$(date +%s)
+  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lint.log" 2>&1
   local rc=$?
   LINT_EXPIRED=0
   if _log_has_expiry "$RUN_DIR/lint.log"; then
     LINT_EXPIRED=1
     printf '\ndev-runner: check_timeout expired after %ss — process group killed, no observed survivor\n' "$CHECK_TIMEOUT" >>"$RUN_DIR/lint.log"
   fi
+  record_gate_duration "$site" "$(( $(date +%s) - _t0 ))" "$(_gate_disposition "$rc" "$LINT_EXPIRED")"
   return "$rc"
 }
 # run_lens (issue #214): the advisory lens tier's runner — the run_checks/run_lint confinement shape
@@ -1527,13 +1560,17 @@ run_lint(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bi
 # bound) with two DELIBERATE deviations: (1) stdout -> the run dir's lens.md and stderr -> lens.log are
 # SEPARATE, never the shape's merged 2>&1 — a stderr traceback must never land in the PR-trail comment;
 # and (2) YR_BASE_REF="$BASE_REF" is exported so a lens can be diff-aware. $1 is an OPAQUE command run
-# verbatim — any stack's lens works, no lens-output parsing, no language assumption. The exit code is
-# READ BUT NEVER GATES (see below) — expiry included, since `timeout --verbose`'s diagnostic lands in
-# lens.log (never lens.md), the same separation the exit code itself already gets.
-run_lens(){ ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null YR_BASE_REF="$BASE_REF" timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lens.md" 2>"$RUN_DIR/lens.log"
+# verbatim — any stack's lens works, no lens-output parsing, no language assumption. $2 = site (issue
+# #313). The exit code is READ BUT NEVER GATES (see below) — expiry included, since `timeout --verbose`'s
+# diagnostic lands in lens.log (never lens.md), the same separation the exit code itself already gets.
+run_lens(){
+  local site="${2:-lens}"
+  local _t0; _t0=$(date +%s)
+  ( cd "$WT" && PATH="$BASE_REPO/.venv/bin:$BASE_REPO/node_modules/.bin:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null YR_BASE_REF="$BASE_REF" timeout --verbose --kill-after="$CHECK_TIMEOUT_KILL_AFTER" "$CHECK_TIMEOUT" bash -c "$1" ) >"$RUN_DIR/lens.md" 2>"$RUN_DIR/lens.log"
   local rc=$?
   LENS_EXPIRED=0
   _log_has_expiry "$RUN_DIR/lens.log" && LENS_EXPIRED=1
+  record_gate_duration "$site" "$(( $(date +%s) - _t0 ))" "$(_gate_disposition "$rc" "$LENS_EXPIRED")"
   return "$rc"
 }
 # Distinguish a CODE failure (the harness ran and tests failed) from an ENVIRONMENT failure (the harness
@@ -1564,7 +1601,7 @@ if stage_done 03-check; then
   log "resume: skipping check (03-check.done present)"
   CHECK_RC=0
 else
-  CHECK_RC=0; run_checks || CHECK_RC=$?
+  CHECK_RC=0; run_checks check || CHECK_RC=$?
   if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" ""; fi
   if [ "$CHECK_RC" -ne 0 ]; then
     log "checks failed (exit $CHECK_RC) — one repair attempt [$CHECK_REPAIR_ID]"
@@ -1572,7 +1609,7 @@ else
     run_stage "$IMPL_SYS" "$(printf 'The project tests FAIL. Fix the PRODUCTION CODE so they pass — do NOT modify the tests. Reproduce with the failing tests only; the runner re-runs the full check suite after this stage. End this repair with the targeted reproduction verified green in the foreground, or an explicit reasoned no-fix — waiting on anything is not a terminal state. Failure output:\n\n%s\n\nTask:\n%s' "$(tail -n 40 "$RUN_DIR/checks.log")" "$SPEC")" "$RUN_DIR/repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || REPAIR_RC=$?
     CHECK_REPAIR_BG_UNRESOLVED="$LAST_STAGE_BG_UNRESOLVED"; CHECK_REPAIR_BG_REASON="$LAST_STAGE_BG_REASON"
     if [ "$REPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/repair.log"; then llm_quota_hold "check repair" "$RUN_DIR/repair.log"; fi
-    CHECK_RC=0; run_checks || CHECK_RC=$?
+    CHECK_RC=0; run_checks check-repair-recheck || CHECK_RC=$?
     if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the repair attempt"; fi
     # bg_scan (issue #306): salvage/re-check ordering is untouched (there is none to preserve here — the
     # check-repair path has no artifact salvage step); the scan only changes the terminal disposition.
@@ -1597,16 +1634,16 @@ else
     LINT_MUTATED=0
     LINT_REPAIR_BG_UNRESOLVED=0
     LINT_REPAIR_BG_REASON=""
-    LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
+    LINT_RC=0; run_lint "$LINT_CMD" lint || LINT_RC=$?
     if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" ""; fi
     if [ "$LINT_RC" -ne 0 ]; then
       log "lint failed (exit $LINT_RC) — lint-repair: deterministic autofix${LINT_FIX_CMD:+ ($LINT_FIX_CMD)}, then at most one LLM repair"
       # (1) deterministic autofix first (no LLM). A 126/127 here is environmental too — same lint hold.
       if [ -n "$LINT_FIX_CMD" ]; then
-        FIX_RC=0; run_lint "$LINT_FIX_CMD" || FIX_RC=$?
+        FIX_RC=0; run_lint "$LINT_FIX_CMD" lint-fix || FIX_RC=$?
         if is_env_failure "$FIX_RC"; then lint_env_hold "$LINT_FIX_CMD" "$FIX_RC" " (autofix)"; fi
         LINT_MUTATED=1
-        LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
+        LINT_RC=0; run_lint "$LINT_CMD" lint-autofix-recheck || LINT_RC=$?
         if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the autofix"; fi
       fi
       # (2) if lint still fails, ONE LLM repair — a NEW prompt, confined to the lint-flagged files.
@@ -1623,10 +1660,10 @@ else
     if [ "$LINT_MUTATED" -eq 1 ]; then
       LINT_REPAIR_BG_SUFFIX=""
       [ "$LINT_REPAIR_BG_UNRESOLVED" -eq 1 ] && LINT_REPAIR_BG_SUFFIX="  Also: $LINT_REPAIR_BG_REASON"
-      CHECK_RC=0; run_checks || CHECK_RC=$?
+      CHECK_RC=0; run_checks lint-repair-recheck || CHECK_RC=$?
       if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the lint repair"; fi
       [ "$CHECK_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (checks failed after the lint fix; log: $RUN_DIR/checks.log)$LINT_REPAIR_BG_SUFFIX"
-      LINT_RC=0; run_lint "$LINT_CMD" || LINT_RC=$?
+      LINT_RC=0; run_lint "$LINT_CMD" lint-repair-recheck || LINT_RC=$?
       if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the lint repair"; fi
       [ "$LINT_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (log: $RUN_DIR/lint.log)$LINT_REPAIR_BG_SUFFIX"
       # bg_scan (issue #306): a live background task at the lint-repair's own stage end blocks even a
@@ -1645,7 +1682,7 @@ else
   # hold, no repair). The artifact lands on the PR trail as its own comment after the PR exists (below);
   # it never enters PR_BODY or the review bundle.
   if [ -n "$LENS_CMD" ]; then
-    LENS_RC=0; run_lens "$LENS_CMD" || LENS_RC=$?
+    LENS_RC=0; run_lens "$LENS_CMD" lens || LENS_RC=$?
     if [ "$LENS_RC" -ne 0 ]; then
       if [ "$LENS_EXPIRED" -eq 1 ]; then
         printf '\nlens did not run cleanly (exit %s) — check_timeout expired after %ss, process group killed\n' "$LENS_RC" "$CHECK_TIMEOUT" >> "$RUN_DIR/lens.md"
@@ -1751,7 +1788,7 @@ else
     "$GIT_BIN" -C "$WT" diff --cached > "$RUN_DIR/final.patch"
     REVIEWREPAIR_BG_SUFFIX=""
     [ "$REVIEWREPAIR_BG_UNRESOLVED" -eq 1 ] && REVIEWREPAIR_BG_SUFFIX="  Also: $REVIEWREPAIR_BG_REASON"
-    run_checks  || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)$REVIEWREPAIR_BG_SUFFIX"
+    run_checks review-repair-recheck || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)$REVIEWREPAIR_BG_SUFFIX"
     if ! review_stage; then
       # this SECOND review_stage call just refreshed REVIEW_ROUND_BG_UNRESOLVED/_REASON with ITS OWN
       # scan result (the re-review's transcript, distinct from the review-repair LLM stage's own above)
@@ -1985,7 +2022,7 @@ rebase_onto_tip(){
   REBASE_REWROTE_REMOTE=1                       # the remote head is now rewritten -- see caller
   PR_HEAD_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
   BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || echo "$BASE_SHA")"
-  local rc=0; run_checks || rc=$?             # re-run the deterministic check gate on the rebased tree
+  local rc=0; run_checks rebase-recheck || rc=$?  # re-run the deterministic check gate on the rebased tree
   is_env_failure "$rc" && return 2
   [ "$rc" -eq 0 ] || return 1                  # cannot re-establish green -> block (never merge a stale/red PR)
   shadow_ci || return 2                        # re-wait CI on the rebased head
