@@ -43,11 +43,28 @@ never a write path, never a gate. Each stage's `price` is `tools/registry.py`'s 
 of that stage's `model` at append time (null when the id is unregistered or carries no price), stored
 beside the raw counts so a row re-weights as a read (re-run `per-model`/`report`) rather than a re-run of
 the build. `totals.shadow_cost_usd` sums `weighted_total × price` over the row's non-shadow, priced
-stages only (the AGENTS.md rule verbatim: the census weights are exactly the Claude API price ratios) —
-an unpriced or shadow-review-seat stage contributes nothing to the sum but never causes the row itself,
-or any other stage in it, to be skipped. `per_model_view()`/`close_time_cost()`/`crossover_cost_axis()`/
-`daily_weighted_tokens()` are the four standing reads (informing capacity/model decisions only — nothing
-here gates a build), windowed on `ts_end` (a row's close time) via lexical ISO-8601 comparison.
+stages only, divided by 1_000_000 (the AGENTS.md rule verbatim: the census weights are exactly the Claude
+API price ratios, and price is $/Mtok — so the raw product is µ$, true dollars need the /1e6) — an
+unpriced or shadow-review-seat stage contributes nothing to the sum but never causes the row itself, or
+any other stage in it, to be skipped.
+
+True units, self-describing eras (issue #313): a row built by this module carries `totals.cost_unit:
+"usd"` — `shadow_cost_usd` is already true dollars. Disposition is READ-TIME, never a host rewrite of
+`rows.jsonl` (pure JSONL, no header, `append_row` below / `read_rows`'s non-JSON skip): every reader
+(`_row_shadow_cost` below, so transitively `per_model_view`/`close_time_cost`/`crossover_cost_axis`)
+treats an ABSENT `cost_unit` as the pre-fix µ$ era and re-derives the true dollar figure from that row's
+own `stages` (`weighted_total` × `price`, same non-shadow/priced filter, /1e6) rather than trusting the
+stored (wrong-unit) `shadow_cost_usd` — so a mixed-era `rows.jsonl` aggregates correctly forever, no
+migration, no file rewrite anywhere.
+
+Gate durations (issue #313): `tools/dev-runner.sh` writes a run-dir artifact `gate-durations.json` — one
+entry per `run_checks`/`run_lint`/`run_lens` invocation (`site`, `elapsed_seconds`, `disposition`).
+`build_ledger_row` folds it into the row as a top-level `gates` list, fail-soft (a missing or unparseable
+artifact yields an empty list, never raises) — informs window calibration only, never gates.
+
+`per_model_view()`/`close_time_cost()`/`crossover_cost_axis()`/`daily_weighted_tokens()` are the four
+standing reads (informing capacity/model decisions only — nothing here gates a build), windowed on
+`ts_end` (a row's close time) via lexical ISO-8601 comparison.
 """
 import argparse
 import fcntl
@@ -231,6 +248,19 @@ def _envelope_fallback_records(run_dir, models, taken_stage_names):
     return records
 
 
+def load_gate_durations(run_dir):
+    """Fail-soft load of the run dir's `gate-durations.json` (issue #313) — `tools/dev-runner.sh` writes
+    one entry per `run_checks`/`run_lint`/`run_lens` invocation (`site`, `elapsed_seconds`,
+    `disposition`). A missing file, unparseable JSON, or a top-level shape that isn't a list all yield an
+    empty list — never raises; the ledger informs, never gates, and a durations artifact is optional."""
+    path = pathlib.Path(run_dir) / "gate-durations.json"
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
 def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
                       build_model, review_model, check_repair_model, review_repair_model, shadow_model,
                       outcome_type, outcome_decision, ts_start, ts_end, wall_seconds):
@@ -263,10 +293,13 @@ def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
     non_shadow = [r for r in stage_records if not str(r.get("stage") or "").startswith("shadow-review")]
     summary = stage_usage.build_summary(non_shadow)
 
-    # Shadow cost (issue #207): weighted-total × the model's registry input price, summed over the
-    # non-shadow stages that carry a price — the AGENTS.md rule verbatim. A stage with price: null (no
-    # registry match) simply contributes nothing to the sum, never excludes the row.
-    shadow_cost_usd = sum(r["weighted_total"] * r["price"] for r in non_shadow if r.get("price") is not None)
+    # Shadow cost (issue #207; true dollars per issue #313): weighted-total × the model's registry input
+    # price, summed over the non-shadow stages that carry a price, divided by 1_000_000 — price is
+    # $/Mtok (the AGENTS.md rule verbatim), so the raw product is µ$ and this is the /1e6 to true dollars.
+    # A stage with price: null (no registry match) simply contributes nothing to the sum, never excludes
+    # the row.
+    shadow_cost_usd = sum(r["weighted_total"] * r["price"] for r in non_shadow
+                           if r.get("price") is not None) / 1_000_000
 
     repairs = {
         "check": 1 if (run_dir_path / "repair.log").is_file() else 0,
@@ -283,9 +316,10 @@ def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
         "models": {"build": build_model or None, "review": review_model or None},
         "stages": stage_records,
         "totals": {**summary["totals"], "weighted_total": summary["weighted_total"],
-                   "shadow_cost_usd": shadow_cost_usd},
+                   "shadow_cost_usd": shadow_cost_usd, "cost_unit": "usd"},
         "outcome": {"type": outcome_type, "decision": outcome_decision or None},
         "repairs": repairs,
+        "gates": load_gate_durations(run_dir),
         "wall_seconds": wall_seconds,
         "ts_start": ts_start,
         "ts_end": ts_end,
@@ -352,8 +386,25 @@ def filter_rows(rows, *, repo=None, since=None, until=None):
     return out
 
 
+def _stages_shadow_cost_usd(stages):
+    """True-dollar shadow cost over a `stages` list — weighted_total × price, non-shadow-review-seat and
+    priced stages only, /1_000_000 (price is $/Mtok). The same formula `build_ledger_row` uses to fill
+    `totals.shadow_cost_usd` on a new row — used here to RE-DERIVE it, read-time, for a µ$-era row (issue
+    #313) that carries no `cost_unit` and whose own stored `shadow_cost_usd` predates the /1e6 fix."""
+    return sum((s.get("weighted_total") or 0) * s["price"] for s in stages
+               if s.get("price") is not None
+               and not str(s.get("stage") or "").startswith("shadow-review")) / 1_000_000
+
+
 def _row_shadow_cost(row):
-    return (row.get("totals") or {}).get("shadow_cost_usd") or 0
+    """A row's true-dollar shadow cost — self-describing across eras (issue #313). `cost_unit == "usd"`
+    means `totals.shadow_cost_usd` is already true dollars, trusted as stored; an ABSENT `cost_unit`
+    marks the pre-fix µ$ era, whose stored figure is the wrong unit — re-derived instead from the row's
+    own `stages` (never rewriting the row/file itself), so a mixed-era rows.jsonl aggregates correctly."""
+    totals = row.get("totals") or {}
+    if totals.get("cost_unit") == "usd":
+        return totals.get("shadow_cost_usd") or 0
+    return _stages_shadow_cost_usd(row.get("stages") or [])
 
 
 def _row_repairs_count(row):
