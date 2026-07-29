@@ -31,14 +31,29 @@ expectations) — frontmatter is provenance and is ignored:
                               Exactly one match resolves it; zero or two-or-more still errors (the
                               latter names every candidate — genuinely ambiguous).
 
-Usage: check_task.py <task.md> [--repo-root DIR] [--base-ref REF]
-Exit 0 if self-contained; 1 (with `<file>: <message>` lines) otherwise.
+A fourth, advisory pass — the pin-collision check — runs alongside the three above but never fails the
+gate: `pin_collision_warnings` extracts candidate literals from the draft's acceptance criteria
+(backtick-quoted spans of length ≥3 containing at least one non-letter character — catches `.05`,
+`70% 46%`, `inset:-40%`; skips prose words), then greps the target repo's declared test surface
+(`test_paths` from `.yr/factory.toml`, default `tests/`, plus `qa/` when present) at the same ref/tree
+`check_task` reads. A file that contains a criteria literal, when the draft body never names that file
+anywhere, yields a WARNING line naming both — a standing test may already pin the very literal a fresh
+draft's criteria are about to change out from under it (website#122 run `122-888903`: four
+undispositioned pin suites made a build unwinnable). Exit stays 0 for this pass alone (the lens-tier /
+check_supersession advisory precedent — reading warnings before promoting is attended practice, not
+wiring); the CLI's `--strict` flag upgrades a non-empty warning list to exit 1.
+
+Usage: check_task.py <task.md> [--repo-root DIR] [--base-ref REF] [--strict]
+Exit 0 if self-contained (and, absent --strict, regardless of pin-collision warnings); 1 (with
+`<file>: <message>` lines) on a self-containedness failure, or (with --strict) on any pin-collision
+warning too.
 """
 import argparse
 import pathlib
 import re
 import subprocess
 import sys
+import tomllib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from tools.textutil import split_frontmatter
@@ -50,6 +65,7 @@ _LINE_SUFFIX_RE = re.compile(r":\d+(?:-\d+)?$")
 _EXT_RE = re.compile(r"/[^/]*\.[A-Za-z0-9]+$")   # last path segment carries a file extension
 # a line naming the task's own deliverable — optional bullet/bold, then `Deliverable:` / `Creates:`
 _DELIVERABLE_RE = re.compile(r"^\s*[-*\s]*(?:deliverable|creates)\s*\**\s*:", re.IGNORECASE)
+DEFAULT_TEST_PATHS = ["tests/"]
 
 
 def _strip_comments(s):
@@ -136,6 +152,89 @@ def _suffix_matches(path, repo_files):
     return sorted(f for f in repo_files if f.endswith(suffix))
 
 
+# --- pin-collision advisory ---------------------------------------------------------------------------
+
+def _read_file(path, repo_root, base_ref):
+    """`path`'s text at `base_ref` (via `git show`) or the working tree; None if unreadable."""
+    if base_ref:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"{base_ref}:{path}"],
+            capture_output=True)
+        return result.stdout.decode("utf-8", errors="replace") if result.returncode == 0 else None
+    try:
+        return (pathlib.Path(repo_root) / path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _read_test_paths(repo_root, base_ref):
+    """The target repo's declared `test_paths` (`.yr/factory.toml`, at the same ref `check_task` reads),
+    or `DEFAULT_TEST_PATHS` when the manifest is absent, unparseable, or doesn't declare a well-formed
+    list — this advisory pass never fails closed on a manifest problem; that is `dev-runner.sh`'s job."""
+    text = _read_file(".yr/factory.toml", repo_root, base_ref)
+    if text is None:
+        return list(DEFAULT_TEST_PATHS)
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return list(DEFAULT_TEST_PATHS)
+    v = data.get("test_paths")
+    if isinstance(v, list) and v and all(isinstance(x, str) and x for x in v):
+        return v
+    return list(DEFAULT_TEST_PATHS)
+
+
+def _pin_literals(criteria_text):
+    """Candidate pin literals in an acceptance-criteria section: backtick spans of length ≥3 containing
+    at least one non-letter character (`.05`, `70% 46%`, `inset:-40%`), in first-seen order, deduped —
+    a plain-letters backtick span (a prose word, a bare identifier) is never a candidate."""
+    seen = []
+    for token in _BACKTICK_RE.findall(criteria_text):
+        if len(token) >= 3 and any(not c.isalpha() for c in token) and token not in seen:
+            seen.append(token)
+    return seen
+
+
+def _test_surface_files(repo_root, base_ref):
+    """Repo files under the declared test surface: `test_paths` (default `tests/`) plus `qa/` when that
+    directory is present in the tree — both judged at the same ref/tree `_repo_files` reads."""
+    all_files = _repo_files(repo_root, base_ref)
+    dirs = list(_read_test_paths(repo_root, base_ref))
+    if any(f.startswith("qa/") for f in all_files) and "qa/" not in dirs:
+        dirs.append("qa/")
+    return [f for f in all_files if any(f.startswith(d) for d in dirs)]
+
+
+def pin_collision_warnings(text, *, repo_root, base_ref=None, read_file=None):
+    """Return WARNING strings (list[str]; [] ⇒ clean) — advisory only, never a self-containedness error.
+
+    For each candidate literal in the draft's acceptance criteria (`_pin_literals`), greps the target
+    repo's test surface (`_test_surface_files`) at `base_ref`/the working tree: a file containing the
+    literal, when the draft body (anywhere, not just acceptance criteria) never names that file, is a
+    hit — a standing test may already pin the very literal this draft's criteria are about to change out
+    from under it. `read_file(path) -> str | None` is injectable (default: `_read_file`).
+    """
+    _, body = split_frontmatter(text)
+    sections = _sections(body)
+    criteria = _strip_comments(sections.get("acceptance criteria", ""))
+    literals = _pin_literals(criteria)
+    if not literals:
+        return []
+    read = read_file or (lambda p: _read_file(p, repo_root, base_ref))
+    warnings = []
+    for f in _test_surface_files(repo_root, base_ref):
+        if f in body:
+            continue
+        content = read(f)
+        if content is None:
+            continue
+        for literal in literals:
+            if literal in content:
+                warnings.append(f"WARNING: `{f}` contains acceptance-criteria literal `{literal}`, "
+                                 f"but the task body never names {f}")
+    return warnings
+
+
 def check_task(text, *, repo_root, base_ref=None, path_exists=None):
     """Return error messages (list[str]) for self-containment failures; [] ⇒ build-ready.
 
@@ -195,12 +294,19 @@ def main(argv=None):
     ap.add_argument("file", help="the task markdown (the authoring aid, or the Issue body saved to a file)")
     ap.add_argument("--repo-root", default=".", help="the target repo working tree")
     ap.add_argument("--base-ref", default=None, help="check cited paths at this git ref instead of the tree")
+    ap.add_argument("--strict", action="store_true",
+                    help="upgrade pin-collision warnings to exit 1 (default: advisory, exit 0)")
     args = ap.parse_args(argv)
     text = pathlib.Path(args.file).read_text(encoding="utf-8")
     errors = check_task(text, repo_root=args.repo_root, base_ref=args.base_ref)
     for e in errors:
         print(f"{args.file}: {e}")
-    return 1 if errors else 0
+    warnings = pin_collision_warnings(text, repo_root=args.repo_root, base_ref=args.base_ref)
+    for w in warnings:
+        print(w)
+    if errors:
+        return 1
+    return 1 if warnings and args.strict else 0
 
 
 if __name__ == "__main__":
