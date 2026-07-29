@@ -270,6 +270,66 @@ def test_record_cli_roundtrip(tmp_path):
     assert REQUIRED_FIELDS <= set(rec)
 
 
+# ============ issue #319: last-record surfaces a parsed record's OWN base_sha/head_sha verbatim ============
+# --re-evaluate (tools/dev-runner.sh) judges whether a prior record itself carries the observed incident
+# shape (its base_sha equal to its head_sha, or a base_sha that is not an ancestor of the PR's live head)
+# using exactly these two fields, read from the `last-record` CLI's own output — so that data must be
+# surfaced verbatim from whatever the parsed record actually carries, not derived or defaulted away.
+
+def _comment(decision, *, run_id="5-1", base_sha=None, head_sha=None, mode="shadow",
+             failed_condition=None, malformed=False):
+    if malformed:
+        block = "{ this is not valid json"
+    else:
+        d = {"schema": "yr-merge-record/1", "decision": decision, "run_id": run_id,
+             "failed_condition": failed_condition, "mode": mode, "machinery_ok": True}
+        if base_sha is not None:
+            d["base_sha"] = base_sha
+        if head_sha is not None:
+            d["head_sha"] = head_sha
+        block = json.dumps(d)
+    prefix = "YR-MERGE" if mode == "armed" else "YR-MERGE-SHADOW"
+    marker = f"{prefix}: {decision}" if failed_condition is None else f"{prefix}: {decision} — {failed_condition}"
+    return {"body": f"{marker}\n\n```yr-merge-record\n{block}\n```\n"}
+
+
+def _last_record_cli(tmp_path, comments):
+    cfile = tmp_path / "comments.json"
+    cfile.write_text(json.dumps(comments))
+    out = subprocess.run([sys.executable, str(TOOL), "last-record", "--comments-file", str(cfile)],
+                         capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_last_record_cli_surfaces_base_and_head_sha_verbatim(tmp_path):
+    same_sha = "a" * 40
+    rec = _last_record_cli(tmp_path, [_comment("WOULD-MERGE", run_id="5-1", base_sha=same_sha, head_sha=same_sha)])
+    assert rec == {
+        "found": True, "malformed": False, "run_id": "5-1", "decision": "WOULD-MERGE",
+        "failed_condition": None, "mode": "shadow", "base_sha": same_sha, "head_sha": same_sha,
+    }
+
+
+def test_last_record_cli_base_and_head_sha_differ_when_the_record_carries_distinct_ones(tmp_path):
+    rec = _last_record_cli(tmp_path, [_comment("WOULD-MERGE", run_id="5-1", base_sha="b" * 40, head_sha="h" * 40)])
+    assert rec["base_sha"] == "b" * 40 and rec["head_sha"] == "h" * 40
+
+
+def test_last_record_cli_base_and_head_sha_absent_from_an_older_record_shape(tmp_path):
+    """A record predating issue #319 (no base_sha/head_sha keys at all) surfaces both as null — the
+    caller's guard for 'nothing to judge' must see null, never a stringified default that could compare
+    equal to something."""
+    rec = _last_record_cli(tmp_path, [_comment("WOULD-MERGE", run_id="5-1")])
+    assert rec["base_sha"] is None and rec["head_sha"] is None
+
+
+def test_last_record_cli_still_flags_malformed_before_any_sha_is_read(tmp_path):
+    """An unparseable last record still surfaces only {found: true, malformed: true} — no base_sha/
+    head_sha keys at all, since there is no parsed record to read them from."""
+    rec = _last_record_cli(tmp_path, [_comment("WOULD-MERGE", run_id="5-1", malformed=True)])
+    assert rec == {"found": True, "malformed": True}
+
+
 # ============ issue #146: the back-compat alias for the condition order is gone ============
 # NB: the retired name is built via concatenation, never spelled out literally, so this file
 # itself doesn't trip its own "nothing left in the tree" scan below.

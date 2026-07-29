@@ -3281,6 +3281,46 @@ def test_pr_stage_relaunch_after_push_hold_resumes_at_pr_stage(tmp_path):
     assert _wt_dir(tmp_path) is None                                  # ...and tears the worktree down again
 
 
+def test_env_hold_resume_bundle_base_sha_is_the_worktree_cut_point_not_the_branch_tip(tmp_path):
+    """Issue #319 characterization test: the env-hold resume path's bundle write. A push-exhaustion hold
+    fires AFTER the commit stage (05-commit.done present) — the preserved worktree's HEAD is now the
+    single task commit, the branch tip, not the cut point. On relaunch, the resumed run re-assembles a
+    FRESH review-bundle.json (a new pid-keyed run dir; review-bundle.json is not copied forward from the
+    prior run dir) — its base_sha must be the worktree's TRUE cut point (the task commit's own parent,
+    i.e. main's tip when the worktree was created), never the branch tip the commit landed on."""
+    work, _ = _make_repo(tmp_path)
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _pr_stage_env(tmp_path, binp, work, number=40, title="Resume bundle base_sha characterization")
+    env["STUB_PUSH_FAIL_COUNT"] = "always"
+    r1 = _run(["40", "--repo", "test/repo"], env)
+    assert r1.returncode != 0
+    wt1 = _wt_dir(tmp_path); assert wt1 is not None and wt1.exists()
+    sd = _state_dir(tmp_path); assert sd is not None and (sd / "05-commit.done").exists()
+
+    # the worktree's true cut point (the task commit's own parent) and its branch tip (the task commit
+    # itself), captured from the preserved worktree BEFORE the resume runs.
+    cut_point = subprocess.run(["git", "-C", str(wt1), "rev-parse", "HEAD^"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+    branch_tip = subprocess.run(["git", "-C", str(wt1), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    assert cut_point != branch_tip
+    run_dirs_before = {d.name for d in _run_dirs(tmp_path, number=40)}
+
+    env2 = {**env, "STUB_TIMELINE": str(tmp_path / "timeline2")}
+    env2.pop("STUB_PUSH_FAIL_COUNT")                                  # the transient clears; push now succeeds
+    r2 = _run(["40", "--repo", "test/repo"], env2)
+    assert r2.returncode == 0, r2.stderr
+    assert "reusing preserved env-hold worktree" in r2.stderr
+
+    run_dirs_after = {d.name for d in _run_dirs(tmp_path, number=40)}
+    new_dirs = run_dirs_after - run_dirs_before
+    assert len(new_dirs) == 1, f"expected exactly one new (resumed) run dir, got {new_dirs}"
+    resume_dir = tmp_path / "drhome" / "runs" / new_dirs.pop()
+    bundle = json.loads((resume_dir / "review-bundle.json").read_text())
+    assert bundle["diff"]["base_sha"] == cut_point                    # the worktree's TRUE cut point...
+    assert bundle["diff"]["base_sha"] != branch_tip                   # ...never the branch tip
+
+
 def test_pr_stage_pr_create_reuses_existing_pr_on_retry_no_duplicate(tmp_path):
     """Criterion 5 (idempotent create): a `pr create` that fails to report back (as if the branch's PR
     was created server-side but the acknowledgment was lost) is not retried into a duplicate — the next

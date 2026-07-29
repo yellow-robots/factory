@@ -402,7 +402,10 @@ def _cli_last_record(args):
     and locates the originating run from. Prints one JSON object: `{"found": false}` when the PR carries
     no merge record at all; `{"found": true, "malformed": true}` when the last one can't be parsed
     (fail-closed — the caller must refuse rather than guess); otherwise `{"found": true, "malformed":
-    false, "run_id", "decision", "failed_condition", "mode"}` from the parsed record."""
+    false, "run_id", "decision", "failed_condition", "mode", "base_sha", "head_sha"}` from the parsed
+    record. `base_sha`/`head_sha` (issue #319) let the caller judge whether the record itself carries a
+    malformed shape (its base_sha equal to its head_sha, or a base_sha that is not an ancestor of the
+    PR's live head) BEFORE reusing it — a record can parse cleanly and still be malformed this way."""
     comments = _read_json(args.comments_file)
     if isinstance(comments, dict):
         comments = comments.get("comments", [])
@@ -420,6 +423,8 @@ def _cli_last_record(args):
         "decision": rec.get("decision"),
         "failed_condition": rec.get("failed_condition"),
         "mode": rec.get("mode"),
+        "base_sha": rec.get("base_sha"),
+        "head_sha": rec.get("head_sha"),
     }))
     return 0
 
