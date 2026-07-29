@@ -640,7 +640,7 @@ for x in v:
     out.write(x.encode() + b"\x00")
 ' "$1" 2>/dev/null
 }
-MF_TESTPATHS_NEEDS_INFO=""; MF_ARTIFACTGLOBS_NEEDS_INFO=""; MF_CHECKCMD_NEEDS_INFO=""
+MF_TESTPATHS_NEEDS_INFO=""; MF_ARTIFACTGLOBS_NEEDS_INFO=""; MF_CHECKCMD_NEEDS_INFO=""; MF_STAGECONDUCT_NEEDS_INFO=""
 # check_cmd is required (issue #275): the built-in pytest fallback is gone, so a manifest that declares
 # no check_cmd bounces here rather than silently guessing a test command. Judged on the manifest ALONE —
 # an environment CHECK_CMD is a session override of a DECLARED gate, never a substitute for registration
@@ -661,6 +661,50 @@ case "${_ag[0]:-ABSENT}" in
   ABSENT) : ;;   # keep the default
   MALFORMED:*) MF_ARTIFACTGLOBS_NEEDS_INFO="manifest key 'artifact_globs' is rejected (value: ${_ag[0]#MALFORMED:}) — artifact_globs must be a non-empty TOML array of non-empty glob-pattern strings: none absolute (no leading '/'), none containing a '..' path component, no empty-string element" ;;
   OK) ARTIFACT_GLOBS=("${_ag[@]:1}"); ARTIFACT_GLOBS_SOURCE=manifest ;;
+esac
+# stage_conduct (issue #312): a repo's own per-command conduct numbers (real durations, this repo's
+# timeout values — NOT the generic conduct rules, which already live in the stage charter, post-#307,
+# and are never restated here), delivered to every stage on the task-prompt/stdin channel (below), never
+# argv (issue #121's channel contract: a conduct table names commands by design, so it must travel where
+# the harness already treats repo-authored text as inert data, not a command line to pattern-match).
+# Typed emission via a DEDICATED python parse (not _read_manifest_array above): a plain non-empty array
+# of non-empty strings, with none of _read_manifest_array's path-safety checks (a conduct line is prose,
+# not a path) but ONE check that key lacks — parse-time content screening against the four routed stub
+# literals the shared test harness's classifier keys on (tests/harness/contract.md: TESTER, REVIEWER,
+# "tests FAIL", "REQUESTED CHANGES") — a declared line containing one would misroute every stage's
+# classification, not just its own, so the ban is enforced here, fail-closed, not left advisory.
+_read_stage_conduct(){
+  printf '%s' "$MF_RAW" | python3 -c '
+import sys, tomllib
+d = tomllib.loads(sys.stdin.read())
+out = sys.stdout.buffer
+key = "stage_conduct"
+if key not in d:
+    out.write(b"ABSENT\x00"); sys.exit(0)
+v = d[key]
+def bad(x):
+    return not isinstance(x, str) or x == ""
+if not isinstance(v, list) or not v or any(bad(x) for x in v):
+    out.write(("MALFORMED:" + repr(v)).encode() + b"\x00"); sys.exit(0)
+stubs = ("TESTER", "REVIEWER", "tests FAIL", "REQUESTED CHANGES")
+for x in v:
+    if any(s in x for s in stubs):
+        out.write(("STUBHIT:" + x).encode() + b"\x00"); sys.exit(0)
+out.write(b"OK\x00")
+for x in v:
+    out.write(x.encode() + b"\x00")
+' 2>/dev/null
+}
+STAGE_CONDUCT_BLOCK=""
+mapfile -d '' -t _sc < <(_read_stage_conduct)
+case "${_sc[0]:-ABSENT}" in
+  ABSENT) : ;;   # no table declared -> stage prompts are byte-identical to today
+  MALFORMED:*) MF_STAGECONDUCT_NEEDS_INFO="manifest key 'stage_conduct' is rejected (value: ${_sc[0]#MALFORMED:}) — stage_conduct must be a non-empty TOML array of non-empty strings" ;;
+  STUBHIT:*) MF_STAGECONDUCT_NEEDS_INFO="manifest key 'stage_conduct' is rejected — a declared line contains a routed stub literal (TESTER, REVIEWER, \"tests FAIL\", or \"REQUESTED CHANGES\" — tests/harness/contract.md's stage classifier keys on these) and would misroute stage classification: ${_sc[0]#STUBHIT:}" ;;
+  OK)
+    _sc_lines=("${_sc[@]:1}")
+    STAGE_CONDUCT_BLOCK="$(printf 'Per-repo stage conduct (source: .yr/factory.toml, key stage_conduct):\n%s' "$(printf '%s\n' "${_sc_lines[@]}")")"
+    ;;
 esac
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
@@ -780,6 +824,7 @@ NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$MF_ARTIFACTGLOBS_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_ARTIFACTGLOBS_NEEDS_INFO"
 [ -n "$MF_CHECKCMD_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKCMD_NEEDS_INFO"
 [ -n "$MF_CHECKTIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKTIMEOUT_NEEDS_INFO"
+[ -n "$MF_STAGECONDUCT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_STAGECONDUCT_NEEDS_INFO"
 
 # ---- slug + branch ----
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
@@ -1302,6 +1347,10 @@ stage_fail_msg(){   # $1 = stage label, $2 = log file, $3 = exit code, $4 = 1 if
   fi
 }
 SPEC="$(printf 'GitHub issue #%s: %s\n\n%s' "$ISSUE" "$TITLE" "$BODY")"
+# stage_conduct (issue #312): appended to the task prompt (never argv — issue #121's channel contract),
+# so every `claude -p` stage below (implement/test/repair/review — all built from $SPEC) receives it on
+# stdin. Absent key -> STAGE_CONDUCT_BLOCK is empty -> SPEC is byte-identical to today, pinned.
+[ -n "$STAGE_CONDUCT_BLOCK" ] && SPEC="$(printf '%s\n\n%s' "$SPEC" "$STAGE_CONDUCT_BLOCK")"
 
 # ---- stage charter (issue #50): the confinement contract every stage runs under, in every target repo —
 # appended (by run_stage) to each stage's role prompt so a stage building a foreign repo still gets it, not

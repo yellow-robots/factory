@@ -140,8 +140,16 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   the tester stage's only legal write surface, `artifact_globs` (default `["__pycache__/", "*.pyc"]`) is
   the boundary guard's build-artifact forgiveness set — both TOML arrays of non-empty, repo-relative
   strings (none absolute, none containing `..`), a rejected declared value blocking fail-closed naming
-  the value, never silently falling back to the default. The **sentinel** kill switch (host file) blocks
-  any merge if present — see [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
+  the value, never silently falling back to the default. `stage_conduct` (issue #312) is a TOML array of
+  non-empty strings — a repo's own per-command conduct numbers (real durations, this repo's timeout
+  values; the generic conduct rules already live in the stage charter, post-#307, and are never
+  restated) — delivered to every `claude -p` stage appended to the task prompt on stdin, under a
+  one-line header naming the source manifest, never on argv (issue #121's channel contract); a declared
+  line containing one of the shared test harness's four routed stub literals
+  (`tests/harness/contract.md`: `TESTER`, `REVIEWER`, `tests FAIL`, `REQUESTED CHANGES`) is rejected at
+  parse time, fail-closed, naming the offending line; absent key, byte-identical stage prompts to today
+  (pinned). The **sentinel** kill switch (host file) blocks any merge if present — see
+  [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
 - **Commits** credit the authoring model, never a hardcoded name: the runner stamps the body
   (`dev-runner, <model-id>`); an attended commit ends with
   `Co-Authored-By: <authoring model> <noreply@anthropic.com>`.
