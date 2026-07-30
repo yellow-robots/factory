@@ -73,10 +73,14 @@ per-path vocabulary check — alien type, alien status, or an alien frontmatter 
 `_closed_keys_for`'s set for the doc's location; (4) a **bare** `§`-style section-anchor reference in a
 doc's body — a dead reference the brain cannot resolve — steering toward the two native anchor forms
 Obsidian actually resolves: a heading link (`[[Note#Heading]]`) or a block reference (`[[Note#^blockid]]`).
-A `§N` *inside* a wikilink is deliberately not a finding: `[[Note#1. Heading|§1]]` is the sanctioned
+A `§N` in a wikilink's **alias** is deliberately not a finding: `[[Note#1. Heading|§1]]` is the sanctioned
 repair — a native anchor, aliased so the prose still reads `§1` — and flagging it would make a repaired
-doc indistinguishable from a broken one, leaving the steer's own recommended form unreachable. This
-fourth class is wired into BOTH surfaces: integrity mode's sweep, and the single-doc draft gate below.
+doc indistinguishable from a broken one, leaving the steer's own recommended form unreachable. Only the
+alias slot is exempt, and only on a single line: the target/anchor slot stays visible to the scan, so a
+*wrong* repair (`[[Note#§4]]`, `[[Note#99. No Such Heading|§99]]`) still reports — this scan is the only
+gate on a heading anchor anywhere in the repo, since `check_links` reads only `source_*` frontmatter and
+strips `#anchor` before resolving. This fourth class is wired into BOTH surfaces: integrity mode's sweep,
+and the single-doc draft gate below.
 
 This is an attended-session check like its siblings: advisory-first, wired into nothing.
 
@@ -148,23 +152,49 @@ def _legacy_reason(meta, is_ideas=False):
 
 
 _SECTION_ANCHOR_RE = re.compile(r"§\d+")
+# The ALIAS slot of a single-line wikilink — deliberately NOT `_WIKILINK_RE`. Two reasons, both
+# load-bearing (see `_section_anchor_findings`): this must never swallow the target/anchor slot, and
+# it must not match across newlines (an Obsidian wikilink cannot, so an unbalanced `[[` must not be
+# allowed to delete the rest of the document). `_WIKILINK_RE` is a permissive *finder* whose
+# over-matching is harmless to its own consumer; this is a *suppressor* feeding a gate, where
+# over-matching is a silent false negative. Same shape, opposite error tolerance — so, separate.
+_ALIAS_SPAN_RE = re.compile(r"\[\[[^\]\n]*\|([^\]\n]*)\]\]")
 _ANCHOR_STEER = ("dead reference the brain cannot resolve — use a native anchor instead: a heading "
-                  "link ([[Note#Heading]]) or a block reference ([[Note#^blockid]])")
+                 "link ([[Note#Heading]]) or a block reference ([[Note#^blockid]]), aliased to keep "
+                 "the reading (e.g. [[Note#2. Mechanism map|§2]]). The heading text must match a "
+                 "real heading — [[Note#§2]] just moves the dead reference inside the brackets")
+
+
+def _blank_alias(m):
+    """Replace a matched wikilink's alias with spaces, keeping the rest of the span verbatim.
+
+    Spaces rather than deletion so offsets are preserved and the characters either side of the link
+    cannot be concatenated into a reference that was never written (`Section §[[Note]]4` must not
+    become `Section §4`).
+    """
+    span, base = m.group(0), m.start()
+    lo, hi = m.start(1) - base, m.end(1) - base
+    return span[:lo] + " " * (hi - lo) + span[hi:]
 
 
 def _section_anchor_findings(body):
-    """One message per distinct BARE `§N`-style anchor reference in `body`, steering toward the two
+    """One message per distinct BARE `§N`-style anchor reference in `body`, steering toward the
     native anchor forms Obsidian actually resolves. Shared by both surfaces: the draft gate and
     integrity mode.
 
-    A `§N` inside a wikilink is NOT a finding. `[[Note#1. Heading|§1]]` is the *sanctioned repair*
-    (the house style — the vault's own clinical framework already uses it): a native anchor Obsidian
-    resolves, aliased so the prose keeps reading `§1`. Scanning raw body text would flag the very
-    form the steer asks for, making a correctly-repaired doc indistinguishable from a broken one and
-    leaving no way to reach zero — so wikilink spans are removed before the scan and only prose-bare
-    references, which are genuinely unresolvable, survive it.
+    A `§N` in a wikilink's ALIAS is not a finding: `[[Note#1. Heading|§1]]` is the *sanctioned
+    repair* (the house style — the vault's own clinical framework already uses it), a native anchor
+    Obsidian resolves, aliased so the prose keeps reading `§1`. Scanning raw body text would flag
+    the very form the steer asks for, making a correctly-repaired doc indistinguishable from a
+    broken one and leaving no way to reach zero.
+
+    Only the alias is blanked. Suppressing the whole span — as this first shipped — hides the
+    *wrongly* repaired doc too: `[[Note#§4]]` and `[[Note#99. No Such Heading|§99]]` are dead
+    references, and NOTHING else in this repo validates a heading anchor (`check_links` reads only
+    `source_*` frontmatter and strips `#anchor` before resolving), so this scan is their only
+    gate. Blanking the alias alone leaves target and anchor visible, so a mis-repair still reports.
     """
-    scanned = _WIKILINK_RE.sub("", body)
+    scanned = _ALIAS_SPAN_RE.sub(_blank_alias, body)
     seen = []
     for m in _SECTION_ANCHOR_RE.finditer(scanned):
         ref = m.group(0)

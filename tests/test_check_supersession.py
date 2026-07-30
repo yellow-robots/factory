@@ -1441,6 +1441,91 @@ def test_bare_anchor_still_flagged_when_a_repaired_one_sits_beside_it(tmp_path):
     assert not any("'§2'" in l for l in lines)
 
 
+# --- only the ALIAS is exempt, and only on one line (cold review of PR #338, 2026-07-30) ----------
+# The first cut suppressed the whole wikilink span. That hid the *wrongly* repaired doc too, and an
+# unbalanced `[[` deleted everything to the next `]]`. Every test below fails against that version;
+# the four above pass against it, which is why they did not pin the claim.
+
+def test_dead_anchor_in_target_slot_is_still_flagged(tmp_path):
+    """`[[Note#§4]]` only moves the dead reference inside the brackets — it must still report.
+    Nothing else in the repo validates a heading anchor, so this scan is its only gate."""
+    body = "# Body\n\nSee [[factory-map#§4]] for details.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("§4" in l for l in lines)
+
+
+def test_dead_anchor_in_target_slot_of_an_aliased_link_is_still_flagged(tmp_path):
+    """The likely mis-repair: aliased so it *looks* sanctioned, but the anchor is the dead glyph."""
+    body = "# Body\n\nSee [[factory-map#§4|§4]] for details.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("§4" in l for l in lines)
+
+
+def test_unbalanced_open_bracket_does_not_swallow_a_later_bare_anchor(tmp_path):
+    """An Obsidian wikilink cannot span newlines, so a stray `[[` must not delete the rest of the
+    document. The docs most likely to contain a stray `[[` are the docs about this very rule."""
+    body = "# Body\n\nA wikilink opens with `[[`. The old §4 refs are still bare. Close with `]]`.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("§4" in l for l in lines)
+
+
+def test_bare_anchor_between_two_repaired_links_is_still_flagged(tmp_path):
+    """Bare BETWEEN two links — the case an implementation that stops at the last `]]` would miss."""
+    body = "# Body\n\n[[a#1. X|§1]] then §7 is bare then [[b#2. Y|§2]].\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("§7" in l for l in lines)
+    assert not any("'§1'" in l or "'§2'" in l for l in lines)
+
+
+def test_embedded_link_alias_is_exempt_like_any_other(tmp_path):
+    body = "# Body\n\n![[factory-map#2. Mechanism map|§2]]\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert not any("§-style anchor reference" in l for l in lines)
+
+
+def test_alias_blanking_does_not_fabricate_a_reference(tmp_path):
+    """Blanked with spaces, not deleted: removing the span outright would splice `§` and `4` into a
+    `§4` that appears nowhere in the document."""
+    body = "# Body\n\nSection §[[Note]]4 mentions the rule.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert not any("§-style anchor reference" in l for l in lines)
+
+
+def test_many_aliases_and_many_bare_dedup_independently(tmp_path):
+    body = ("# Body\n\n[[a#1. X|§1]] [[b#2. Y|§2]] and bare §7, §8, §7 again, "
+            "plus [[c#3. Z|§1]].\n")
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    anchor_lines = [l for l in lines if "§-style anchor reference" in l]
+    assert len(anchor_lines) == 2
+    assert any("'§7'" in l for l in anchor_lines)
+    assert any("'§8'" in l for l in anchor_lines)
+
+
+def test_draft_gate_flags_a_dead_anchor_in_the_target_slot(tmp_path):
+    """Both surfaces inherit the narrowed exemption, not just integrity mode."""
+    text = _doc(type_="task", body="# Body\n\nSee [[factory-map#§4|§4]].\n")
+    assert any("§4" in e for e in check_draft(text, vault_root=tmp_path))
+
+
+def test_steer_names_the_aliased_form(tmp_path):
+    """The steer must name the aliased shape: naming only [[Note#Heading]] invites the mechanical
+    `[[Note#§4]]`, which is exactly the wrong repair."""
+    text = _doc(type_="task", body="# Body\n\nSee §4.\n")
+    errors = check_draft(text, vault_root=tmp_path)
+    assert any("|§2]]" in e for e in errors)
+
+
 # =====================================================================================
 # integrity mode — exit-code matrix and census headline (issue #318)
 # =====================================================================================
