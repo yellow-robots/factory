@@ -9,6 +9,8 @@
 
 A consequence worth stating plainly: **shipping freezes the why.** When an iteration lands, its `product-spec` / `feature-rfc` / `technical-rfc` become a dated, immutable record. We never re-edit them to match a later reality — a later change gets its *own* later iteration. (So "amend RFC 0002 to match the runner that was actually built" is the wrong move: the drift is recorded by the *next* iteration, not by rewriting the frozen one.)
 
+**The freeze protects the argument, not the defects (the human's ruling, 2026-07-30).** What is frozen is the *decision and the reasoning that supported it* — the WHAT, the WHY, the alternatives weighed. It was never a guarantee that a broken artifact stays broken. A **functional defect** — a dead link, an anchor the brain cannot resolve, malformed or property-less frontmatter, a wikilink orphaned by a rename — is **repaired in place, in any doc, however frozen**: the repair changes nothing about the spirit of the document, it makes the document work. That is a *repair*, categorically distinct from the *rewrite* the paragraph above forbids, and the test between them is simple: **would the edit change what the document says, or only whether a reader can follow it?** Changing what it says is a new iteration; making it navigable again is maintenance, and needs no iteration, no supersession, and no tombstone. A frozen doc is a historical record, and we keep historical records legible.
+
 ## The unit: an iteration
 
 - **We work in iterations.** An iteration is one coherent change to the product, from intent to shipped code.
