@@ -746,3 +746,68 @@ def test_technical_rfc_check_gate_parity_reminder_not_duplicated():
         "templates/technical-rfc.md states check_cmd more than once — the check-gate parity "
         "reminder should appear once, in the authoring-scaffold checklist"
     )
+
+
+# ---------------------------------------------------------------------------
+# technical-rfc.md — the open-question grammar teaching (issue #343): the
+# authoring-scaffold states the YR-OPEN-QUESTION: marker grammar and the
+# rule it enforces (epic-gate mechanical block on promotion), inert by
+# construction (indented + inline-backticked), never inside the filed
+# ISSUE BODY that becomes the epic body verbatim.
+# ---------------------------------------------------------------------------
+
+def test_technical_rfc_scaffold_states_open_question_grammar():
+    section = _technical_rfc_checklist_section()
+    assert "YR-OPEN-QUESTION:" in section, (
+        "templates/technical-rfc.md scaffold does not state the open-question marker grammar"
+    )
+    lower = section.lower()
+    assert "column 0" in lower, (
+        "templates/technical-rfc.md scaffold does not state the column-0 anchoring of the "
+        "open-question grammar"
+    )
+    assert "block" in lower and "promot" in lower, (
+        "templates/technical-rfc.md scaffold does not state that the marker blocks promotion"
+    )
+
+
+def test_technical_rfc_open_question_grammar_not_in_filed_issue_body():
+    """The grammar is authoring scaffold, not filed content — it must not land inside the ISSUE
+    BODY markers that get pasted to GitHub as the epic body (which the epic-gate then scans)."""
+    text = _text(TECHNICAL_RFC)
+    start = text.find("ISSUE BODY · file from here")
+    end = text.find("END ISSUE BODY")
+    assert start != -1 and end != -1 and start < end, (
+        "templates/technical-rfc.md is missing its ISSUE BODY markers"
+    )
+    issue_body = text[start:end]
+    assert "YR-OPEN-QUESTION:" not in issue_body, (
+        "templates/technical-rfc.md open-question grammar leaked into the filed ISSUE BODY section"
+    )
+
+
+def test_technical_rfc_open_question_teaching_lines_are_inert():
+    """Every scaffold line mentioning the marker must be inert by construction: never a raw line
+    beginning the marker at column 0 (indentation is the guarantee here, not fencing)."""
+    section = _technical_rfc_checklist_section()
+    teaching_lines = [ln for ln in section.splitlines() if "YR-OPEN-QUESTION:" in ln]
+    assert teaching_lines, (
+        "templates/technical-rfc.md scaffold no longer mentions the open-question marker"
+    )
+    for line in teaching_lines:
+        assert not line.startswith("YR-OPEN-QUESTION:"), (
+            f"templates/technical-rfc.md open-question teaching line fires the grammar at "
+            f"column 0: {line!r}"
+        )
+
+
+def test_technical_rfc_open_question_worked_example_is_backticked_and_indented():
+    """At least one teaching line must be a worked example that is BOTH indented and
+    inline-backticked, so it is inert by placement (scaffold-only) as well as by grammar."""
+    section = _technical_rfc_checklist_section()
+    worked = [ln for ln in section.splitlines()
+              if "YR-OPEN-QUESTION:" in ln and ln.startswith("  ") and "`" in ln]
+    assert worked, (
+        "templates/technical-rfc.md scaffold is missing an indented, inline-backticked worked "
+        "example of the open-question marker"
+    )

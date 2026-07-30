@@ -105,6 +105,10 @@ human sign-off, and open questions never ride the epic — an unresolved WHAT-ca
 back into the governing design doc. For the review discipline that feeds this gate, see
 [`reviewing.md`](reviewing.md).
 
+**The epic-gate enforces this mechanically.** A filed epic-body line beginning `YR-OPEN-QUESTION:` at
+column 0 is an un-dispositioned open question and blocks promotion of every slice in the epic until that
+line is rewritten off the grammar (its disposition) or removed — presence only, never a content judgment.
+
 ---
 
 ### 4. task
