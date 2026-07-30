@@ -842,14 +842,89 @@ LINT_FIX_CMD="${LINT_FIX_CMD:-${MF_LINT_FIX_CMD:-}}"
 # LENS_CMD is off (byte-identical to today: no run, no artifact, no comment). env overrides manifest as ever.
 LENS_CMD="${LENS_CMD:-${MF_LENS_CMD:-}}"
 
-# ---- fetch issue (state/title/body) ----
-ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state,issueType 2>/dev/null)" \
+# ---- fetch issue (state/title/body/comments/parent) ----
+ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state,issueType,comments,parent 2>/dev/null)" \
   || die "could not fetch issue #$ISSUE from $REPO"
 TITLE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("title","") or "")')"
 BODY="$(printf '%s' "$ISSUE_JSON"  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("body","") or "")')"
 STATE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state","") or "")')"
 # native Issue Type name ("Task"/"Bug"/"Feature"), or "" when the issue is untyped (issueType: null).
 ITYPE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; t=json.load(sys.stdin).get("issueType") or {}; print((t.get("name","") if isinstance(t,dict) else "") or "")')"
+
+# ---- standalone task gates record (issue #347) ----
+# A Task with no native sub-issue parent carries no governing design above it, so its own body IS that
+# design and earns the design gates directly (skills/factory/references/closing.md — "Promote to
+# Ready"): an independent review verdict + an architect fit verdict, recorded on the trail before
+# promote. This re-checks that structurally at claim time. Fail-closed both ways: an absent `parent` key
+# reads as standalone (more tasks checked, not fewer); an absent `comments` key reads as no record
+# (bounce). A parent of ANY Issue Type exempts the child — only the native sub-issue relationship
+# matters. Read-only: computes a message, never writes; flows into the existing NEEDS_INFO bounce below,
+# adding no exit path of its own.
+TASK_GATES_NEEDS_INFO="$(printf '%s' "$ISSUE_JSON" | python3 -c '
+import sys, json
+
+MARKER = "YR-TASK-GATES"
+FIELDS = ("review", "fit", "who")
+# a bare placeholder in fit: cannot stand in for an architect verdict; a semantically-empty verdict
+# phrased as prose still passes -- this refuses only dressed-up exemptions, not bad judgment.
+PLACEHOLDERS = {"n/a", "none", "exempt", "skipped", "tbd", "-"}
+
+
+def extract(body, key):
+    prefix = key + ":"
+    for line in body.splitlines():
+        s = line.strip()
+        if s[:len(prefix)].lower() == prefix:
+            return s[len(prefix):].strip()
+    return ""
+
+
+def has_marker(body):
+    # whole-line equality after stripping only trailing whitespace -- no leading-whitespace tolerance,
+    # and trailing text on the marker line is never accepted either (deliberately stricter than the
+    # YR-EPIC-APPROVAL prefix rule; the two anchoring rules are not unified).
+    return any(line.rstrip() == MARKER for line in body.splitlines())
+
+
+def well_formed(body):
+    if not has_marker(body):
+        return False
+    if not all(extract(body, f) for f in FIELDS):
+        return False
+    if extract(body, "fit").strip().lower() in PLACEHOLDERS:
+        return False
+    return True
+
+
+def failure_reason(bodies):
+    candidates = [b for b in bodies if has_marker(b)]
+    if not candidates:
+        return "no comment has a line that is exactly `YR-TASK-GATES`"
+    body = candidates[0]
+    missing = [f + ":" for f in FIELDS if not extract(body, f)]
+    if missing:
+        return "the YR-TASK-GATES record is missing " + ", ".join(missing)
+    return "the YR-TASK-GATES record has a fit: field that is a placeholder, not an architect verdict"
+
+
+d = json.load(sys.stdin)
+itype = d.get("issueType") or {}
+itype = (itype.get("name", "") if isinstance(itype, dict) else "") or ""
+parent = d.get("parent")
+has_parent = isinstance(parent, dict)
+
+if itype.strip().lower() != "task" or has_parent:
+    print("")
+else:
+    bodies = [(c.get("body") or "") for c in (d.get("comments") or []) if isinstance(c, dict)]
+    if any(well_formed(b) for b in bodies):
+        print("")
+    else:
+        reason = failure_reason(bodies)
+        print("issue #" + sys.argv[1] + " has no well-formed YR-TASK-GATES record on its trail (" + reason + ") \
+— a standalone task with no native sub-issue parent must carry review:/fit:/who: fields on a comment \
+whose own line is exactly YR-TASK-GATES before it can be claimed (skills/factory/references/authoring.md)")
+' "$ISSUE")"
 
 # ---- find the project item id + current Status/Reason (both project-item-resident, RFC 0003) ----
 ITEMS_JSON="$("$GH_BIN" project item-list "$PROJECT_NUMBER" --owner "$OWNER" --limit 500 --format json 2>/dev/null)" \
@@ -914,6 +989,7 @@ NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$MF_CHECKTIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKTIMEOUT_NEEDS_INFO"
 [ -n "$MF_CHECKIDLETIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKIDLETIMEOUT_NEEDS_INFO"
 [ -n "$MF_STAGECONDUCT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_STAGECONDUCT_NEEDS_INFO"
+[ -n "$TASK_GATES_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$TASK_GATES_NEEDS_INFO"
 
 # ---- slug + branch ----
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \

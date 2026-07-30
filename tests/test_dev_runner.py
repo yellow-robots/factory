@@ -68,12 +68,23 @@ def _stubs(binp):
     _exec(binp / "check.sh", CHECK_STUB)
 
 
+_HAS_PARENT = object()   # sentinel: "give it a default parent", vs. an explicit parent=None
+
+
 def _issue(tmp, *, number=7, title="Do a thing", body="### Acceptance criteria\n- [ ] it works\n",
-           state="OPEN", issue_type="Task"):
+           state="OPEN", issue_type="Task", parent=_HAS_PARENT, comments=None):
     p = tmp / "issue.json"
     # issueType mirrors `gh issue view --json issueType`: an object with a .name, or null when untyped.
+    # parent mirrors `gh issue view --json parent`: null on a standalone issue, an object carrying
+    # `number` on a native sub-issue child. Every caller that doesn't pass `parent` gets a default child
+    # shape (issue #347's parentless-standalone-gates condition never fires for it), so every existing
+    # suite exercises exactly the paths it exercised before #347; a test exercising the new standalone
+    # shape opts in explicitly by passing parent=None (and its own `comments` list).
+    if parent is _HAS_PARENT:
+        parent = {"number": number + 1000}
     d = {"number": number, "title": title, "state": state, "body": body,
-         "issueType": ({"name": issue_type} if issue_type else None)}
+         "issueType": ({"name": issue_type} if issue_type else None),
+         "parent": parent, "comments": (list(comments) if comments is not None else [])}
     p.write_text(json.dumps(d))
     return p
 
