@@ -211,9 +211,11 @@ A component (or the org — *Structure*) may grow an **ideas-backlog**: the name
 - **The task-delivered arm (ruled 2026-07-21).** A seed whose intent ships through a **standalone task** has no vault-side absorber; its pair is `status: superseded` + `crossed_to: owner/repo#N` — the task Issue, the same crossing key the spine carries, and like every crossing it is **stamped at the filing itself**: the session that files the task stamps the seed then, so the later flip is mechanical when the task closes and Pending never carries delivered work. The sweep accepts the arm for ideas-notes only — a well-formed `crossed_to` completes the backward pair, a malformed one is a hard finding, neither key stays the standing advisory. `superseded_by` and `crossed_to` are alternative arms of the same pair, never both required.
 - **The direct lane (ruled 2026-07-28).** A seed does not have to wait for a spec session to earn its
   task. The direct lane runs **seed → drafted task → independent adversarial review with dispositions
-  on the trail → file + task-delivered arm stamp → human promote** — the review discipline of
-  [`reviewing.md`](reviewing.md) stands in for a design session's scrutiny, and filing the task is the
-  same stamping act the arm above already names. A **governing design is earned instead** — a
+  on the trail → architect fit check → file + task-delivered arm stamp → human promote** — the review
+  discipline of [`reviewing.md`](reviewing.md) stands in for a design session's scrutiny, the fit check
+  is [`architect.md`](architect.md)'s earn-test firing on the task body per
+  [`closing.md`](closing.md)'s promote checklist, and filing the task is the same stamping act the arm
+  above already names. A **governing design is earned instead** — a
   feature-rfc, or the spec that would mine the seed — when the idea has **multi-slice shape, cross-repo
   reach, or is an approach worth arguing over**: the same earned-test [`authoring.md`](authoring.md)'s
   feature-rfc step already states; an idea clearing that bar waits for a design session rather than
