@@ -58,7 +58,7 @@ shadow streak.
 
 ## Stage conduct
 
-Every stage prompt carries one confinement contract — the **stage charter** (`tools/dev-runner.sh:1276`),
+Every stage prompt carries one confinement contract — the **stage charter** (`tools/dev-runner.sh:1591`),
 appended by `run_stage` to each stage's role prompt so a stage building a foreign repo gets it too, not
 just the factory's own. It is the enforcing surface; this reference states its intent, not its text.
 Four of its rules bear directly on how a stage's own behavior should be read against the rest of this
