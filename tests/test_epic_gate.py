@@ -117,9 +117,11 @@ def _status_select(name, updated_at=None):
 
 
 def _child(number, *, itype="Task", state="OPEN", pi_id=None, project_number=1,
-           status=None, reason=None, repo=REPO, updated_at=None):
+           status=None, reason=None, repo=REPO, updated_at=None, body=""):
     """A sub-issue node, as EPIC_QUERY returns it. `pi_id` present => the child is on our board.
-    `updated_at` sets the Status field value's `updatedAt` (when the claim's age is measured from)."""
+    `updated_at` sets the Status field value's `updatedAt` (when the claim's age is measured from).
+    `body` is the child's OWN issue body (issue #345's EPIC_QUERY addition) — distinct from the epic's
+    own body set on `_epic_detail`; defaults to empty so every pre-#345 fixture stays byte-identical."""
     pis = []
     if pi_id is not None:
         pis.append({
@@ -133,6 +135,7 @@ def _child(number, *, itype="Task", state="OPEN", pi_id=None, project_number=1,
         "state": state,
         "issueType": _select(itype),
         "repository": {"nameWithOwner": repo},
+        "body": body,
         "projectItems": {"nodes": pis},
     }
 
@@ -866,6 +869,238 @@ def test_first_open_child_not_task_raises_and_does_not_skip():
     epic_comments = [c for c in fake.comments if c[1] == "100"]
     assert len(epic_comments) == 1
     assert "#101" in epic_comments[0][2] and "task" in epic_comments[0][2].lower()
+
+
+# ============================================================================
+# Issue #345 — the gate-touching declaration: a first-open child whose OWN body carries a line
+# beginning `YR-GATE-TOUCHING:` at column 0 with a non-empty reason refuses fail-closed
+# (Reason=Blocked on the epic), promoting nothing and touching no child's state. Runs immediately
+# after the Type gate (above) and BEFORE the `_pi_node` lookup — a child not yet on the board must
+# still refuse. The declaration is read from the CHILD's own body only, never the epic's (whose
+# per-task context slices legitimately carry the same prefix describing that very child).
+# ============================================================================
+
+GATE_TOUCHING_MARKER = "YR-EPIC-GATE: gate-touching"
+
+
+def _run_gate_touching(first_child_body, *, second_child_pi="PI-102", epic_body="",
+                        comments=None, epic_reason=None):
+    """`comments`, when given, are EXTRA comments alongside a valid approval record (never a
+    replacement for it) -- this section is about the gate-touching site specifically, so every
+    fixture here already clears the approval-record check upstream of it."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", reason=epic_reason)]
+    children = [_child(101, pi_id="PI-101", status="Backlog", body=first_child_body)]
+    if second_child_pi is not None:
+        children.append(_child(102, pi_id=second_child_pi, status="Backlog"))
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD] + list(comments if comments is not None else []),
+        body=epic_body,
+        children=children)}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    return fake
+
+
+def test_gate_touching_declaration_blocks_promotion_and_raises_blocked():
+    fake = _run_gate_touching("YR-GATE-TOUCHING: raises check_timeout's default\n")
+
+    # nothing promoted at all -- not #101, not a skip-ahead to #102
+    assert _status_ready_edits(fake) == []
+    assert not any(e[0] == "PI-101" for e in fake.edits)
+    assert not any(e[0] == "PI-102" for e in fake.edits)
+    assert not any(c[1] == "101" for c in fake.comments)
+    assert not any(c[1] == "102" for c in fake.comments)
+
+    # epic raised to Blocked, exactly one comment on the epic
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    text = epic_comments[0][2]
+    assert text.splitlines()[0] == GATE_TOUCHING_MARKER
+    assert "#101" in text
+    assert "`raises check_timeout's default`" in text          # the reason, backticked
+    assert "attended" in text.lower()                            # the rule: gate evolution is attended work
+    # the refusal never reproduces the marker at column 0 (would satisfy its own detector)
+    assert not any(line.startswith("YR-GATE-TOUCHING:") for line in text.splitlines())
+
+
+def test_gate_touching_read_only_from_childs_own_body_not_the_epics():
+    """The epic BODY legitimately carries `YR-GATE-TOUCHING:` lines inside its per-task context
+    slices describing children -- reading declarations from there would false-positive on every
+    epic whose slice text names a later child's gate-touching status. The first open child's own
+    body carries no declaration here, so promotion proceeds normally."""
+    epic_body = (
+        "### Slice A -- some task\n"
+        "YR-GATE-TOUCHING: this describes a DIFFERENT slice, not child #101\n"
+    )
+    fake = _run_gate_touching("Ordinary task body, no declaration here.", epic_body=epic_body,
+                               second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_gate_touching_fires_even_when_child_not_yet_on_the_board():
+    """The check runs BEFORE the `_pi_node` lookup, which early-returns (no writes, no comment) for
+    a child not yet on the board. A gate-touching child in exactly that state must still refuse --
+    proving the check does not sit downstream of a project item it never reads."""
+    fake = _run_gate_touching("YR-GATE-TOUCHING: adds a new lint gate\n", second_child_pi=None)
+    # no board item to have edited for #101 (it carries no pi_id) -- but the epic itself still raises
+    assert not any(e[0] == "PI-101" for e in fake.edits)
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == GATE_TOUCHING_MARKER
+
+
+def test_gate_touching_runs_after_the_type_gate_not_a_task_wins():
+    """When the first open child is BOTH not-a-Task and carries a gate-touching declaration, the
+    Type gate (which runs first) refuses with its own marker -- the gate-touching check never even
+    reads that child's body."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        children=[_child(101, itype="Feature", pi_id="PI-101", status="Backlog",
+                          body="YR-GATE-TOUCHING: irrelevant, this child is not even a Task\n"),
+                  _child(102, itype="Task", pi_id="PI-102", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == "YR-EPIC-GATE: not-a-task"
+
+
+# ---- false positives: indentation / inline-backticking / empty reason never fire -------------------
+
+def test_gate_touching_indented_declaration_does_not_fire():
+    fake = _run_gate_touching(" YR-GATE-TOUCHING: does one leading space still count?\n",
+                               second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_gate_touching_inline_backticked_mention_does_not_fire():
+    body = "See the `YR-GATE-TOUCHING:` grammar in authoring.md for how this gate reads a child body."
+    fake = _run_gate_touching(body, second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_gate_touching_prose_mention_does_not_fire():
+    body = "We discussed a YR-GATE-TOUCHING: line here and decided this slice doesn't need one."
+    fake = _run_gate_touching(body, second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_gate_touching_empty_reason_does_not_fire():
+    fake = _run_gate_touching("YR-GATE-TOUCHING:\n", second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_gate_touching_whitespace_only_reason_does_not_fire():
+    fake = _run_gate_touching("YR-GATE-TOUCHING:    \n", second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_gate_touching_similarly_prefixed_marker_does_not_match():
+    body = "YR-GATE-TOUCHING-ISH: a longer prefix must not match the exact grammar\n"
+    fake = _run_gate_touching(body, second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_gate_touching_fenced_declaration_still_fires_indentation_is_the_guarantee_not_fencing():
+    """A line-anchored matcher still accepts a FENCED example -- a fenced block's content lines sit
+    at column 0 same as a real marker. This documents the accepted gap, same discipline as the
+    open-question grammar's own precedent."""
+    body = "```\nYR-GATE-TOUCHING: still fires even fenced\n```\n"
+    fake = _run_gate_touching(body, second_child_pi=None)
+    assert _status_ready_edits(fake) == []
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits
+
+
+def test_technical_rfc_shipped_slot_fires_nothing_end_to_end():
+    """The technical-rfc template's shipped per-task-context slot (read from the file, not
+    retyped) must not itself fire the gate-touching grammar when pasted verbatim into a child's
+    body -- the mirror of the open-question teaching-line pin."""
+    text = (ROOT / "templates" / "technical-rfc.md").read_text(encoding="utf-8")
+    start = text.find("### Slice A")
+    end = text.find("### Slice B")
+    assert start != -1 and end != -1 and start < end, (
+        "templates/technical-rfc.md is missing its 'Slice A' / 'Slice B' per-task context markers"
+    )
+    slot = text[start:end]
+    assert "YR-GATE-TOUCHING" in slot, (
+        "templates/technical-rfc.md's Slice A scaffold no longer mentions YR-GATE-TOUCHING -- "
+        "update this test's target"
+    )
+    assert not any(line.startswith("YR-GATE-TOUCHING:") for line in slot.splitlines()), (
+        f"templates/technical-rfc.md's shipped per-task-context slot fires the gate-touching "
+        f"grammar at column 0: {slot!r}"
+    )
+
+    fake = _run_gate_touching(slot, second_child_pi=None)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]   # promotes normally, no false positive
+    assert _reason_edits(fake) == []
+
+
+# ---- idempotency + independent comment/field keying, same discipline as the sibling refusal sites --
+
+def test_gate_touching_raise_is_idempotent_across_ticks():
+    fake = _run_gate_touching("YR-GATE-TOUCHING: raises check_timeout's default\n")
+    edits_after_1, comments_after_1 = list(fake.edits), list(fake.comments)
+    assert ("EI-100", REASON_FIELD, "Blocked") in edits_after_1
+
+    _sweep(fake)                                             # identical second tick
+    assert fake.edits == edits_after_1
+    assert fake.comments == comments_after_1
+
+
+def test_gate_touching_posts_its_own_comment_under_a_stale_different_reason():
+    fake = _run_gate_touching("YR-GATE-TOUCHING: raises check_timeout's default\n",
+                               comments=[], epic_reason="Needs-info")   # stale, not this site's target
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == GATE_TOUCHING_MARKER
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits   # corrected to this site's own target
+
+
+def test_gate_touching_makes_no_field_write_when_reason_already_blocked():
+    fake = _run_gate_touching("YR-GATE-TOUCHING: raises check_timeout's default\n",
+                               comments=[], epic_reason="Blocked")
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == GATE_TOUCHING_MARKER
+    assert not any(e[0] == "EI-100" for e in fake.edits)
+
+
+def test_gate_touching_posts_no_duplicate_once_its_marker_is_on_record_but_still_corrects_a_stale_field():
+    fake = _run_gate_touching("YR-GATE-TOUCHING: raises check_timeout's default\n",
+                               comments=[GATE_TOUCHING_MARKER], epic_reason="Needs-info")
+    assert fake.comments == []
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits
+
+
+def test_gate_touching_indented_marker_in_a_comment_does_not_satisfy_the_key():
+    fake = _run_gate_touching("YR-GATE-TOUCHING: raises check_timeout's default\n",
+                               comments=[" " + GATE_TOUCHING_MARKER])
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1                             # the indent did not suppress the post
+    assert epic_comments[0][2].splitlines()[0] == GATE_TOUCHING_MARKER
+
+
+def test_gate_touching_query_requests_child_body():
+    """`EPIC_QUERY`'s `subIssues` selection must request `body` -- the field the check reads --
+    inside that selection specifically, not merely somewhere else in the query."""
+    query = epic_gate.EPIC_QUERY
+    sub_start = query.index("subIssues")
+    sub_end = query.index("projectItems", sub_start)
+    sub_issues_selection = query[sub_start:sub_end]
+    assert re.search(r"^\s*body\s*$", sub_issues_selection, re.MULTILINE), (
+        "EPIC_QUERY's subIssues selection does not request the child's own `body`"
+    )
 
 
 # ============================================================================

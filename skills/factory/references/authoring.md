@@ -109,6 +109,16 @@ back into the governing design doc. For the review discipline that feeds this ga
 column 0 is an un-dispositioned open question and blocks promotion of every slice in the epic until that
 line is rewritten off the grammar (its disposition) or removed — presence only, never a content judgment.
 
+**Gate-touching declarations — a duty of the role, not advice.** Gate evolution is attended work: the
+pipeline builds under *fixed* gates, so any slice whose mandate touches checks, CI, or the manifest gets a
+declaration in that slice's own per-task context — never in the epic's own prose, where it would go
+unread. Grammar: a line beginning `YR-GATE-TOUCHING:` at column 0 in the *slice's own filed body*, no
+leading-whitespace tolerance, carrying a non-empty reason after the prefix (e.g. a line like
+`YR-GATE-TOUCHING: raises check_timeout's default`, inline-backticked here so it doesn't fire). The
+epic-gate reads the declaration off the CHILD's own body only, never the epic's, and refuses to promote
+that child — `Reason=Blocked` on the epic, nothing promoted — until the declaration line is resolved by
+hand and the epic's Reason is cleared.
+
 **The standing-approval record — grammar and author.** The epic-gate promotes a child only once a
 **comment** on the epic's trail (never the body) carries a line beginning `YR-EPIC-APPROVAL` at column 0,
 unindented — either the block form (the marker alone on its own line, then `design:`, `review:`, and

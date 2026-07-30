@@ -54,6 +54,10 @@ created: "<YYYY-MM-DD>"
      "Context & links". It must stand alone (cite exact files); no Obsidian needed. -->
 ### Slice A — <task title>
 <!-- modules to touch · pattern to follow · integration point · the one gotcha — cite files -->
+<!-- gate-touching? if this slice changes checks, CI, or the manifest, add a line here by hand:
+     `YR-GATE-TOUCHING: <gate surface this slice touches>` — the epic-gate refuses to promote a slice
+     carrying that line; gate evolution is attended work. Leave this comment as-is (never itself a
+     declaration) when the slice doesn't touch a gate. -->
 
 ### Slice B — <task title>
 
@@ -87,6 +91,15 @@ rewritten off the grammar (its disposition) or removed — presence only, never 
 question here in the scaffold while drafting, inert by indentation, never in the body above, e.g.
   a line like `YR-OPEN-QUESTION: does the retry budget need a cap?` blocks promotion once filed —
 resolve it in the governing design doc before filing.
+
+**Gate-touching declarations.** Declaring a slice gate-touching at the crossing is a duty of the
+architect role, not advice — the pipeline builds under *fixed* gates, so a slice that touches checks, CI,
+or the manifest must be named here, not left for someone downstream to notice. The epic-gate enforces this
+mechanically: a line in the *slice's own filed body* beginning `YR-GATE-TOUCHING:` at column 0, with a
+non-empty reason, refuses promotion of that child and blocks nothing else — gate evolution is attended
+work. Add the real line by hand into the slice above when it's earned, e.g.
+  a line like `YR-GATE-TOUCHING: raises check_timeout's default` in a slice's body blocks that slice's
+promotion until a human lands the change and clears the epic's Reason.
 
 *Next stage:* **task decomposition** (`task.md`) turns each slice into a Ready Issue.
 Gate before then: **review the technical RFC** (human).
