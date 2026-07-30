@@ -2443,3 +2443,228 @@ def test_main_uses_registered_repos_for_intake(capsys, monkeypatch):
     rc = epic_gate.main()
     assert rc == 0
     assert [_flags(a)["--repo"] for a in fake.issue_list_argv] == [INTAKE_REPO_A]
+
+
+# ============================================================================
+# Issue #342 — every epic-gate refusal records itself, even under a Reason a different refusal set.
+#
+# Each of the three per-epic refusal sites (missing approval, first-open-child-not-a-Task, the
+# admission-wall epic-child bounce) must post its OWN comment keyed on the presence of its OWN marker
+# line among the epic's already-fetched comments, and make its field write keyed independently on the
+# epic's CURRENT Reason value -- so a stale Reason left behind by a *different* refusal never suppresses
+# this refusal's own comment, and a marker already on record never suppresses a still-needed field
+# correction. No test here asserts a Reason was ever cleared -- the sweep never clears one.
+# ============================================================================
+
+NO_APPROVAL_MARKER = "YR-EPIC-GATE: no-approval"
+NOT_A_TASK_MARKER = "YR-EPIC-GATE: not-a-task"
+NOT_ONBOARDED_MARKER = "YR-EPIC-GATE: not-onboarded"
+
+
+def _no_approval_setup(*, comments, epic_reason=None):
+    """An epic with an invalid/missing approval record -- site (1)."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", reason=epic_reason)]
+    epics = {100: _epic_detail(comments=comments,
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    return board, epics
+
+
+def _not_a_task_setup(*, comments, epic_reason=None):
+    """A validly-approved epic whose first open child is not a Task -- site (3)."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", reason=epic_reason)]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD] + list(comments),
+        children=[_child(101, itype="Feature", pi_id="PI-101", status="Backlog"),
+                  _child(102, itype="Task", pi_id="PI-102", status="Backlog")])}
+    return board, epics
+
+
+def _not_onboarded_setup(*, comments, epic_reason=None):
+    """A validly-approved epic whose first open (Task) child sits on a repo with no manifest -- the
+    admission wall's epic-child bounce, site (5)."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready", repo=NOT_ONBOARDED_REPO,
+                   reason=epic_reason)]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD] + list(comments),
+        children=[_child(101, pi_id="PI-101", status="Backlog", repo=NOT_ONBOARDED_REPO)])}
+    return board, epics
+
+
+# ---- each site posts its own record even though the epic already carries a Reason a DIFFERENT ----------
+# ---- refusal would have set (a stale value distinct from this site's own target) ------------------------
+
+def test_no_approval_posts_its_own_comment_under_a_stale_different_reason():
+    board, epics = _no_approval_setup(comments=["just a normal comment, no sentinel"],
+                                       epic_reason="Blocked")   # stale, not this site's own target
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NO_APPROVAL_MARKER
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits   # corrected to this site's own target
+
+
+def test_not_a_task_posts_its_own_comment_under_a_stale_different_reason():
+    board, epics = _not_a_task_setup(comments=[], epic_reason="Needs-info")   # stale, not "Blocked"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NOT_A_TASK_MARKER
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits
+
+
+def test_not_onboarded_posts_its_own_comment_under_a_stale_different_reason():
+    board, epics = _not_onboarded_setup(comments=[], epic_reason="Blocked")   # stale, not "Needs-info"
+    fake = FakeGh(board, epics, manifest_repos={})
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NOT_ONBOARDED_MARKER
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+
+
+# ---- each site makes NO field write once the Reason already holds the value it would set (the ----------
+# ---- comment still posts if its own marker is not yet on record -- the debt-hold shape, applied here) --
+
+def test_no_approval_makes_no_field_write_when_reason_already_needs_info():
+    board, epics = _no_approval_setup(comments=["just a normal comment, no sentinel"],
+                                       epic_reason="Needs-info")
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NO_APPROVAL_MARKER
+    assert not any(e[0] == "EI-100" for e in fake.edits)
+
+
+def test_not_a_task_makes_no_field_write_when_reason_already_blocked():
+    board, epics = _not_a_task_setup(comments=[], epic_reason="Blocked")
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NOT_A_TASK_MARKER
+    assert not any(e[0] == "EI-100" for e in fake.edits)
+
+
+def test_not_onboarded_makes_no_field_write_when_reason_already_needs_info():
+    board, epics = _not_onboarded_setup(comments=[], epic_reason="Needs-info")
+    fake = FakeGh(board, epics, manifest_repos={})
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NOT_ONBOARDED_MARKER
+    assert not any(e[0] == "EI-100" for e in fake.edits)
+
+
+# ---- once a site's own marker is already on record, it posts no duplicate -- but its field write --------
+# ---- still runs independently, keyed on the current Reason value alone (proves the two keys are ---------
+# ---- genuinely independent, not just both happening to agree) --------------------------------------------
+
+def test_no_approval_posts_no_duplicate_once_its_marker_is_on_record_but_still_corrects_a_stale_field():
+    board, epics = _no_approval_setup(comments=[NO_APPROVAL_MARKER], epic_reason="Blocked")
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.comments == []                                 # marker already present -> no re-post
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits  # field still corrected
+
+
+def test_not_a_task_posts_no_duplicate_once_its_marker_is_on_record_but_still_corrects_a_stale_field():
+    board, epics = _not_a_task_setup(comments=[NOT_A_TASK_MARKER], epic_reason="Needs-info")
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.comments == []
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits
+
+
+def test_not_onboarded_posts_no_duplicate_once_its_marker_is_on_record_but_still_corrects_a_stale_field():
+    board, epics = _not_onboarded_setup(comments=[NOT_ONBOARDED_MARKER], epic_reason="Blocked")
+    fake = FakeGh(board, epics, manifest_repos={})
+    _sweep(fake)
+    assert fake.comments == []
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+
+
+# ---- marker matching tolerates NO leading whitespace -- an indented echo of the marker (e.g. quoted ------
+# ---- in a reply) must not satisfy the key, so the site's own comment still posts --------------------------
+
+def test_no_approval_indented_marker_does_not_satisfy_the_key():
+    board, epics = _no_approval_setup(comments=[" " + NO_APPROVAL_MARKER])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1                              # the indent did not suppress the post
+    assert epic_comments[0][2].splitlines()[0] == NO_APPROVAL_MARKER
+
+
+def test_not_a_task_indented_marker_does_not_satisfy_the_key():
+    board, epics = _not_a_task_setup(comments=[" " + NOT_A_TASK_MARKER])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NOT_A_TASK_MARKER
+
+
+def test_not_onboarded_indented_marker_does_not_satisfy_the_key():
+    board, epics = _not_onboarded_setup(comments=[" " + NOT_ONBOARDED_MARKER])
+    fake = FakeGh(board, epics, manifest_repos={})
+    _sweep(fake)
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_comments[0][2].splitlines()[0] == NOT_ONBOARDED_MARKER
+
+
+# ---- the three markers are pairwise distinct and match the exact literal text specified -----------------
+
+def test_the_three_refusal_markers_are_pairwise_distinct_and_match_the_spec_literal():
+    board1, epics1 = _no_approval_setup(comments=["no sentinel here"])
+    fake1 = FakeGh(board1, epics1)
+    _sweep(fake1)
+    line1 = fake1.comments[0][2].splitlines()[0]
+
+    board2, epics2 = _not_a_task_setup(comments=[])
+    fake2 = FakeGh(board2, epics2)
+    _sweep(fake2)
+    line2 = fake2.comments[0][2].splitlines()[0]
+
+    board3, epics3 = _not_onboarded_setup(comments=[])
+    fake3 = FakeGh(board3, epics3, manifest_repos={})
+    _sweep(fake3)
+    line3 = fake3.comments[0][2].splitlines()[0]
+
+    assert (line1, line2, line3) == (NO_APPROVAL_MARKER, NOT_A_TASK_MARKER, NOT_ONBOARDED_MARKER)
+    assert len({line1, line2, line3}) == 3
+
+
+# ---- the headline scenario: a first refusal raises the epic, then a genuinely DIFFERENT refusal fires ---
+# ---- on a later tick and is not silently swallowed by the epic already carrying a Reason -----------------
+
+def test_a_different_refusal_on_a_later_tick_still_posts_its_own_comment():
+    """Tick 1: no valid approval record -> raises Needs-info, posts the no-approval marker. Tick 2: a
+    human adds a valid approval record, but the next open child turns out not to be a Task -> a
+    DIFFERENT refusal fires. It must still post its own comment and correct the Reason to its own
+    target, not be silently suppressed by the epic already carrying Needs-info from tick 1."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=["no sentinel here"],
+        children=[_child(101, itype="Feature", pi_id="PI-101", status="Backlog"),
+                  _child(102, itype="Task", pi_id="PI-102", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    epic_comments_after_1 = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments_after_1) == 1
+    assert epic_comments_after_1[0][2].splitlines()[0] == NO_APPROVAL_MARKER
+
+    # a human adds a valid approval record between ticks; the epic still carries stale Needs-info
+    epics[100]["comments"]["nodes"].append({"body": VALID_RECORD})
+    second_actions = _sweep(fake)
+
+    assert ("EI-100", REASON_FIELD, "Blocked") in fake.edits    # corrected to the SECOND site's target
+    epic_comments_after_2 = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments_after_2) == 2                      # the first comment is untouched, +1 new
+    assert epic_comments_after_2[0] == epic_comments_after_1[0]
+    assert epic_comments_after_2[1][2].splitlines()[0] == NOT_A_TASK_MARKER
+    assert {"epic": 100, "action": "raise", "reason": "Blocked"} in second_actions

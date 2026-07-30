@@ -344,6 +344,19 @@ LEDGER_MARKER = "YR-DEBT-LEDGER"
 HOLD_MARKER = "YR-DEBT-HOLD"
 DUE_MARKER = "YR-DEBT-DUE"
 
+# --- the three per-epic refusal markers: one condition token per site, so each refusal's own comment
+# --- record is keyed on its own line, never satisfiable by a different refusal's record.
+NO_APPROVAL_MARKER = "YR-EPIC-GATE: no-approval"
+NOT_A_TASK_MARKER = "YR-EPIC-GATE: not-a-task"
+NOT_ONBOARDED_MARKER = "YR-EPIC-GATE: not-onboarded"
+
+
+def _has_marker(comments, marker):
+    """True iff some comment carries `marker` as an exact line — no leading-whitespace tolerance
+    (`line.rstrip() == marker`, never `.strip()` or a `\\s*`-prefixed regex): an indented echo of the
+    marker in quoted/replied text must not satisfy the key."""
+    return any(line.rstrip() == marker for c in comments for line in c.splitlines())
+
 
 def _extract_field(body, key):
     """Pull `key`'s value from an approval comment. Accepts both the block form (`design: <v>` on its own
@@ -419,7 +432,8 @@ def _promoted_body(epic_number):
 
 def _needs_info_body():
     return (
-        "YR-EPIC-GATE: no valid standing-approval record found. The epic-gate needs a "
+        f"{NO_APPROVAL_MARKER}\n\n"
+        "no valid standing-approval record found. The epic-gate needs a "
         "`YR-EPIC-APPROVAL` comment carrying non-empty `design:` and `review:` fields before it will "
         "promote any child — nothing was promoted. Add the record, then clear this epic's Reason to resume."
     )
@@ -427,7 +441,8 @@ def _needs_info_body():
 
 def _not_a_task_body(child_number):
     return (
-        f"YR-EPIC-GATE: next open child #{child_number} is not a Task — nested decompositions are out of "
+        f"{NOT_A_TASK_MARKER}\n\n"
+        f"next open child #{child_number} is not a Task — nested decompositions are out of "
         "scope; promotion stopped. The gate does not skip ahead to a later Task. Reorder so the next open "
         "child is a Task (or split it out), then clear this epic's Reason to resume."
     )
@@ -435,7 +450,8 @@ def _not_a_task_body(child_number):
 
 def _not_onboarded_body():
     return (
-        "YR-EPIC-GATE: this repo is not onboarded — no `.yr/factory.toml` found at the base ref, so no "
+        f"{NOT_ONBOARDED_MARKER}\n\n"
+        "this repo is not onboarded — no `.yr/factory.toml` found at the base ref, so no "
         "build could ever run here. Onboarding (auth, onboarding the repo, arming) is attended, "
         "design-side work — never a slice the factory can pick up itself. Onboard the repo, then "
         "re-promote it (a standalone item) or clear the Reason (an epic) to resume."
@@ -835,12 +851,18 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
         _close_issue(gh, epic["repo"], epic["number"], reason)
         return [{"epic": epic["number"], "action": "close", "reason": reason}]
 
-    # (1) no valid approval record → raise Needs-info + stop; promote nothing. Idempotent: never re-raise
-    #     (or re-comment) when the epic already carries the Reason this raise would set.
+    # (1) no valid approval record → raise Needs-info + stop; promote nothing. The comment is keyed on its
+    #     own marker (never re-posted once on record), the field write on the current Reason value (never
+    #     re-set once already Needs-info) — independently, so a stale Reason from a *different* refusal
+    #     never suppresses this refusal's own comment.
     if not _has_valid_approval(comments):
-        if epic["reason"] != "Needs-info":
-            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+        comment_needed = not _has_marker(comments, NO_APPROVAL_MARKER)
+        field_needed = epic["reason"] != "Needs-info"
+        if comment_needed:
             _comment(gh, epic["repo"], epic["number"], _needs_info_body())
+        if field_needed:
+            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+        if comment_needed or field_needed:
             return [{"epic": epic["number"], "action": "raise", "reason": "Needs-info"}]
         return []
 
@@ -868,10 +890,15 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
     # (3) promote the first open child in sub-issue order.
     first = open_children[0]
     if ((first.get("issueType") or {}).get("name") or "").lower() != "task":
-        # not a Task → raise Blocked + stop; do NOT skip ahead to a later Task. Idempotent as in (1).
-        if epic["reason"] != "Blocked":
-            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Blocked"])
+        # not a Task → raise Blocked + stop; do NOT skip ahead to a later Task. Comment and field write
+        # keyed independently, as in (1).
+        comment_needed = not _has_marker(comments, NOT_A_TASK_MARKER)
+        field_needed = epic["reason"] != "Blocked"
+        if comment_needed:
             _comment(gh, epic["repo"], epic["number"], _not_a_task_body(first["number"]))
+        if field_needed:
+            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Blocked"])
+        if comment_needed or field_needed:
             return [{"epic": epic["number"], "action": "raise", "reason": "Blocked"}]
         return []
 
@@ -882,18 +909,22 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
 
     # the admission wall: a child about to be promoted into an un-onboarded repo is a doomed build —
     # refuse before the Ready write. Bounces the EPIC (Needs-info + comment), never the child itself;
-    # idempotent as in (1)/(4) above (never re-raise once the epic already carries this Reason). A probe
-    # failure (non-404 — network/5xx/timeout, not a confirmed absence) is neither: skip this tick writing
-    # nothing, so the next sweep re-probes instead of a false bounce (issue #140).
+    # comment and field write keyed independently, as in (1)/(3). A probe failure (non-404 —
+    # network/5xx/timeout, not a confirmed absence) is neither: skip this tick writing nothing, so the
+    # next sweep re-probes instead of a false bounce (issue #140).
     try:
         onboarded = _repo_onboarded(gh, child_repo, manifest_cache)
     except ManifestProbeError as exc:
         return [{"epic": epic["number"], "action": "probe-error", "child": first["number"],
                  "error": str(exc)}]
     if not onboarded:
-        if epic["reason"] != "Needs-info":
-            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+        comment_needed = not _has_marker(comments, NOT_ONBOARDED_MARKER)
+        field_needed = epic["reason"] != "Needs-info"
+        if comment_needed:
             _comment(gh, epic["repo"], epic["number"], _not_onboarded_body())
+        if field_needed:
+            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+        if comment_needed or field_needed:
             return [{"epic": epic["number"], "action": "raise", "reason": "Needs-info"}]
         return []
 
@@ -929,8 +960,10 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
     probed BEFORE the Ready write; on a miss the EPIC bounces (Reason=Needs-info + a comment), the child
     is never promoted. An already-Ready standalone item bounces itself, off the Ready poll (the poll reads
     Status only): Status=Backlog + Reason=Needs-info + the same comment — the runner's own DoR bounce
-    shape (`tools/dev-runner.sh:493`). Both are idempotent via the existing Reason-guard pattern, and the
-    manifest probe is cached per repo within one sweep (`_repo_onboarded`).
+    shape (`tools/dev-runner.sh:493`). The epic bounce's comment and field write are each keyed
+    independently (marker presence, Reason value); the standalone bounce stays idempotent via its
+    Status=Backlog write dropping the item out of the Ready filter. The manifest probe is cached per repo
+    within one sweep (`_repo_onboarded`).
 
     `now` (a `() -> datetime.datetime` clock), `build_lock_held` (a `(repo) -> bool` probe), and
     `stranded_after_min` are injectable for the stranded-claim check — each defaults to a real read.
