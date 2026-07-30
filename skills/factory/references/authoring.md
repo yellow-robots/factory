@@ -109,6 +109,17 @@ back into the governing design doc. For the review discipline that feeds this ga
 column 0 is an un-dispositioned open question and blocks promotion of every slice in the epic until that
 line is rewritten off the grammar (its disposition) or removed — presence only, never a content judgment.
 
+**The standing-approval record — grammar and author.** The epic-gate promotes a child only once a
+**comment** on the epic's trail (never the body) carries a line beginning `YR-EPIC-APPROVAL` at column 0,
+unindented — either the block form (the marker alone on its own line, then `design:`, `review:`, and
+`who:` lines) or the one-line form (`YR-EPIC-APPROVAL design=… review=… who=…`) — with all three fields
+non-empty: `design` names the governing product-spec/feature-rfc, `review` names the technical-rfc
+review's outcome, `who` names who is attesting it. Posted by the **human**, in an attended operator
+session, record-before-flip (see `AGENTS.md` — *Attended operator sessions*) — never an agent, and never
+satisfied by the epic-gate's own refusal comment, which names the marker and fields only in prose, never
+at column 0. `tools/epic_gate.py`'s `_has_valid_approval` re-reads this record on every sweep; absent,
+unmatched, or short a field, it blocks every child's promotion until the record is corrected.
+
 ---
 
 ### 4. task

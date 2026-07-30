@@ -73,7 +73,10 @@ REASON_OPT = {"Needs-info": "NeedsInfo", "Blocked": "Blocked"}
 INV_STATUS = {v: k for k, v in STATUS_OPT.items()}
 INV_REASON = {v: k for k, v in REASON_OPT.items()}
 
-VALID_RECORD = "YR-EPIC-APPROVAL\ndesign: [[product-spec/robots]]\nreview: 2026-07-03 APPROVE by human"
+VALID_RECORD = (
+    "YR-EPIC-APPROVAL\ndesign: [[product-spec/robots]]\nreview: 2026-07-03 APPROVE by human\n"
+    "who: a human reviewer"
+)
 
 
 # ---- canned-shape builders (the GraphQL node shapes the sweep reads) ----
@@ -583,15 +586,206 @@ def test_record_empty_field_is_invalid():
 
 
 def test_oneline_record_form_is_valid():
-    """The one-line `YR-EPIC-APPROVAL design=… review=…` form is accepted -> promotes (no raise)."""
+    """The one-line `YR-EPIC-APPROVAL design=… review=… who=…` form is accepted -> promotes (no
+    raise)."""
     board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
     epics = {100: _epic_detail(
-        comments=["YR-EPIC-APPROVAL design=[[spec]] review=2026-07-03 APPROVE"],
+        comments=["YR-EPIC-APPROVAL design=[[spec]] review=2026-07-03 APPROVE who=a human reviewer"],
         children=[_child(101, pi_id="PI-101", status="Backlog")])}
     fake = FakeGh(board, epics)
     _sweep(fake)
     assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
     assert _reason_edits(fake) == []                       # not raised
+
+
+# ============================================================================
+# Issue #344 — the approval record: line-anchored, and authored.
+#
+# `_has_valid_approval` must match `YR-EPIC-APPROVAL` only on a line that STARTS the line at column 0
+# (a prefix match, no leading-whitespace tolerance) rather than as a substring anywhere in the comment
+# body, and must additionally require a non-empty `who` field alongside `design` and `review`. A refusal
+# must name which requirement failed, and the gate's own refusal comment must never itself satisfy the
+# check it describes.
+# ============================================================================
+
+def _epic_comment_text(fake, number=100):
+    """The single comment body posted to epic `number` by this sweep -- fails loudly if the sweep
+    posted zero or more than one, since every test using this helper expects exactly one refusal."""
+    texts = [c[2] for c in fake.comments if c[1] == str(number)]
+    assert len(texts) == 1, f"expected exactly one comment on #{number}, got {texts!r}"
+    return texts[0]
+
+
+# ---- the match is line-anchored: a substring anywhere in the comment must not satisfy it ----------------
+
+def test_prose_mention_of_marker_with_bare_field_values_does_not_validate():
+    """A prose sentence quoting the marker mid-line, with bare `design:`/`review:`/`who:` values
+    elsewhere in the same sentence, must not satisfy the approval check -- a substring match anywhere in
+    the comment body is exactly the exploit this issue closes."""
+    body = (
+        "Note: our YR-EPIC-APPROVAL process requires design: sign-off, review: approval, and "
+        "who: attestation before any promotion happens."
+    )
+    fake = _run_missing_record([body])
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+
+
+def test_indented_approval_record_does_not_validate():
+    """A marker line carrying leading whitespace (e.g. quoted in a reply) must not satisfy the check --
+    prefix matching tolerates no leading whitespace, matching the open-question grammar's own rule."""
+    record = " YR-EPIC-APPROVAL\ndesign: [[spec]]\nreview: 2026-07-03 APPROVE\nwho: a human"
+    fake = _run_missing_record([record])
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+
+
+def test_blockquoted_approval_record_does_not_validate():
+    """A blockquoted echo of the marker (e.g. a GitHub '> ' quote-reply) must not satisfy the check --
+    every line carries the quote prefix, so none of them starts with the marker at column 0."""
+    record = "> YR-EPIC-APPROVAL\n> design: [[spec]]\n> review: 2026-07-03 APPROVE\n> who: a human"
+    fake = _run_missing_record([record])
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+
+
+def test_inline_backticked_marker_mention_does_not_validate():
+    """An inline-backticked mention of the marker in prose must not satisfy the check."""
+    body = "See the `YR-EPIC-APPROVAL` grammar in authoring.md for the required design/review/who fields."
+    fake = _run_missing_record([body])
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+
+
+def test_marker_prefixed_line_with_only_backticked_field_names_still_refuses():
+    """A line that legitimately STARTS with the marker (passing the line-anchor check) but only
+    mentions the field names inside backticks, never as real `key: value` / `key=value` assignments,
+    must still refuse. `_extract_field`'s word-boundary guard is what keeps a backticked field name
+    inert -- this exercises that guard directly rather than assuming it holds, per the issue's own
+    residual note."""
+    body = "YR-EPIC-APPROVAL requires `design:`, `review:`, and `who:` before it is considered valid."
+    fake = _run_missing_record([body])
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+
+
+def test_fenced_marker_line_still_validates_indentation_is_the_guarantee_not_fencing():
+    """Documents the accepted residual named in the issue: a line-anchored matcher is exactly as strong
+    as the rest of the file, not unforgeable -- a FENCED example still fires, because a fenced block's
+    content lines sit at column 0 same as a real marker."""
+    record = "```\nYR-EPIC-APPROVAL\ndesign: [[spec]]\nreview: 2026-07-03 APPROVE\nwho: a human\n```"
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[record],
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+# ---- the third field: `who` is required, non-empty, alongside `design` and `review` ---------------------
+
+def test_record_missing_who_is_invalid():
+    """A residual two-field record (design + review, no who) -- the pre-#344 shape -- must now refuse."""
+    fake = _run_missing_record(["YR-EPIC-APPROVAL\ndesign: [[spec]]\nreview: 2026-07-03 APPROVE"])
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+
+
+def test_record_empty_who_field_is_invalid():
+    fake = _run_missing_record(
+        ["YR-EPIC-APPROVAL\ndesign: [[spec]]\nreview: 2026-07-03 APPROVE\nwho:"])
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+
+
+def test_all_three_fields_present_promotes_block_form():
+    record = "YR-EPIC-APPROVAL\ndesign: [[spec]]\nreview: 2026-07-03 APPROVE\nwho: a human reviewer"
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[record],
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_oneline_form_review_value_does_not_absorb_who_key():
+    """The one-line form's value cutter must stop `review`'s value at the next `who=` key. Without `who`
+    in the cutter's key list, `review` would swallow `who=<value>` whole -- still non-empty, so it would
+    wrongly pass -- instead of leaving a genuinely separate, non-empty `who` value."""
+    record = "YR-EPIC-APPROVAL design=[[spec]] review=2026-07-03 APPROVE who=a human"
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[record],
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+    assert epic_gate._extract_field(record, "review") == "2026-07-03 APPROVE"
+    assert epic_gate._extract_field(record, "who") == "a human"
+
+
+# ---- the refusal names which requirement failed: absent marker, or which field, distinctly -------------
+
+def test_refusal_names_missing_design_only():
+    fake = _run_missing_record(["YR-EPIC-APPROVAL\nreview: 2026-07-03 APPROVE\nwho: a human"])
+    text = _epic_comment_text(fake)
+    assert "`design`" in text
+    assert "`review`" not in text
+    assert "`who`" not in text
+
+
+def test_refusal_names_missing_review_only():
+    fake = _run_missing_record(["YR-EPIC-APPROVAL\ndesign: [[spec]]\nwho: a human"])
+    text = _epic_comment_text(fake)
+    assert "`review`" in text
+    assert "`design`" not in text
+    assert "`who`" not in text
+
+
+def test_refusal_names_missing_who_only():
+    fake = _run_missing_record(["YR-EPIC-APPROVAL\ndesign: [[spec]]\nreview: 2026-07-03 APPROVE"])
+    text = _epic_comment_text(fake)
+    assert "`who`" in text
+    assert "`design`" not in text
+    assert "`review`" not in text
+
+
+def test_refusal_names_multiple_missing_fields():
+    fake = _run_missing_record(["YR-EPIC-APPROVAL\ndesign: [[spec]]"])
+    text = _epic_comment_text(fake)
+    assert "`review`" in text
+    assert "`who`" in text
+    assert "`design`" not in text
+
+
+def test_refusal_when_no_marker_found_does_not_falsely_name_a_specific_field():
+    """When no comment carries the marker line at all, the refusal must still name the requirement that
+    failed -- but it must not falsely claim a specific field is empty/absent, since there is no
+    candidate record to inspect fields on in the first place."""
+    fake = _run_missing_record(["just a normal comment, no sentinel"])
+    text = _epic_comment_text(fake)
+    assert "YR-EPIC-APPROVAL" in text
+    assert "`design`" not in text
+    assert "`review`" not in text
+    assert "`who`" not in text
+
+
+# ---- the gate's own refusal comment must never satisfy the check it describes ----------------------------
+
+def test_refusal_comment_fed_back_as_epic_comment_does_not_satisfy_approval():
+    """The gate's own refusal comment -- fed back onto the epic's trail as though a human had quoted it
+    in a reply -- must not itself satisfy the approval check it describes. `FakeGh` feeds every posted
+    comment back onto the epic's own canned detail, so the second tick genuinely sees the refusal sitting
+    on the epic's trail, exactly as a real second sweep would."""
+    fake = _run_missing_record(["just a normal comment, no sentinel"])
+    assert _status_ready_edits(fake) == []
+    refusal_text = _epic_comment_text(fake)
+    assert "YR-EPIC-APPROVAL" in refusal_text     # sanity: not a vacuous test
+
+    _sweep(fake)                                  # second tick: the refusal now sits on the epic's trail
+    assert _status_ready_edits(fake) == []         # still refuses -- nothing was ever promoted
 
 
 # ============================================================================

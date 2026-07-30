@@ -337,8 +337,11 @@ def _sweep_standalone_stranded(gh, nodes, reason_field_id, reason_opt, now, buil
     return actions
 
 
-# --- the standing-approval record: a comment on the epic carrying the sentinel + both fields ----------
+# --- the standing-approval record: a comment on the epic carrying a line-anchored sentinel + three
+# --- required fields (design, review, who) -------------------------------------------------------------
 # --- the debt-epic ledger gate: a body sentinel marking a debt epic, and a comment-borne verdict record
+APPROVAL_MARKER = "YR-EPIC-APPROVAL"
+APPROVAL_FIELDS = ("design", "review", "who")
 DEBT_KIND_LINE = "YR-ITERATION-KIND: tech-debt"
 LEDGER_MARKER = "YR-DEBT-LEDGER"
 HOLD_MARKER = "YR-DEBT-HOLD"
@@ -382,8 +385,8 @@ def _extract_field(body, key):
                 rest = line[pos + len(key):].lstrip()
                 if rest[:1] in (":", "="):
                     val = rest[1:].strip()
-                    # one-line form: cut the value off at the next `design`/`review` key
-                    for other in ("design", "review"):
+                    # one-line form: cut the value off at the next `design`/`review`/`who` key
+                    for other in ("design", "review", "who"):
                         low_val = val.lower()
                         p = 0
                         while True:
@@ -400,15 +403,35 @@ def _extract_field(body, key):
     return ""
 
 
+def _approval_candidates(comments):
+    """The bodies of comments carrying a line that starts with `YR-EPIC-APPROVAL` at column 0 — no
+    leading-whitespace tolerance (`line.startswith(...)`, never `.strip()` or a `\\s*`-tolerant match), so
+    a prose mention, a quoted/backticked example, or a blockquoted reply of the marker never matches. A
+    prefix match, not whole-line equality: the one-line record form carries `design=`/`review=`/`who=`
+    values after the marker on the same line."""
+    return [body for body in comments
+            if any(line.startswith(APPROVAL_MARKER) for line in body.splitlines())]
+
+
 def _has_valid_approval(comments):
-    """True iff ≥1 epic comment carries the `YR-EPIC-APPROVAL` sentinel with both `design` and `review`
-    non-empty. The sweep trusts this named fact — it does not re-run the review."""
-    for body in comments:
-        if "YR-EPIC-APPROVAL" not in body:
-            continue
-        if _extract_field(body, "design") and _extract_field(body, "review"):
-            return True
-    return False
+    """True iff ≥1 epic comment carries a line beginning `YR-EPIC-APPROVAL` at column 0 with all of
+    `design`, `review`, and `who` non-empty. The sweep trusts this named fact — it does not re-run the
+    review."""
+    return any(all(_extract_field(body, f) for f in APPROVAL_FIELDS)
+               for body in _approval_candidates(comments))
+
+
+def _approval_failure_reason(comments):
+    """Name which requirement kept `_has_valid_approval` false, for the refusal comment: no comment
+    carries a line beginning `YR-EPIC-APPROVAL` at column 0, or — for the first comment that does —
+    which of `design`, `review`, `who` is absent or empty."""
+    candidates = _approval_candidates(comments)
+    if not candidates:
+        return "no comment has a line beginning `YR-EPIC-APPROVAL` at column 0"
+    missing = [f for f in APPROVAL_FIELDS if not _extract_field(candidates[0], f)]
+    fields = " and ".join(f"`{f}`" for f in missing)
+    plural = len(missing) != 1
+    return f"the {fields} field{'s' if plural else ''} {'are' if plural else 'is'} empty or absent"
 
 
 def _open_question_lines(body):
@@ -448,12 +471,13 @@ def _promoted_body(epic_number):
     )
 
 
-def _needs_info_body():
+def _needs_info_body(reason):
     return (
         f"{NO_APPROVAL_MARKER}\n\n"
-        "no valid standing-approval record found. The epic-gate needs a "
-        "`YR-EPIC-APPROVAL` comment carrying non-empty `design:` and `review:` fields before it will "
-        "promote any child — nothing was promoted. Add the record, then clear this epic's Reason to resume."
+        f"no valid standing-approval record found: {reason}. The epic-gate needs a comment with a line "
+        "beginning `YR-EPIC-APPROVAL` at column 0, carrying non-empty `design:`, `review:`, and `who:` "
+        "fields, before it will promote any child — nothing was promoted. Add the record, then clear this "
+        "epic's Reason to resume."
     )
 
 
@@ -913,7 +937,7 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
         comment_needed = not _has_marker(comments, NO_APPROVAL_MARKER)
         field_needed = epic["reason"] != "Needs-info"
         if comment_needed:
-            _comment(gh, epic["repo"], epic["number"], _needs_info_body())
+            _comment(gh, epic["repo"], epic["number"], _needs_info_body(_approval_failure_reason(comments)))
         if field_needed:
             _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
         if comment_needed or field_needed:

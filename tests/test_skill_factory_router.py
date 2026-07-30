@@ -770,6 +770,62 @@ def test_authoring_crossing_step_open_question_mention_is_inert():
 
 
 # ---------------------------------------------------------------------------
+# authoring.md — the standing-approval record's grammar and author
+# (issue #344): step 3 must state the YR-EPIC-APPROVAL record's shape -- a
+# comment (never the body) carrying a line beginning the marker at column 0,
+# with non-empty design/review/who fields -- and who may post it (the human,
+# never an agent). Stated inertly, same discipline as the open-question
+# grammar just above it.
+# ---------------------------------------------------------------------------
+
+def test_authoring_crossing_step_states_approval_record_grammar():
+    """The crossing step must state the standing-approval record's grammar: a line beginning
+    YR-EPIC-APPROVAL at column 0, carrying all three of design/review/who non-empty."""
+    section = _authoring_crossing_step_text()
+    assert "YR-EPIC-APPROVAL" in section, \
+        "authoring.md step 3 does not state the approval-record marker grammar"
+    lower = section.lower()
+    assert "column 0" in lower, \
+        "authoring.md step 3 does not state the column-0 anchoring of the approval-record grammar"
+    for field in ("design", "review", "who"):
+        assert field in lower, \
+            f"authoring.md step 3 does not name the `{field}` field of the approval record"
+
+
+def test_authoring_crossing_step_states_approval_record_lives_in_a_comment_not_the_body():
+    """The record is a comment on the epic's trail, posted after filing -- never part of the epic
+    body itself. This is the load-bearing distinction the issue gives for why the authoring
+    reference (not the technical-rfc template body) is the only surface that can carry this grammar."""
+    section = _authoring_crossing_step_text()
+    lower = section.lower()
+    assert "comment" in lower, \
+        "authoring.md step 3 does not state that the approval record is a comment"
+    assert "never the body" in lower or "never part of the" in lower or "not the body" in lower, \
+        "authoring.md step 3 does not state that the approval record is never the epic body"
+
+
+def test_authoring_crossing_step_states_approval_record_author():
+    """The crossing step must state WHO may post the approval record -- the human, never an
+    agent -- and that the record is never satisfied by the gate's own refusal comment."""
+    section = _authoring_crossing_step_text()
+    lower = section.lower()
+    assert "human" in lower, \
+        "authoring.md step 3 does not name the human as the approval record's author"
+    assert "never an agent" in lower, \
+        "authoring.md step 3 does not state that the approval record is never posted by an agent"
+
+
+def test_authoring_crossing_step_approval_mention_is_inert():
+    """The approval-record grammar must be stated inertly -- never as a raw line beginning the
+    marker at column 0, which would trip the epic-gate's own detector were this file's text ever
+    fed in as a comment body."""
+    section = _authoring_crossing_step_text()
+    assert not any(line.startswith("YR-EPIC-APPROVAL") for line in section.splitlines()), \
+        "authoring.md step 3's approval-record mention sits at column 0 -- it must stay inert " \
+        "(inline-backticked / mid-sentence), never a raw marker line"
+
+
+# ---------------------------------------------------------------------------
 # Issue #127 — the bootstrap invariant and non-delegable acts on the
 # planning surfaces.
 #
