@@ -67,7 +67,8 @@ created: "<YYYY-MM-DD>"
 ## Authoring scaffold — NOT filed on the Issue
 
 **Pre-gate (shape first):** before writing the body, post the **touched-files list + the 1–2 biggest risks**
-and get the shape approved (human). Then flesh out the body above. *Gates review the plan, not the output.*
+so the adversarial review can weigh in on the plan, not just the finished draft. Then flesh out the body
+above. *Gates review the plan, not the output.*
 
 **Checklist to produce the body:**
 - [ ] **Read the feature RFC from the vault** (its `source_feature_rfc`); cite it, don't copy — this technical RFC is a *projection* of the feature RFC onto the code, not a duplicate.
@@ -102,4 +103,4 @@ work. Add the real line by hand into the slice above when it's earned, e.g.
 promotion until a human lands the change and clears the epic's Reason.
 
 *Next stage:* **task decomposition** (`task.md`) turns each slice into a Ready Issue.
-Gate before then: **review the technical RFC** (human).
+Gate before then: **review the technical RFC**.

@@ -36,8 +36,8 @@ spine artifact. The **product-spec is the root**: it captures the intent as its 
 upstream `source_*`. Reference the vision in prose if useful, never as a gated crossing-link.
 
 Both are *author proposes, gate disposes*. **Upper** is **v1 human-driven-with-agent-assist**: you (or an
-agent a human drives) fill each artifact, run the gates, and a human approves at each step. **Lower** is
-fully automated once a human promotes a task to Ready.
+agent a human drives) fill each artifact and run the gates — the human's structural approval sits upstream,
+at design-active, not at every step. **Lower** is fully automated once a human promotes a task to Ready.
 
 ## Operations — load on demand
 

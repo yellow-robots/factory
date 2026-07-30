@@ -81,7 +81,10 @@ Decidable from the draft alone, no external state needed. The role runs when **a
 1. a non-empty `supersedes` declaration;
 2. an earned technical-rfc, read from the draft's own Next-stage statement;
 3. changes touching the living reference's **load-bearing** sections (the reference cites
-   [`documentation-model.md`](documentation-model.md) for the section set).
+   [`documentation-model.md`](documentation-model.md) for the section set);
+4. a standalone task's body, at its promote-to-Ready moment — [`closing.md`](closing.md)'s promote
+   checklist mandates the fit check there because the body **is** the design, with no governing
+   artifact upstream to have earned the first three arms in its place.
 
 No arm holds ⇒ the role is **skipped**: the empty-declaration justification line plus the ordinary
 human review suffice. The architect is earned work, not a tax on every change.

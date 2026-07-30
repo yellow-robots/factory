@@ -593,10 +593,11 @@ def test_architect_md_has_fail_closed_rules():
         "architect.md missing the already-active-spec routing-to-human rule"
 
 
-def test_architect_md_has_earn_test_with_three_arms():
+def test_architect_md_has_earn_test_with_four_arms():
     """The earn-test is decidable from the draft alone: a non-empty supersedes declaration, an
-    earned technical-rfc read from the draft's Next-stage statement, or changes touching the
-    living reference's load-bearing sections; no arm holding means the role is skipped."""
+    earned technical-rfc read from the draft's Next-stage statement, changes touching the
+    living reference's load-bearing sections, or a standalone task's body at its
+    promote-to-Ready moment; no arm holding means the role is skipped."""
     lower = _architect_text_normalized()
     assert "earn" in lower, "architect.md missing the earn-test"
     assert "supersedes" in lower, \
@@ -605,6 +606,8 @@ def test_architect_md_has_earn_test_with_three_arms():
         "architect.md earn-test missing the earned-technical-rfc-from-Next-stage-statement arm"
     assert "load-bearing" in lower, \
         "architect.md earn-test missing the load-bearing-sections arm"
+    assert "standalone task" in lower, \
+        "architect.md earn-test missing the fourth arm firing for a standalone task's body"
     assert "skip" in lower, \
         "architect.md missing the no-arm-holds-the-role-is-skipped path"
 
@@ -1151,9 +1154,10 @@ def _doc_model_editing_safely_section():
 
 
 def test_doc_model_ideas_backlog_names_the_direct_lane_steps():
-    """The ideas-backlog section must name the direct seed-to-task lane's five stops, in
-    order: seed, drafted task, independent adversarial review with dispositions on the
-    trail, file + task-delivered arm stamp, human promote."""
+    """The ideas-backlog section must name the direct seed-to-task lane's stops, in order:
+    seed, drafted task, independent adversarial review with dispositions on the trail, the
+    architect fit check, file + task-delivered arm stamp, human promote. The fit check is
+    inserted between the pre-existing stops; the original five keep their relative order."""
     section = _doc_model_ideas_backlog_section()
     lower = _normalized(section)
 
@@ -1164,6 +1168,7 @@ def test_doc_model_ideas_backlog_names_the_direct_lane_steps():
         "drafted task",
         "independent adversarial review",
         "dispositions on the trail",
+        "fit check",
         "task-delivered arm stamp",
         "human promote",
     ]:
@@ -1171,9 +1176,9 @@ def test_doc_model_ideas_backlog_names_the_direct_lane_steps():
             f"documentation-model.md direct-lane text missing the '{phrase}' stop"
 
     # Ordering: each stop must appear no earlier than the previous one, so the lane
-    # reads seed -> drafted task -> review -> file+stamp -> human promote.
+    # reads seed -> drafted task -> review -> fit check -> file+stamp -> human promote.
     stops = ["drafted task", "independent adversarial review", "dispositions on the trail",
-             "task-delivered arm stamp", "human promote"]
+             "fit check", "task-delivered arm stamp", "human promote"]
     positions = [lower.index(s) for s in stops]
     assert positions == sorted(positions), \
         f"documentation-model.md direct-lane stops are out of order: {stops} at {positions}"
