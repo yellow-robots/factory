@@ -157,4 +157,23 @@ would need two PRs, split it into sub-issues.
 **Judgment:** is the task self-contained? Can an implementer produce a correct PR from this Issue alone?
 Is every acceptance criterion verifiable by an independent tester who has not seen the implementation?
 
+**The standalone gates record — grammar and author.** A task with no native sub-issue parent carries no
+governing design above it, so its own body *is* that design and it takes the direct lane
+([`documentation-model.md`](documentation-model.md) — *The direct lane*), earning the gates that lane's
+review and fit-check stops already require, recorded on the issue's trail before promote
+(`closing.md` — *Promote to Ready*). The runner's DoR gate re-checks this structurally at claim
+time, in place of the epic-gate's standing-approval check (which never runs on a standalone task): a
+**comment** on the issue's trail carries a line that is *exactly* `YR-TASK-GATES` — whole-line equality
+after stripping only trailing whitespace, no leading-whitespace tolerance and no trailing text on that
+line tolerated either, deliberately **stricter** than `YR-EPIC-APPROVAL`'s prefix rule — and that same
+comment carries three fields, each on its own line and non-empty: `review:` the adversarial review's
+verdict, `fit:` the architect fit verdict, `who:` the authorship. `fit:` additionally refuses a small
+closed set of placeholder tokens (a bare `n/a`, `none`, `exempt`, `skipped`, `tbd`, or `-`), so an
+exemption cannot be dressed as a verdict — this catches only that placeholder set, not a semantically
+empty verdict phrased as prose. A task with a native sub-issue parent is exempt regardless of that
+parent's Issue Type: the parent's own governing design already supplies the gates. Absent or malformed,
+the runner bounces the claim to `Needs-info` naming the missing record; `YR-AUTO-PROMOTED`
+(`tools/epic_gate.py`) and `YR-PROMOTED` (`tools/promote.sh`) are different markers and never satisfy
+this one.
+
 For promote-to-Ready and onwards, see [`closing.md`](closing.md).
