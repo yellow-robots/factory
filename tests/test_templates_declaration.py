@@ -811,3 +811,105 @@ def test_technical_rfc_open_question_worked_example_is_backticked_and_indented()
         "templates/technical-rfc.md scaffold is missing an indented, inline-backticked worked "
         "example of the open-question marker"
     )
+
+
+# ---------------------------------------------------------------------------
+# technical-rfc.md — the gate-touching declaration slot (issue #345). Unlike the open-question
+# grammar above, this slot is deliberately shipped INSIDE the filed ISSUE BODY's per-task context
+# section (`## Per-task context slices` -> Slice A), because that is exactly where the text gets
+# pasted verbatim into every task Issue's own body -- the site the epic-gate actually reads. It
+# must therefore be inert not by placement (it IS filed) but by its own form: never a raw
+# `YR-GATE-TOUCHING:` line at column 0 with a non-empty reason. The worked teaching example lives
+# in the authoring-scaffold region below, same house pattern as the open-question worked example.
+# ---------------------------------------------------------------------------
+
+def _technical_rfc_filed_issue_body():
+    text = _text(TECHNICAL_RFC)
+    start = text.find("ISSUE BODY · file from here")
+    end = text.find("END ISSUE BODY")
+    assert start != -1 and end != -1 and start < end, (
+        "templates/technical-rfc.md is missing its ISSUE BODY markers"
+    )
+    return text[start:end]
+
+
+def _technical_rfc_slice_a_slot():
+    """The per-task context slot for 'Slice A' -- the exact scaffold text an architect pastes
+    into a task Issue's own 'Context & links' -- bounded from its own heading to the next slice."""
+    issue_body = _technical_rfc_filed_issue_body()
+    start = issue_body.find("### Slice A")
+    end = issue_body.find("### Slice B")
+    assert start != -1 and end != -1 and start < end, (
+        "templates/technical-rfc.md is missing its 'Slice A' / 'Slice B' per-task context markers"
+    )
+    return issue_body[start:end]
+
+
+def test_technical_rfc_gate_touching_slot_lives_inside_the_filed_issue_body():
+    """The slot is deliberately filed content (not scaffold) -- it must sit inside the ISSUE BODY
+    markers, the region that is pasted verbatim into each task Issue and that the epic-gate reads.
+    (The mirror image of the open-question grammar, which must stay OUT of this region.)"""
+    slot = _technical_rfc_slice_a_slot()
+    assert "YR-GATE-TOUCHING" in slot, (
+        "templates/technical-rfc.md's filed Slice A slot does not mention YR-GATE-TOUCHING -- "
+        "the architect has no recorded place to make the declaration at the crossing"
+    )
+
+
+def test_technical_rfc_gate_touching_slot_is_inert():
+    """The shipped slot must never itself satisfy the grammar: no line in it may begin
+    `YR-GATE-TOUCHING:` at column 0. A slot shipped as a live declaration (even with a placeholder
+    reason like `<gate surface>` or `TBD`) would block EVERY epic on its very first slice."""
+    slot = _technical_rfc_slice_a_slot()
+    for line in slot.splitlines():
+        assert not line.startswith("YR-GATE-TOUCHING:"), (
+            f"templates/technical-rfc.md's shipped Slice A slot fires the gate-touching grammar "
+            f"at column 0: {line!r}"
+        )
+
+
+def test_technical_rfc_gate_touching_slot_names_the_rule():
+    """The slot must teach the architect what the marker does, not just show its shape -- it names
+    that a slice carrying the line is refused promotion, and that gate evolution is attended work."""
+    slot = _technical_rfc_slice_a_slot()
+    lower = slot.lower()
+    assert "refus" in lower or "block" in lower, (
+        "templates/technical-rfc.md's Slice A slot does not state that a declaration refuses/blocks "
+        "promotion"
+    )
+    assert "attended" in lower, (
+        "templates/technical-rfc.md's Slice A slot does not state that gate evolution is attended work"
+    )
+
+
+def test_technical_rfc_scaffold_states_gate_touching_duty_and_grammar():
+    """The authoring-scaffold region (below the filed ISSUE BODY) must independently state that
+    declaring a slice gate-touching is a duty of the role, and the marker grammar it enforces."""
+    section = _technical_rfc_checklist_section()
+    lower = section.lower()
+    assert "duty" in lower, (
+        "templates/technical-rfc.md scaffold does not frame the gate-touching declaration as a duty"
+    )
+    assert "YR-GATE-TOUCHING:" in section, (
+        "templates/technical-rfc.md scaffold does not state the gate-touching marker grammar"
+    )
+    assert "column 0" in lower, (
+        "templates/technical-rfc.md scaffold does not state the column-0 anchoring of the "
+        "gate-touching grammar"
+    )
+    assert "non-empty" in lower or "empty reason" in lower, (
+        "templates/technical-rfc.md scaffold does not state the non-empty-reason requirement"
+    )
+
+
+def test_technical_rfc_gate_touching_worked_example_in_scaffold_is_backticked_and_indented():
+    """The scaffold's worked example of the marker (as opposed to the shipped, filed slot) must be
+    inert by BOTH indentation and inline-backticking, same house pattern as the open-question
+    worked example just above it."""
+    section = _technical_rfc_checklist_section()
+    worked = [ln for ln in section.splitlines()
+              if "YR-GATE-TOUCHING:" in ln and ln.startswith("  ") and "`" in ln]
+    assert worked, (
+        "templates/technical-rfc.md scaffold is missing an indented, inline-backticked worked "
+        "example of the gate-touching marker"
+    )

@@ -31,7 +31,11 @@ exist in the pipeline, never a fourth stage added on top of it.
    stale ones. **First iteration for a new repo:** when the crossing targets a repo the factory has
    never built (no `.yr/factory.toml` at its base ref), the technical-rfc names the attended
    onboarding prerequisites as design-side work and routes them to the human, never a slice — see
-   [`onboarding.md`](onboarding.md).
+   [`onboarding.md`](onboarding.md). **Declaring a gate-touching slice is a duty of the role, not
+   advice:** any slice whose mandate touches checks, CI, or the manifest gets a `YR-GATE-TOUCHING:`
+   line (grammar in [`authoring.md`](authoring.md) step 3) in that slice's own context — the
+   epic-gate reads it off the child's own body and refuses to promote it, because gate evolution is
+   attended work and the pipeline builds under *fixed* gates.
 3. **The ship-walk.** Walk the grounding list: update the living reference in place, supersede
    replaced research (never edit it), verify the stamps — the crossing stamp and every declared
    pair — and record the pilot observables with the iteration.

@@ -516,6 +516,39 @@ def test_architect_md_crossing_covers_rfc_stamp_and_drift_pass():
         "architect.md missing the final citation-drift pass against the tip at filing"
 
 
+def test_architect_md_crossing_states_gate_touching_is_a_duty_not_advice():
+    """Issue #345: declaring a slice gate-touching at the crossing is a DUTY of the architect
+    role, stated as such -- not folded into the merely-advisory boundary-custodian language a few
+    lines below it, and not left unstated as implicit best practice."""
+    lower = _architect_text_normalized()
+    assert "gate-touching" in lower, \
+        "architect.md's crossing moment does not mention declaring a slice gate-touching"
+    assert "duty of the role" in lower, \
+        "architect.md does not state that declaring a gate-touching slice is a duty of the role"
+    assert "not advice" in lower or "never advice" in lower, \
+        "architect.md does not state that the gate-touching declaration is NOT merely advice"
+
+
+def test_architect_md_crossing_states_gate_touching_grammar_and_rule():
+    """The charter names the marker, where it lives (the slice's own context, per authoring.md
+    step 3), and the rule the epic-gate enforces from it -- gate evolution is attended work."""
+    lower = _architect_text_normalized()
+    assert "yr-gate-touching" in lower, \
+        "architect.md does not name the YR-GATE-TOUCHING: marker"
+    assert "epic-gate" in lower, \
+        "architect.md does not state that the epic-gate reads the declaration"
+    assert "attended" in lower, \
+        "architect.md does not state the rule: gate evolution is attended work"
+
+
+def test_architect_md_gate_touching_mention_is_inert():
+    """architect.md must never trip its own detector: the marker mention must never sit as a raw
+    line beginning YR-GATE-TOUCHING: at column 0."""
+    text = _architect_text()
+    assert not any(line.startswith("YR-GATE-TOUCHING:") for line in text.splitlines()), \
+        "architect.md's gate-touching mention sits at column 0 -- it must stay inert"
+
+
 def test_architect_md_ship_walk_covers_grounding_list_and_observables():
     """The ship-walk: walk the grounding list, update the living reference in place, supersede
     replaced research, verify stamps, and record the pilot observables with the iteration."""
@@ -766,6 +799,76 @@ def test_authoring_crossing_step_open_question_mention_is_inert():
     section = _authoring_crossing_step_text()
     assert not any(line.startswith("YR-OPEN-QUESTION:") for line in section.splitlines()), \
         "authoring.md step 3's open-question mention sits at column 0 -- it must stay inert " \
+        "(inline-backticked / mid-sentence), never a raw marker line"
+
+
+# ---------------------------------------------------------------------------
+# authoring.md — the gate-touching declaration's duty, grammar, and rule
+# (issue #345): step 3 must state that declaring a slice gate-touching at
+# the crossing is a duty of the role (not advice), the YR-GATE-TOUCHING:
+# marker grammar (column 0, non-empty reason, read off the CHILD's own
+# body -- never the epic's), and the rule it enforces (refuses promotion;
+# gate evolution is attended work). Stated inertly, same discipline as the
+# open-question grammar just above it.
+# ---------------------------------------------------------------------------
+
+def test_authoring_crossing_step_states_gate_touching_duty():
+    """Declaring a gate-touching slice must be framed as a duty of the architect role, not
+    advice -- distinct in kind from an ordinary recommendation."""
+    section = _authoring_crossing_step_text()
+    lower = section.lower()
+    assert "duty" in lower, \
+        "authoring.md step 3 does not frame the gate-touching declaration as a duty"
+    assert "not advice" in lower or "never advice" in lower or "rather than advice" in lower, \
+        "authoring.md step 3 does not state that the gate-touching declaration is NOT merely advice"
+
+
+def test_authoring_crossing_step_states_gate_touching_grammar():
+    """The crossing step must state the gate-touching grammar: a line beginning
+    YR-GATE-TOUCHING: at column 0, carrying a non-empty reason."""
+    section = _authoring_crossing_step_text()
+    assert "YR-GATE-TOUCHING:" in section, \
+        "authoring.md step 3 does not state the gate-touching marker grammar"
+    lower = section.lower()
+    assert "column 0" in lower, \
+        "authoring.md step 3 does not state the column-0 anchoring of the gate-touching grammar"
+    assert "non-empty" in lower or "empty reason" in lower, \
+        "authoring.md step 3 does not state the non-empty-reason requirement"
+
+
+def test_authoring_crossing_step_states_gate_touching_reads_child_body_only():
+    """The load-bearing gotcha: the epic body legitimately carries this same prefix inside its
+    per-task context slices, so the grammar must state it is read off the CHILD's own body only,
+    never the epic's."""
+    section = _authoring_crossing_step_text()
+    lower = section.lower()
+    assert "child" in lower and ("own body" in lower or "own filed body" in lower), \
+        "authoring.md step 3 does not state that the gate-touching declaration is read off the " \
+        "child's own body"
+    assert "never the epic" in lower or "not the epic" in lower, \
+        "authoring.md step 3 does not state that the epic's own body is never read for the " \
+        "gate-touching declaration"
+
+
+def test_authoring_crossing_step_states_gate_touching_refusal_rule():
+    """The rule it enforces: the epic-gate refuses to promote that child (Reason=Blocked, nothing
+    promoted) because gate evolution is attended work."""
+    section = _authoring_crossing_step_text()
+    lower = section.lower()
+    assert "epic-gate" in lower, \
+        "authoring.md step 3 does not state that the epic-gate reads the gate-touching declaration"
+    assert "refus" in lower or "block" in lower, \
+        "authoring.md step 3 does not state that the declaration refuses/blocks promotion"
+    assert "attended" in lower, \
+        "authoring.md step 3 does not state the rule: gate evolution is attended work"
+
+
+def test_authoring_crossing_step_gate_touching_mention_is_inert():
+    """The grammar must be stated inline-backticked / mid-sentence, never as a raw line beginning
+    the marker at column 0 -- authoring.md must never trip its own detector."""
+    section = _authoring_crossing_step_text()
+    assert not any(line.startswith("YR-GATE-TOUCHING:") for line in section.splitlines()), \
+        "authoring.md step 3's gate-touching mention sits at column 0 -- it must stay inert " \
         "(inline-backticked / mid-sentence), never a raw marker line"
 
 

@@ -137,6 +137,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           stateReason
           issueType { name }
           repository { nameWithOwner }
+          body
           projectItems(first: 20) {
             nodes {
               id
@@ -353,6 +354,7 @@ NO_APPROVAL_MARKER = "YR-EPIC-GATE: no-approval"
 NOT_A_TASK_MARKER = "YR-EPIC-GATE: not-a-task"
 NOT_ONBOARDED_MARKER = "YR-EPIC-GATE: not-onboarded"
 OPEN_QUESTIONS_MARKER = "YR-EPIC-GATE: open-questions"
+GATE_TOUCHING_MARKER = "YR-EPIC-GATE: gate-touching"
 
 # --- the open-question grammar: a *filed* epic-body line beginning this prefix at column 0, matched with
 # --- no leading-whitespace tolerance — the same anchoring the shipped `VERDICT:` family uses
@@ -360,6 +362,13 @@ OPEN_QUESTIONS_MARKER = "YR-EPIC-GATE: open-questions"
 # --- whether a question is really open — a disposition rewrites the line off the grammar, and that
 # --- rewrite is the only disposition there is.
 OPEN_QUESTION_PREFIX = "YR-OPEN-QUESTION:"
+
+# --- the gate-touching grammar: a line beginning this prefix at column 0 in the CHILD's own body (never
+# --- the epic's — the technical-rfc's per-task context slices legitimately carry this prefix describing a
+# --- child from inside the epic body), matched with no leading-whitespace tolerance, carrying a non-empty
+# --- reason after the prefix. Gate evolution is attended work by ruling: the pipeline builds under fixed
+# --- gates (`skills/factory/references/architect.md` — the boundary-custodian duty).
+GATE_TOUCHING_PREFIX = "YR-GATE-TOUCHING:"
 
 
 def _has_marker(comments, marker):
@@ -444,6 +453,20 @@ def _open_question_lines(body):
             if line.startswith(OPEN_QUESTION_PREFIX)]
 
 
+def _gate_touching_declaration(body):
+    """The declared reason on the first gate-touching line in a CHILD's own `body`, or None. A line
+    beginning `YR-GATE-TOUCHING:` at column 0 (`line.startswith`, never `.strip()` or a `\\s*`-tolerant
+    match) counts only when the text after the prefix, stripped, is non-empty — an empty reason is what
+    keeps the technical-rfc template's shipped marker-only slot inert. Caller passes the child's own body;
+    this function never sees or reads the epic's."""
+    for line in (body or "").splitlines():
+        if line.startswith(GATE_TOUCHING_PREFIX):
+            reason = line[len(GATE_TOUCHING_PREFIX):].strip()
+            if reason:
+                return reason
+    return None
+
+
 def _is_debt_epic(body):
     """True iff some line of the epic body, stripped, is exactly the debt-kind sentinel line — a substring
     test would also fire on a prose mention or a quoted/backticked example, so this checks whole lines."""
@@ -487,6 +510,18 @@ def _not_a_task_body(child_number):
         f"next open child #{child_number} is not a Task — nested decompositions are out of "
         "scope; promotion stopped. The gate does not skip ahead to a later Task. Reorder so the next open "
         "child is a Task (or split it out), then clear this epic's Reason to resume."
+    )
+
+
+def _gate_touching_body(child_number, reason):
+    # `reason` is backticked, never reproduced at column 0 — a self-triggering record must not satisfy its
+    # own detector on the next sweep (same discipline as `_open_questions_body`).
+    return (
+        f"{GATE_TOUCHING_MARKER}\n\n"
+        f"next open child #{child_number} declares itself gate-touching (`{reason}`) — promotion stopped. "
+        "Gate evolution is attended work: the pipeline builds under fixed gates, so a slice that touches "
+        "checks, CI, or the manifest is not the factory's to promote itself. Land the change by hand, "
+        "then clear this epic's Reason to resume."
     )
 
 
@@ -974,6 +1009,25 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
         field_needed = epic["reason"] != "Blocked"
         if comment_needed:
             _comment(gh, epic["repo"], epic["number"], _not_a_task_body(first["number"]))
+        if field_needed:
+            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Blocked"])
+        if comment_needed or field_needed:
+            return [{"epic": epic["number"], "action": "raise", "reason": "Blocked"}]
+        return []
+
+    # (3.5) gate-touching declaration → refuse fail-closed, promote nothing. Read from the child's OWN
+    #     body only — never the epic's, which legitimately carries `YR-GATE-TOUCHING:` lines inside its
+    #     per-task context slices describing this very child. Runs immediately after the Type gate above
+    #     and BEFORE the `_pi_node` lookup below on purpose: that lookup early-returns for a child not yet
+    #     on the board, and a gate-touching child must refuse even then — this check reads no project
+    #     item, so it has no reason to sit downstream of one it never uses. Comment and field write are
+    #     keyed independently, as in (1)/(3).
+    gate_reason = _gate_touching_declaration(first.get("body") or "")
+    if gate_reason is not None:
+        comment_needed = not _has_marker(comments, GATE_TOUCHING_MARKER)
+        field_needed = epic["reason"] != "Blocked"
+        if comment_needed:
+            _comment(gh, epic["repo"], epic["number"], _gate_touching_body(first["number"], gate_reason))
         if field_needed:
             _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Blocked"])
         if comment_needed or field_needed:
