@@ -79,5 +79,14 @@ and get the shape approved (human). Then flesh out the body above. *Gates review
       the in-build check gate and server CI are the same contract on two hosts.
 - [ ] Run **`check_links`** on this draft (its `source_feature_rfc` must resolve) before filing.
 
+**Open questions never ride the epic.** Past this airlock the epic executes mechanically, no human gate —
+an unresolved WHAT-call pauses the crossing and goes back into the governing design doc, never into the
+body above. The epic-gate enforces this mechanically once filed: a body line beginning `YR-OPEN-QUESTION:`
+at column 0 is an un-dispositioned open question and blocks promotion of every slice until that line is
+rewritten off the grammar (its disposition) or removed — presence only, never a content judgment. Track a
+question here in the scaffold while drafting, inert by indentation, never in the body above, e.g.
+  a line like `YR-OPEN-QUESTION: does the retry budget need a cap?` blocks promotion once filed —
+resolve it in the governing design doc before filing.
+
 *Next stage:* **task decomposition** (`task.md`) turns each slice into a Ready Issue.
 Gate before then: **review the technical RFC** (human).

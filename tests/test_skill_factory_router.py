@@ -727,6 +727,49 @@ def test_authoring_check_gate_parity_rule_not_duplicated_elsewhere():
 
 
 # ---------------------------------------------------------------------------
+# authoring.md — the open-question grammar teaching at the crossing step
+# (issue #343): step 3 must state the YR-OPEN-QUESTION: marker grammar and
+# the rule it enforces (epic-gate mechanical block on promotion), stated
+# inertly (inline-backticked / mid-sentence), never as a raw line at
+# column 0 that would trip authoring.md's own detector.
+# ---------------------------------------------------------------------------
+
+def _authoring_crossing_step_text():
+    """Return the text of authoring.md's step 3 (cross the airlock) section only, from its
+    '### 3.' heading up to the next '### ' heading."""
+    text = _authoring_text()
+    start = text.find("### 3.")
+    assert start != -1, "authoring.md is missing a '### 3.' crossing step heading"
+    rest = text[start + len("### 3."):]
+    next_heading = rest.find("### ")
+    end = start + len("### 3.") + (next_heading if next_heading != -1 else len(rest))
+    return text[start:end]
+
+
+def test_authoring_crossing_step_states_open_question_grammar():
+    """The crossing step must state the open-question grammar and the rule it enforces: a filed
+    epic-body line beginning YR-OPEN-QUESTION: at column 0 blocks promotion until dispositioned
+    (rewritten off the grammar) or removed."""
+    section = _authoring_crossing_step_text()
+    assert "YR-OPEN-QUESTION:" in section, \
+        "authoring.md step 3 does not state the open-question marker grammar"
+    lower = section.lower()
+    assert "column 0" in lower, \
+        "authoring.md step 3 does not state the column-0 anchoring of the open-question grammar"
+    assert "block" in lower and "promot" in lower, \
+        "authoring.md step 3 does not state that the marker blocks promotion"
+
+
+def test_authoring_crossing_step_open_question_mention_is_inert():
+    """The grammar must be stated inline-backticked / mid-sentence, never as a raw line beginning
+    the marker at column 0 -- authoring.md must never trip its own detector."""
+    section = _authoring_crossing_step_text()
+    assert not any(line.startswith("YR-OPEN-QUESTION:") for line in section.splitlines()), \
+        "authoring.md step 3's open-question mention sits at column 0 -- it must stay inert " \
+        "(inline-backticked / mid-sentence), never a raw marker line"
+
+
+# ---------------------------------------------------------------------------
 # Issue #127 — the bootstrap invariant and non-delegable acts on the
 # planning surfaces.
 #

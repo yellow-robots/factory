@@ -343,6 +343,203 @@ def test_happy_path_only_sets_status_to_ready():
 
 
 # ============================================================================
+# Issue #343 — the open-questions gate: an un-dispositioned `YR-OPEN-QUESTION:` marker in the epic
+# BODY refuses fail-closed, promotes nothing, and names each marker line. Runs before the approval
+# check (below) and after the no-open-children branch (tested further down, alongside the
+# self-close/debt-hold fixtures) — a finished epic's decision is unaffected by any marker.
+# ============================================================================
+
+def _run_open_question_body(body, comments=None):
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=comments if comments is not None else [VALID_RECORD],
+        body=body,
+        children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    return fake
+
+
+def test_marker_at_column_zero_blocks_promotion_and_raises_needs_info():
+    body = "Some epic prose.\n\nYR-OPEN-QUESTION: does the retry budget need a cap?\n\nMore prose."
+    fake = _run_open_question_body(body)
+
+    # nothing promoted, no child touched at all
+    assert _status_ready_edits(fake) == []
+    assert not any(e[0] == "PI-101" for e in fake.edits)
+    assert not any(c[1] == "101" for c in fake.comments)
+    # Reason=Needs-info; Status never touched
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert not any(e[0] == "EI-100" and e[1] == STATUS_FIELD for e in fake.edits)
+
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    text = epic_comments[0][2]
+    assert epic_gate.OPEN_QUESTIONS_MARKER in text
+    assert "line 3" in text
+    assert "`YR-OPEN-QUESTION: does the retry budget need a cap?`" in text
+    # the refusal never reproduces a found marker at column 0 (would satisfy its own detector)
+    assert not any(line.startswith(epic_gate.OPEN_QUESTION_PREFIX) for line in text.splitlines())
+
+
+def test_two_open_question_markers_both_named():
+    body = (
+        "Intro line.\n"
+        "YR-OPEN-QUESTION: first question here?\n"
+        "middle prose\n"
+        "YR-OPEN-QUESTION: second question here?\n"
+    )
+    fake = _run_open_question_body(body)
+    assert _status_ready_edits(fake) == []
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    text = epic_comments[0][2]
+    assert "line 2" in text and "`YR-OPEN-QUESTION: first question here?`" in text
+    assert "line 4" in text and "`YR-OPEN-QUESTION: second question here?`" in text
+
+
+def test_open_questions_gate_precedes_approval_check_single_refusal():
+    """An epic with BOTH an open-question marker and no valid approval record raises exactly once —
+    the open-questions refusal — never falling through to also post the missing-approval refusal."""
+    body = "YR-OPEN-QUESTION: still open?\n"
+    fake = _run_open_question_body(body, comments=[])   # no valid approval either
+    epic_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(epic_comments) == 1
+    assert epic_gate.OPEN_QUESTIONS_MARKER in epic_comments[0][2]
+    assert epic_gate.NO_APPROVAL_MARKER not in epic_comments[0][2]
+
+
+def test_open_questions_raise_is_idempotent_across_ticks():
+    body = "YR-OPEN-QUESTION: still open?\n"
+    fake = _run_open_question_body(body)
+    edits_after_1, comments_after_1 = list(fake.edits), list(fake.comments)
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in edits_after_1
+
+    _sweep(fake)                                            # identical second tick
+    assert fake.edits == edits_after_1
+    assert fake.comments == comments_after_1
+
+
+def test_removing_last_marker_resumes_promotion_next_tick_no_attended_reset():
+    """Tick 1 refuses on the marker. The disposition is rewriting the line off the grammar — nothing
+    else. Tick 2 (no attended step beyond that rewrite) resumes promotion; the stale Needs-info Reason
+    from tick 1 is never cleared."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[VALID_RECORD], body="YR-OPEN-QUESTION: still open?\n",
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert _status_ready_edits(fake) == []
+    reason_edits_after_1 = _reason_edits(fake)
+
+    # the disposition: rewrite the marker line off the grammar (an attended body edit) -- nothing else
+    epics[100]["body"] = "RESOLVED: no cap needed, default is fine.\n"
+    _sweep(fake)                                            # next tick, no other reset
+
+    assert ("PI-101", STATUS_FIELD, "Ready") in fake.edits  # promotion resumed
+    assert _reason_edits(fake) == reason_edits_after_1       # the stale Reason is never cleared
+
+
+def test_dispositioned_marker_no_longer_blocks():
+    body = "RESOLVED: does the retry budget need a cap? -- no, using the default.\n"
+    fake = _run_open_question_body(body)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_ruling_appended_same_line_still_blocks_not_a_disposition():
+    """Appending a ruling after the marker on the SAME line still matches -- that is a tempting
+    non-disposition, not a second way to disposition. Only rewriting the line off the grammar counts."""
+    body = "YR-OPEN-QUESTION: does the retry budget need a cap? RESOLVED: no, default is fine.\n"
+    fake = _run_open_question_body(body)
+    assert _status_ready_edits(fake) == []
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+
+
+def test_similarly_prefixed_marker_does_not_match():
+    """The colon is part of the prefix constant specifically so a plural/longer marker can't match."""
+    body = "YR-OPEN-QUESTIONS: a plural form must not match the singular grammar\n"
+    fake = _run_open_question_body(body)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_fenced_marker_line_still_fires_indentation_is_the_guarantee_not_fencing():
+    """A line-anchored matcher still accepts a FENCED example: a fenced block's content lines sit at
+    column 0 same as a real marker. This documents the accepted gap -- it does NOT claim a fenced
+    mention is inert (indentation is the guarantee here, fencing is not)."""
+    body = "```\nYR-OPEN-QUESTION: still fires even fenced?\n```\n"
+    fake = _run_open_question_body(body)
+    assert _status_ready_edits(fake) == []
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+
+
+# ---- false positives: prose / inline-backtick / indentation / trail comment never fire ----
+
+def test_prose_mention_is_not_an_open_question():
+    body = "We discussed the marker YR-OPEN-QUESTION: should this block? and decided it should not."
+    fake = _run_open_question_body(body)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_inline_backticked_mention_is_not_an_open_question():
+    body = "See the `YR-OPEN-QUESTION:` grammar in authoring.md for how this gate reads the epic body."
+    fake = _run_open_question_body(body)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_one_space_indented_mention_is_not_an_open_question():
+    body = " YR-OPEN-QUESTION: does one leading space still count?\n"
+    fake = _run_open_question_body(body)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_marker_only_in_a_trail_comment_is_not_an_open_question():
+    """The gate scans the epic BODY only -- the trail is deliberately not scanned (the comment read
+    is capped at first:100 and unpaginated). A marker sitting only in a comment must never block."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD, "YR-OPEN-QUESTION: does this comment count?"],
+        body="Clean epic body, no markers here.",
+        children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert _reason_edits(fake) == []
+
+
+def test_technical_rfc_teaching_line_is_not_an_open_question_end_to_end():
+    """The technical-rfc template's own worked example -- read from the file, not retyped -- must not
+    fire the open-question grammar. It is inert by indentation + inline-backticking, not by content."""
+    text = (ROOT / "templates" / "technical-rfc.md").read_text(encoding="utf-8")
+    marker = "END ISSUE BODY"
+    idx = text.find(marker)
+    assert idx != -1, "templates/technical-rfc.md is missing the 'END ISSUE BODY' marker"
+    scaffold = text[idx:]
+    teaching_lines = [ln for ln in scaffold.splitlines() if "YR-OPEN-QUESTION:" in ln]
+    assert teaching_lines, (
+        "templates/technical-rfc.md's scaffold no longer mentions YR-OPEN-QUESTION: -- "
+        "update this test's target"
+    )
+    for line in teaching_lines:
+        assert not line.startswith(epic_gate.OPEN_QUESTION_PREFIX), (
+            f"templates/technical-rfc.md teaching line fires the open-question grammar: {line!r}"
+        )
+
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(comments=[VALID_RECORD], body=scaffold,
+                               children=[_child(101, pi_id="PI-101", status="Backlog")])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]   # promotes normally, no false positive
+    assert _reason_edits(fake) == []
+
+
+# ============================================================================
 # AC2 — no valid approval record -> raise Needs-info + comment, promote nothing
 # ============================================================================
 
@@ -771,6 +968,26 @@ def test_open_child_remaining_blocks_self_close():
     assert fake.edits == [("PI-102", STATUS_FIELD, "Ready")]
 
 
+def test_finished_epic_with_open_question_marker_still_self_closes():
+    """Issue #343: the open-questions gate runs AFTER the no-open-children branch -- a finished epic's
+    self-close decision is unchanged regardless of any marker in its body."""
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        body="YR-OPEN-QUESTION: does this even matter now?\n",
+        children=[_child(101, state="CLOSED", pi_id="PI-101"),
+                  _child(102, state="CLOSED", pi_id="PI-102")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    epics[100]["subIssues"]["nodes"][1]["stateReason"] = "NOT_PLANNED"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+
+    assert fake.closes == [(REPO, "100", "completed")]
+    # the open-questions refusal never fires for a finished epic -- no raise, no comment at all
+    assert fake.comments == []
+    assert not any(e[1] == REASON_FIELD for e in fake.edits)
+
+
 def test_self_close_is_idempotent_across_ticks():
     """Tick 1 closes the finished epic (the fake flips its board content.state to CLOSED). Tick 2's board
     read no longer sees it OPEN, so it is not a candidate -> no second close call."""
@@ -909,6 +1126,25 @@ def test_stale_needs_info_reason_does_not_suppress_the_hold_comment():
     assert fake.closes == []
     # Reason was already Needs-info -> no edit needed/made
     assert _reason_edits(fake) == []
+
+
+def test_finished_debt_epic_with_open_question_marker_still_holds():
+    """Issue #343: a finished DEBT epic's hold decision (waiting on a ledger verdict) is also
+    unaffected by an open-question marker -- the no-open-children branch runs first for a debt epic
+    too, exactly as it does for the plain self-close path above."""
+    board, epics = _debt_epic_detail(comments=[])
+    epics[100]["body"] = DEBT_BODY + "\n\nYR-OPEN-QUESTION: does this block the hold too?\n"
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+
+    assert fake.closes == []
+    assert actions == [{"epic": 100, "action": "hold"},
+                        {"action": "debt-count", "repo": REPO, "count": 0, "threshold": 10}]
+    hold_comments = [c for c in fake.comments if c[1] == "100"]
+    assert len(hold_comments) == 1
+    assert "YR-DEBT-HOLD" in hold_comments[0][2]
+    # the open-questions refusal text never appears -- the debt-hold decision alone governs here
+    assert not any(epic_gate.OPEN_QUESTIONS_MARKER in c[2] for c in fake.comments)
 
 
 def test_ledger_marker_mentioned_midline_is_not_a_verdict():

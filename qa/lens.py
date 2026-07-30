@@ -72,6 +72,14 @@ SPECIES_ALTERNATIVE = {
 _TRANSPORT_NAME_RE = re.compile(r"argv|transcript", re.IGNORECASE)
 _MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_-]{1,40}:$")
 
+# A doc/reference-teaching test (e.g. "does authoring.md state the marker grammar?") asserts a
+# marker string is present somewhere in a documentation excerpt — inherently a substring check,
+# never a line-anchored one, since the doc may state it inline-backticked or mid-sentence. This
+# repo's own test suite names such an excerpt's variable via a `..._text()`/`..._section()`
+# helper call (e.g. `section = _authoring_crossing_step_text()`); that naming is the signal this
+# is documentation being read, not a captured protocol output the marker's line-anchoring guards.
+_DOC_HELPER_NAME_RE = re.compile(r"(text|section)$", re.IGNORECASE)
+
 # tests/harness/{claude_fake,gh_fake}.py ARE the shared home the clone-accretion species is defined
 # relative to — the species detects a SECOND definition beside them, so the shared home's own
 # constants (which of course carry the fingerprint below) are excluded from this species by path.
@@ -172,6 +180,33 @@ def _scan_raw_argv_transport_grep(path, source, asserts):
     return findings
 
 
+def _enclosing_function(node):
+    cur = getattr(node, "parent", None)
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return cur
+        cur = getattr(cur, "parent", None)
+    return None
+
+
+def _assigned_from_doc_helper(name, func):
+    """True iff `name` is assigned, inside `func`, from a call to a `..._text()`/`..._section()`
+    helper — see `_DOC_HELPER_NAME_RE`."""
+    if func is None:
+        return False
+    for n in ast.walk(func):
+        if not (isinstance(n, ast.Assign) and len(n.targets) == 1
+                and isinstance(n.targets[0], ast.Name) and n.targets[0].id == name
+                and isinstance(n.value, ast.Call)):
+            continue
+        callee = n.value.func
+        callee_name = callee.id if isinstance(callee, ast.Name) else (
+            callee.attr if isinstance(callee, ast.Attribute) else None)
+        if callee_name and _DOC_HELPER_NAME_RE.search(callee_name):
+            return True
+    return False
+
+
 def _scan_unanchored_marker_substring(path, source, asserts):
     findings = []
     for a in asserts:
@@ -180,6 +215,9 @@ def _scan_unanchored_marker_substring(path, source, asserts):
             if literal is None or not _MARKER_RE.match(literal):
                 continue
             if _is_negated(cmp, a):
+                continue
+            right = cmp.comparators[0]
+            if isinstance(right, ast.Name) and _assigned_from_doc_helper(right.id, _enclosing_function(a)):
                 continue
             findings.append(Finding(path, a.lineno, "unanchored-marker-substring"))
     return findings

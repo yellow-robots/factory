@@ -344,11 +344,19 @@ LEDGER_MARKER = "YR-DEBT-LEDGER"
 HOLD_MARKER = "YR-DEBT-HOLD"
 DUE_MARKER = "YR-DEBT-DUE"
 
-# --- the three per-epic refusal markers: one condition token per site, so each refusal's own comment
-# --- record is keyed on its own line, never satisfiable by a different refusal's record.
+# --- the per-epic refusal markers: one condition token per site, so each refusal's own comment record
+# --- is keyed on its own line, never satisfiable by a different refusal's record.
 NO_APPROVAL_MARKER = "YR-EPIC-GATE: no-approval"
 NOT_A_TASK_MARKER = "YR-EPIC-GATE: not-a-task"
 NOT_ONBOARDED_MARKER = "YR-EPIC-GATE: not-onboarded"
+OPEN_QUESTIONS_MARKER = "YR-EPIC-GATE: open-questions"
+
+# --- the open-question grammar: a *filed* epic-body line beginning this prefix at column 0, matched with
+# --- no leading-whitespace tolerance — the same anchoring the shipped `VERDICT:` family uses
+# --- (`tools/dev-runner.sh:262`, `tools/review_bundle.py:58`). Marker-presence only: this never judges
+# --- whether a question is really open — a disposition rewrites the line off the grammar, and that
+# --- rewrite is the only disposition there is.
+OPEN_QUESTION_PREFIX = "YR-OPEN-QUESTION:"
 
 
 def _has_marker(comments, marker):
@@ -403,6 +411,16 @@ def _has_valid_approval(comments):
     return False
 
 
+def _open_question_lines(body):
+    """The 1-indexed line number and raw text of every open-question marker in the epic `body` — a line
+    beginning `YR-OPEN-QUESTION:` at column 0 (`line.startswith`, never `.strip()` or a `\\s*`-tolerant
+    match), so a one-space-indented mention, an inline-backticked mention, or prose discussing the marker
+    never fires. A fenced example's content line DOES fire — the anchoring guarantees indentation, not
+    fencing; teaching text must be indented, not just fenced, to stay inert."""
+    return [(n, line) for n, line in enumerate((body or "").splitlines(), start=1)
+            if line.startswith(OPEN_QUESTION_PREFIX)]
+
+
 def _is_debt_epic(body):
     """True iff some line of the epic body, stripped, is exactly the debt-kind sentinel line — a substring
     test would also fire on a prose mention or a quoted/backticked example, so this checks whole lines."""
@@ -455,6 +473,23 @@ def _not_onboarded_body():
         "build could ever run here. Onboarding (auth, onboarding the repo, arming) is attended, "
         "design-side work — never a slice the factory can pick up itself. Onboard the repo, then "
         "re-promote it (a standalone item) or clear the Reason (an epic) to resume."
+    )
+
+
+def _open_questions_body(lines):
+    # Never reproduce a found marker at column 0 here — a self-triggering record would satisfy its own
+    # detector on the next sweep (the house has burned on this twice; `tools/epic_gate.py:446-448`
+    # documents one of them). Each marker is named by line number plus a backticked excerpt instead.
+    named = "\n".join(f"- line {n}: `{line}`" for n, line in lines)
+    return (
+        f"{OPEN_QUESTIONS_MARKER}\n\n"
+        "this epic's body carries an un-dispositioned open question — promotion stopped, nothing "
+        f"promoted (rule: open questions never ride the epic, `skills/factory/references/authoring.md` "
+        f"step 3 / `skills/factory/references/architect.md`). A line beginning `{OPEN_QUESTION_PREFIX}` "
+        "at column 0 is an open question until its line is rewritten off that grammar (its disposition) "
+        f"or removed:\n\n{named}\n\n"
+        "Disposition each marker line, then the next sweep resumes promotion on its own — no Reason to "
+        "clear."
     )
 
 
@@ -850,6 +885,25 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
         reason = _epic_close_reason(children)
         _close_issue(gh, epic["repo"], epic["number"], reason)
         return [{"epic": epic["number"], "action": "close", "reason": reason}]
+
+    # (0) open-questions gate → refuse fail-closed, promote nothing. This runs after the no-open-children
+    #     branch above (a finished epic's self-close/hold decision stays exactly as it is, regardless of
+    #     any marker) and before the approval check below, since this criterion governs promotion only.
+    #     Detection is marker-presence only — no content judgment. Comment and field write are keyed
+    #     independently, as in (1)/(3): the comment marker keys re-post, the current Reason value keys the
+    #     field write, so a stale Reason from a *different* refusal never suppresses this refusal's own
+    #     comment, and this refusal is never re-posted once already on record.
+    open_lines = _open_question_lines(body)
+    if open_lines:
+        comment_needed = not _has_marker(comments, OPEN_QUESTIONS_MARKER)
+        field_needed = epic["reason"] != "Needs-info"
+        if comment_needed:
+            _comment(gh, epic["repo"], epic["number"], _open_questions_body(open_lines))
+        if field_needed:
+            _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+        if comment_needed or field_needed:
+            return [{"epic": epic["number"], "action": "raise", "reason": "Needs-info"}]
+        return []
 
     # (1) no valid approval record → raise Needs-info + stop; promote nothing. The comment is keyed on its
     #     own marker (never re-posted once on record), the field write on the current Reason value (never
