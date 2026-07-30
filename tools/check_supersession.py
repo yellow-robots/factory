@@ -70,9 +70,12 @@ is indented and skipped, and a quoted or tab-prefixed key line is flagged as non
 parsed (it could be a duplicate or could not be — never guessed); (2) property-less governed notes (the
 sweep's own "no frontmatter keys extracted" legacy class), listed by path instead of counted; (3) a
 per-path vocabulary check — alien type, alien status, or an alien frontmatter key outside
-`_closed_keys_for`'s set for the doc's location; (4) a `§`-style section-anchor reference in a doc's
-body — a dead reference the brain cannot resolve — steering toward the two native anchor forms Obsidian
-actually resolves: a heading link (`[[Note#Heading]]`) or a block reference (`[[Note#^blockid]]`). This
+`_closed_keys_for`'s set for the doc's location; (4) a **bare** `§`-style section-anchor reference in a
+doc's body — a dead reference the brain cannot resolve — steering toward the two native anchor forms
+Obsidian actually resolves: a heading link (`[[Note#Heading]]`) or a block reference (`[[Note#^blockid]]`).
+A `§N` *inside* a wikilink is deliberately not a finding: `[[Note#1. Heading|§1]]` is the sanctioned
+repair — a native anchor, aliased so the prose still reads `§1` — and flagging it would make a repaired
+doc indistinguishable from a broken one, leaving the steer's own recommended form unreachable. This
 fourth class is wired into BOTH surfaces: integrity mode's sweep, and the single-doc draft gate below.
 
 This is an attended-session check like its siblings: advisory-first, wired into nothing.
@@ -150,11 +153,20 @@ _ANCHOR_STEER = ("dead reference the brain cannot resolve — use a native ancho
 
 
 def _section_anchor_findings(body):
-    """One message per distinct `§N`-style anchor reference in `body` (regex over body text — these
-    are never resolvable, so every occurrence is a defect), steering toward the two native anchor
-    forms Obsidian actually resolves. Shared by both surfaces: the draft gate and integrity mode."""
+    """One message per distinct BARE `§N`-style anchor reference in `body`, steering toward the two
+    native anchor forms Obsidian actually resolves. Shared by both surfaces: the draft gate and
+    integrity mode.
+
+    A `§N` inside a wikilink is NOT a finding. `[[Note#1. Heading|§1]]` is the *sanctioned repair*
+    (the house style — the vault's own clinical framework already uses it): a native anchor Obsidian
+    resolves, aliased so the prose keeps reading `§1`. Scanning raw body text would flag the very
+    form the steer asks for, making a correctly-repaired doc indistinguishable from a broken one and
+    leaving no way to reach zero — so wikilink spans are removed before the scan and only prose-bare
+    references, which are genuinely unresolvable, survive it.
+    """
+    scanned = _WIKILINK_RE.sub("", body)
     seen = []
-    for m in _SECTION_ANCHOR_RE.finditer(body):
+    for m in _SECTION_ANCHOR_RE.finditer(scanned):
         ref = m.group(0)
         if ref not in seen:
             seen.append(ref)

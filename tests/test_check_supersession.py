@@ -1406,6 +1406,41 @@ def test_integrity_distinct_section_anchors_each_listed_once(tmp_path):
     assert any("§7" in l for l in lines)
 
 
+# --- the sanctioned repair must not itself be a finding (the human's ruling, 2026-07-30) ----------
+# `[[Note#1. Heading|§1]]` is a native anchor Obsidian resolves, aliased so the prose still reads
+# `§1`. Flagging it would make a repaired doc indistinguishable from a broken one, and leave the
+# steer's own recommended form unreachable.
+
+def test_integrity_section_anchor_inside_wikilink_alias_is_not_flagged(tmp_path):
+    body = "# Body\n\nSee [[factory-map#2. Mechanism map|§2]] for details.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert not any("§-style anchor reference" in l for l in lines)
+
+
+def test_integrity_same_doc_anchor_alias_is_not_flagged(tmp_path):
+    body = "# Body\n\nAs [[#5. Maintenance|§5]] states.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert not any("§-style anchor reference" in l for l in lines)
+
+
+def test_draft_gate_section_anchor_inside_wikilink_alias_is_not_flagged(tmp_path):
+    text = _doc(type_="task", body="# Body\n\nSee [[factory-map#2. Mechanism map|§2]].\n")
+    assert check_draft(text, vault_root=tmp_path) == []
+
+
+def test_bare_anchor_still_flagged_when_a_repaired_one_sits_beside_it(tmp_path):
+    """The exclusion is scoped to the wikilink span, not to the whole document: a doc that repaired
+    one reference and missed another must still report the one it missed."""
+    body = "# Body\n\nRepaired [[factory-map#2. Mechanism map|§2]], but §7 is still bare.\n"
+    _vault_file(tmp_path, "proj/compA/iterations/doc.md", _doc(status="active", body=body))
+    lines, failed = check_integrity(vault_root=tmp_path, scope="proj")
+    assert failed is True
+    assert any("§7" in l for l in lines)
+    assert not any("'§2'" in l for l in lines)
+
+
 # =====================================================================================
 # integrity mode — exit-code matrix and census headline (issue #318)
 # =====================================================================================
