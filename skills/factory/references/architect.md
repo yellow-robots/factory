@@ -58,7 +58,12 @@ the architect last means it judges what actually shipped, not an intermediate dr
   in its report — never a guess, never a silent pass.
 - A factual slip discovered in an **already-active** spec routes to the human, never a silent edit —
   an active spec is a frozen record (see [`documentation-model.md`](documentation-model.md) — *Two
-  principles*); the architect flags what it found, it never rewrites history to match it.
+  principles*); the architect flags what it found, it never rewrites history to match it. The line
+  between that and a **functional defect** the same section says to repair in place is *what the
+  edit touches*: a slip is something the doc **says** (a wrong number, a claim the tree contradicts)
+  and is always the human's; a defect is something that stops a reader **reaching** what it says (a
+  dead link, an unresolvable anchor) and is repaired, recorded, under that section's closed rules.
+  When an edit could be read as either, it is a slip — route it.
 - Open WHAT-calls live on the design side — the only side with a structural human gate: at spec-ready
   they land as callouts on the draft; at the crossing, an unresolved question pauses the crossing and
   goes back into the governing design doc — never onto the epic, which past the airlock executes

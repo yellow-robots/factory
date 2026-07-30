@@ -57,7 +57,11 @@ Native close → `Status=Done` either way.
 
 When the PR merges, the iteration's Obsidian docs become immutable records:
 
-- Set `status: active` on any doc still at `draft`; do not edit the body to match later reality.
+- Set `status: active` on any doc still at `draft`; do not edit the body to match later reality. A
+  **functional defect** (a dead link or unresolvable anchor) is the one exception and *is* repaired
+  here, under the closed rules in [`documentation-model.md`](documentation-model.md) — *Two
+  principles*: the close is the moment a session handles every doc in the iteration, so it is where
+  such a defect is most cheaply caught. Record the repair in the walk entry.
 - A later change gets its *own* later iteration. "Amend the spec to match what was actually built" is
   the wrong move — the drift is recorded by the *next* iteration, not by rewriting the frozen one.
 - The technical-rfc on the epic Issue stays as the permanent record; the PR carries the link to the
