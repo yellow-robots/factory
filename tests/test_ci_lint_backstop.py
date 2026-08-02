@@ -28,6 +28,25 @@ interpolation of event data, which is where workflow injection actually lives.
 Text-based parsing throughout: this repo declares no YAML parser (`requirements-dev.txt` has
 none), and the slice ships no new dependency, so the existing regex idiom in
 test_ci_run_economy.py / test_ci_full_history_checkout.py is followed rather than replaced.
+
+Two known limitations, recorded rather than fixed — the guard wall's recorded-impossibility case
+(it-27 § 4: where a finding admits no deterministic predicate, record why and what would have to
+be true for one to exist). Both were found by the independent cold review of PR #372.
+
+  1. **The two hosts read different refs.** The runner resolves the manifest from the BASE ref
+     (`tools/dev-runner.sh`, the "build from git refs, never a mutable tree" invariant), while
+     this CI step reads the manifest at the PR HEAD, because that is the only tree a workflow
+     step has checked out. So a PR can weaken or disarm its own lint backstop by editing its own
+     `lint_cmd`. No predicate here can catch it: reading the base ref's manifest instead would
+     mean a PR could never ADOPT or fix a lint command either, which defeats the slice. What
+     would have to be true for a guard to exist: the certification would need the base ref's
+     manifest AND a separate, reviewed path for manifest changes — i.e. `.yr/factory.toml` would
+     have to become a gate-touching surface in its own right, which is a WHAT-call, not a test.
+  2. **Value coercion diverges.** The runner and this step do not agree on every non-string
+     `lint_cmd` (a boolean, a multi-line value). "One contract on two hosts" holds for the
+     command's SOURCE, which is what the seam is about; it does not hold byte-for-byte across
+     every TOML type the key was never meant to carry. Not asserted here because pinning today's
+     divergence would freeze it.
 """
 
 import pathlib
@@ -77,12 +96,23 @@ def _lint_run_script():
     return textwrap.dedent("\n".join(script))
 
 
-def _run_script_in(tmp_path, manifest_text):
-    """Run the extracted Lint shell in a temp cwd carrying `manifest_text` (None = no manifest)."""
-    if manifest_text is not None:
+def _run_script_in(tmp_path, manifest_text, *, raw_bytes=None):
+    """Run the extracted Lint shell in a temp cwd carrying `manifest_text` (None = no manifest).
+
+    `bash -e -c`, NOT `bash -c`. GitHub Actions runs a `run:` step as `/usr/bin/bash -e {0}` —
+    read off this workflow's own job log (run 30769527323, every step: `shell: /usr/bin/bash -e
+    {0}`). The difference is not cosmetic: under `-e` a failing manifest read ABORTS the step,
+    while without it execution continues with an empty LINT_CMD and prints a false "no lint_cmd
+    declared" no-op. A harness missing `-e` therefore stays green while the real step exits 1 —
+    the failure mode where the verification itself is what hides the defect.
+    """
+    if raw_bytes is not None:
+        (tmp_path / ".yr").mkdir(exist_ok=True)
+        (tmp_path / ".yr" / "factory.toml").write_bytes(raw_bytes)
+    elif manifest_text is not None:
         (tmp_path / ".yr").mkdir(exist_ok=True)
         (tmp_path / ".yr" / "factory.toml").write_text(manifest_text, encoding="utf-8")
-    return subprocess.run(["bash", "-c", _lint_run_script()], cwd=tmp_path,
+    return subprocess.run(["bash", "-e", "-c", _lint_run_script()], cwd=tmp_path,
                           capture_output=True, text=True)
 
 
@@ -105,13 +135,15 @@ def test_lint_step_reads_the_command_from_the_manifest():
 
 
 def test_lint_step_does_not_restate_the_declared_command():
-    """The manifest's own lint_cmd must not appear literally in the workflow."""
-    declared = ""
-    for line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines():
-        m = re.match(r'^\s*lint_cmd\s*=\s*"(.+)"\s*$', line)
-        if m:
-            declared = m.group(1)
-            break
+    """The manifest's own lint_cmd must not appear literally in the workflow.
+
+    Parsed with `tomllib`, not a regex: TOML accepts basic strings ("…") AND literal strings
+    ('…'), and the literal form is exactly the idiom slice A3 prescribes for regex rules. A
+    hand-rolled `"(.+)"` pattern silently fails to find a single-quoted value and then reports
+    "declares no lint_cmd", which is a misleading message for a manifest that declares one.
+    """
+    import tomllib
+    declared = tomllib.loads(MANIFEST_PATH.read_text(encoding="utf-8")).get("lint_cmd", "")
     assert declared, "this repo's .yr/factory.toml declares no lint_cmd to test against"
     assert declared not in _ci_text(), (
         f"ci.yml restates the manifest's lint_cmd ({declared!r}) instead of reading it — two "
@@ -137,6 +169,33 @@ def test_lint_step_is_a_no_op_when_there_is_no_manifest_at_all(tmp_path):
     assert r.returncode == 0, (
         f"the Lint step failed a repo with no .yr/factory.toml (rc={r.returncode}) — the read "
         f"must yield empty, not raise.\n{r.stderr}"
+    )
+
+
+def test_a_malformed_manifest_fails_loud_rather_than_silently_skipping(tmp_path):
+    """A broken manifest is a fact worth failing on, not a reason to skip the gate.
+
+    This is fail-closed by design and NOT a defect to soften: under `bash -e` the parse error
+    aborts the step, so a repo whose manifest stopped parsing gets a red job naming the reason
+    rather than a green one that quietly linted nothing. The danger is the opposite shape — a
+    harness without `-e` reports rc=0 here AND prints "no lint_cmd declared", which is a false
+    statement about a manifest that does declare one.
+    """
+    r = _run_script_in(tmp_path, 'lint_cmd = "unterminated\n')
+    assert r.returncode != 0, (
+        "a manifest that does not parse produced a GREEN lint step — the job would certify a "
+        f"tree nothing linted. stdout={r.stdout!r}"
+    )
+    assert "no lint_cmd declared" not in r.stdout, (
+        "the step reported 'no lint_cmd declared' for a manifest it simply could not parse — "
+        "that is a false statement about the repo, not a legible failure"
+    )
+
+
+def test_a_non_utf8_manifest_fails_loud(tmp_path):
+    r = _run_script_in(tmp_path, None, raw_bytes=b'lint_cmd = "\xff\xfe caf\xe9"\n')
+    assert r.returncode != 0, (
+        f"a non-UTF-8 manifest produced a green lint step; stdout={r.stdout!r}"
     )
 
 
@@ -176,25 +235,41 @@ def _jobs_block(text):
 
 
 def test_lint_step_rides_the_existing_job():
-    """A second job means a second checkout (pinned in test_ci_full_history_checkout.py)."""
+    """A second job means a second checkout (pinned in test_ci_full_history_checkout.py).
+
+    Asserts the COUNT, not a hardcoded name list: this epic's own convention is derive from the
+    tree, never enumerate, and `jobs == ["test"]` would misattribute an innocent job rename as
+    "the lint step grew a second job".
+    """
     jobs = re.findall(r"^  (\w[\w-]*):$", _jobs_block(_ci_text()), re.MULTILINE)
-    assert jobs == ["test"], (
-        f"ci.yml declares jobs {jobs} — the lint step must ride the single certification job, "
-        "never a second one"
+    assert len(jobs) == 1, (
+        f"ci.yml declares {len(jobs)} jobs {jobs} — the lint step must ride the single "
+        "certification job, never a second one"
     )
 
 
-def test_workflow_holds_exactly_one_manifest_read():
+def test_workflows_hold_exactly_one_manifest_read():
     """The cardinality issue #365 pins from outside, asserted here from inside.
 
-    Counting rule, stated because the number moves with it: a *read* is an expression that
-    PARSES the manifest (`tomllib`), not any line that mentions the path — the step legitimately
-    names `.yr/factory.toml` in its own log output and in comments, and prose is not a reader.
+    Two counting rules, both stated because the number moves with them:
+
+    1. The SURFACE is every YAML file under `.github/workflows/`, not `ci.yml` alone — #365's
+       `workflow-manifest-read` rule globs the directory, and a test reading one file would let
+       a second workflow carry a second reader while still claiming "the same contract".
+    2. A READ is an expression that opens the manifest — `tomllib` (the sanctioned parse) or any
+       other command naming the file as an input. Prose is not a reader: the step legitimately
+       names `.yr/factory.toml` in its own log output and comments, so mentions are not counted,
+       but a `sed`/`grep`/`awk` reader IS, since it evades a tomllib-only rule.
     """
-    reads = [ln for ln in _ci_text().splitlines() if "tomllib" in ln]
-    assert len(reads) == 1, (
-        f"ci.yml parses the manifest at {len(reads)} sites, expected exactly 1 — a second "
-        f"reader is the clone shape this iteration exists to stop:\n" + "\n".join(reads)
+    wf_dir = pathlib.Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    readers = []
+    for path in sorted(wf_dir.glob("*.y*ml")):
+        for ln in path.read_text(encoding="utf-8").splitlines():
+            if "tomllib" in ln or re.search(r"\b(sed|grep|awk|cut|python3?)\b[^\n]*factory\.toml", ln):
+                readers.append(f"{path.name}: {ln.strip()}")
+    assert len(readers) == 1, (
+        f"the workflows parse .yr/factory.toml at {len(readers)} sites, expected exactly 1 — a "
+        f"second reader is the clone shape this iteration exists to stop:\n" + "\n".join(readers)
     )
 
 
