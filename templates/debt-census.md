@@ -58,11 +58,13 @@ exclude: <rule, e.g. a path prefix or glob>
 | Prior carry-forward | <finding, or "none"> | |
 
 ## Arm coverage
-<!-- The axis set is closed at four — reachability, system shape, tests, performance. Each arm reports
-     whether it ran this round and, if not, what it carried forward unmeasured — an arm silently absent
-     is a defect in the census, never a signal it found nothing. A candidate axis outside this set is
-     excluded only by an argument recorded here; an axis not mentioned at all is not thereby excluded —
-     debt-rounds.md → Census arms. -->
+<!-- The axis set is closed at four — reachability, system shape, tests, performance. Tests and
+     performance are standing arms: measured every round and gating nothing (tests is swept, not
+     sampled once; performance records a protocol-tagged reading every round — see the Performance
+     section below). Each arm reports whether it ran this round and, if not, what it carried forward
+     unmeasured — an arm silently absent is a defect in the census, never a signal it found nothing. A
+     candidate axis outside this set is excluded only by an argument recorded here; an axis not
+     mentioned at all is not thereby excluded — debt-rounds.md → Census arms. -->
 | Arm | Ran this round | Carried forward unmeasured |
 |---|---|---|
 | Reachability | <yes/no> | <what, or "n/a"> |
@@ -117,9 +119,27 @@ relationships no single change can exhibit>
 | <e.g. a grammar's forked conventions> | <instances found> | <the ruled intended shape> | <why> |
 | <e.g. a duplicated home> | <instances found> | <the ruled intended shape> | <why> |
 
+## Performance
+<!-- A standing arm: measured every round, gates nothing — debt-rounds.md → Census arms. Each census
+     records per-test runtime attribution together with the protocol that produced it — host, load
+     state, extraction method — because three runs of the same tree at the same ref spread ~10% while a
+     meter exists to detect a 23% trend. A reading with no protocol recorded does not enter the series.
+     Successive readings compare shares before seconds; where two readings were produced under
+     different protocols, compare shares only, never absolute durations. -->
+**Protocol:** host: `<e.g. named CI runner class, or the attended operator's machine>` · load state:
+`<idle | contended, and how that was known>` · extraction method: `<e.g. pytest --durations=N, a timer
+wrapper>`
+
+| Test | Runtime | Share of suite duration | Prior share (same protocol only) |
+|---|---|---|---|
+| <slowest test, or "none this round"> | <duration> | <% of suite duration> | <prior round's share, or "n/a — no prior reading under a comparable protocol"> |
+
 ## Duplication / consolidation sets
 <!-- Groups of items that overlap or duplicate each other — candidates for merging rather than a
-     straight removal. One set per group, naming its members and the consolidation target. -->
+     straight removal. One set per group, naming its members and the consolidation target. These
+     consolidation-shape rows are one half of the round-close detection-locus meter: reported at round
+     close as a count, kept separate from — never a ratio against — the duplication findings the
+     iteration's reviewer raised at build time (debt-rounds.md → Round-close duties). -->
 **Coverage:** <swept surface, per the block above | whole tree — exempt per the per-arm exemption: name
 why this arm's findings depend on relationships no single change can exhibit>
 
