@@ -57,6 +57,22 @@ exclude: <rule, e.g. a path prefix or glob>
 | Open backlog seeds | <finding, or "none"> | |
 | Prior carry-forward | <finding, or "none"> | |
 
+## Arm coverage
+<!-- The axis set is closed at four — reachability, system shape, tests, performance. Each arm reports
+     whether it ran this round and, if not, what it carried forward unmeasured — an arm silently absent
+     is a defect in the census, never a signal it found nothing. A candidate axis outside this set is
+     excluded only by an argument recorded here; an axis not mentioned at all is not thereby excluded —
+     debt-rounds.md → Census arms. -->
+| Arm | Ran this round | Carried forward unmeasured |
+|---|---|---|
+| Reachability | <yes/no> | <what, or "n/a"> |
+| System shape | <yes/no> | <what, or "n/a"> |
+| Tests | <yes/no> | <what, or "n/a"> |
+| Performance | <yes/no> | <what, or "n/a"> |
+
+**Excluded candidate axes:** <none this round | name each excluded candidate with its argument — an
+unmentioned axis is never treated as excluded>
+
 ## Baselines
 <!-- The meters the next round's census diffs against. Tests are reported separately from production —
      debt-rounds.md → The walls (the content-rules wall). -->
@@ -69,13 +85,37 @@ exclude: <rule, e.g. a path prefix or glob>
 
 ## Reachability ledger
 <!-- Nothing is deletable unless the ledger clears it: this is the only source of "this is
-     unreachable," and a removal without a clearing row here is a removal on vibes. -->
+     unreachable," and a removal without a clearing row here is a removal on vibes. The call-graph walk
+     yields three partitions, not two: reached by nothing (dead, below), reached only by tests
+     (untested, below), and reached in production and exercised by no test (the third partition, listed
+     by name beneath the table) — debt-rounds.md → Census arms. -->
 **Coverage:** <swept surface, per the block above | whole tree — exempt per the per-arm exemption: name
 why this arm's findings depend on relationships no single change can exhibit>
 
 | Item | Class | Evidence | Birth | Candidate disposition |
 |---|---|---|---|---|
 | <item> | <live / untested / dead> | <what was inspected> | <introducing commit or issue> | <keep / pin-then-prune / needs more evidence> |
+
+**Reached in production, exercised by no test:**
+<!-- The third partition — distinct from "reached by nothing" (dead, above) and "reached only by
+     tests" (untested, above). A list of names, never a ratio — debt-rounds.md → Census arms. -->
+| Symbol |
+|---|
+| <name, or "none this round"> |
+
+## System shape
+<!-- The round's macro view — scope is the system, not any single change; exempt from surface
+     reduction per the per-arm exemption (debt-rounds.md → The walls, wall 8). Reports shapes no
+     single change can reveal, and rules the intended shape for each rather than only enumerating its
+     instances — debt-rounds.md → Census arms. -->
+**Coverage:** whole tree — exempt per the per-arm exemption: <name why this arm's findings depend on
+relationships no single change can exhibit>
+
+| Shape | Instances found | Ruling: intended shape | Rationale |
+|---|---|---|---|
+| <e.g. a contract's consumer count> | <instances found> | <the ruled intended shape> | <why> |
+| <e.g. a grammar's forked conventions> | <instances found> | <the ruled intended shape> | <why> |
+| <e.g. a duplicated home> | <instances found> | <the ruled intended shape> | <why> |
 
 ## Duplication / consolidation sets
 <!-- Groups of items that overlap or duplicate each other — candidates for merging rather than a
