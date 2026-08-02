@@ -38,6 +38,26 @@ each a rule with the reason it exists, not a formality.
 6. **The prune review bar.** A prune PR clears review only if it is **behavior-identical** (the pin
    slice's tests still pass, unchanged) and **net-negative** (it removes more than it adds) — a prune
    that grows the tree, or changes behavior, isn't a prune.
+7. **Swept surface, not clock.** A census declares its swept surface as three machine-readable fields —
+   a baseline ref, an include rule, an exclude rule — in its own fenced block. The next round's surface
+   is *(the tree today) − (files matching that declared surface unchanged since that baseline ref)*: a
+   round's boundary is what changed, not how long since the last sweep. The exclude rule applies to
+   **both terms** of that subtraction — the tree-today term and the unchanged-since term alike — so a
+   path once excluded never re-enters the surface by falling back into either term in a later round.
+8. **Per-arm exemption, declared.** Surface reduction applies per arm of the census, not census-wide: an
+   arm whose findings depend on relationships no single change can exhibit is exempt from the
+   subtraction and declares, in its own coverage line, that it read the whole tree — an undeclared
+   "read the whole tree" claim is indistinguishable from a swept-surface claim wrongly scoped, so the
+   declaration is the arm's own obligation, not an inference a reader makes.
+9. **Generated evidence out, tests apart.** A census excludes generated evidence from its surface and
+   names every such exclusion with its size — an untracked coverage report or build artifact is not
+   evidence of reachability. And a census reports tests separately from production in its counts — a
+   suite growing while production shrinks is progress, not noise netted against it.
+10. **Inputs mined before swept.** A census reads four inputs, in this fixed order, before performing
+    any sweep of its own: the declared surface, the nit clusters, the open backlog seeds, and the prior
+    census's carry-forward. A finding already held by one of those inputs is cited to that input, never
+    re-derived — a sweep that re-derives what a nit cluster or a backlog seed already found is spending
+    effort on ground already covered.
 
 ## Record grammars
 
