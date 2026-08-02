@@ -168,6 +168,32 @@ A candidate axis outside this set is excluded only when this section records the
 argument — never by silence. An axis this document has not mentioned is not thereby excluded; it is
 simply unaddressed, and adding a fifth axis is a change to this canon, not a census's own call.
 
+### The nit harvest
+
+`tools/nit_harvest.py` is the tool behind the **nit clusters** input (wall 10) — it is **not a fifth
+axis**: the axis set stays closed at four, and the harvest feeds the census rather than expanding it. It
+reads the repo's merged-PR comment trail (`gh api repos/{owner}/{name}/issues/comments --paginate`) and
+ranks paths by **recurrence across independent reviews** — a file named by findings in **two or more
+separate PRs** that **still resolves in the tree** today. Its output lands in the census's *Duplication /
+consolidation sets* section, feeding that arm the same way a backlog seed feeds another; a recurrence of
+one is not a cluster, and a path that no longer resolves is dropped.
+
+Two finding sources, **one label per row**. A **record** row is a line beginning `YR-NIT:` at column 0 —
+`line.startswith("YR-NIT:")` on the raw line, no `.strip()` and no `\s*` tolerance, the same line-anchor
+rule the record grammars above and `tools/epic_gate.py` share. The grammar is defined once, in
+`tools/nit_harvest.py`'s module docstring — `YR-NIT: tag=<blocker|nit> path=<repo-relative path>
+[line=<n>] — <one sentence>` — and cited, never re-defined, from anywhere else. Column-0 anchoring is
+what keeps **shadow** nits out of the harvest: the shadow review seat blockquotes its transcript
+(`tools/dev-runner.sh`), so a shadow nit arrives indented behind `> ` and never sits at column 0. When a
+finding carries **no** record, a **heuristic** row is recovered from prose and labelled as such — a path
+that **degrades precision, never a run**: the absent-record path never raises and never fails a build. A
+stored `line` is **provenance only** — a pointer back to the comment, never an actionable line: the
+harvest clusters and resolves on the path alone.
+
+The harvest **never files a nit as an issue.** `tools/epic_gate.py`'s intake sweep adds every open issue
+in a registered repo to the shared board, so a harvested-nit issue would flood the state machine the
+census feeds; the harvest's output is a census row, not a ticket.
+
 ## The counter
 
 `tools/epic_gate.py`'s per-repo sweep counts, since the most recent closed debt epic (the **anchor**,

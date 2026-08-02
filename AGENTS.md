@@ -94,6 +94,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/check_links.py` | the crossing-link (`source_*`) resolver/gate |
 | `tools/check_model_refs.py` | the stale vault-doc-reference guard |
 | `tools/check_supersession.py` | the supersession declaration/pair guard |
+| `tools/nit_harvest.py` | the census's nit-harvest arm: recurrence-ranked duplication clusters from the PR comment trail |
 | `tools/promote.sh` | operator: promote a standalone task to Ready |
 | `tools/watch_build.sh` | operator: poll a build to a terminal state |
 | `tools/board.sh` | operator: one-shot org-wide board TSV |
