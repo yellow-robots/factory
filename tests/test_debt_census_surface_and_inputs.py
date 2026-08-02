@@ -492,12 +492,18 @@ def test_debt_census_new_sections_do_not_follow_the_pre_existing_sections():
 
 
 # ---------------------------------------------------------------------------
-# Constraint — out of scope: this slice does not define the axis set (that is slice P2)
+# Constraint — the axis set is slice P2's (issue #359) job, not this slice's own;
+# once P2 lands, the axis set is defined but not under its own "## Axes" heading
+# (it lives inside the pre-existing "Arm coverage" section instead).
 # ---------------------------------------------------------------------------
 
-def test_debt_census_does_not_define_an_axis_set():
+def test_debt_census_defines_the_axis_set_via_slice_p2_not_as_its_own_heading():
     text = _census().lower()
-    assert "axis set" not in text and "## axes" not in text, (
-        "templates/debt-census.md defines an axis set — that is out of scope for issue #358 "
-        "(slice P2's job)"
+    assert "## axes" not in text, (
+        "templates/debt-census.md defines the axis set under its own '## Axes' heading — slice "
+        "P2 (issue #359) folds it into the pre-existing 'Arm coverage' section instead"
+    )
+    assert "axis set" in text, (
+        "templates/debt-census.md no longer defines an axis set — slice P2 (issue #359) is "
+        "expected to have closed it at four, superseding this slice's own out-of-scope note"
     )

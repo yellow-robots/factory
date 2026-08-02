@@ -117,6 +117,37 @@ net-lines: -18
 All five are safe to show verbatim in a repo file: the counter and the hold marker only ever read
 GitHub issue/comment surfaces, never this file.
 
+## Census arms
+
+The census's axis set is **closed at four** — no fifth without an argued canon change to this section.
+Every census reports, on each arm's own coverage line, whether that arm ran this round and, when it
+didn't, what it carried forward unmeasured; an arm silently absent from a census reads as a defect in
+the census, never as a signal that the arm found nothing.
+
+1. **Reachability.** Walls the call graph from every entry point (wall 1) and partitions what it finds
+   into three sets, not two: reached by nothing (the deletion ledger), reached only by tests (untested
+   is not unused), and — the third partition — **reached in production and exercised by no test**. The
+   third falls out of the same call-graph walk the other two already use and is reported as a list of
+   names, never collapsed into a ratio.
+2. **System shape.** A declared arm of every census, run as the round's macro view: its scope is the
+   system rather than any single change, and it is the arm wall 8 exempts from surface reduction,
+   because its findings are relationships no single change can exhibit. It reports shapes only a
+   system-wide pass surfaces — a contract's consumer count, a grammar's forked conventions, a
+   duplicated home — and for each one it **rules the intended shape**, not only enumerates the
+   instances found: a row listing five consumers with no ruling on whether five is right hasn't done
+   this arm's job — the ruling is what a later guard checks against, so the decision survives the round
+   that made it. The concern behind it is the same kind of judgment [`architect.md`](architect.md)
+   names, but that reference binds the architect role to three moments and states it is never a fourth
+   stage — so the name stays the arm's own, never that role's.
+3. **Tests.** The suite, reported apart from production (wall 9); its full per-round protocol is a later
+   round's addition.
+4. **Performance.** Measured every round once its protocol lands; until then, a census reports it as not
+   run this round and carries it forward unmeasured rather than dropping the row silently.
+
+A candidate axis outside this set is excluded only when this section records the exclusion with its
+argument — never by silence. An axis this document has not mentioned is not thereby excluded; it is
+simply unaddressed, and adding a fifth axis is a change to this canon, not a census's own call.
+
 ## The counter
 
 `tools/epic_gate.py`'s per-repo sweep counts, since the most recent closed debt epic (the **anchor**,
