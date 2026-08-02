@@ -143,6 +143,15 @@ wrapper>`
 **Coverage:** <swept surface, per the block above | whole tree — exempt per the per-arm exemption: name
 why this arm's findings depend on relationships no single change can exhibit>
 
+**Nit harvest** — `tools/nit_harvest.py` reads the merged-PR comment trail and ranks paths named by
+findings in two or more *separate* reviews that still resolve in the tree (debt-rounds.md → Census arms,
+*the nit harvest*). A stored `line` is provenance only; a row's `source` is `record` (a column-0
+`YR-NIT:` line) or `heuristic` (recovered from prose). A recurrence of 1 is not a cluster.
+
+| Path | Recurrence (distinct PRs) | Source(s) | Provenance | Consolidation target |
+|---|---|---|---|---|
+| <path> | <n PRs, e.g. #a, #b> | <record / heuristic> | <PR + line, if any — a pointer to the comment, never an actionable line> | <the merge target, or "none this round"> |
+
 ## Unknowns
 <!-- What the census could not determine — explicit, not silently dropped. Each unknown either becomes
      a round item once resolved, or stays unresolved and is carried into the next census. -->
