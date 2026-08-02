@@ -154,10 +154,15 @@ the census, never as a signal that the arm found nothing.
    that made it. The concern behind it is the same kind of judgment [`architect.md`](architect.md)
    names, but that reference binds the architect role to three moments and states it is never a fourth
    stage — so the name stays the arm's own, never that role's.
-3. **Tests.** The suite, reported apart from production (wall 9); its full per-round protocol is a later
-   round's addition.
-4. **Performance.** Measured every round once its protocol lands; until then, a census reports it as not
-   run this round and carries it forward unmeasured rather than dropping the row silently.
+3. **Tests.** A standing arm: `tests/` is the largest surface in the repo, so it is swept every round
+   rather than once. Reported apart from production (wall 9). It gates nothing — the sweep is a meter,
+   not a check.
+4. **Performance.** A standing arm: measured every round, and it gates nothing. Each census records
+   per-test runtime attribution together with the protocol that produced it — host, load state,
+   extraction method — because three runs of the same tree at the same ref spread ~10% while a meter
+   exists to detect a 23% trend. A reading without a protocol does not enter the series. Successive
+   readings compare **shares before seconds**; where two readings were produced under different
+   protocols, the comparison is of shares only, never of absolute durations.
 
 A candidate axis outside this set is excluded only when this section records the exclusion with its
 argument — never by silence. An axis this document has not mentioned is not thereby excluded; it is
@@ -195,11 +200,20 @@ Closing a debt epic — attended, once the ledger verdict is ready — runs this
 1. **Post the ledger verdict** (the seven-field record above) as a comment on the epic.
 2. **Aggregate the net-lines records** from every prune PR in the round into the verdict's `items` and
    `net-lines` totals.
-3. **Dispose of the round's raise issue** — close it now that its need is met; it is never left open
+3. **Report the round's six close-time meters:** recurrence (findings that reappeared despite a prior
+   wall-11 guard); coverage over the four declared axes (the census's own arm-coverage table);
+   guard yield (how many of this round's prune slices shipped the wall-11 guard); per-test cost with its
+   protocol (the performance arm's reading, per *Census arms*); cluster conversion **within the round
+   that found them** (how many of this round's duplication/consolidation sets converted to a prune item
+   in the same round they were found in); and the **detection locus** — two counts kept separate,
+   duplication findings raised at build time by the iteration's reviewer and consolidation shapes found
+   by the system-shape arm, reported as **two counts and never as a ratio** — a build-time catch is one
+   PR wide, a shape is many, so the two counts never collapse into one unit.
+4. **Dispose of the round's raise issue** — close it now that its need is met; it is never left open
    past the round it named.
-4. **Clear the held `Reason`** — the epic-gate's sweep posts the hold and sets `Needs-info`, but it
+5. **Clear the held `Reason`** — the epic-gate's sweep posts the hold and sets `Needs-info`, but it
    never clears a Reason itself; clearing is the attended closer's act, the same fail-closed shape as
    every other epic-gate hold.
-5. **Re-census per the census's own revisit trigger** — freshness for a `research` doc is event-driven,
+6. **Re-census per the census's own revisit trigger** — freshness for a `research` doc is event-driven,
    never clock-gated (see [`documentation-model.md`](documentation-model.md) — *Lifecycle*); the next
    round's census starts from the trigger the last one named, not from scratch.
