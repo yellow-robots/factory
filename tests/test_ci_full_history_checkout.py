@@ -44,16 +44,10 @@ def test_ci_certification_run_triggers_on_pull_request():
         "ci.yml must trigger on pull_request — the certification run that needs full history"
     )
 
+# The one-checkout cardinality assertion that lived here migrated to a declared rule in
+# qa/cardinality.toml (`ci-checkout-step`, max 1, birth #225) at it-27 slice A3, issue #365.
+# The fetch-depth assertions below are unaffected: they test a VALUE, not a count.
 
-def test_ci_workflow_has_exactly_one_checkout_step():
-    """A single checkout step, with one fetch-depth setting, unambiguously governs the
-    certification run's history depth."""
-    text = _text()
-    checkout_uses = re.findall(r"(?m)^\s*-\s*uses:\s*actions/checkout@", text)
-    assert len(checkout_uses) == 1, (
-        "expected exactly one actions/checkout step so a single fetch-depth setting "
-        f"unambiguously governs the certification run's history; found {len(checkout_uses)}"
-    )
 
 
 def _checkout_step_body(text):

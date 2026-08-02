@@ -103,7 +103,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tests/` | the pytest suite |
-| `qa/` | consumer quality content (e.g. `qa/lens.py`) — distinct from the platform machinery in `tools/` |
+| `qa/` | consumer quality content — the advisory lens (`qa/lens.py`) and the blocking cardinality guards (`qa/cardinality.py` + its rule set `qa/cardinality.toml`); distinct from the platform machinery in `tools/` |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |
 | `docs/rfcs/` | canonical RFCs |
 | `skills/` | the factory skill (router + references) |

@@ -39,21 +39,12 @@ def _dev_runner_source():
 def _review_bundle_source():
     return REVIEW_BUNDLE_PY.read_text()
 
+# The one-raw-pipeline cardinality assertion that lived here migrated to a declared rule in
+# qa/cardinality.toml (`verdict-extraction-pipeline`, max 1, birth #151) at it-27 slice A3,
+# issue #365. The shape is still pinned — by the declarative tier now, not a bespoke test.
+# What remains here is the part a cardinality rule cannot express: that both call sites invoke
+# the SAME named helper, which is a relationship, not a count.
 
-# ---------------------------------------------------------------------------------------------
-# tools/dev-runner.sh: the two extraction sites share ONE implementation
-# ---------------------------------------------------------------------------------------------
-
-def test_dev_runner_sh_has_exactly_one_raw_verdict_extraction_pipeline():
-    """The raw `grep -E '^VERDICT:' ... | tail -n1 | sed ...` pipeline must be written exactly
-    once in the file — a second, independently-typed copy at the other call site is the drift
-    this slice removes."""
-    lines = _dev_runner_source().splitlines()
-    invocation_lines = [ln for ln in lines if _RAW_PIPELINE_INVOCATION.search(ln)]
-    assert len(invocation_lines) == 1, (
-        f"expected exactly one raw VERDICT-extraction pipeline in tools/dev-runner.sh, "
-        f"found {len(invocation_lines)}: {invocation_lines}"
-    )
 
 
 def test_dev_runner_sh_review_gate_and_terminal_approval_call_a_shared_symbol():
