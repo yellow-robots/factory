@@ -58,6 +58,21 @@ each a rule with the reason it exists, not a formality.
     census's carry-forward. A finding already held by one of those inputs is cited to that input, never
     re-derived — a sweep that re-derives what a nit cluster or a backlog seed already found is spending
     effort on ground already covered.
+11. **Every prune slice ships a guard.** A prune slice ships a guard — an ordinary test, no instrument
+    named — that fails when its own finding recurs; a prune with no guard is a fix that can silently
+    regress. Where a finding admits no deterministic predicate, the slice records **why** no guard is
+    expressible and **what would have to be true** for one to exist — a recorded impossibility is a
+    finding, silence is not. Where the guard protects an enumerable set, the expected set is **derived
+    from the tree**, never enumerated as a list of offenders — a hardcoded list is legitimate only as a
+    **tombstone for a named removal**, not as the check's ongoing shape. Where the guard asserts against
+    a document, it names the **surface it reads** — the specific section or table, not the containing
+    file — so a match found outside that surface can't satisfy it. The difference across these guards is
+    shape, not tier: `tests/harness/test_gh_fake_migration.py`'s
+    `test_no_full_gh_fake_reimplementation_anywhere_in_tests` walks the tree and holds completely;
+    `tests/test_verdict_grammar_consolidation.py`'s
+    `test_dev_runner_sh_has_exactly_one_raw_verdict_extraction_pipeline` is a cardinality guard that
+    held; `tests/test_docs_drift_correction.py`'s `assert int(match.group(1)) > 63` is a floor, still
+    green while drifted — all three are ordinary pytest tests.
 
 ## Record grammars
 

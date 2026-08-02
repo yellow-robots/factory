@@ -208,10 +208,14 @@ def test_debt_rounds_states_findings_cited_to_input_never_rederived():
 # ---------------------------------------------------------------------------
 
 def test_debt_rounds_walls_are_numbered_one_through_ten_contiguous():
+    """As of this slice (issue #358) the walls end at 10; issue #360 (a later slice) legitimately
+    adds an 11th wall, whose own contiguous-numbering guard lives in
+    tests/test_debt_round_prune_guard_wall.py. This check only asserts walls 1-10 are still an
+    unbroken prefix, not that 10 is the final count."""
     section = _walls_section()
     numbers = [int(m.group(1)) for m in re.finditer(r"(?m)^(\d+)\. \*\*", section)]
-    assert numbers == list(range(1, 11)), (
-        f"debt-rounds.md walls are not numbered 1..10 contiguously: got {numbers}"
+    assert numbers[:10] == list(range(1, 11)), (
+        f"debt-rounds.md walls 1-10 are not numbered contiguously: got {numbers}"
     )
 
 
