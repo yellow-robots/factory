@@ -26,16 +26,53 @@ updated: "<YYYY-MM-DD>"
 <!-- Keep this line, with a real justification, when the supersedes list above is empty. Once the
      list is non-empty, replace it with prose naming what's replaced, or drop it entirely. -->
 
+## Swept surface
+<!-- Machine-readable: this round's surface is (the tree today) minus (files in this declared surface
+     unchanged since baseline). The exclude rule applies to both terms of that subtraction, so an
+     excluded path never re-enters the surface in a later round — debt-rounds.md → The walls (the
+     swept-surface wall). -->
+```
+YR-DEBT-SURFACE
+baseline: <ref, e.g. the prior round's closing commit>
+include: <rule, e.g. a path prefix or glob>
+exclude: <rule, e.g. a path prefix or glob>
+```
+
+**Generated evidence excluded:**
+<!-- Name every generated-evidence exclusion and its size — debt-rounds.md → The walls (the
+     content-rules wall). -->
+| Exclusion | Size |
+|---|---|
+| <path or glob> | <size> |
+
+## Inputs mined
+<!-- Read in this fixed order, before any sweep of this census's own: the declared surface above, the
+     nit clusters, the open backlog seeds, the prior census's carry-forward. A finding already held by
+     one of these is cited to it here, never re-derived — debt-rounds.md → The walls (the mined-inputs
+     wall). -->
+| Input | Already held | Cite |
+|---|---|---|
+| Declared surface | <finding, or "none"> | |
+| Nit clusters | <finding, or "none"> | |
+| Open backlog seeds | <finding, or "none"> | |
+| Prior carry-forward | <finding, or "none"> | |
+
 ## Baselines
-<!-- The meters the next round's census diffs against. -->
-- Tracked files: `<count>`
-- Tracked lines: `<count>`
+<!-- The meters the next round's census diffs against. Tests are reported separately from production —
+     debt-rounds.md → The walls (the content-rules wall). -->
+- Tracked files (production): `<count>`
+- Tracked files (tests): `<count>`
+- Tracked lines (production): `<count>`
+- Tracked lines (tests): `<count>`
 - Suite count: `<count>` tests
 - Suite duration: `<Nm NNs>`
 
 ## Reachability ledger
 <!-- Nothing is deletable unless the ledger clears it: this is the only source of "this is
      unreachable," and a removal without a clearing row here is a removal on vibes. -->
+**Coverage:** <swept surface, per the block above | whole tree — exempt per the per-arm exemption: name
+why this arm's findings depend on relationships no single change can exhibit>
+
 | Item | Class | Evidence | Birth | Candidate disposition |
 |---|---|---|---|---|
 | <item> | <live / untested / dead> | <what was inspected> | <introducing commit or issue> | <keep / pin-then-prune / needs more evidence> |
@@ -43,6 +80,8 @@ updated: "<YYYY-MM-DD>"
 ## Duplication / consolidation sets
 <!-- Groups of items that overlap or duplicate each other — candidates for merging rather than a
      straight removal. One set per group, naming its members and the consolidation target. -->
+**Coverage:** <swept surface, per the block above | whole tree — exempt per the per-arm exemption: name
+why this arm's findings depend on relationships no single change can exhibit>
 
 ## Unknowns
 <!-- What the census could not determine — explicit, not silently dropped. Each unknown either becomes
