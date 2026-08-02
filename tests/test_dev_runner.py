@@ -4589,4 +4589,9 @@ def test_lint_tier_does_not_disturb_the_terminal_merge_record(tmp_path):
 def test_factory_manifest_declares_lint_cmd():
     import tomllib
     manifest = tomllib.loads((ROOT / ".yr" / "factory.toml").read_text())
-    assert manifest.get("lint_cmd") == "ruff check tools/ tests/"
+    # Composed at it-27 slice A3 (#365): ruff still leads the chain and the declarative
+    # cardinality tier joins it. Asserted as a composition rather than one byte-exact string, so
+    # adding a third deterministic checker later is an ordinary manifest edit, not a test rewrite.
+    lint_cmd = manifest.get("lint_cmd", "")
+    assert lint_cmd.startswith("ruff check tools/ tests/")
+    assert "qa/cardinality.py" in lint_cmd
