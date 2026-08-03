@@ -1853,9 +1853,19 @@ run_checks(){   # $1 = site (defaults to "check"), named for gate-durations.json
 # deterministic autofix may find nothing to fix, and the LLM repair may end in a reasoned no-fix — so
 # the predicate is a before/after comparison of this hash, never the mere fact that a branch ran.
 # Same `add -A` + `write-tree` idiom the implementer guard uses; staging is idempotent.
+# Fail-safe is BY CONSTRUCTION here, not by luck. An earlier form ran `add -A … || true` and relied
+# on write-tree failing too — it does not: `git add -A` exits 128 on a file it cannot read and leaves
+# the index UNTOUCHED, after which write-tree happily returns the PRE-repair tree. The predicate then
+# reads "unchanged" for a repair that really did rewrite bytes, and check_cmd is never re-run against
+# them. Reproduced exactly that way. So an `add` failure is now its own unique sentinel: any failure
+# on either command makes the comparison differ, which buys the conservative full re-run.
 tree_hash(){
-  "$GIT_BIN" -C "$WT" add -A >/dev/null 2>&1 || true
-  "$GIT_BIN" -C "$WT" write-tree 2>/dev/null || echo "tree-hash-unavailable-$RANDOM"
+  if ! "$GIT_BIN" -C "$WT" add -A >/dev/null 2>&1; then
+    echo "tree-hash-add-failed-$$-$RANDOM-$(date +%s%N 2>/dev/null || echo x)"
+    return
+  fi
+  "$GIT_BIN" -C "$WT" write-tree 2>/dev/null \
+    || echo "tree-hash-unavailable-$$-$RANDOM-$(date +%s%N 2>/dev/null || echo x)"
 }
 
 run_lint(){

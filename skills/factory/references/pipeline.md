@@ -343,7 +343,8 @@ migration, no file rewrite anywhere.
 **Gate durations** (issue #313): `tools/dev-runner.sh` writes a run-dir artifact `gate-durations.json` —
 one entry per `run_checks`/`run_lint`/`run_lens` invocation (`site`, `elapsed_seconds`, `disposition`),
 across every check-gate re-run site (the initial check, the check-repair recheck, the lint tier and its
-autofix/repair rechecks, the lens tier, the review-repair recheck, the pre-merge rebase recheck).
+autofix/repair rechecks, the lens tier, the review-repair recheck and its lint, the pre-merge rebase
+recheck and its lint).
 `ledger.py append` folds it into the row as a top-level `gates` list, fail-soft — a missing or
 unparseable artifact yields an empty list, never blocking or failing the append. Informs window
 calibration (`check_timeout`, issue #308) only; never gates.

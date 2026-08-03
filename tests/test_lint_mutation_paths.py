@@ -84,6 +84,40 @@ def test_tree_hash_changes_when_a_file_changes(tmp_path):
     )
 
 
+def test_tree_hash_fails_safe_when_staging_itself_fails(tmp_path):
+    """The property the whole cost fix rests on, asserted rather than assumed.
+
+    `git add -A` exits 128 on a file it cannot read and leaves the index UNTOUCHED — after which
+    `write-tree` succeeds and returns the PRE-repair tree. An earlier form of this helper ran
+    `add -A … || true` and relied on write-tree failing too; it does not, so the predicate read
+    "unchanged" for a repair that really had rewritten bytes and check_cmd was silently skipped.
+    That is fail-OPEN in the one direction that matters, and it is what this test pins shut.
+    """
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=wt, check=True)
+    (wt / "a.py").write_text("x = 1\n", encoding="utf-8")
+    script = f"""
+    GIT_BIN=git
+    WT={wt}
+    {_func_source("tree_hash")}
+    tree_hash
+    printf 'x = 999\\n' > "$WT/a.py"
+    printf 'secret\\n' > "$WT/unreadable.py"
+    chmod 000 "$WT/unreadable.py"
+    tree_hash
+    chmod 644 "$WT/unreadable.py"
+    """
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    out = r.stdout.split()
+    assert len(out) == 2, f"expected two hashes, got {out!r} (stderr: {r.stderr})"
+    assert out[0] != out[1], (
+        "tree_hash() reported UNCHANGED after a real byte change, because `git add` failed and "
+        "write-tree returned the stale pre-repair tree. The predicate must fail safe: any failure "
+        "on either command buys the conservative full re-run, never a skipped gate."
+    )
+
+
 def test_tree_hash_notices_a_new_untracked_file(tmp_path):
     a, b = _run_tree_hash_twice(tmp_path, mutate=True, new_file=True)
     assert a != b, (
@@ -181,13 +215,36 @@ def test_review_repair_path_relints():
     )
 
 
-def test_review_repair_lint_failure_blocks():
+def _lint_guard_block(site):
+    """The `if [ -n "$LINT_CMD" ]; then … fi` block that contains `site`, and nothing else.
+
+    Window-based assertions are how these two tests were originally written and both were VACUOUS:
+    a window starting at `run_checks review-repair-recheck` already contains that line's own
+    `fail_blocked`, and a window running to the end of `rebase_onto_tip()` already contains the
+    pre-existing `return 1`/`return 2` of `shadow_ci`/`shadow_freshness`. Each test therefore
+    passed against an implementation with the new guard removed entirely. Extracting the exact
+    block is what makes the assertion mean what it says.
+    """
     text = _runner_text()
-    i = text.index("run_checks review-repair-recheck")
-    window = text[i:i + 1200]
-    assert "fail_blocked" in window and "lint failing after review-repair" in window, (
+    i = text.index(f'run_lint "$LINT_CMD" {site}')
+    start = text.rindex('if [ -n "$LINT_CMD" ]; then', 0, i)
+    indent = " " * (len(text[:start].split("\n")[-1]))
+    end = text.index(f"\n{indent}fi\n", i)
+    return text[start:end]
+
+
+def test_review_repair_lint_failure_blocks():
+    block = _lint_guard_block("review-repair-lint")
+    assert "fail_blocked" in block, (
         "the review-repair lint runs but its failure does not block — an advisory lint on a "
         "mutation path is not a gate"
+    )
+    assert "lint failing after review-repair" in block, (
+        "the review-repair lint's block does not name what failed, so the Blocked comment would "
+        "not state the observed fact"
+    )
+    assert "REVIEWREPAIR_LINT_RC" in block, (
+        "the block does not gate on the lint's own exit code"
     )
 
 
@@ -204,11 +261,22 @@ def test_rebase_path_relints():
 
 
 def test_rebase_lint_failure_returns_the_blocking_code():
-    """rebase_onto_tip's contract: 1 = block for the human, 2 = environmental."""
-    src = _func_source("rebase_onto_tip")
-    tail = src[src.index("run_lint"):]
-    assert "return 1" in tail, "a lint failure in rebase_onto_tip does not block (no `return 1`)"
-    assert "return 2" in tail, "an environmental lint failure in rebase_onto_tip is not rc 2"
+    """rebase_onto_tip's contract: 1 = block for the human, 2 = environmental.
+
+    Asserted inside the lint guard's own block. A tail-of-function window is vacuous here — the
+    pre-existing `shadow_ci`/`shadow_freshness` calls already supply both return codes, so
+    deleting the merge-path lint entirely left the original version of this test green.
+    """
+    block = _lint_guard_block("rebase-lint")
+    assert "return 1" in block, (
+        "a lint failure on the merge path does not block (no `return 1` in the guard's own "
+        "block) — an armed merge would ship a rebased tree that failed lint"
+    )
+    assert "return 2" in block, (
+        "an environmental lint failure on the merge path is not rc 2, so it would be reported as "
+        "a real lint failure and block a human instead of being retried"
+    )
+    assert "lrc" in block, "the block does not gate on the lint's own exit code"
 
 
 def test_every_mutation_path_uses_the_shared_run_lint():
