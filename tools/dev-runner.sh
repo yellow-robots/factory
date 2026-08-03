@@ -366,9 +366,13 @@ print((d.get("mergeCommit") or {}).get("oid","") or "")' 2>/dev/null || true)"
 #     rebase-remediated here (no worktree to rebase in) — it is just one more direct block condition, so a
 #     stale green still never merges. No board/issue write either way (out of scope, issue #239): the
 #     posted PR comment (and, for an armed pass, the merge itself) are the only writes.
-_json_field(){   # $1 = JSON text, $2 = top-level key -> its value (bools as true/false, missing as "")
+_json_field(){   # $1 = JSON text, $2 = top-level key, $3 = optional nested key one level down
+                 # -> value (bools as true/false, missing/non-object intermediate as "")
+  local nested="${3:-}"
   printf '%s' "$1" | python3 -c "import sys,json
 v=json.load(sys.stdin).get(\"$2\")
+if \"$nested\":
+    v=v.get(\"$nested\") if isinstance(v, dict) else None
 if isinstance(v, bool): print('true' if v else 'false')
 elif v is None: print('')
 else: print(v)"
@@ -845,11 +849,11 @@ LENS_CMD="${LENS_CMD:-${MF_LENS_CMD:-}}"
 # ---- fetch issue (state/title/body/comments/parent) ----
 ISSUE_JSON="$("$GH_BIN" issue view "$ISSUE" --repo "$REPO" --json number,title,body,state,issueType,comments,parent 2>/dev/null)" \
   || die "could not fetch issue #$ISSUE from $REPO"
-TITLE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("title","") or "")')"
-BODY="$(printf '%s' "$ISSUE_JSON"  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("body","") or "")')"
-STATE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state","") or "")')"
+TITLE="$(_json_field "$ISSUE_JSON" title)"
+BODY="$(_json_field "$ISSUE_JSON" body)"
+STATE="$(_json_field "$ISSUE_JSON" state)"
 # native Issue Type name ("Task"/"Bug"/"Feature"), or "" when the issue is untyped (issueType: null).
-ITYPE="$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; t=json.load(sys.stdin).get("issueType") or {}; print((t.get("name","") if isinstance(t,dict) else "") or "")')"
+ITYPE="$(_json_field "$ISSUE_JSON" issueType name)"
 
 # ---- standalone task gates record (issue #347) ----
 # A Task with no native sub-issue parent carries no governing design above it, so its own body IS that
