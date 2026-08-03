@@ -1847,6 +1847,27 @@ run_checks(){   # $1 = site (defaults to "check"), named for gate-durations.json
 # output to lint.log in the run dir. $1 is an OPAQUE command run verbatim: python repos declare ruff, node
 # repos eslint — no lint-output parsing, no language assumption anywhere. Used for both LINT_CMD (the probe
 # / re-run) and LINT_FIX_CMD (the autofix, non-gating but bounded too — issue #308). $2 = site (issue #313).
+# tree_hash (issue #364): the worktree's content hash. "A repair path was entered" and "the tree
+# changed" are different facts, and only the second justifies paying for a full re-run of check_cmd
+# (761-812 s on the build host). Both lint-repair paths can end having changed nothing — the
+# deterministic autofix may find nothing to fix, and the LLM repair may end in a reasoned no-fix — so
+# the predicate is a before/after comparison of this hash, never the mere fact that a branch ran.
+# Same `add -A` + `write-tree` idiom the implementer guard uses; staging is idempotent.
+# Fail-safe is BY CONSTRUCTION here, not by luck. An earlier form ran `add -A … || true` and relied
+# on write-tree failing too — it does not: `git add -A` exits 128 on a file it cannot read and leaves
+# the index UNTOUCHED, after which write-tree happily returns the PRE-repair tree. The predicate then
+# reads "unchanged" for a repair that really did rewrite bytes, and check_cmd is never re-run against
+# them. Reproduced exactly that way. So an `add` failure is now its own unique sentinel: any failure
+# on either command makes the comparison differ, which buys the conservative full re-run.
+tree_hash(){
+  if ! "$GIT_BIN" -C "$WT" add -A >/dev/null 2>&1; then
+    echo "tree-hash-add-failed-$$-$RANDOM-$(date +%s%N 2>/dev/null || echo x)"
+    return
+  fi
+  "$GIT_BIN" -C "$WT" write-tree 2>/dev/null \
+    || echo "tree-hash-unavailable-$$-$RANDOM-$(date +%s%N 2>/dev/null || echo x)"
+}
+
 run_lint(){
   local site="${2:-lint}"
   local _t0; _t0=$(date +%s)
@@ -1946,38 +1967,57 @@ else
       log "lint failed (exit $LINT_RC) — lint-repair: deterministic autofix${LINT_FIX_CMD:+ ($LINT_FIX_CMD)}, then at most one LLM repair"
       # (1) deterministic autofix first (no LLM). A 126/127 here is environmental too — same lint hold.
       if [ -n "$LINT_FIX_CMD" ]; then
+        LINT_TREE_BEFORE="$(tree_hash)"
         FIX_RC=0; run_lint "$LINT_FIX_CMD" lint-fix || FIX_RC=$?
         if is_env_failure "$FIX_RC"; then lint_env_hold "$LINT_FIX_CMD" "$FIX_RC" " (autofix)"; fi
-        LINT_MUTATED=1
+        # issue #364: an autofix that moved no bytes is not a mutation. tree_hash() fails SAFE — an
+        # unavailable hash reads as "changed", so the conservative full re-run is what a broken git
+        # buys, never a skipped gate.
+        [ "$(tree_hash)" = "$LINT_TREE_BEFORE" ] || LINT_MUTATED=1
         LINT_RC=0; run_lint "$LINT_CMD" lint-autofix-recheck || LINT_RC=$?
         if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the autofix"; fi
       fi
       # (2) if lint still fails, ONE LLM repair — a NEW prompt, confined to the lint-flagged files.
       if [ "$LINT_RC" -ne 0 ]; then
         log "lint still failing — one LLM repair attempt [$CHECK_REPAIR_ID]"
+        LINT_TREE_BEFORE="$(tree_hash)"
         LINT_REPAIR_RC=0
         run_stage "$IMPL_SYS" "$(printf 'The lint gate FAILS (command: %s). Fix ONLY what the lint output flags, in exactly the files it names, test or production; change no test'"'"'s assertions; make the linter pass, nothing else. End this repair with the lint command verified green in the foreground, or an explicit reasoned no-fix — waiting on anything is not a terminal state. Lint output:\n\n%s\n\nTask:\n%s' "$LINT_CMD" "$(tail -n 40 "$RUN_DIR/lint.log")" "$SPEC")" "$RUN_DIR/lint-repair.log" "Read Edit Write Bash" "$CHECK_REPAIR_ID" || LINT_REPAIR_RC=$?
         LINT_REPAIR_BG_UNRESOLVED="$LAST_STAGE_BG_UNRESOLVED"; LINT_REPAIR_BG_REASON="$LAST_STAGE_BG_REASON"
         if [ "$LINT_REPAIR_RC" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/lint-repair.log"; then llm_quota_hold "lint repair" "$RUN_DIR/lint-repair.log"; fi
-        LINT_MUTATED=1
+        # issue #364: the LLM repair may end in an explicit reasoned no-fix, having changed nothing.
+        # The predicate must be applied HERE too — fixing only the autofix site corrects the cheaper
+        # half and leaves the LLM path paying a full suite for a repair that moved no bytes.
+        [ "$(tree_hash)" = "$LINT_TREE_BEFORE" ] || LINT_MUTATED=1
       fi
     fi
-    # (3) after ANY repair-path mutation, re-run BOTH gates against the shipped tree. Either failing → Blocked.
+    # (3) after a repair path, re-establish green against the shipped tree. The EXPENSIVE half —
+    # re-running check_cmd, 761-812 s on the build host — is paid only when the repair actually
+    # changed bytes (issue #364).
+    #
+    # The lint verdict and the bg_scan verdict are enforced UNCONDITIONALLY, below the branch. This
+    # split is the whole correctness of the change: making the entire block conditional on
+    # LINT_MUTATED would let a repair that ends in a reasoned no-fix carry a RED lint straight to the
+    # commit, since nothing else re-tests it — the exact inverse of this tier's purpose. When the tree
+    # did not move, LINT_RC still carries the verdict the last lint run established, so the gate is
+    # known without paying to re-establish it.
+    LINT_REPAIR_BG_SUFFIX=""
+    [ "$LINT_REPAIR_BG_UNRESOLVED" -eq 1 ] && LINT_REPAIR_BG_SUFFIX="  Also: $LINT_REPAIR_BG_REASON"
     if [ "$LINT_MUTATED" -eq 1 ]; then
-      LINT_REPAIR_BG_SUFFIX=""
-      [ "$LINT_REPAIR_BG_UNRESOLVED" -eq 1 ] && LINT_REPAIR_BG_SUFFIX="  Also: $LINT_REPAIR_BG_REASON"
       CHECK_RC=0; run_checks lint-repair-recheck || CHECK_RC=$?
       if is_env_failure "$CHECK_RC"; then env_hold "$CHECK_RC" " after the lint repair"; fi
       [ "$CHECK_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (checks failed after the lint fix; log: $RUN_DIR/checks.log)$LINT_REPAIR_BG_SUFFIX"
       LINT_RC=0; run_lint "$LINT_CMD" lint-repair-recheck || LINT_RC=$?
       if is_env_failure "$LINT_RC"; then lint_env_hold "$LINT_CMD" "$LINT_RC" " after the lint repair"; fi
-      [ "$LINT_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (log: $RUN_DIR/lint.log)$LINT_REPAIR_BG_SUFFIX"
-      # bg_scan (issue #306): a live background task at the lint-repair's own stage end blocks even a
-      # re-check that came back green — the kill window of an abandoned task overlaps the re-check, so a
-      # green read over that window is not trustworthy (same rule as the check-repair path above; a pure
-      # deterministic autofix never runs an LLM stage, so LINT_REPAIR_BG_UNRESOLVED stays 0 there).
-      [ "$LINT_REPAIR_BG_UNRESOLVED" -eq 1 ] && fail_blocked "lint-repair stage ended its turn with a live background task, so the green re-check is not trustworthy: $LINT_REPAIR_BG_REASON"
     fi
+    [ "$LINT_RC" -eq 0 ] || fail_blocked "lint still failing after one repair (log: $RUN_DIR/lint.log)$LINT_REPAIR_BG_SUFFIX"
+    # bg_scan (issue #306): a live background task at the lint-repair's own stage end blocks even a
+    # re-check that came back green — the kill window of an abandoned task overlaps the re-check, so a
+    # green read over that window is not trustworthy (same rule as the check-repair path above; a pure
+    # deterministic autofix never runs an LLM stage, so LINT_REPAIR_BG_UNRESOLVED stays 0 there).
+    # Unconditional since issue #364: an abandoned background task is untrustworthy whether or not the
+    # repair changed bytes — the old placement inside the mutation branch tied it to the wrong fact.
+    [ "$LINT_REPAIR_BG_UNRESOLVED" -eq 1 ] && fail_blocked "lint-repair stage ended its turn with a live background task, so the green re-check is not trustworthy: $LINT_REPAIR_BG_REASON"
   fi
 
   # ---- lens tier (issue #214): a manifest-declared, purely ADVISORY tier, run only AFTER check_cmd (and
@@ -2104,6 +2144,15 @@ else
     REVIEWREPAIR_BG_SUFFIX=""
     [ "$REVIEWREPAIR_BG_UNRESOLVED" -eq 1 ] && REVIEWREPAIR_BG_SUFFIX="  Also: $REVIEWREPAIR_BG_REASON"
     run_checks review-repair-recheck || fail_blocked "checks failing after review-repair (log: $RUN_DIR/checks.log)$REVIEWREPAIR_BG_SUFFIX"
+    # issue #364: the review-repair stage runs with `Read Edit Write Bash` and may rewrite any file,
+    # so its output must meet the LINT gate too. Before this, only run_checks re-ran here — an LLM
+    # edit landing after the lint tier had already passed shipped unlinted, which is why the claim
+    # that the runner guarantees a lint-clean head was false. Reuses run_lint's own confinement.
+    if [ -n "$LINT_CMD" ]; then
+      REVIEWREPAIR_LINT_RC=0; run_lint "$LINT_CMD" review-repair-lint || REVIEWREPAIR_LINT_RC=$?
+      if is_env_failure "$REVIEWREPAIR_LINT_RC"; then lint_env_hold "$LINT_CMD" "$REVIEWREPAIR_LINT_RC" " after the review repair"; fi
+      [ "$REVIEWREPAIR_LINT_RC" -eq 0 ] || fail_blocked "lint failing after review-repair (log: $RUN_DIR/lint.log)$REVIEWREPAIR_BG_SUFFIX"
+    fi
     if ! review_stage; then
       # this SECOND review_stage call just refreshed REVIEW_ROUND_BG_UNRESOLVED/_REASON with ITS OWN
       # scan result (the re-review's transcript, distinct from the review-repair LLM stage's own above)
@@ -2340,6 +2389,15 @@ rebase_onto_tip(){
   local rc=0; run_checks rebase-recheck || rc=$?  # re-run the deterministic check gate on the rebased tree
   is_env_failure "$rc" && return 2
   [ "$rc" -eq 0 ] || return 1                  # cannot re-establish green -> block (never merge a stale/red PR)
+  # issue #364: a rebase onto a moved base produces a tree no lint run has ever seen. This was the one
+  # mutation path the tier never covered, and it sits on the MERGE path — an armed merge would ship the
+  # rebased tree unlinted. The rebased tree meets the same gate as the original: a lint failure blocks
+  # exactly like a red check (rc 1), an environmental failure is rc 2, matching this function's contract.
+  if [ -n "$LINT_CMD" ]; then
+    local lrc=0; run_lint "$LINT_CMD" rebase-lint || lrc=$?
+    is_env_failure "$lrc" && return 2
+    [ "$lrc" -eq 0 ] || return 1
+  fi
   shadow_ci || return 2                        # re-wait CI on the rebased head
   [ "$CI_RESULT" = pass ] || return 1
   shadow_freshness || return 2                 # base==tip now
