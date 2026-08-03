@@ -44,7 +44,7 @@ below).
 | **Implement** | Build-role model writes the minimal change against the acceptance criteria. `--permission-mode bypassPermissions` (the worktree + scoped creds are the walls). | `Blocked` (early escalation included — below) |
 | **Test** | Independent cold process derives tests from the **acceptance criteria** (not the implementation). Boundary guard: any change outside the legal test tree (below) → `Blocked`, offending diff saved, no auto-revert. | `Blocked` (early escalation included — below) |
 | **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`, bounded by `check_timeout` (issue #308; env > manifest > 1200s default, resolved once at start-of-run — the armed re-green reuses it). One repair attempt on a code failure (at the registry's `check_repair` stage tier when set, else the build model); no repair on an environment failure (exit 126/127). An OBSERVED expiry (the wrapper itself firing, never inferred from the exit code alone) disposes as a code failure through this same path — a wedged process tree is killed with no survivor. | `Blocked` |
-| **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
+| **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Judges correctness, maintainability, simplicity, security — and, since #366, **duplication within the change's own seam** (see below). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`, plus a `YR-NIT:` record per finding; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
 | **PR** | Commit, push `task/<id>-<slug>`, open PR, post the review. | — |
 | **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · rank gate (review >= build, one provider, both ranked, the reviewer is never weaker) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block (one exception: an environmental failure after freshness remediation already force-pushed the branch — see *Shadow merge choreography* below) |
 
@@ -293,6 +293,36 @@ concept of "a build is currently running." That makes the human side of the chor
   shadow-only shape, same as any other prior record) — that supersession is a routing decision about which
   record is newest, not a retraction of the unrecoverable finding, and does not make the original state
   resumable.
+
+## The duplication mandate, and why it is myopic on purpose
+
+Issue #366 adds one clause to the reviewer's charter: treat a contract **re-implemented within the
+files the change touches, or their immediate seam**, as a finding — a second reader of a manifest key,
+a second matcher for a record grammar, a second home for an identifier. It is the *only* review
+instruction about duplication, and it is deliberately bounded.
+
+The forcing evidence is eight cloned manifest readers in `tools/dev-runner.sh`. Seven were built by
+this pipeline, each passing an independent reviewer, and the reviewers were not asleep: one of them
+named the mirroring and approved it anyway, calling the cloned precedent "the right model". It was
+correct to — **no review document in this factory mandated catching duplication**, so nothing told it
+that the fourth copy of a contract is a defect.
+
+**Detection is two-locus, and this is the micro half.** The reviewer sees the seam it is already
+reading, where a clone is cheapest to name; no diff, however well reviewed, can reveal that a contract
+has acquired eight consumers. That is a shape of the *system*, and the debt round's **system-shape arm**
+owns it (see `debt-rounds.md`). So the charter explicitly does **not** ask the reviewer to judge
+duplication beyond its own seam: a reviewer hunting clones repo-wide reports noise instead of defects,
+and the round's detection-locus meter is what would show that happening.
+
+**The record.** Each finding is emitted as a line beginning `YR-NIT:` at column 0 in addition to its
+prose, for findings of **either** tag — a blocking duplication finding must be as visible to the harvest
+as a non-blocking one. The grammar has a single home, `tools/nit_harvest.py`; the charter cites it
+rather than restating the anchoring rule. Column-0 anchoring is load-bearing rather than stylistic: the
+shadow seat runs the same prompt and blockquotes its transcript, so anchoring at column 0 is exactly
+what keeps shadow nits out of the harvest.
+
+**Calibration is empirical, not specified.** The mandate ships in one wording, a round runs under it,
+and the answer is read off the corpus rather than argued in advance.
 
 ## The shadow review seat
 
