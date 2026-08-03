@@ -74,18 +74,39 @@ def test_readme_rfc_0005_is_not_marked_in_rework():
     )
 
 
-def test_readme_test_count_is_not_the_stale_63():
+def _readme_has_test_count_claim(text):
+    return re.search(r"\b\d+ tests green\b", text) is not None
+
+
+def test_readme_has_no_hand_maintained_test_count_claim():
+    """Declared guard inversion (debt round 2, item D — issue #383): this test
+    replaces test_readme_test_count_is_not_the_stale_63, which used to require
+    a '<N> tests green' claim to exist and floored it above 63. A
+    hand-maintained count is the defect — it drifted twice (63, then 1129) —
+    so the new expectation is that README.md carries no such claim at all,
+    never a fresh number correcting the old one. This is the wall-11
+    micro-guard for the README rider (skills/factory/references/debt-rounds.md,
+    wall 11); the floor assertion it replaces retires with the claim it
+    floored.
+
+    Surface read: README.md, the whole file — the claim has no fixed section
+    to scope a narrower guard to.
+    """
     text = _text(README)
-    assert not re.search(r"\b63 tests\b", text), (
-        "README.md still cites the stale '63 tests green' figure"
+    assert not _readme_has_test_count_claim(text), (
+        "README.md still carries a hand-maintained '<N> tests green' claim — "
+        "removed at debt round 2 item D (issue #383), not to be replaced with "
+        "a fresh number"
     )
-    match = re.search(r"(\d+) tests green", text)
-    assert match, "README.md dropped the '<N> tests green' status fact"
-    # Not pinned to an exact count: the suite grows as later slices land (this
-    # task's own new tests shift it too), same reasoning as the doc-byte-size
-    # non-pin in test_operating_doc_consolidation.py. Just sanity-check it is
-    # a plausible, non-stale figure.
-    assert int(match.group(1)) > 63
+
+
+def test_readme_test_count_claim_detector_flags_a_count_claim_positive_case():
+    """Positive case for the detector above: a README-shaped string carrying a
+    count claim must be flagged, proving the guard would actually catch a
+    regression rather than vacuously passing."""
+    assert _readme_has_test_count_claim("... reads that repo's build config ... 1129 tests green.")
+    assert _readme_has_test_count_claim("42 tests green")
+    assert not _readme_has_test_count_claim("reads that repo's build config from a per-repo file.")
 
 
 def test_readme_dead_remaining_items_are_gone():
@@ -372,18 +393,51 @@ def _agents_repo_map_section():
     return match.group(1)
 
 
-def test_agents_md_repo_map_lists_every_named_addition():
+def _tracked_tools_paths():
+    """Every path git tracks under tools/ — the map's tools/ half is derived from
+    this rather than pinned, so a newly added tools/ file fails the guard below
+    until AGENTS.md's Repo map names it (issue #383). Follows the same
+    subprocess.run(["git", "ls-files", "tools/"]) pattern already used by
+    tests/test_readme_public_audience.py::test_whats_here_covers_every_tracked_top_level_tool."""
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "tools/"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    tracked = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert tracked, "git ls-files tools/ returned nothing — repo checkout looks wrong"
+    return tracked
+
+
+def _missing_tools_paths(section, tracked_paths):
+    return [path for path in tracked_paths if path not in section]
+
+
+def test_agents_md_repo_map_lists_every_tracked_tools_path():
+    section = _agents_repo_map_section()
+    missing = _missing_tools_paths(section, _tracked_tools_paths())
+    assert not missing, (
+        f"AGENTS.md repo map is missing these git-tracked tools/ paths: {missing!r}"
+    )
+
+
+def test_agents_md_repo_map_derivation_is_live_against_the_tracked_tree():
+    """Proves the derivation above is live, not a re-pinned list in disguise:
+    dropping one tracked tools/ path from a synthetic map section must surface
+    exactly that path as missing, the same way a real newly added tools/ file
+    would fail the guard until AGENTS.md names it."""
+    tracked = _tracked_tools_paths()
+    dropped = tracked[0]
+    fake_section = "\n".join(f"| `{path}` | ... |" for path in tracked[1:])
+    assert _missing_tools_paths(fake_section, tracked) == [dropped]
+
+
+def test_agents_md_repo_map_lists_every_named_non_tools_addition():
+    # Tombstone for the pre-#383 hardcoded list (issue #178, #383): these
+    # entries are not git-derivable the way tools/ is, so they stay pinned.
     section = _agents_repo_map_section()
     for path in [
-        "tools/epic_gate.py",
-        "tools/review_bundle.py",
-        "tools/check_task.py",
-        "tools/check_links.py",
-        "tools/check_model_refs.py",
-        "tools/check_supersession.py",
-        "tools/promote.sh",
-        "tools/watch_build.sh",
-        "tools/board.sh",
         "skills/",
         "templates/",
     ]:

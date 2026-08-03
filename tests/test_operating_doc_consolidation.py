@@ -26,6 +26,7 @@ forbid legitimate future growth of the docs.
 
 import re
 import pathlib
+import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "AGENTS.md"
@@ -165,16 +166,51 @@ def test_invariant_docs_consolidated_not_accreted_survives():
 # Repo map — every path from the pre-consolidation table must survive
 # ---------------------------------------------------------------------------
 
-def test_repo_map_lists_every_core_path():
+def _tracked_tools_paths():
+    """Every path git tracks under tools/ — derived rather than pinned, so a
+    newly added tools/ file fails this guard until AGENTS.md's Repo map names
+    it (issue #383). Mirrors tests/test_readme_public_audience.py's
+    test_whats_here_covers_every_tracked_top_level_tool."""
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "tools/"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    tracked = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert tracked, "git ls-files tools/ returned nothing — repo checkout looks wrong"
+    return tracked
+
+
+def _missing_tools_paths(section, tracked_paths):
+    return [path for path in tracked_paths if path not in section]
+
+
+def test_repo_map_lists_every_tracked_tools_path():
+    section = _repo_map_section()
+    missing = _missing_tools_paths(section, _tracked_tools_paths())
+    assert not missing, (
+        f"AGENTS.md repo map is missing these git-tracked tools/ paths: {missing!r}"
+    )
+
+
+def test_repo_map_derivation_is_live_against_the_tracked_tree():
+    """Proves the derivation above is live: dropping one tracked tools/ path
+    from a synthetic map section must surface exactly that path as missing,
+    the same way a real newly added tools/ file would fail the guard until
+    AGENTS.md names it."""
+    tracked = _tracked_tools_paths()
+    dropped = tracked[0]
+    fake_section = "\n".join(f"| `{path}` | ... |" for path in tracked[1:])
+    assert _missing_tools_paths(fake_section, tracked) == [dropped]
+
+
+def test_repo_map_lists_every_core_non_tools_path():
+    # Tombstone for the pre-#383 hardcoded list (issue #52, #383): these
+    # entries are not git-derivable the way tools/ is, so they stay pinned.
     section = _repo_map_section()
     for path in [
-        "tools/dev-runner.sh",
-        "tools/merge_shadow.py",
-        "tools/dispatch.py",
-        "tools/stage_usage.py",
-        "tools/textutil.py",
         "models.toml",
-        "tools/registry.py",
         "tests/",
         "deploy/",
         "docs/rfcs/",
