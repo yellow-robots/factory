@@ -140,10 +140,21 @@ def tracked_files(root):
     return files, "filesystem walk (not a git checkout)"
 
 
+def surface_for(rule, files):
+    """The files a rule's `paths` globs actually resolve to.
+
+    NOTE for rule authors: `fnmatch`'s `*` crosses `/`, so `tools/*.py` matches `tools/a/b.py`
+    too, and `tools/**/*.py` does NOT match the top-level `tools/foo.py`. Write `tools/*.py` when
+    you mean "anywhere under tools/". This is exactly the shape that produces an empty surface by
+    accident, which is why an empty surface is fatal below rather than silently green.
+    """
+    return [f for f in files if any(fnmatch.fnmatch(f, g) for g in rule["paths"])]
+
+
 def matches_for(rule, files, root):
     """[(path, lineno, line)] for every line matching `rule` on `rule`'s declared surface."""
     pattern = re.compile(rule["pattern"])
-    surface = [f for f in files if any(fnmatch.fnmatch(f, g) for g in rule["paths"])]
+    surface = surface_for(rule, files)
     hits = []
     for rel in surface:
         try:
@@ -154,6 +165,17 @@ def matches_for(rule, files, root):
             if pattern.search(line):
                 hits.append((rel, lineno, line.strip()))
     return hits
+
+
+def empty_surfaces(rules, files):
+    """Rules whose `paths` resolve to no file at all.
+
+    A rule guarding nothing is worse than no rule: it reports "0 found, max N" and reads as
+    healthy forever. A renamed or mistyped surface is the ordinary way this happens, and with
+    `max = 0` it produces no output whatsoever. So it is FATAL, not an advisory — the whole point
+    of the tier is that a guard's silence means the shape is absent, not that the guard is blind.
+    """
+    return [r for r in rules if not surface_for(r, files)]
 
 
 def evaluate(rules, files, root):
@@ -178,6 +200,16 @@ def main(argv):
         return 2                      # a rule set that cannot be trusted never silently passes
 
     files, source = tracked_files(root)
+
+    blind = empty_surfaces(rules, files)
+    if blind:
+        for rule in blind:
+            print(f"cardinality: rule `{rule['id']}` guards NOTHING — its declared surface "
+                  f"({', '.join(rule['paths'])}) resolves to no file under {source}. A rule with "
+                  f"an empty surface reports 0 found forever and cannot fail; fix the globs or "
+                  f"remove the rule.", file=sys.stderr)
+        return 2
+
     failures, advisories = evaluate(rules, files, root)
 
     for rule, hits in advisories:

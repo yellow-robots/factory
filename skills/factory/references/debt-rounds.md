@@ -69,11 +69,13 @@ each a rule with the reason it exists, not a formality.
     file — so a match found outside that surface can't satisfy it. The difference across these guards is
     shape, not tier: `tests/harness/test_gh_fake_migration.py`'s
     `test_no_full_gh_fake_reimplementation_anywhere_in_tests` walks the tree and holds completely;
-    the raw-VERDICT-pipeline cap is a cardinality guard that
-    held as a bespoke test from #151 and now lives as a **declared rule** — `verdict-extraction-pipeline`
-    in `qa/cardinality.toml`, enforced by `qa/cardinality.py` off the repo's `lint_cmd` (#365), which is
-    the shape a repo should reach for once it has more than one such cap; `tests/test_docs_drift_correction.py`'s `assert int(match.group(1)) > 63` is a floor, still
-    green while drifted — all three are ordinary pytest tests.
+    the raw-VERDICT-pipeline cap is a cardinality guard that held — written
+    as an ordinary pytest test at #151 and, in the factory's own repo since #365, carried as the
+    declared rule `verdict-extraction-pipeline` in `qa/cardinality.toml` instead;
+    `tests/test_docs_drift_correction.py`'s `assert int(match.group(1)) > 63` is a floor, still green
+    while drifted. That middle exhibit states the rule better than the prose can: it changed tier
+    without changing one thing it asserts. Which tier a repo reaches for is the repo's own call — the
+    wall constrains the shape and never the instrument.
 
 ## Record grammars
 

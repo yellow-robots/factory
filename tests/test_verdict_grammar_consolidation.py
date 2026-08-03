@@ -52,7 +52,7 @@ def test_dev_runner_sh_review_gate_and_terminal_approval_call_a_shared_symbol():
     invoke the SAME named helper rather than each embedding their own copy of the pipeline."""
     src = _dev_runner_source()
 
-    # Locate the single raw pipeline invocation (proven to exist exactly once by the test above)
+    # Locate the single raw pipeline invocation (capped at exactly one by the declared rule `verdict-extraction-pipeline` in qa/cardinality.toml, since #365)
     # and the name of the function it's defined inside of, e.g. `verdict_line(){ grep -E ... }`.
     def_match = re.search(
         r"(?m)^(\w+)\(\)\s*\{[^\n]*" + _RAW_PIPELINE_INVOCATION.pattern, src

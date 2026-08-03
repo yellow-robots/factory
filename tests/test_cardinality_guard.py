@@ -260,28 +260,97 @@ def test_the_runner_assumes_no_language_or_toolchain():
         )
 
 
+def _shipped_rules():
+    import tomllib
+    return tomllib.loads(CONFIG.read_text(encoding="utf-8"))["rule"]
+
+
 def test_this_repos_rule_set_holds_at_this_ref():
     """Every shipped rule is true at its own landing ref — the discipline, not a coincidence."""
     r = _run()
     assert r.returncode == 0, f"the shipped rule set does not hold at this ref:\n{r.stderr}"
 
 
-def test_no_manifest_reader_rule_is_shipped_for_the_runner():
-    """Eight readers exist in tools/dev-runner.sh at this ref.
+def test_every_shipped_rule_actually_matches_its_declared_maximum():
+    """RC=0 is NOT enough, and this is the load-bearing test of the rule set.
 
-    A rule declaring `max = 8` would ratify the finding instead of retiring it, and `max = 1`
-    would be false at landing. The only slice that can honestly assert one is round 2's item B2,
-    which collapses them — it ships that rule, under this same wall.
+    A runner that matches NOTHING also exits 0 — every rule silently drops to zero hits and the
+    whole tier reads as healthy. Mutating `pattern.search(line)` to `pattern.match(line)` in
+    qa/cardinality.py does exactly that, and a suite asserting only the exit code stays green
+    while the guards guard nothing. So assert the COUNTS: each shipped rule sits exactly at its
+    declared max, which is what "true at this landing ref" actually means.
     """
-    text = CONFIG.read_text(encoding="utf-8")
-    assert "tools/dev-runner.sh" in text, "expected the verdict-pipeline rule to name the runner"
-    assert "tomllib" not in text.split("[[rule]]")[1], "unexpected manifest rule on the first rule"
-    for block in text.split("[[rule]]")[1:]:
-        if "tools/dev-runner.sh" in block:
-            assert "import sys" not in block and "tomllib" not in block, (
-                "a manifest-reader rule for tools/dev-runner.sh is shipped here — it belongs to "
-                "round 2's item B2, the slice that collapses the eight readers"
+    import importlib
+    sys.path.insert(0, str(REPO / "qa"))
+    try:
+        cardinality = importlib.import_module("cardinality")
+        importlib.reload(cardinality)
+        files, _ = cardinality.tracked_files(REPO)
+        for rule in _shipped_rules():
+            hits = cardinality.matches_for(rule, files, REPO)
+            assert len(hits) == rule["max"], (
+                f"rule `{rule['id']}` found {len(hits)} matches, expected exactly its declared "
+                f"max of {rule['max']}. Zero means the pattern matches nothing and the rule is "
+                f"guarding air; more means it is false at this landing ref."
             )
+    finally:
+        sys.path.remove(str(REPO / "qa"))
+
+
+def test_no_rule_targeting_the_runner_is_a_manifest_reader_rule():
+    """The crossing's commitment, asserted structurally rather than by keyword blocklist.
+
+    A two-string blocklist (`tomllib`, `import sys`) is trivially satisfied by a rule named
+    anything else — a `runner-manifest-read` rule at `max = 8` would sail past it. So: every rule
+    whose surface includes tools/dev-runner.sh must BE the verdict-pipeline rule. Eight manifest
+    readers exist there at this ref; `max = 8` ratifies the finding and `max = 1` is false at
+    landing, so that rule belongs to round 2's item B2, the slice that collapses them.
+    """
+    for rule in _shipped_rules():
+        if any("dev-runner.sh" in g for g in rule["paths"]):
+            assert rule["id"] == "verdict-extraction-pipeline", (
+                f"rule `{rule['id']}` targets tools/dev-runner.sh. The only rule allowed on that "
+                "surface at this ref is verdict-extraction-pipeline — a manifest-reader rule "
+                "belongs to round 2's item B2, the slice that collapses the eight readers."
+            )
+
+
+def test_no_shipped_rule_declares_a_maximum_above_one():
+    """A max above 1 ratifies an existing duplication instead of retiring it."""
+    for rule in _shipped_rules():
+        assert rule["max"] <= 1, (
+            f"rule `{rule['id']}` declares max={rule['max']} — a ceiling above one blesses the "
+            "copies that already exist, which is the opposite of making a finding non-recurring"
+        )
+
+
+def test_a_rule_whose_surface_resolves_to_nothing_is_fatal(tmp_path):
+    """A guard that guards nothing reports 0-found forever and reads as healthy.
+
+    A renamed or mistyped surface is the ordinary way this happens, and with `max = 0` it emits
+    no output at all — the tier's silence must mean "the shape is absent", never "the guard is
+    blind". `fnmatch`'s `*` crossing `/` makes this easy to do by accident.
+    """
+    cfg = _cfg(tmp_path, "\n".join([
+        "[[rule]]",
+        'id = "blind"',
+        "pattern = 'anything'",
+        'paths = ["tools/dev-runner.bash"]',
+        "max = 0",
+        'reason = "a renamed surface must never read as a healthy guard"',
+        'birth = "#365"',
+    ]))
+    r = _run(cfg)
+    assert r.returncode == 2, (
+        f"a rule with an empty surface was accepted (rc={r.returncode}) — with max=0 it produces "
+        "no output at all, so a mistyped or renamed path silently disables the guard forever"
+    )
+    assert "guards NOTHING" in r.stderr
+
+
+# (superseded: the keyword-blocklist version of this check was replaced by
+# test_no_rule_targeting_the_runner_is_a_manifest_reader_rule above, which asserts the
+# commitment structurally instead of by a two-string blocklist a renamed rule evades.)
 
 
 def test_the_manifest_declares_the_runner_in_lint_cmd():
