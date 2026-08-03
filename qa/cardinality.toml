@@ -1,0 +1,45 @@
+# qa/cardinality.toml — this repo's own cardinality rules (it-27 § 4, issue #365).
+#
+# Consumer content: the rules are THIS repo's, the runner (qa/cardinality.py) is the shape another
+# repo copies. Every field is required and the loader refuses fail-closed on any missing or empty
+# one — a rule without a `reason` cannot satisfy the failure criterion, and a rule without a `birth`
+# is one nobody can retire.
+#
+#   id      stable kebab-case name, unique in this file; keys the failure message
+#   pattern a Python regex, matched per line against file TEXT. TOML literal strings (single
+#           quotes) are used so a regex needs no double escaping.
+#   paths   repo-relative globs — THE SURFACE THE ASSERTION READS. Named explicitly because a
+#           guard can be perfectly tree-derived and still assert against the wrong surface.
+#   max     a non-negative integer ceiling.
+#   reason  why this shape is capped. Printed on failure.
+#   birth   the introducing issue or commit, read off the rule's source — never re-derived.
+#
+# EVERY RULE HERE IS TRUE AT THIS SLICE'S OWN LANDING REF. That is the discipline, not a
+# coincidence: a rule declaring a max equal to today's offender count would ratify the finding
+# instead of retiring it. Which is exactly why the manifest-reader rule for tools/dev-runner.sh is
+# NOT here — eight readers exist at this ref, and the slice that can honestly assert one is round
+# 2's item B2, which collapses them. It ships that rule under this same wall.
+
+[[rule]]
+id = "verdict-extraction-pipeline"
+pattern = '''\b(e?grep|awk|sed|rg|ack)\b[^\n]*\^VERDICT:'''
+paths = ["tools/dev-runner.sh"]
+max = 1
+reason = "The raw VERDICT-extraction pipeline is written once, in verdict_line(). A second independently-typed copy at the other call site is the drift issue #151 removed: two readers of one grammar drift apart, and the review gate and terminal_approval must never disagree about what an approval is."
+birth = "#151"
+
+[[rule]]
+id = "ci-checkout-step"
+pattern = '''uses:\s*['"]?actions/checkout'''
+paths = [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+max = 1
+reason = "One checkout step, so a single fetch-depth setting unambiguously governs the certification run's history. A second checkout means a second job, and the history-pinned tests die on a shallow clone."
+birth = "#225"
+
+[[rule]]
+id = "workflow-manifest-read"
+pattern = '''(tomll?ib|\byq\b|\b(sed|e?grep|awk|cut|cat|head|tail|rg)\b[^\n]*factory\.toml)'''
+paths = [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+max = 1
+reason = "The CI lint backstop reads .yr/factory.toml at exactly one site. A second reader in the workflows is the clone shape this iteration exists to stop — the manifest is the seam, and the seam has one door. The pattern deliberately catches a sed/grep/awk reader too, since a tomllib-only rule is trivially evaded."
+birth = "#363"

@@ -17,7 +17,12 @@ auto_merge = true
 # The lint tier (issue #213): blocking, autofix-first repair after check_cmd passes. lint_cmd's rule
 # set is this repo's own ruff.toml (issue #215) — chosen green-at-adoption, tightened later by
 # ordinary convention edits, never by fixing code to fit a stricter config.
-lint_cmd = "ruff check tools/ tests/"
+#
+# The cardinality tier (it-27 § 4, issue #365) joins lint_cmd: declarative guards that pin a named
+# shape at a declared maximum, so a consolidation this round makes cannot silently recur. Rules live
+# in qa/cardinality.toml (this repo's own, like qa/lens.py's). It has no autofix, so lint_fix_cmd is
+# unchanged — a cardinality failure is a design decision to make, never a rewrite to apply.
+lint_cmd = "ruff check tools/ tests/ && python3 qa/cardinality.py"
 lint_fix_cmd = "ruff check --fix tools/ tests/"
 
 # The lens tier (issue #216): advisory, never gating (issue #214's seam). qa/lens.py is the

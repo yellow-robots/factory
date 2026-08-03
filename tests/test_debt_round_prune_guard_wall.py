@@ -264,8 +264,10 @@ def test_debt_rounds_wall_11_cites_the_three_exemplars_by_name():
     exemplars = [
         "tests/harness/test_gh_fake_migration.py",
         "test_no_full_gh_fake_reimplementation_anywhere_in_tests",
-        "tests/test_verdict_grammar_consolidation.py",
-        "test_dev_runner_sh_has_exactly_one_raw_verdict_extraction_pipeline",
+        # The cardinality exemplar migrated from a bespoke test to a declared rule at it-27
+        # slice A3 (#365). The wall cites the shape's new home, so this cites it too.
+        "qa/cardinality.toml",
+        "verdict-extraction-pipeline",
         "tests/test_docs_drift_correction.py",
     ]
     for exemplar in exemplars:
@@ -285,17 +287,23 @@ def test_gh_fake_migration_exemplar_resolves_to_a_real_test():
     )
 
 
-def test_verdict_grammar_exemplar_resolves_to_a_real_test():
-    path = ROOT / "tests" / "test_verdict_grammar_consolidation.py"
-    assert path.is_file(), f"exemplar path does not exist: {path}"
-    text = _text(path)
-    assert re.search(
-        r"(?m)^def test_dev_runner_sh_has_exactly_one_raw_verdict_extraction_pipeline\(", text
-    ), (
-        "tests/test_verdict_grammar_consolidation.py no longer defines "
-        "test_dev_runner_sh_has_exactly_one_raw_verdict_extraction_pipeline — the wall 11 "
-        "exemplar has gone stale"
+def test_verdict_grammar_exemplar_resolves_to_a_real_guard():
+    """The wall's cardinality exemplar must resolve to something that actually enforces it.
+
+    It began as a bespoke test (#151) and migrated to a declared rule at it-27 slice A3 (#365) --
+    the same shape, one tier down, which is what the wall now recommends. The guard follows the
+    exemplar to its new home rather than pinning the old one, or the wall would cite a test the
+    repo deliberately deleted.
+    """
+    config = ROOT / "qa" / "cardinality.toml"
+    assert config.is_file(), f"exemplar path does not exist: {config}"
+    text = _text(config)
+    assert 'id = "verdict-extraction-pipeline"' in text, (
+        "qa/cardinality.toml no longer declares the `verdict-extraction-pipeline` rule -- the "
+        "wall 11 exemplar has gone stale"
     )
+    runner = ROOT / "qa" / "cardinality.py"
+    assert runner.is_file(), "qa/cardinality.py is missing -- the declared rule enforces nothing"
 
 
 def test_docs_drift_exemplar_resolves_to_the_cited_floor_assertion():
