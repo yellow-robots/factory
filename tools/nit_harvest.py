@@ -54,6 +54,24 @@ _PATH_RE = re.compile(r"\bpath=(\S+)")
 _LINE_RE = re.compile(r"\bline=(\d+)\b")
 _SENTENCE_RE = re.compile(r"—\s*(.*)$")
 
+# A `path=` value as a human actually types it: backticked, quoted, and/or carrying a `:NN` suffix
+# copied straight off a grep hit. All three parse fine and then fail tree-resolution, so the record is
+# silently dropped — the reviewer emitted a conforming-looking record and the harvest lost it. Normalize
+# once, at parse time, and recover the suffix as provenance when no explicit `line=` was given.
+_PATH_DECORATION = "`'\"()[],;"
+_PATH_LINE_SUFFIX_RE = re.compile(r":(\d+)$")
+
+# A symbol token in review prose: a backticked identifier that is not a path. Symbol clustering is the
+# half the arm was justified by — a contract's consumers share a NAME, not a file, and `read_ci_timeout`
+# recurring across two PRs is the signal, while `tools/dev-runner.sh` recurring across sixty is churn.
+_SYMBOL_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{2,63})`")
+
+# Identifiers present in the tree, for the symbol arm's resolution filter (the analogue of a path's
+# `.exists()`). Same closed exclusion set the rest of the factory's tree walks use.
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,63}")
+_TREE_SKIP = {".git", ".venv", "node_modules", ".claude", "__pycache__", "bench"}
+_TREE_TEXT_SUFFIXES = {".py", ".sh", ".md", ".toml", ".yml", ".yaml", ".json", ".txt", ".cfg", ".ini"}
+
 # A prose path token: either something containing a slash (`tools/nit_harvest.py`, `a/b/c`) or a bare
 # filename with an extension (`README.md`). The tree-resolution filter (cluster()) discards any token
 # that isn't a real file, so this stays deliberately permissive — it degrades precision, never a run.
@@ -78,13 +96,79 @@ def parse_nit(raw_line):
         return None
     line = _LINE_RE.search(payload)
     sentence = _SENTENCE_RE.search(payload)
+    raw_path, suffix_line = _normalize_path(path.group(1))
     return {
         "tag": tag.group(1),
-        "path": path.group(1).rstrip("/"),
-        "line": int(line.group(1)) if line else None,   # provenance only
+        "path": raw_path,
+        # provenance only. An explicit `line=` wins; otherwise a `:NN` suffix on the path is where the
+        # reviewer put it, and discarding it would throw away provenance the record did carry.
+        "line": int(line.group(1)) if line else suffix_line,
         "sentence": sentence.group(1).strip() if sentence else "",
         "source": "record",
     }
+
+
+def _normalize_path(value):
+    """(path, line_or_None) from a raw `path=` value as a human actually types it.
+
+    Strips backticks, quotes and trailing punctuation, and lifts a `:NN` suffix into provenance. Without
+    this a record reading ``path=`tools/x.py`:42`` parses cleanly, fails `.exists()` in cluster(), and
+    vanishes — the reviewer did everything right and the finding was lost silently, which is worse than
+    a rejected record because nothing anywhere reports it.
+    """
+    path = (value or "").strip().strip(_PATH_DECORATION)
+    suffix = _PATH_LINE_SUFFIX_RE.search(path)
+    line = None
+    if suffix:
+        path = path[: suffix.start()]
+        line = int(suffix.group(1))
+    return path.rstrip("/").strip(_PATH_DECORATION), line
+
+
+# A review report's own scaffolding — headings, scope declarations, verification ticks. These name a
+# file WITHOUT reporting a defect in it, and the first live run (2026-08-03) showed they dominate the
+# heuristic yield: sampled "findings" were `**AC3 — scope.** Outside tests/, the only file touched is…`
+# and `- No changes to docs/rfcs/. ✅`. Harvesting them inverts the ranking, because the files a report
+# declares scope over are exactly the files every report mentions.
+#
+# The vocabulary is CLOSED and lives here, deliberately: precision is what the heuristic path trades
+# away, and widening this set silently is how a filter starts eating real findings. Anything not matched
+# here is treated as prose, so the failure direction stays "too many rows", never "a lost finding".
+_VERIFICATION_GLYPHS = ("✓", "✔", "✅", "❌", "✗", "🟢", "🔴")
+_REPORT_LABELS = (
+    "scope", "constraints", "acceptance", "acceptance criteria", "verification", "verified",
+    "summary", "verdict", "steelman", "findings", "blockers", "nits", "coverage", "evidence",
+    "provenance", "grounding", "notes", "out of scope", "test expectations", "goal",
+)
+_BOLD_ONLY_RE = re.compile(r"^\*\*[^*]+\*\*[.:\s]*$")
+_BOLD_LABEL_RE = re.compile(r"^\*\*([^*]+?)\*\*")
+_AC_LABEL_RE = re.compile(r"^\*\*AC\s*\d+\b", re.IGNORECASE)
+
+
+def is_report_scaffolding(line):
+    """True when `line` is a review report's own structure rather than a finding about a file."""
+    # Strip a LIST BULLET only — `- `, `+ `, or a single `* ` — never a bare run of `*`. A naive
+    # `.lstrip("-*+ ")` eats the `**` of a bold heading, so every `**heading**` then failed the
+    # bold-only test below and was harvested as a finding. That was the first version of this filter
+    # and the live corpus caught it.
+    stripped = re.sub(r"^(?:[-+]|\*(?!\*))\s+", "", line.strip())
+    if not stripped:
+        return False
+    if stripped.startswith("#"):
+        return True                                  # a markdown heading
+    if _BOLD_ONLY_RE.match(stripped):
+        return True                                  # a bold heading and nothing else
+    if any(glyph in stripped for glyph in _VERIFICATION_GLYPHS):
+        return True                                  # a confirmation, not a defect
+    if _AC_LABEL_RE.match(stripped):
+        return True                                  # `**AC3 — scope.** …`
+    label = _BOLD_LABEL_RE.match(stripped)
+    if label:
+        head = label.group(1).strip().rstrip(":.").strip().lower()
+        head = head.split("—")[0].split("--")[0].strip()
+        if head in _REPORT_LABELS:
+            return True
+    return False
 
 
 def prose_findings(body):
@@ -101,6 +185,8 @@ def prose_findings(body):
     for line in (body or "").splitlines():
         lead = line.lstrip()
         if lead.startswith(">") or lead.startswith(NIT_PREFIX):
+            continue
+        if is_report_scaffolding(line):
             continue
         for match in _PROSE_PATH_RE.finditer(line):
             path = match.group(0).rstrip("/").rstrip(".,;:)")
@@ -129,6 +215,20 @@ def findings_from_comment(pr, body):
     if records:
         return records
     return [{**row, "pr": pr} for row in prose_findings(body)]
+
+# NOT FIXED HERE, deliberately — an off-column `YR-NIT:` (indented, or bulleted out of habit) is
+# matched by nothing: not a record, and prose_findings() skips marker lines too, so it is dropped with
+# no heuristic fallback and no report anywhere. An it-27 review called that a defect. But
+# test_indented_and_blockquoted_yr_nit_are_not_matched_as_records pins the current behaviour
+# deliberately and states its reason, and it passed independent review — so this is a live
+# disagreement between two reviews about what the grammar should tolerate, not a bug to quietly
+# resolve by editing the test that encodes the decision. It goes to the human.
+#
+# The two positions, both defensible: strictness says a near-miss must fail visibly or reviewers
+# learn sloppy emission still works; the absent-record contract says a finding with no valid record
+# should degrade to `source: heuristic`, never vanish. Note the blockquote half is NOT in dispute —
+# `> `-prefixed markers must stay excluded either way, because the shadow seat blockquotes its whole
+# transcript and recovering those would double-count the corpus.
 
 
 def _comment_pr(comment):
@@ -170,16 +270,113 @@ def cluster(findings, *, tree_root):
     return clusters
 
 
+def tree_identifiers(tree_root):
+    """Every identifier-shaped token in the tree's text files — the symbol arm's resolution filter.
+
+    The analogue of a path's `.exists()`: a symbol named by two reviews but no longer present in the
+    tree is a finding about code that is already gone. Read once into a set rather than grepped per
+    candidate, so the arm costs one tree pass regardless of how many symbols it is testing.
+    """
+    idents = set()
+    root = pathlib.Path(tree_root)
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix not in _TREE_TEXT_SUFFIXES:
+            continue
+        if any(part in _TREE_SKIP for part in path.relative_to(root).parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        idents.update(_IDENT_RE.findall(text))
+    return idents
+
+
+def is_compound_identifier(symbol):
+    """True for `read_ci_timeout`, `MERGE_CI_TIMEOUT`, `runLint` — false for `active`, `main`, `None`.
+
+    Backticks in review prose wrap two different things: code symbols, and ordinary English words a
+    reviewer is quoting (`active`, `superseded`, `main`, `log`). Both resolve as identifiers somewhere
+    in a tree this size, so tree-resolution alone cannot separate them, and the first run of the symbol
+    arm surfaced six English words inside its top fourteen.
+
+    A compound identifier — one carrying an underscore, or a capital anywhere but the first character
+    — is the shape a code symbol takes, and the shape a CLONED CONTRACT takes in particular: contracts
+    get named things like `read_server_ci`, never `active`.
+
+    The capital must be INTERNAL, which is the whole discriminator: `runLint` and `EpicGate` are
+    symbols, `None` and `Draft` are capitalised English. Counting capitals instead would reject
+    `runLint` — and this rule has to survive a repo that names things in camelCase, since the tier
+    assumes no language.
+
+    It drops a genuinely single-word symbol (`harvest`, `cluster`), which is the honest cost: the arm
+    exists to find duplicated contracts, and a bare verb is not evidence of one.
+    """
+    return "_" in symbol or any(c.isupper() for c in symbol[1:])
+
+
+def cluster_symbols(findings, *, tree_root, known=None):
+    """Recurrence clusters keyed on a SYMBOL rather than a path.
+
+    This is the half the arm was justified by and the half that shipped missing. A contract's consumers
+    share a NAME, not a file: `read_ci_timeout` named by findings in two separate PRs is the signal that
+    a reader has been cloned, while `tools/dev-runner.sh` named in sixty is only churn. Path clustering
+    ranks the most-edited files to the top by construction, which inverts the very ordering the arm
+    exists to produce.
+
+    Same rule as `cluster()` in every other respect — two or more distinct PRs, must still resolve in
+    the tree — so the two arms are comparable and neither invents its own threshold.
+    """
+    idents = tree_identifiers(tree_root) if known is None else known
+    by_symbol = {}
+    for finding in findings:
+        for symbol in _SYMBOL_RE.findall(finding.get("sentence") or ""):
+            if symbol in idents and is_compound_identifier(symbol):
+                by_symbol.setdefault(symbol, []).append(finding)
+    clusters = []
+    for symbol, rows in by_symbol.items():
+        prs = sorted({row["pr"] for row in rows})
+        if len(prs) < 2:
+            continue
+        clusters.append({
+            "symbol": symbol,
+            "recurrence": len(prs),
+            "prs": prs,
+            "findings": rows,
+        })
+    clusters.sort(key=lambda c: (-c["recurrence"], c["symbol"]))
+    return clusters
+
+
 def harvest(comments, *, tree_root):
-    """The arm's whole pass: every finding across `comments` (a list of `issues/comments`-shaped dicts),
-    clustered and ranked by recurrence. Never raises on a shapeless comment or an absent record."""
+    """The arm's whole pass: every finding across `comments`, clustered and ranked by recurrence.
+
+    Returns BOTH arms — `{"by_symbol": [...], "by_path": [...], "counts": {...}}` — because they answer
+    different questions and collapsing them loses the useful one. A symbol cluster says a contract has
+    acquired consumers; a path cluster says a file draws attention. Symbol first, because that is the
+    ordering the census actually reads.
+
+    Never raises on a shapeless comment or an absent record.
+    """
     findings = []
     for comment in comments:
         pr = _comment_pr(comment)
         if pr is None:
             continue
         findings.extend(findings_from_comment(pr, comment.get("body") or ""))
-    return cluster(findings, tree_root=tree_root)
+    by_path = cluster(findings, tree_root=tree_root)
+    by_symbol = cluster_symbols(findings, tree_root=tree_root)
+    return {
+        "by_symbol": by_symbol,
+        "by_path": by_path,
+        "counts": {
+            "findings": len(findings),
+            "records": sum(1 for f in findings if f["source"] == "record"),
+            "heuristic": sum(1 for f in findings if f["source"] == "heuristic"),
+            "symbol_clusters": len(by_symbol),
+            "path_clusters": len(by_path),
+        },
+    }
 
 
 # --- the network read (injectable; the suite never reaches here) -----------------------------------
