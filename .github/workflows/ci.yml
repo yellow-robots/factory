@@ -28,3 +28,24 @@ jobs:
       # tests/ so xdist never collects a stray worktree copy.
       - name: Tests
         run: pytest tests/ -n auto -q
+      # The lint backstop (it-27 § 7, issue #363). The runner's lint tier cannot cover every
+      # commit that reaches main: an attended commit never meets the runner at all, and a local
+      # hook is per-clone and bypassable. So server CI runs the SAME lint the runner runs —
+      # ordered after the tests exactly as the runner orders lint_cmd after check_cmd, one
+      # contract on two hosts.
+      #
+      # The command is READ from the manifest, never restated here: a second declaration is the
+      # drift twin the seam contract forbids. This is the workflow's ONE manifest read — a
+      # declared cardinality rule caps it at one (issue #365), so a second reader is a gate
+      # failure, not a review catch. Absent lint_cmd the read yields empty and the step is a
+      # no-op, preserving the tier's capability-defaults-off shape for any repo copying this.
+      # `bash -c` runs the string verbatim, the same opaque-command shape as run_lint().
+      - name: Lint
+        run: |
+          LINT_CMD="$(python3 -c 'import tomllib,pathlib;p=pathlib.Path(".yr/factory.toml");print(tomllib.loads(p.read_text()).get("lint_cmd","") if p.exists() else "")')"
+          if [ -z "$LINT_CMD" ]; then
+            echo "no lint_cmd declared in .yr/factory.toml — lint backstop is a no-op"
+            exit 0
+          fi
+          echo "lint_cmd (read from .yr/factory.toml): $LINT_CMD"
+          bash -c "$LINT_CMD"
