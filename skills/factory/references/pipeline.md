@@ -296,10 +296,11 @@ concept of "a build is currently running." That makes the human side of the chor
 
 ## The duplication mandate, and why it is myopic on purpose
 
-Issue #366 adds one clause to the reviewer's charter: treat a contract **re-implemented within the
-files the change touches, or their immediate seam**, as a finding — a second reader of a manifest key,
-a second matcher for a record grammar, a second home for an identifier. It is the *only* review
-instruction about duplication, and it is deliberately bounded.
+Issue #366 adds one clause to the reviewer's charter, and the charter itself is the authority — the
+exact wording lives in `REVIEW_SYS` (`tools/dev-runner.sh`) and is deliberately **not** reproduced
+here, since two copies of an instruction are the drift twin this very clause exists to catch. What it
+does: scopes the reviewer to duplication it can see from inside the change, and names the shapes that
+count. It is the *only* review instruction about duplication, and it is deliberately bounded.
 
 The forcing evidence is eight cloned manifest readers in `tools/dev-runner.sh`. Seven were built by
 this pipeline, each passing an independent reviewer, and the reviewers were not asleep: one of them
@@ -310,9 +311,9 @@ that the fourth copy of a contract is a defect.
 **Detection is two-locus, and this is the micro half.** The reviewer sees the seam it is already
 reading, where a clone is cheapest to name; no diff, however well reviewed, can reveal that a contract
 has acquired eight consumers. That is a shape of the *system*, and the debt round's **system-shape arm**
-owns it (see `debt-rounds.md`). So the charter explicitly does **not** ask the reviewer to judge
-duplication beyond its own seam: a reviewer hunting clones repo-wide reports noise instead of defects,
-and the round's detection-locus meter is what would show that happening.
+owns it (see `debt-rounds.md`). So the charter carries an explicit **negative** clause too, declining
+the wider judgement — asked to police the whole tree, a stage that can only see one diff returns
+opinion rather than evidence, and the round's detection-locus meter is what would show that happening.
 
 **The record.** Each finding is emitted as a line beginning `YR-NIT:` at column 0 in addition to its
 prose, for findings of **either** tag — a blocking duplication finding must be as visible to the harvest
