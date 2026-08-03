@@ -37,6 +37,37 @@ def is_frozen_bench_evidence(rel_path: str) -> bool:
     return False
 
 
+# The two named anchoring modes a `YR-*` record-marker reader may require. Deliberately distinct — a
+# caller names the one it needs, and the helper never guesses between them nor collapses them into one.
+MARKER_SENTINEL = "sentinel"
+MARKER_PREFIX = "prefix"
+
+
+def marker_line_matches(line: str, marker: str, *, mode: str) -> bool:
+    """The one shared matcher for every `YR-*` record marker in the tree: does a single `line` carry
+    `marker` under the named anchoring `mode`? The caller iterates its own lines (`body.splitlines()`)
+    and owns what a match MEANS (a whole body, a 1-indexed line number, the text after the marker) — this
+    helper judges exactly one line, under exactly one of two deliberately-distinct rules:
+
+      * ``mode="sentinel"`` — the line, after ``.strip()``, is EXACTLY `marker`. Leading (and trailing)
+        whitespace is tolerated BY DESIGN, so an indented sentinel line still matches; a prose mention or
+        an inline-backticked example on a longer line does not.
+      * ``mode="prefix"`` — the line's RAW, unstripped text begins with `marker` at column 0
+        (``line.startswith(marker)``), with NO whitespace tolerance: an indented line, a ``> ``-blockquoted
+        line, or an inline mention never matches — the anchor guarantees the marker leads its own physical
+        line (the shadow-/bench-transcript guard).
+
+    The difference between the two is deliberate and load-bearing; the helper never unifies them. An
+    unrecognized `mode` is a programming error, raised rather than guessed.
+    """
+    if mode == MARKER_SENTINEL:
+        return line.strip() == marker
+    if mode == MARKER_PREFIX:
+        return line.startswith(marker)
+    raise ValueError(
+        f"marker_line_matches: unknown mode {mode!r} (expected {MARKER_SENTINEL!r} or {MARKER_PREFIX!r})")
+
+
 def _unquote(item: str):
     """Strip a wrapping pair of double quotes from one scalar/list-item token, verbatim inside."""
     if item.startswith('"'):

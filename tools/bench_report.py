@@ -36,6 +36,7 @@ import sys
 # sibling-module import (never `tools.`-prefixed): run as a bare script, sys.path[0] is already
 # `tools/` — the same discipline tools/bench_replay.py documents for `import registry` / `stage_usage`.
 import stage_usage
+import textutil
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_RESULTS_DIR = ROOT / "bench" / "results"
@@ -45,6 +46,9 @@ DEFAULT_CORPUS_README = ROOT / "bench" / "corpus" / "README.md"
 
 RESULT_SCHEMA = "yr-bench-result/1"
 DIFF_SCHEMA = "yr-verdict-diff/1"
+# The verdict-diff comment's record marker. tools/verdict_diff.py's render_comment always emits it on
+# line 1 at column 0, so identification is textutil's column-0 prefix mode over the comment's lines.
+DIFF_MARKER = "YR-VERDICT-DIFF:"
 
 CAVEAT_HEADING = "## Grading caveat"
 
@@ -216,7 +220,8 @@ def parse_verdict_diff_comment(pr_number, body):
     """One yr-verdict-diff/1-shaped record ({schema, pr, round, gating, shadow, agree}) from a posted
     YR-VERDICT-DIFF comment body (tools/verdict_diff.py's `render_comment` shape), or None if `body`
     isn't such a comment or is missing a field — never a partial/guessed record."""
-    if not body.startswith("YR-VERDICT-DIFF:"):
+    if not any(textutil.marker_line_matches(line, DIFF_MARKER, mode="prefix")
+               for line in body.splitlines()):
         return None
     matches = {key: rx.search(body) for key, rx in _COMMENT_FIELD_RES.items()}
     if not all(matches.values()):

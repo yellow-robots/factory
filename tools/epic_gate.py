@@ -62,6 +62,7 @@ import tomllib
 # (`tools/dispatch.py` spawns `tools/epic_gate.py` directly), which puts `tools/` at `sys.path[0]` — a
 # `tools.`-prefixed import would only resolve under pytest's repo-root cwd and would crash the sweeper.
 import dispatch
+import textutil
 
 # --- Projects field config (reused from the runner; env-overridable, same live defaults) ---------------
 ORG = os.environ.get("YR_ORG", "yellow-robots")
@@ -419,7 +420,8 @@ def _approval_candidates(comments):
     prefix match, not whole-line equality: the one-line record form carries `design=`/`review=`/`who=`
     values after the marker on the same line."""
     return [body for body in comments
-            if any(line.startswith(APPROVAL_MARKER) for line in body.splitlines())]
+            if any(textutil.marker_line_matches(line, APPROVAL_MARKER, mode="prefix")
+                   for line in body.splitlines())]
 
 
 def _has_valid_approval(comments):
@@ -450,7 +452,7 @@ def _open_question_lines(body):
     never fires. A fenced example's content line DOES fire — the anchoring guarantees indentation, not
     fencing; teaching text must be indented, not just fenced, to stay inert."""
     return [(n, line) for n, line in enumerate((body or "").splitlines(), start=1)
-            if line.startswith(OPEN_QUESTION_PREFIX)]
+            if textutil.marker_line_matches(line, OPEN_QUESTION_PREFIX, mode="prefix")]
 
 
 def _gate_touching_declaration(body):
@@ -460,7 +462,7 @@ def _gate_touching_declaration(body):
     keeps the technical-rfc template's shipped marker-only slot inert. Caller passes the child's own body;
     this function never sees or reads the epic's."""
     for line in (body or "").splitlines():
-        if line.startswith(GATE_TOUCHING_PREFIX):
+        if textutil.marker_line_matches(line, GATE_TOUCHING_PREFIX, mode="prefix"):
             reason = line[len(GATE_TOUCHING_PREFIX):].strip()
             if reason:
                 return reason
@@ -470,14 +472,16 @@ def _gate_touching_declaration(body):
 def _is_debt_epic(body):
     """True iff some line of the epic body, stripped, is exactly the debt-kind sentinel line — a substring
     test would also fire on a prose mention or a quoted/backticked example, so this checks whole lines."""
-    return any(line.strip() == DEBT_KIND_LINE for line in (body or "").splitlines())
+    return any(textutil.marker_line_matches(line, DEBT_KIND_LINE, mode="sentinel")
+               for line in (body or "").splitlines())
 
 
 def _has_ledger_verdict(comments):
     """True iff some epic comment carries the `YR-DEBT-LEDGER` marker on its own line AND that same
     comment yields non-empty `items` and `net-lines` fields — the machine-checked pair."""
     for body in comments:
-        if not any(line.strip() == LEDGER_MARKER for line in body.splitlines()):
+        if not any(textutil.marker_line_matches(line, LEDGER_MARKER, mode="sentinel")
+                   for line in body.splitlines()):
             continue
         if _extract_field(body, "items") and _extract_field(body, "net-lines"):
             return True
@@ -818,7 +822,8 @@ def _is_due_raise(body, repo, anchor_str):
     """True iff `body` carries the due marker on its own whole stripped line AND its own `repo:`/
     `anchor:` fields match the current (repo, anchor) key — a raise whose anchor differs is a *different*
     key, so it never suppresses a new raise."""
-    if not any(line.strip() == DUE_MARKER for line in (body or "").splitlines()):
+    if not any(textutil.marker_line_matches(line, DUE_MARKER, mode="sentinel")
+               for line in (body or "").splitlines()):
         return False
     return _extract_field(body, "repo") == repo and _extract_field(body, "anchor") == anchor_str
 
@@ -934,7 +939,9 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
     if not open_children:
         if _is_debt_epic(body) and not _has_ledger_verdict(comments):
             already_held = any(
-                any(line.strip() == HOLD_MARKER for line in c.splitlines()) for c in comments
+                any(textutil.marker_line_matches(line, HOLD_MARKER, mode="sentinel")
+                    for line in c.splitlines())
+                for c in comments
             )
             if not already_held:
                 _comment(gh, epic["repo"], epic["number"], _debt_hold_body())

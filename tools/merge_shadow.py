@@ -46,9 +46,19 @@ import pathlib
 import re
 import sys
 
+import textutil
+
 MARKER_SHADOW = "YR-MERGE-SHADOW"
 MARKER_ARMED = "YR-MERGE"
 SCHEMA = "yr-merge-record/1"
+# The whole marker TOKENS a genuine merge-record comment leads its record line with: the marker name plus
+# its colon (render_comment always emits `<marker>: <decision>`). Matched by textutil's prefix mode on a
+# RAW column-0 line — so a bare `YR-MERGE` substring in prose, the fence word `yr-merge-record` alone, a
+# longer marker name matched only by its `YR-MERGE` prefix, or a `> `-blockquoted record line never
+# identifies a comment as this PR's merge record. The armed token carries its colon (`YR-MERGE:`), which
+# the longer shadow token (`YR-MERGE-SHADOW:`) does not begin with, so the two stay distinct while both a
+# genuine armed record and a genuine shadow record are still recognized.
+RECORD_MARKER_TOKENS = (MARKER_ARMED + ":", MARKER_SHADOW + ":")
 # Order is the contract: the FIRST failed condition names the WOULD-BLOCK reason (shadow mode).
 SHADOW_ORDER = ("ci_green", "freshness", "terminal_approval", "rank_gate")
 
@@ -211,8 +221,8 @@ def render_comment(record, note=None):
 # ---------------------------------------------------------------------------
 
 def _parse_record_block(body):
-    """Parse the fenced ```yr-merge-record JSON block from a comment body. dict, or None if
-    absent/unparseable."""
+    """Parse the fenced ```yr-merge-record JSON block from a comment `body` (or a body SLICE starting at
+    the identifying marker line). dict, or None if absent/unparseable."""
     marker = "```yr-merge-record"
     i = body.find(marker)
     if i < 0:
@@ -227,18 +237,34 @@ def _parse_record_block(body):
         return None
 
 
+def _record_marker_offset(body):
+    """The character offset of the FIRST raw column-0 line beginning with a whole merge-record marker
+    token, or None when the body carries no such line. The fenced-block parse anchors HERE, so a genuine
+    record that also blockquotes an older one parses its OWN block, never the quoted one."""
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        if any(textutil.marker_line_matches(line, tok, mode="prefix") for tok in RECORD_MARKER_TOKENS):
+            return offset
+        offset += len(line)
+    return None
+
+
 def _last_merge_record(comments):
-    """(record_dict | None, malformed_bool, seen_bool) for the LAST comment carrying a YR-MERGE marker.
-    `seen` is False when the PR has no merge record at all (so it is not part of the window)."""
+    """(record_dict | None, malformed_bool, seen_bool) for the LAST comment whose body carries a genuine
+    merge-record marker line — a whole marker token (`YR-MERGE:` armed / `YR-MERGE-SHADOW:` shadow) at raw
+    column 0. `seen` is False when the PR has no such comment, so a comment merely mentioning `YR-MERGE`
+    in prose, carrying the bare fence word `yr-merge-record`, carrying a longer marker name, or
+    blockquoting a record leaves the PR OUT of the window rather than flagging it malformed. The fenced
+    block is read from the marker line onward, so a record that also blockquotes an older one cannot parse
+    the quoted block."""
     rec, malformed, seen = None, False, False
     for c in comments or []:
         body = c.get("body") or ""
-        # A merge-record comment is identified by its loud marker OR its fenced block (real records
-        # carry both; either alone still marks the comment as a record for the window).
-        if "YR-MERGE" not in body and "yr-merge-record" not in body:
+        offset = _record_marker_offset(body)
+        if offset is None:
             continue
         seen = True
-        parsed = _parse_record_block(body)
+        parsed = _parse_record_block(body[offset:])
         if parsed is None:
             rec, malformed = None, True
         else:
