@@ -102,6 +102,10 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `models.toml` + `tools/registry.py` | the model registry + loader/CLI |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
+| `tools/bench_corpus.py` | derives the replayable bench corpus from a repo's merged task PRs |
+| `tools/bench_replay.py` | sealed-checkout replay harness + deterministic grading, plus the live candidate replay driver |
+| `tools/bench_report.py` | bench evidence report + verdict-diff aggregate, with merge-outcome backfill |
+| `tools/verdict_diff.py` | the per-round gating-vs-shadow verdict diff record |
 | `tests/` | the pytest suite |
 | `qa/` | consumer quality content — the advisory lens (`qa/lens.py`) and the blocking cardinality guards (`qa/cardinality.py` + its rule set `qa/cardinality.toml`); distinct from the platform machinery in `tools/` |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |

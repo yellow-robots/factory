@@ -306,13 +306,44 @@ def test_verdict_grammar_exemplar_resolves_to_a_real_guard():
     assert runner.is_file(), "qa/cardinality.py is missing -- the declared rule enforces nothing"
 
 
-def test_docs_drift_exemplar_resolves_to_the_cited_floor_assertion():
+def test_docs_drift_exemplar_resolves_to_the_retirement_record():
+    """Second declared guard move (debt round 2, item D — issue #383): the wall 11
+    exemplar paragraph itself was rewritten into a dated retirement record once the
+    floor assertion it used to cite live (`assert int(match.group(1)) > 63`) was
+    retired along with the README claim it floored. This pins that the exemplar
+    paragraph still names the retired assertion (so the exhibit stays identifiable)
+    and now frames it as retired by debt round 2, citing issue #383 — the live
+    citation this test used to require is gone by design, replaced by the
+    retirement record.
+    """
+    body = _wall_11_body()
+    assert "assert int(match.group(1)) > 63" in body, (
+        "debt-rounds.md wall 11's docs-drift exemplar dropped its citation of the "
+        "specific floor assertion it retired — the exhibit needs the code snippet "
+        "to stay identifiable"
+    )
+    assert "retired by debt round 2" in _norm(body), (
+        "debt-rounds.md wall 11's docs-drift exemplar no longer frames the cited "
+        "floor assertion as retired by debt round 2 — the exhibit has gone stale "
+        "against its own retirement"
+    )
+    assert "#383" in body, (
+        "debt-rounds.md wall 11's docs-drift exemplar dropped the issue #383 "
+        "citation for its own retirement record"
+    )
+
+
+def test_docs_drift_floor_assertion_no_longer_lives_in_the_test_file():
+    """The retirement record in debt-rounds.md is only accurate once the floor
+    assertion it describes as retired is actually gone from the live test suite —
+    proving the exhibit, its guard, and the floor moved together in one PR
+    (debt round 2 item D, issue #383)."""
     path = ROOT / "tests" / "test_docs_drift_correction.py"
     assert path.is_file(), f"exemplar path does not exist: {path}"
     text = _text(path)
-    assert "assert int(match.group(1)) > 63" in text, (
-        "tests/test_docs_drift_correction.py no longer carries the cited floor assertion "
-        "'assert int(match.group(1)) > 63' — the wall 11 exemplar has gone stale"
+    assert "assert int(match.group(1)) > 63" not in text, (
+        "tests/test_docs_drift_correction.py still carries the floor assertion "
+        "debt-rounds.md's wall 11 exemplar now records as retired"
     )
 
 

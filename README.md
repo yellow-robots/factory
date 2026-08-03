@@ -65,4 +65,4 @@ none of it is a service this repo serves to the outside.
 Extracted from `yellow-robots` and made **repo-agnostic**: the runner discovers its workspace relative to
 itself (`YR_WORKSPACE`, default `factory/../..`), resolves each target repo as `$YR_WORKSPACE/<name>`, and
 reads that repo's build config from a per-repo `.yr/factory.toml` (`check_cmd` / `model` / `base_ref`;
-explicit env overrides it). 1129 tests green.
+explicit env overrides it).

@@ -72,10 +72,12 @@ each a rule with the reason it exists, not a formality.
     the raw-VERDICT-pipeline cap is a cardinality guard that held — written
     as an ordinary pytest test at #151 and, in the factory's own repo since #365, carried as the
     declared rule `verdict-extraction-pipeline` in `qa/cardinality.toml` instead;
-    `tests/test_docs_drift_correction.py`'s `assert int(match.group(1)) > 63` is a floor, still green
-    while drifted. That middle exhibit states the rule better than the prose can: it changed tier
-    without changing one thing it asserts. Which tier a repo reaches for is the repo's own call — the
-    wall constrains the shape and never the instrument.
+    `tests/test_docs_drift_correction.py`'s `assert int(match.group(1)) > 63` was a floor, still green
+    while the claim it floored drifted — the exhibit reads as the fail-open floor *retired by debt
+    round 2* (issue #383), once the drifted claim was removed rather than corrected a third time: the
+    species lesson kept, the live citation not. That middle exhibit states the rule better than the
+    prose can: it changed tier without changing one thing it asserts. Which tier a repo reaches for is
+    the repo's own call — the wall constrains the shape and never the instrument.
 
 ## Record grammars
 
