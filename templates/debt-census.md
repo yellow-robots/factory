@@ -148,6 +148,16 @@ findings in two or more *separate* reviews that still resolve in the tree (debt-
 *the nit harvest*). A stored `line` is provenance only; a row's `source` is `record` (a column-0
 `YR-NIT:` line) or `heuristic` (recovered from prose). A recurrence of 1 is not a cluster.
 
+**By symbol** — the arm that answers whether a contract has acquired consumers. Read this table
+first: a symbol named by two independent reviews is the consolidation signal, where a much-edited
+file is only churn.
+
+| Symbol | Recurrence (distinct PRs) | Source(s) | Provenance | Consolidation target |
+|---|---|---|---|---|
+| <symbol> | <n PRs, e.g. #a, #b> | <record / heuristic> | <PR + line, if any — a pointer to the comment, never an actionable line> | <the merge target, or "none this round"> |
+
+**By path.**
+
 | Path | Recurrence (distinct PRs) | Source(s) | Provenance | Consolidation target |
 |---|---|---|---|---|
 | <path> | <n PRs, e.g. #a, #b> | <record / heuristic> | <PR + line, if any — a pointer to the comment, never an actionable line> | <the merge target, or "none this round"> |

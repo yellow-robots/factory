@@ -369,13 +369,34 @@ def test_a_symbol_named_in_one_pr_only_is_not_a_cluster(tmp_path):
 
 def test_a_symbol_no_longer_in_the_tree_is_dropped(tmp_path):
     """The symbol arm's analogue of path resolution: a name two reviews discussed and that is now
-    gone is a finding about code that no longer exists."""
+    gone is a finding about code that no longer exists.
+
+    The comments MUST name a resolving path as well as the symbol. A symbol is only ever read off a
+    finding row, and rows exist only for lines carrying a path token — so a fixture with no path
+    produces zero rows and this assertion then holds for a reason that has nothing to do with tree
+    resolution. The first version of this test did exactly that: deleting the whole resolution guard
+    left the suite green. The control below is what makes the assertion mean what it says.
+    """
     tree = _tree(tmp_path, "tools/a.py")
-    comments = [
-        _comment(1, "the `long_since_deleted_helper` is cloned"),
-        _comment(2, "`long_since_deleted_helper` again"),
+    (tree / "tools" / "a.py").write_text("def present_helper():\n    pass\n", encoding="utf-8")
+    gone = [
+        _comment(1, "tools/a.py duplicates the `long_since_deleted_helper` logic"),
+        _comment(2, "`long_since_deleted_helper` again in tools/a.py"),
     ]
-    assert nit_harvest.harvest(comments, tree_root=tree)["by_symbol"] == []
+    out = nit_harvest.harvest(gone, tree_root=tree)
+    assert out["counts"]["findings"] > 0, "fixture produced no findings — the assertion below is vacuous"
+    assert [c["symbol"] for c in out["by_symbol"]] == [], (
+        "a symbol absent from the tree still clustered — the arm would report findings about code "
+        "that no longer exists"
+    )
+
+    # the control: same shape, but the symbol IS in the tree, so it must cluster
+    present = [
+        _comment(1, "tools/a.py duplicates the `present_helper` logic"),
+        _comment(2, "`present_helper` again in tools/a.py"),
+    ]
+    assert [c["symbol"] for c in nit_harvest.harvest(present, tree_root=tree)["by_symbol"]] == \
+        ["present_helper"], "the control failed — this test cannot distinguish resolution from silence"
 
 
 def test_english_words_in_backticks_are_not_symbols():
@@ -386,6 +407,28 @@ def test_english_words_in_backticks_are_not_symbols():
         assert not nit_harvest.is_compound_identifier(word), f"{word!r} clustered as a code symbol"
     for symbol in ("read_ci_timeout", "MERGE_CI_TIMEOUT", "STAGE_CHARTER", "runLint", "_json_field"):
         assert nit_harvest.is_compound_identifier(symbol), f"{symbol!r} was rejected as a symbol"
+
+
+def test_english_words_do_not_cluster_end_to_end(tmp_path):
+    """The predicate must be WIRED, not merely correct.
+
+    Testing `is_compound_identifier` alone leaves the gate untested: removing its call from
+    `cluster_symbols()` left the whole suite green, so the arm could regress to the state the first
+    live run showed — six English words inside its top fourteen — with nothing failing.
+    """
+    tree = _tree(tmp_path, "tools/a.py")
+    (tree / "tools" / "a.py").write_text(
+        "active = True\ndef read_ci_timeout():\n    pass\n", encoding="utf-8")
+    comments = [
+        _comment(1, "tools/a.py leaves the design `active` and clones `read_ci_timeout`"),
+        _comment(2, "still `active` in tools/a.py, and `read_ci_timeout` again"),
+    ]
+    symbols = [c["symbol"] for c in nit_harvest.harvest(comments, tree_root=tree)["by_symbol"]]
+    assert "read_ci_timeout" in symbols, "the control symbol did not cluster"
+    assert "active" not in symbols, (
+        "an English word clustered as a code symbol — the compound-identifier gate is not wired into "
+        "cluster_symbols(), only unit-tested beside it"
+    )
 
 
 # --- the report-scaffolding filter ----------------------------------------------------------------
@@ -458,3 +501,45 @@ def test_an_explicit_line_field_wins_over_a_path_suffix(tmp_path):
     comments = [_comment(1, body), _comment(2, body)]
     by_path = _cluster_by_path(nit_harvest.harvest(comments, tree_root=tree)["by_path"])
     assert by_path["tools/dupe.py"]["findings"][0]["line"] == 7
+
+
+def test_a_finding_written_as_a_heading_is_not_scaffolding():
+    """The filter's correctness property, and the one its first version inverted.
+
+    Reviewers in this repo routinely write a nit AS a markdown heading — `### nit — <file:line> —
+    <finding>` is the canonical shape in PRs #372/#373 — and the first filter treated every heading
+    as scaffolding. Measured on the live 822-comment corpus it ate **16 explicitly self-labelled
+    findings, three of them tagged blocker**, and dropped `tools/nit_harvest.py` itself out of the
+    path clusters by eating a bolded "Defects in…" list. A filter whose failure direction is a LOST
+    finding is worse than no filter, because the loss is silent.
+    """
+    for line in (
+        "### nit — tools/dev-runner.sh:1951 — the mutation flag is set unconditionally",
+        "#### blocker — qa/lens.py:61 — the species matcher never fires",
+        "**Defects in already-merged slice P5 (`tools/nit_harvest.py`), for round 2's census:**",
+        "- **Blockers**",
+        "**nit** — `tools/textutil.py` grows a second matcher",
+    ):
+        assert not nit_harvest.is_report_scaffolding(line), (
+            f"a self-labelled finding was filtered as scaffolding: {line!r}"
+        )
+
+
+def test_a_heading_carrying_no_finding_signal_is_still_scaffolding():
+    """The override must not swallow the filter: a plain section heading stays filtered."""
+    for line in ("## Findings", "**Scope integrity** ✓", "**AC3 — scope.** Outside `tests/`"):
+        assert nit_harvest.is_report_scaffolding(line), f"scaffolding leaked through: {line!r}"
+
+
+def test_a_heading_shaped_finding_reaches_the_clusters(tmp_path):
+    """End-to-end: the override must be wired, not merely correct in isolation."""
+    tree = _tree(tmp_path, "tools/dupe.py")
+    comments = [
+        _comment(1, "### nit — tools/dupe.py:12 — a second reader of the same key"),
+        _comment(2, "### nit — tools/dupe.py:31 — and a third reader here"),
+    ]
+    by_path = _cluster_by_path(nit_harvest.harvest(comments, tree_root=tree)["by_path"])
+    assert "tools/dupe.py" in by_path, (
+        "two findings written as headings produced no cluster — the scaffolding filter is eating "
+        "the shape reviewers actually use"
+    )

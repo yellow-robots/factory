@@ -191,7 +191,10 @@ what keeps **shadow** nits out of the harvest: the shadow review seat blockquote
 finding carries **no** record, a **heuristic** row is recovered from prose and labelled as such — a path
 that **degrades precision, never a run**: the absent-record path never raises and never fails a build. A
 stored `line` is **provenance only** — a pointer back to the comment, never an actionable line: the
-harvest clusters and resolves on the path alone.
+harvest clusters on **two** keys and returns both — a **symbol** (a backticked identifier that
+still resolves in the tree) and a **path** — because a contract's consumers share a name rather than a
+file, and path clustering alone ranks the most-edited files to the top by construction. Each arm uses
+the same recurrence rule; a stored line number is consulted by neither.
 
 The harvest **never files a nit as an issue.** `tools/epic_gate.py`'s intake sweep adds every open issue
 in a registered repo to the shared board, so a harvested-nit issue would flood the state machine the

@@ -29,7 +29,13 @@ Two finding sources, one label per row:
                       build.
 
 A stored ``line=<n>`` is **provenance only** — carried on the row so a reader can find the original
-comment, never used to locate anything: clustering and tree-resolution key on the path alone.
+comment, never used to locate anything; no clustering or resolution step ever consults it.
+
+TWO ARMS, and ``harvest()`` returns both. ``by_symbol`` clusters on a backticked identifier that
+resolves in the tree — a contract's consumers share a NAME, not a file, so this is the arm that
+answers "has this contract acquired consumers?". ``by_path`` clusters on the file. Path
+clustering alone ranks the most-edited files to the top by construction, which inverts the
+ordering the census actually wants (issue #376).
 
 Read shape (no product knowledge, injectable for a network-free suite): the merged-PR comment trail is
 ``gh api repos/{owner}/{name}/issues/comments --paginate`` (following ``tools/bench_report.py:239``); the
@@ -134,6 +140,10 @@ def _normalize_path(value):
 # The vocabulary is CLOSED and lives here, deliberately: precision is what the heuristic path trades
 # away, and widening this set silently is how a filter starts eating real findings. Anything not matched
 # here is treated as prose, so the failure direction stays "too many rows", never "a lost finding".
+# A line naming itself a finding is never scaffolding, whatever shape it wears. Checked FIRST in
+# is_report_scaffolding() — see that docstring for the 16 real findings its absence ate.
+_FINDING_SIGNAL_RE = re.compile(r"\b(nits?|blockers?|defects?|bugs?)\b", re.IGNORECASE)
+
 _VERIFICATION_GLYPHS = ("✓", "✔", "✅", "❌", "✗", "🟢", "🔴")
 _REPORT_LABELS = (
     "scope", "constraints", "acceptance", "acceptance criteria", "verification", "verified",
@@ -146,7 +156,20 @@ _AC_LABEL_RE = re.compile(r"^\*\*AC\s*\d+\b", re.IGNORECASE)
 
 
 def is_report_scaffolding(line):
-    """True when `line` is a review report's own structure rather than a finding about a file."""
+    """True when `line` is a review report's own structure rather than a finding about a file.
+
+    A FINDING SIGNAL OVERRIDES EVERY RULE BELOW, and that override is the filter's correctness. The
+    first version had none, and it inverted the very property it was built to have: measured against
+    the live 822-comment corpus it ate **16 explicitly self-labelled findings, three of them tagged
+    blocker**, because reviewers in this repo routinely write a nit AS a markdown heading —
+    `### nit — <file:line> — <finding>` is the canonical shape in PRs #372/#373 — and a heading was
+    unconditionally scaffolding. It also ate `**Defects in already-merged slice P5 …**`, which is
+    why `tools/nit_harvest.py` itself dropped out of the path clusters.
+
+    So a line naming itself a nit, blocker, defect or bug is never scaffolding, whatever shape it
+    wears. The other rules fire only on lines carrying no such signal, which restores the stated
+    failure direction: surplus rows, never a lost finding.
+    """
     # Strip a LIST BULLET only — `- `, `+ `, or a single `* ` — never a bare run of `*`. A naive
     # `.lstrip("-*+ ")` eats the `**` of a bold heading, so every `**heading**` then failed the
     # bold-only test below and was harvested as a finding. That was the first version of this filter
@@ -154,6 +177,8 @@ def is_report_scaffolding(line):
     stripped = re.sub(r"^(?:[-+]|\*(?!\*))\s+", "", line.strip())
     if not stripped:
         return False
+    if _FINDING_SIGNAL_RE.search(stripped):
+        return False                                 # names itself a finding — never scaffolding
     if stripped.startswith("#"):
         return True                                  # a markdown heading
     if _BOLD_ONLY_RE.match(stripped):
