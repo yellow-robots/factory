@@ -15,8 +15,8 @@ Two finding sources, one label per row:
 
                           YR-NIT: tag=<blocker|nit> path=<repo-relative path> [line=<n>] — <one sentence>
 
-                      The anchor is ``line.startswith("YR-NIT:")`` on the RAW line — column 0, no
-                      ``.strip()`` and no ``\\s*`` tolerance — the same discipline
+                      The anchor is ``textutil.marker_line_matches(..., mode="prefix")`` on the RAW line
+                      — column 0, no ``.strip()`` and no ``\\s*`` tolerance — the same discipline
                       ``tools/epic_gate.py:453``/``:463`` and ``tools/dev-runner.sh:262`` use for their
                       own markers. It matters because the shadow review seat's PR comment blockquotes its
                       transcript (``tools/dev-runner.sh:2235``), so a shadow nit arrives indented behind
@@ -49,8 +49,10 @@ import re
 import sys
 import subprocess
 
-# The one matcher constant for the record grammar (see the module docstring). Column-0, raw-line anchor:
-# `raw_line.startswith(NIT_PREFIX)`, never a `.strip()`ed or `\s*`-tolerant match.
+import textutil
+
+# The one matcher constant for the record grammar (see the module docstring). Column-0, raw-line anchor
+# via textutil's shared prefix mode, never a `.strip()`ed or `\s*`-tolerant match.
 NIT_PREFIX = "YR-NIT:"
 
 # Fields inside a YR-NIT payload. Parsed individually (not one rigid regex) so a well-formed record with
@@ -93,7 +95,7 @@ def parse_nit(raw_line):
     when the line is not a column-0 ``YR-NIT:`` record. The stored ``line`` is provenance only — kept on
     the row, never used to locate anything. Indentation or a blockquote prefix means `startswith` is
     False, so an indented or `> `-quoted YR-NIT never matches (the shadow-transcript guard)."""
-    if not raw_line.startswith(NIT_PREFIX):
+    if not textutil.marker_line_matches(raw_line, NIT_PREFIX, mode="prefix"):
         return None
     payload = raw_line[len(NIT_PREFIX):]
     tag = _TAG_RE.search(payload)
@@ -209,7 +211,10 @@ def prose_findings(body):
     seen = set()
     for line in (body or "").splitlines():
         lead = line.lstrip()
-        if lead.startswith(">") or lead.startswith(NIT_PREFIX):
+        # Skip blockquoted lines and any off-column YR-NIT: marker echo: matching the shared prefix mode
+        # against the left-stripped text deliberately tolerates indentation here (unlike parse_nit's RAW
+        # column-0 record anchor), so an indented teaching/example marker is dropped, not mined for paths.
+        if lead.startswith(">") or textutil.marker_line_matches(lead, NIT_PREFIX, mode="prefix"):
             continue
         if is_report_scaffolding(line):
             continue
