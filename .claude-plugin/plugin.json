@@ -2,7 +2,7 @@
   "name": "factory",
   "displayName": "Yellow Robots Dev Factory",
   "description": "How an AI actually runs a change through the Yellow Robots dev factory \u2014 the operating manual, not orientation. Use when authoring (product-spec \u00b7 feature-rfc \u00b7 technical-rfc \u00b7 task), reviewing a spec or RFC, running the lower pipeline or its gates (check_links / check_task / check_cmd / review verdict), closing an iteration (promote-to-Ready \u00b7 merge \u2192 Done \u00b7 doc freeze \u00b7 skill release), migrating a legacy doc, or onboarding a new repo. Covers builder \u2260 verifier, deterministic gates, and the human gates. Routes each operation to the right reference on demand. Reach for it whenever the work is factory-driven development \u2014 even if the user doesn't say \"factory\".",
-  "version": "0.9.15",
+  "version": "0.9.16",
   "author": {
     "name": "Yellow Robots"
   },
