@@ -3,10 +3,10 @@
 
 Reads a repo's merged-PR comment trail and returns duplication / consolidation clusters ranked by
 **recurrence across independent reviews** — a file named by findings in two or more *separate* PRs that
-still resolves in the tree today. It feeds the census (`templates/debt-census.md` → *Duplication /
-consolidation sets*); it NEVER files a finding as an issue, because `tools/epic_gate.py`'s intake sweep
-(`_sweep_intake`, tools/epic_gate.py:661) adds every open issue in a registered repo to the shared board,
-so a harvested-nit issue would flood the very state machine the census feeds.
+still resolves in the tree today. It feeds the census (`skills/factory/templates/debt-census.md` →
+*Duplication / consolidation sets*); it NEVER files a finding as an issue, because `tools/epic_gate.py`'s
+intake sweep (`_sweep_intake`, tools/epic_gate.py:661) adds every open issue in a registered repo to the
+shared board, so a harvested-nit issue would flood the very state machine the census feeds.
 
 Two finding sources, one label per row:
 

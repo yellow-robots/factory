@@ -14,7 +14,7 @@
 
 ### 1. product-spec
 
-Author in the brain (Obsidian), from `templates/product-spec.md`. WHAT/WHY only — no tech, no
+Author in the brain (Obsidian), from `skills/factory/templates/product-spec.md`. WHAT/WHY only — no tech, no
 implementation decisions.
 
 **Content:** acceptance criteria in **EARS** (`WHEN … THE SYSTEM SHALL …`, or ubiquitous
@@ -52,7 +52,7 @@ See [`documentation-model.md`](documentation-model.md) — *The document types* 
 the change is small or the approach obvious, go directly to step 3 (floor: product-spec → task(s)).
 
 **Content:** the approach, decision, scope, non-goals. `source_spec:` the product-spec as a
-`[[wikilink]]`. Author in Obsidian, from `templates/feature-rfc.md`.
+`[[wikilink]]`. Author in Obsidian, from `skills/factory/templates/feature-rfc.md`.
 
 **Declaration:** carry `supersedes` from the template — a list of `[[wikilink]]`s naming what this
 feature-rfc replaces, or `[]` when nothing is replaced (an empty declaration needs a one-line body
@@ -75,7 +75,7 @@ the review discipline, see [`reviewing.md`](reviewing.md).
 
 ### 3. Cross the airlock → technical-rfc
 
-Author on the **epic GitHub Issue** from `templates/technical-rfc.md`. This is the Obsidian→GitHub
+Author on the **epic GitHub Issue** from `skills/factory/templates/technical-rfc.md`. This is the Obsidian→GitHub
 crossing: the artifact **cites, never copies** the feature-rfc — there is no mirror to drift. Carry
 `source_feature_rfc:` as a `[[wikilink]]`. (On the **floor** there is no technical-rfc — the crossing
 is product-spec → task, and the task cites `source_spec:`; skip to step 4.)
@@ -134,7 +134,7 @@ unmatched, or short a field, it blocks every child's promotion until the record 
 
 ### 4. task
 
-One GitHub Issue via the Task DoR form, from `templates/task.md`.
+One GitHub Issue via the Task DoR form, from `skills/factory/templates/task.md`.
 
 **The direct lane.** A task need not descend from a technical-rfc slice — an ideas-backlog seed may
 draft straight to a task, skipping a governing design, when the idea clears the earned-test (small,

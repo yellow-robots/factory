@@ -27,7 +27,7 @@ CLOSING = REFS / "closing.md"
 GATES = REFS / "gates.md"
 PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
 SKILL = ROOT / "skills" / "factory" / "SKILL.md"
-TEMPLATES = ROOT / "templates"
+TEMPLATES = ROOT / "skills" / "factory" / "templates"
 
 
 def _text(path):

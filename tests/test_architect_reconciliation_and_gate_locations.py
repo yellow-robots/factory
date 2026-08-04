@@ -36,7 +36,7 @@ DOC_MODEL = ROOT / "skills" / "factory" / "references" / "documentation-model.md
 CLOSING = ROOT / "skills" / "factory" / "references" / "closing.md"
 SKILL = ROOT / "skills" / "factory" / "SKILL.md"
 REVIEWING = ROOT / "skills" / "factory" / "references" / "reviewing.md"
-TECHNICAL_RFC_TEMPLATE = ROOT / "templates" / "technical-rfc.md"
+TECHNICAL_RFC_TEMPLATE = ROOT / "skills" / "factory" / "templates" / "technical-rfc.md"
 AUTHORING = ROOT / "skills" / "factory" / "references" / "authoring.md"
 RFC_0005 = ROOT / "docs" / "rfcs" / "0005-upper-pipeline.md"
 

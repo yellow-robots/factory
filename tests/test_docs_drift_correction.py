@@ -33,7 +33,7 @@ DISPATCH_MD = ROOT / "deploy" / "DISPATCH.md"
 DISPATCH_ENV_EXAMPLE = ROOT / "deploy" / "dispatch.env.example"
 CLOSING = ROOT / "skills" / "factory" / "references" / "closing.md"
 ONBOARDING = ROOT / "skills" / "factory" / "references" / "onboarding.md"
-TASK_TEMPLATE = ROOT / "templates" / "task.md"
+TASK_TEMPLATE = ROOT / "skills" / "factory" / "templates" / "task.md"
 TEMPLATES_README = ROOT / "templates" / "README.md"
 TEST_TEMPLATES_DECLARATION = ROOT / "tests" / "test_templates_declaration.py"
 

@@ -18,7 +18,7 @@ assert its load-bearing content, pinning it so it cannot silently regress.
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TASK = ROOT / "templates" / "task.md"
+TASK = ROOT / "skills" / "factory" / "templates" / "task.md"
 CHECK_TASK = ROOT / "tools" / "check_task.py"
 
 
