@@ -141,6 +141,75 @@ CI_TIMEOUT_DEFAULT=1200
 MERGE_CI_REG_POLL_INTERVAL="${MERGE_CI_REG_POLL_INTERVAL:-5}"  # poll cadence during the registration grace (seconds)
 MERGE_CI_REG_GRACE="${MERGE_CI_REG_GRACE:-10}"                 # bounded wait for a check to register (seconds)
 
+# ── THE one manifest reader (issue #386) ──────────────────────────────────────────────────────────────
+# Every `.yr/factory.toml` key parses through this single parameterized entry point; the eight inline
+# per-key parsers that used to re-implement this contract are gone. It takes the manifest TEXT on stdin —
+# fetching stays the CALLER's, so read time is the caller's choice: most keys pipe the start-of-run
+# snapshot ($MF_RAW), while the three merge-decision keys (merge_ci_timeout / server_ci / auto_merge) pipe
+# the base ref's CURRENT tip re-read at decision time. $1 = MODE (the key's value kind + rejection
+# channel), $2 = key name where the mode needs one:
+#   scalar <key>   typed scalar — emits __error__ (whole-manifest parse failure) / __absent__ (key None) /
+#                  str(value), keeping a declared 0 and a parse failure distinct from an absent key. The
+#                  CALLER applies the per-key rejection rule (positive integer, or the declared enumeration)
+#                  and names the rejected value. Used by merge_ci_timeout, server_ci, check_timeout,
+#                  check_idle_timeout.
+#   bool           auto_merge — true only on a literal boolean true, never errors into a default (a
+#                  whole-manifest parse failure emits `error`, an environmental case the caller returns 2 on).
+#   bulk           the seven scalars in one newline-delimited pass (check_cmd / model / base_ref /
+#                  review_model / lint_cmd / lint_fix_cmd / lens_cmd) plus the start-of-run auto_merge flag;
+#                  an embedded newline in a declared value is flattened to a space. A parse failure exits
+#                  non-zero (empty stdout → the caller's warn), never an error token.
+#   pathlist <key> NUL-delimited array carrying the path-array safety screen (test_paths, artifact_globs):
+#                  ABSENT (key missing) / OK + elements / MALFORMED:<repr> (declared but rejected).
+#   strlist <key>  NUL-delimited array (stage_conduct): a conduct line is prose not a path, so no path
+#                  checks — but ONE the others lack, a content screen against the four routed stub literals,
+#                  emitting STUBHIT:<line>.
+# The NUL channel is read with `mapfile -d ''` straight off the pipe (a bash string can't carry a NUL byte),
+# so an element with an embedded newline survives verbatim where the scalar channel would flatten it.
+_manifest_read(){   # $1 = mode; $2 = key (modes that name one). stdin = manifest text.
+  python3 -c '
+import sys, tomllib
+mode = sys.argv[1]
+try:
+    d = tomllib.loads(sys.stdin.read())
+except Exception:
+    if mode == "scalar": print("__error__"); sys.exit(0)
+    if mode == "bool": print("error"); sys.exit(0)
+    raise
+if mode == "scalar":
+    v = d.get(sys.argv[2])
+    print("__absent__" if v is None else str(v))
+elif mode == "bool":
+    print("true" if d.get("auto_merge") is True else "false")
+elif mode == "bulk":
+    for k in ("check_cmd","model","base_ref","review_model","lint_cmd","lint_fix_cmd","lens_cmd"):
+        print(str(d.get(k) or "").replace("\n"," "))
+    print("true" if d.get("auto_merge") is True else "false")
+else:
+    key = sys.argv[2]
+    out = sys.stdout.buffer
+    if key not in d:
+        out.write(b"ABSENT\x00"); sys.exit(0)
+    v = d[key]
+    if mode == "pathlist":
+        def bad(x):
+            return not isinstance(x, str) or x == "" or x.startswith("/") or any(part == ".." for part in x.split("/"))
+    else:
+        def bad(x):
+            return not isinstance(x, str) or x == ""
+    if not isinstance(v, list) or not v or any(bad(x) for x in v):
+        out.write(("MALFORMED:" + repr(v)).encode() + b"\x00"); sys.exit(0)
+    if mode == "strlist":
+        stubs = ("TESTER", "REVIEWER", "tests FAIL", "REQUESTED CHANGES")
+        for x in v:
+            if any(s in x for s in stubs):
+                out.write(("STUBHIT:" + x).encode() + b"\x00"); sys.exit(0)
+    out.write(b"OK\x00")
+    for x in v:
+        out.write(x.encode() + b"\x00")
+' "$@"
+}
+
 # (0) ci_timeout — resolves MERGE_CI_TIMEOUT at DECISION time, same precedence/read shape as (5a)
 #     read_auto_merge below: explicit env override > the manifest's `merge_ci_timeout` (read from the
 #     base ref's CURRENT tip, MERGE_GIT_DIR, never a start-of-run copy) > CI_TIMEOUT_DEFAULT. A present
@@ -157,11 +226,7 @@ read_ci_timeout(){   # sets MERGE_CI_TIMEOUT + CI_TIMEOUT_SOURCE (env|manifest|d
   "$GIT_BIN" -C "$MERGE_GIT_DIR" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
   raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
   if [ -z "$raw" ]; then MERGE_CI_TIMEOUT="$CI_TIMEOUT_DEFAULT"; CI_TIMEOUT_SOURCE=default; return 0; fi
-  parsed="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
-try: d=tomllib.loads(sys.stdin.read())
-except Exception: print("__error__"); sys.exit(0)
-v=d.get("merge_ci_timeout")
-print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  parsed="$(printf '%s' "$raw" | _manifest_read scalar merge_ci_timeout 2>/dev/null || echo __error__)"
   [ "$parsed" = "__error__" ] && return 2
   if [ "$parsed" = "__absent__" ]; then MERGE_CI_TIMEOUT="$CI_TIMEOUT_DEFAULT"; CI_TIMEOUT_SOURCE=default; return 0; fi
   case "$parsed" in
@@ -185,11 +250,7 @@ read_server_ci(){   # sets SERVER_CI (required|none) + SERVER_CI_SOURCE (manifes
   "$GIT_BIN" -C "$MERGE_GIT_DIR" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
   raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
   if [ -z "$raw" ]; then SERVER_CI=required; SERVER_CI_SOURCE=default; return 0; fi
-  parsed="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
-try: d=tomllib.loads(sys.stdin.read())
-except Exception: print("__error__"); sys.exit(0)
-v=d.get("server_ci")
-print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  parsed="$(printf '%s' "$raw" | _manifest_read scalar server_ci 2>/dev/null || echo __error__)"
   [ "$parsed" = "__error__" ] && return 2
   if [ "$parsed" = "__absent__" ]; then SERVER_CI=required; SERVER_CI_SOURCE=default; return 0; fi
   case "$parsed" in
@@ -282,10 +343,7 @@ read_auto_merge(){   # sets AUTO_MERGE (true|false); returns 2 on an environment
   local raw
   raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
   [ -z "$raw" ] && { AUTO_MERGE=false; return 0; }
-  AUTO_MERGE="$(printf '%s' "$raw" | python3 -c 'import sys,tomllib
-try: d=tomllib.loads(sys.stdin.read())
-except Exception: print("error"); sys.exit(0)
-print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null || echo error)"
+  AUTO_MERGE="$(printf '%s' "$raw" | _manifest_read bool 2>/dev/null || echo error)"
   [ "$AUTO_MERGE" = error ] && return 2
   return 0
 }
@@ -660,10 +718,7 @@ if [ -n "$MF_RAW" ]; then
   # lint_cmd/lint_fix_cmd (issue #213) are the lint tier's opaque commands, lens_cmd (issue #214) the
   # advisory lens tier's — all with no built-in default (absent = off, the auto_merge defaults-off
   # precedent), applied via the same env>manifest precedence below.
-  _mf_out="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
-d=tomllib.loads(sys.stdin.read())
-for k in ("check_cmd","model","base_ref","review_model","lint_cmd","lint_fix_cmd","lens_cmd"): print(str(d.get(k) or "").replace("\n"," "))
-print("true" if d.get("auto_merge") is True else "false")' 2>/dev/null)" \
+  _mf_out="$(printf '%s' "$MF_RAW" | _manifest_read bulk 2>/dev/null)" \
     || log "warn: could not parse manifest from $MANIFEST_REF"
   mapfile -t _mf <<<"$_mf_out"
   MF_CHECK_CMD="${_mf[0]:-}"; MF_MODEL="${_mf[1]:-}"; MF_BASE_REF="${_mf[2]:-}"; MF_REVIEW_MODEL="${_mf[3]:-}"; MF_LINT_CMD="${_mf[4]:-}"; MF_LINT_FIX_CMD="${_mf[5]:-}"; MF_LENS_CMD="${_mf[6]:-}"; MF_AUTO_MERGE="${_mf[7]:-false}"
@@ -677,22 +732,7 @@ fi
 # fallback). A manifest that fails to parse at all yields no stdout, so the caller's mapfile is empty and
 # ${arr[0]:-ABSENT} reads as ABSENT — same silent-default precedent as the scalar keys above.
 _read_manifest_array(){   # $1 = key name
-  printf '%s' "$MF_RAW" | python3 -c '
-import sys, tomllib
-key = sys.argv[1]
-d = tomllib.loads(sys.stdin.read())
-out = sys.stdout.buffer
-if key not in d:
-    out.write(b"ABSENT\x00"); sys.exit(0)
-v = d[key]
-def bad(x):
-    return not isinstance(x, str) or x == "" or x.startswith("/") or any(part == ".." for part in x.split("/"))
-if not isinstance(v, list) or not v or any(bad(x) for x in v):
-    out.write(("MALFORMED:" + repr(v)).encode() + b"\x00"); sys.exit(0)
-out.write(b"OK\x00")
-for x in v:
-    out.write(x.encode() + b"\x00")
-' "$1" 2>/dev/null
+  printf '%s' "$MF_RAW" | _manifest_read pathlist "$1" 2>/dev/null
 }
 MF_TESTPATHS_NEEDS_INFO=""; MF_ARTIFACTGLOBS_NEEDS_INFO=""; MF_CHECKCMD_NEEDS_INFO=""; MF_STAGECONDUCT_NEEDS_INFO=""
 # check_cmd is required (issue #275): the built-in pytest fallback is gone, so a manifest that declares
@@ -728,26 +768,7 @@ esac
 # "tests FAIL", "REQUESTED CHANGES") — a declared line containing one would misroute every stage's
 # classification, not just its own, so the ban is enforced here, fail-closed, not left advisory.
 _read_stage_conduct(){
-  printf '%s' "$MF_RAW" | python3 -c '
-import sys, tomllib
-d = tomllib.loads(sys.stdin.read())
-out = sys.stdout.buffer
-key = "stage_conduct"
-if key not in d:
-    out.write(b"ABSENT\x00"); sys.exit(0)
-v = d[key]
-def bad(x):
-    return not isinstance(x, str) or x == ""
-if not isinstance(v, list) or not v or any(bad(x) for x in v):
-    out.write(("MALFORMED:" + repr(v)).encode() + b"\x00"); sys.exit(0)
-stubs = ("TESTER", "REVIEWER", "tests FAIL", "REQUESTED CHANGES")
-for x in v:
-    if any(s in x for s in stubs):
-        out.write(("STUBHIT:" + x).encode() + b"\x00"); sys.exit(0)
-out.write(b"OK\x00")
-for x in v:
-    out.write(x.encode() + b"\x00")
-' 2>/dev/null
+  printf '%s' "$MF_RAW" | _manifest_read strlist stage_conduct 2>/dev/null
 }
 STAGE_CONDUCT_BLOCK=""
 mapfile -d '' -t _sc < <(_read_stage_conduct)
@@ -790,11 +811,7 @@ CHECK_TIMEOUT_REJECTED=""
 if [ -n "${CHECK_TIMEOUT:-}" ]; then
   CHECK_TIMEOUT_SOURCE=env
 else
-  _ct_parsed="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
-try: d=tomllib.loads(sys.stdin.read())
-except Exception: print("__error__"); sys.exit(0)
-v=d.get("check_timeout")
-print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  _ct_parsed="$(printf '%s' "$MF_RAW" | _manifest_read scalar check_timeout 2>/dev/null || echo __error__)"
   case "$_ct_parsed" in
     __error__|__absent__) CHECK_TIMEOUT="$CHECK_TIMEOUT_DEFAULT"; CHECK_TIMEOUT_SOURCE=default ;;
     ''|*[!0-9]*) CHECK_TIMEOUT_REJECTED="$_ct_parsed"; CHECK_TIMEOUT_SOURCE=manifest ;;
@@ -820,11 +837,7 @@ CHECK_IDLE_TIMEOUT_REJECTED=""
 if [ -n "${CHECK_IDLE_TIMEOUT:-}" ]; then
   CHECK_IDLE_TIMEOUT_SOURCE=env
 else
-  _cit_parsed="$(printf '%s' "$MF_RAW" | python3 -c 'import sys,tomllib
-try: d=tomllib.loads(sys.stdin.read())
-except Exception: print("__error__"); sys.exit(0)
-v=d.get("check_idle_timeout")
-print("__absent__" if v is None else str(v))' 2>/dev/null || echo __error__)"
+  _cit_parsed="$(printf '%s' "$MF_RAW" | _manifest_read scalar check_idle_timeout 2>/dev/null || echo __error__)"
   case "$_cit_parsed" in
     __error__|__absent__) CHECK_IDLE_TIMEOUT="$CHECK_IDLE_TIMEOUT_DEFAULT"; CHECK_IDLE_TIMEOUT_SOURCE=default ;;
     ''|*[!0-9]*) CHECK_IDLE_TIMEOUT_REJECTED="$_cit_parsed"; CHECK_IDLE_TIMEOUT_SOURCE=manifest ;;
