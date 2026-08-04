@@ -282,16 +282,46 @@ def test_dispatch_md_ops_paragraph_describes_locks_cap_and_slot_files():
 
 def test_run_sweep_spawns_flocked_sweeper():
     calls = []
-    r = dispatch.run_sweep(sweeper="/x/epic_gate.py", lock="/tmp/sweep.lock", spawn=calls.append)
+    r = dispatch.run_sweep(sweeper="/x/epic_gate.py", lock="/tmp/sweep.lock",
+                            spawn=lambda *a: calls.append(a[0]))
     assert r["ok"] and r["dispatched"]
     assert calls == [["flock", "-n", "/tmp/sweep.lock", "/x/epic_gate.py"]]
 
 
 def test_run_sweep_takes_no_issue_or_repo_args():
     calls = []
-    r = dispatch.run_sweep(spawn=calls.append)   # no issue/repo — org-wide, board is the input
+    r = dispatch.run_sweep(spawn=lambda *a: calls.append(a[0]))   # no issue/repo — org-wide, board is the input
     assert r["ok"] and r["dispatched"]
     assert len(calls) == 1 and len(calls[0]) == 4   # flock, -n, <lock>, <sweeper> — nothing else appended
+
+
+def test_run_sweep_spawn_receives_a_log_path_under_runs_dir(tmp_path):
+    # unlike build_task (unstubbed spawn is invoked with cmd, log_path, lock_home), run_sweep's spawn
+    # shape is (cmd, log_path) — the sweeper never needed a lock_home override.
+    calls = []
+    runs_dir = tmp_path / "runs"
+    r = dispatch.run_sweep(sweeper="/x/epic_gate.py", lock="/tmp/sweep.lock",
+                            spawn=lambda cmd, log_path: calls.append((cmd, log_path)),
+                            runs_dir=str(runs_dir))
+    assert r["ok"] and r["dispatched"]
+    assert len(calls) == 1
+    cmd, log_path = calls[0]
+    assert cmd == ["flock", "-n", "/tmp/sweep.lock", "/x/epic_gate.py"]
+    assert pathlib.Path(log_path).parent == runs_dir
+
+
+def test_run_sweep_log_path_is_the_same_single_file_across_invocations(tmp_path):
+    """AC: a single append-mode sweep log, not one file per poll tick — the log path handed to spawn
+    must be IDENTICAL across repeated sweeps against the same runs_dir."""
+    calls = []
+    runs_dir = tmp_path / "runs"
+    for _ in range(4):
+        r = dispatch.run_sweep(sweeper="/x/epic_gate.py", lock="/tmp/sweep.lock",
+                                spawn=lambda cmd, log_path: calls.append(log_path),
+                                runs_dir=str(runs_dir))
+        assert r["ok"]
+    assert len(calls) == 4
+    assert len({str(p) for p in calls}) == 1, f"expected one stable log path, got {sorted(set(map(str, calls)))}"
 
 
 def test_sweep_lock_distinct_from_build_lock():
@@ -300,7 +330,7 @@ def test_sweep_lock_distinct_from_build_lock():
 
     build_calls, sweep_calls = [], []
     dispatch.build_task("7", "o/r", runner="/x/run.sh", spawn=lambda *a: build_calls.append(a[0]))
-    dispatch.run_sweep(sweeper="/x/epic_gate.py", spawn=sweep_calls.append)
+    dispatch.run_sweep(sweeper="/x/epic_gate.py", spawn=lambda *a: sweep_calls.append(a[0]))
     build_lock_path = build_calls[0][4]       # composed argv: [flock, -n, -E, 200, <repo-lock>, bash, -c, ...]
     sweep_lock_path = sweep_calls[0][2]       # sweep argv is unchanged: [flock, -n, <lock>, <sweeper>]
     assert build_lock_path != sweep_lock_path
@@ -309,8 +339,9 @@ def test_sweep_lock_distinct_from_build_lock():
 
 
 def test_epic_sweeper_default_is_executable():
-    # flock execs the sweeper directly (run_sweep's argv), detached with stderr to DEVNULL — a missing
-    # exec bit means every /sweep 202s then dies silently (exit 126). Git checkouts preserve mode bits,
+    # flock execs the sweeper directly (run_sweep's argv), detached with stdout+stderr into sweep.log —
+    # a missing exec bit means every /sweep 202s then dies with exit 126, traceable in that log rather
+    # than silently. Git checkouts preserve mode bits,
     # so pin the bit here.
     assert os.access(dispatch.EPIC_SWEEPER, os.X_OK)
 
@@ -533,6 +564,41 @@ def test_http_build_answers_before_the_runner_finishes_and_still_persists_its_ou
         dispatch.DEV_RUNNER, dispatch.RUNS_DIR, dispatch.LOCK = orig_runner, orig_runs, orig_lock
 
 
+# ---- sweep output lands in a single append-mode log file, not a discarded stdout (issue #407) ----
+# These exercise the REAL spawn path (dispatch's own _spawn_detached, not the injectable stub) — the same
+# rationale as the build_task real-spawn section above: the behavior lives in that seam.
+
+def test_run_sweep_persists_combined_stdout_stderr_to_a_discoverable_log(tmp_path):
+    sweeper = _script(tmp_path / "sweeper.sh", 'echo "sweep-out-marker"\necho "sweep-err-marker" >&2\n')
+    runs_dir = tmp_path / "runs"
+    r = dispatch.run_sweep(sweeper=str(sweeper), lock=str(tmp_path / "sweep.lock"), runs_dir=str(runs_dir))
+    assert r["ok"] and r["dispatched"]
+    assert _wait_for(lambda: runs_dir.exists() and any(runs_dir.iterdir()))
+    files = list(runs_dir.iterdir())
+    assert len(files) == 1, f"expected exactly one sweep log file, found {files}"
+    log_path = files[0]
+    assert _wait_for(lambda: log_path.exists() and "sweep-err-marker" in log_path.read_text())
+    content = log_path.read_text()
+    assert "sweep-out-marker" in content and "sweep-err-marker" in content   # both streams, combined
+
+
+def test_run_sweep_appends_across_invocations_file_count_stays_at_one(tmp_path):
+    """AC: 'the file count stays bounded on the poll cadence' — repeated sweep spawns append to the SAME
+    file rather than accreting one file per invocation."""
+    counter = tmp_path / "counter"
+    sweeper = _script(tmp_path / "sweeper.sh",
+                       f'echo "tick" >> {shlex.quote(str(counter))}\necho "tick-marker"\n')
+    runs_dir = tmp_path / "runs"
+    for i in range(3):
+        r = dispatch.run_sweep(sweeper=str(sweeper), lock=str(tmp_path / "sweep.lock"), runs_dir=str(runs_dir))
+        assert r["ok"]
+        assert _wait_for(lambda i=i: counter.exists() and counter.read_text().count("tick") == i + 1), \
+            f"invocation {i} never completed"
+    files = list(runs_dir.iterdir())
+    assert len(files) == 1, f"sweep log file count must stay bounded on the poll cadence, found {files}"
+    assert files[0].read_text().count("tick-marker") == 3   # each invocation's output landed, none overwritten
+
+
 # ---- spawn env allowlist (issue #237) ----
 # The runner (and everything it spawns) must receive an ALLOWLISTED environment, not dispatch's own
 # os.environ wholesale: dispatch's bearer secret (DISPATCH_TOKEN) must never reach the runner or any
@@ -620,7 +686,8 @@ def test_run_sweep_spawn_env_excludes_dispatch_token(tmp_path, monkeypatch):
     monkeypatch.setenv("STUB_SWEEP_FLAG", "1")
     env_file = tmp_path / "env.txt"
     sweeper = _dump_env_script(tmp_path / "sweeper.sh", env_file)
-    r = dispatch.run_sweep(sweeper=str(sweeper), lock=str(tmp_path / "sweep.lock"))
+    r = dispatch.run_sweep(sweeper=str(sweeper), lock=str(tmp_path / "sweep.lock"),
+                            runs_dir=str(tmp_path / "runs"))
     assert r["ok"]
     assert _wait_for(env_file.exists)
     time.sleep(0.2)

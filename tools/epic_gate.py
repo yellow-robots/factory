@@ -14,8 +14,9 @@ and returns its stdout (parsed JSON *or* text; `_query` tolerates either). The d
 subprocess; tests pass a fake that serves canned board / subIssues / comments JSON and records writes.
 
 State lives on **native GitHub primitives only** (RFC 0003) — never labels or sidecar files:
-  - Issue Type (`Task` / `Feature`); an epic is a `Feature` whose native `subIssues` are its children, and
-    the `subIssues` connection order is the canonical promotion order (the board has no sub-issue order).
+  - Issue Type (`Task` / `Feature` / `Epic`); an epic is a `Feature`- or `Epic`-typed issue (matched
+    case-insensitively, both arms of the vocabulary) whose native `subIssues` are its children, and the
+    `subIssues` connection order is the canonical promotion order (the board has no sub-issue order).
   - Two Projects single-select fields on org project #1 — Status and Reason — read/written exactly as the
     runner does (`gh project item-edit` / `gh issue comment`), reusing its field/option ids.
 
@@ -683,9 +684,10 @@ def _sweep_intake(gh, repos, board_nodes, *, project_number, org):
 #     (the anchor), raising the need for a round exactly once at the threshold ------------------------
 def _debt_repo_set(nodes):
     """Distinct `repository.nameWithOwner` over board items whose content is an Issue of Type Feature —
-    any state, any Status. Reuses the content/type guards of the sweep's own board loop, without its
-    OPEN/Ready filters: the counted-repo set is every repo that holds a feature epic on the board at all,
-    live or finished."""
+    any state, any Status. Feature-scoped on its own authority, not by reuse of the sweep's routing
+    guard (which now also matches Type=Epic): the debt protocol's "countable feature epics" is its own
+    ruled semantic, so the counted-repo set is every repo that holds a Type=Feature epic on the board at
+    all, live or finished — Type=Epic is out of scope here."""
     repos = set()
     for item in nodes:
         content = item.get("content") or {}
@@ -1074,11 +1076,12 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
     """Run one sweep of the org board. First, board intake over `repos` (see `_sweep_intake`). Second, the
     standalone stranded-claim pass over the whole board (see `_sweep_standalone_stranded`) — independent of
     the Ready filter below, since a stranded claim is always In Progress, never Ready. Then, for each OPEN,
-    `Status=Ready` item: a `Type=Feature` epic (candidates, interleaved with no prioritization) gets the
-    per-epic algorithm; any other OPEN Ready item — a standalone task, or an epic child already Ready —
-    gets the admission wall directly (see below). Then run the per-repo debt counter over the distinct
-    repositories holding any Type=Feature issue on the board (any state, any Status). Returns the list of
-    actions taken.
+    `Status=Ready` item: an epic — Type=Feature OR Type=Epic, matched case-insensitively, both arms of the
+    vocabulary — (candidates, interleaved with no prioritization) gets the per-epic algorithm; any other
+    OPEN Ready item — a standalone task, or an epic child already Ready — gets the admission wall directly
+    (see below). Then run the per-repo debt counter over the distinct repositories holding any Type=Feature
+    issue on the board (any state, any Status) — the debt counter's own Feature-scoped semantic, unchanged
+    by the routing widening above. Returns the list of actions taken.
 
     The sweep only ever *sets* Status/Reason and posts comments — it never clears a Reason (clearing is
     the human's explicit resume act), never builds, and never sets any Status but `Ready` (promotion) or,
@@ -1128,7 +1131,7 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
         if _fv_name(item.get("status")) != "Ready":                       # cord-pull: only Ready items
             continue
         repo = (content.get("repository") or {}).get("nameWithOwner") or ""
-        if ((content.get("issueType") or {}).get("name") or "").lower() == "feature":
+        if ((content.get("issueType") or {}).get("name") or "").lower() in ("feature", "epic"):
             epic = {
                 "number": content["number"],
                 "repo": repo,

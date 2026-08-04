@@ -127,6 +127,32 @@ def test_refuses_type_feature_epic_writes_nothing(tmp_path):
     assert not _writes(_calls(tmp_path))
 
 
+def test_refuses_type_epic_epic_writes_nothing(tmp_path):
+    """issue #407: the refuse gate matches both arms of the vocabulary — an Epic-typed epic is refused
+    exactly like a Feature-typed one, never promoted as if standalone."""
+    binp = _bin(tmp_path)
+    r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, itype="Epic"))
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
+def test_refuses_type_epic_case_insensitively(tmp_path):
+    binp = _bin(tmp_path)
+    for itype in ("EPIC", "epic", "EpIc", "FEATURE", "feature"):
+        r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, itype=itype))
+        assert r.returncode != 0, f"itype={itype!r} should refuse"
+    assert not _writes(_calls(tmp_path))
+
+
+def test_refusal_exit_code_matches_between_feature_and_epic_arms(tmp_path):
+    """Both arms of the vocabulary refuse via the identical code path — same exit code, not two
+    different refusal shapes for the two spellings of 'epic'."""
+    binp = _bin(tmp_path)
+    feature_refused = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, itype="Feature"))
+    epic_refused = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, itype="Epic"))
+    assert feature_refused.returncode == epic_refused.returncode != 0
+
+
 def test_refusal_exit_code_is_distinct_from_success(tmp_path):
     binp = _bin(tmp_path)
     ok = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp))

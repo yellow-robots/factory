@@ -1212,6 +1212,68 @@ def test_childless_epic_untouched():
 
 
 # ============================================================================
+# issue #407 — the routing selector matches issueType in {Feature, Epic}, case-insensitively: an
+# Epic-typed Ready parent is routed through the per-epic algorithm exactly as a Feature-typed one.
+# ============================================================================
+
+@pytest.mark.parametrize("itype", ["Epic", "EPIC", "epic", "EpIc"])
+def test_epic_typed_ready_parent_promotes_first_open_child_same_as_feature(itype):
+    """Mirrors test_happy_path_promotes_first_open_task_child byte-for-byte, except the parent's own
+    Type is Epic (in various casings) rather than Feature — the routing selector must not care."""
+    board = [_item(100, item_id="EI-100", itype=itype, status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        children=[_child(101, pi_id="PI-101", status="Backlog"),
+                  _child(102, pi_id="PI-102", status="Backlog")],
+    )}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.edits == [("PI-101", STATUS_FIELD, "Ready")]
+    assert fake.comments[0][1] == "101"
+
+
+def test_epic_typed_finished_epic_self_closes_same_as_feature():
+    """Mirrors test_finished_epic_with_completed_child_closes_completed with an Epic-typed parent: the
+    self-close leg of the per-epic algorithm is reached identically for either arm of the vocabulary."""
+    board = [_item(100, item_id="EI-100", itype="Epic", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=[VALID_RECORD],
+        children=[_child(101, state="CLOSED", pi_id="PI-101"),
+                  _child(102, state="CLOSED", pi_id="PI-102")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    epics[100]["subIssues"]["nodes"][1]["stateReason"] = "NOT_PLANNED"
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+
+
+def test_epic_typed_childless_epic_untouched_same_as_feature():
+    board = [_item(100, item_id="EI-100", itype="Epic", status="Ready")]
+    epics = {100: _epic_detail(comments=[VALID_RECORD], children=[])}
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.edits == [] and fake.comments == []
+
+
+def test_epic_and_feature_typed_ready_epics_both_promote_in_one_sweep():
+    """Two epics on the same board, one of each arm of the vocabulary — both are routed through the
+    per-epic algorithm in the same sweep; neither shadows the other."""
+    board = [
+        _item(100, item_id="EI-100", itype="Feature", status="Ready"),
+        _item(200, item_id="EI-200", itype="Epic", status="Ready"),
+    ]
+    epics = {
+        100: _epic_detail(comments=[VALID_RECORD], children=[_child(101, pi_id="PI-101", status="Backlog")]),
+        200: _epic_detail(comments=[VALID_RECORD], children=[_child(201, pi_id="PI-201", status="Backlog")]),
+    }
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert ("PI-101", STATUS_FIELD, "Ready") in fake.edits
+    assert ("PI-201", STATUS_FIELD, "Ready") in fake.edits
+    assert len(_status_ready_edits(fake)) == 2
+
+
+# ============================================================================
 # AC9 — reuse of the runner's Projects field/option ids (env-overridable, same defaults) & mechanisms
 # ============================================================================
 
@@ -2098,6 +2160,17 @@ def test_debt_repo_set_any_state_any_status_feature_only():
     assert epic_gate._debt_repo_set(nodes) == {"org/r1", "org/r2"}
 
 
+def test_debt_repo_set_excludes_epic_typed_items():
+    """issue #407: the routing widening (issueType in {Feature, Epic}) is the sweep's own routing
+    selector's concern, not the debt counter's — `_debt_repo_set` keeps its Feature-only match, so a
+    repo whose only board item is Epic-typed is never counted."""
+    nodes = [
+        _item(1, item_id="A", itype="Feature", status="Ready", state="OPEN", repo="org/r1"),
+        _item(2, item_id="B", itype="Epic", status="Ready", state="OPEN", repo="org/r2"),
+    ]
+    assert epic_gate._debt_repo_set(nodes) == {"org/r1"}
+
+
 # ---- anchor selection + countable classification (`_debt_anchor_and_countable`) -----------------------
 
 def test_no_anchor_all_countable_epics_count():
@@ -2249,6 +2322,17 @@ def test_closed_epic_search_paginates_across_two_pages():
 def test_closed_epic_search_filters_non_feature_nodes_defensively():
     contaminated = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
                     _closed_epic(999, closed_at="2026-01-01T00:00:00Z", itype="Task")]
+    fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [contaminated]},
+                       manifest_repos={DEBT_REPO_A: "debt_round_every = 5\n"})
+    actions = _run_debt_sweep(fake, {DEBT_REPO_A})
+    assert actions == [{"action": "debt-count", "repo": DEBT_REPO_A, "count": 1, "threshold": 5}]
+
+
+def test_closed_epic_search_filters_epic_typed_nodes_defensively():
+    """issue #407: the debt counter's Feature-scoped semantics are unchanged by the routing widening —
+    an Epic-typed node surfacing from the search re-filters out exactly like a Task-typed one."""
+    contaminated = [_closed_epic(101, closed_at="2026-01-01T00:00:00Z"),
+                    _closed_epic(999, closed_at="2026-01-01T00:00:00Z", itype="Epic")]
     fake = FakeDebtGh([], {}, closed_epic_pages={DEBT_REPO_A: [contaminated]},
                        manifest_repos={DEBT_REPO_A: "debt_round_every = 5\n"})
     actions = _run_debt_sweep(fake, {DEBT_REPO_A})

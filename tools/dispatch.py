@@ -14,7 +14,9 @@ later (one core, two faces).
 `run_sweep()` is the same shape for the org-wide epic-gate sweep (RFC — epic-gate sweep): it fires
 `epic_gate.py` under its own NON-BLOCKING flock on a SEPARATE lock, DETACHED, and returns immediately.
 POST /sweep wraps it. The sweep takes no issue/repo — the board is org-wide and the tool does its own
-GitHub I/O — so dispatch here only flocks + spawns, same seam as build_task.
+GitHub I/O — so dispatch here only flocks + spawns, same seam as build_task. Unlike build_task's per-run
+log, every sweep spawn appends to the SAME `sweep.log` under DEV_RUNNER_HOME/runs/ — one file, not one
+per poll tick — so sweep decisions stay traceable without accreting a file per invocation.
 
 Config (env): DISPATCH_TOKEN (bearer, required to start the HTTP server), DISPATCH_BIND (default
 127.0.0.1), DISPATCH_PORT (default 8770), DEV_RUNNER (default dev-runner.sh next to this file),
@@ -230,12 +232,19 @@ def build_task(issue, repo=None, *, runner=None, lock=None, lock_home=None, max_
     return {"ok": True, "issue": int(issue), "repo": repo, "dispatched": True, "log": str(log_path)}
 
 
-def run_sweep(*, sweeper=None, lock=None, spawn=None):
+def run_sweep(*, sweeper=None, lock=None, spawn=None, runs_dir=None):
     """Reusable core: fire the org-wide epic-gate sweep under its own non-blocking flock, detached.
     Returns immediately. Takes no issue/repo — the sweep tool reads/writes the board itself; dispatch
-    only flocks + spawns, on a lock separate from the build lock so neither blocks the other."""
+    only flocks + spawns, on a lock separate from the build lock so neither blocks the other. Unlike
+    `build_task`'s per-run log (one file per issue per dispatch), every sweep spawn appends to the SAME
+    `sweep.log` under the runs directory — the poll cadence would otherwise accrete one file per tick with
+    nothing pruning the runs directory; `_spawn_detached`'s append-mode open already makes each
+    invocation's output land after the last, so sweep decisions stay traceable without the file count
+    growing unbounded. `runs_dir` is injectable (mirrors `build_task`'s) so tests never write the real
+    runs directory."""
     cmd = ["flock", "-n", lock or SWEEP_LOCK, sweeper or EPIC_SWEEPER]
-    (spawn or _SPAWN)(cmd)
+    log_path = pathlib.Path(runs_dir or RUNS_DIR) / "sweep.log"
+    (spawn or _SPAWN)(cmd, log_path)
     return {"ok": True, "dispatched": True}
 
 
