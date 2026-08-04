@@ -11,7 +11,11 @@ set -euo pipefail
 
 GH_BIN="${GH_BIN:-gh}"
 YR_ORG="${YR_ORG:-yellow-robots}"
-PROJECT_NUMBER="${PROJECT_NUMBER:-1}"
+# The project number (this script's one board identifier) comes from the one home
+# (tools/board_plumbing.py) through the single `sh-exports` mechanism — no default restated here. The
+# org-wide `projectV2.items` read below is a deliberately different read and stays as it is.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$(GH_BIN="$GH_BIN" python3 "$SELF_DIR/board_plumbing.py" sh-exports)"
 
 die()  { echo "board: ERROR: $*" >&2; exit 1; }
 usage(){ echo "usage: board.sh [--org <org>] [--project <number>]" >&2; exit 2; }

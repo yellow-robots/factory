@@ -18,6 +18,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/dev-runner.sh` | the staged pipeline: gate → implement → independent test → check → independent review → PR (RFC 0002) — builder ≠ verifier, by construction |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/merge_shadow.py` | the merge-decision evaluator + shadow-completion |
+| `tools/board_plumbing.py` | the one home for the board's identifiers, its single field write, and its single per-issue project-item read + selection rule |
 | `models.toml` + `tools/registry.py` | the model registry (data) + its stdlib loader/CLI |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tools/stage_usage.py`, `tools/textutil.py` | the PR usage-summary comment; small shared text helpers |

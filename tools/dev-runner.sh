@@ -67,14 +67,13 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YR_WORKSPACE="${YR_WORKSPACE:-$(cd "$SELF_DIR/../.." && pwd)}"
 
 # --- Projects field config (status/reason live on the project item; RFC 0003) ---
-PROJECT_NUMBER="${PROJECT_NUMBER:-1}"
-PROJECT_ID="${PROJECT_ID:-PVT_kwDOEEAo0M4Ba6Ls}"
-STATUS_FIELD_ID="${STATUS_FIELD_ID:-PVTSSF_lADOEEAo0M4Ba6LszhVuZlw}"
-REASON_FIELD_ID="${REASON_FIELD_ID:-PVTSSF_lADOEEAo0M4Ba6LszhVzoxI}"
-declare -A STATUS_OPT=( [Backlog]="${OPT_BACKLOG:-b863a902}" [Ready]="${OPT_READY:-c85eb5c1}"
-                        ["In Progress"]="${OPT_INPROGRESS:-14e415a3}" ["In Review"]="${OPT_INREVIEW:-da2e6a49}"
-                        [Done]="${OPT_DONE:-e614f531}" )
-declare -A REASON_OPT=( [Needs-info]="${OPT_NEEDSINFO:-803a86fb}" [Blocked]="${OPT_BLOCKED:-fe4d566c}" )
+# The board's identifiers, the field write and the per-issue read all live in the one home
+# (tools/board_plumbing.py). The runner obtains PROJECT_NUMBER (its board-wide `item-list` read and its
+# own messages) from that home through the single `sh-exports` mechanism — no default is restated here —
+# and performs every Status/Reason write through the home's `set-field` CLI (`_board` below).
+BOARD_PY="$SELF_DIR/board_plumbing.py"
+_board(){ GH_BIN="$GH_BIN" python3 "$BOARD_PY" "$@"; }
+eval "$(_board sh-exports)"
 
 die()  { echo "dev-runner: ERROR: $*" >&2; exit 1; }
 gate() { echo "dev-runner: NOT READY: $*" >&2; exit 3; }   # DoR refusal — distinct exit code
@@ -956,15 +955,11 @@ ITEM_ID="${ITEM_LINE%%$'\t'*}"; _ITEM_REST="${ITEM_LINE#*$'\t'}"
 ITEM_STATUS="${_ITEM_REST%%$'\t'*}"; ITEM_REASON="${_ITEM_REST#*$'\t'}"
 [ "$ITEM_ID" = "$ITEM_LINE" ] && { ITEM_STATUS=""; ITEM_REASON=""; }   # no tab => no match
 
-# field setters (best-effort: a failed state write warns, never aborts the actual work)
-_set_field(){ "$GH_BIN" project item-edit --id "$ITEM_ID" --project-id "$PROJECT_ID" \
-              --field-id "$1" --single-select-option-id "$2" >/dev/null 2>&1 || log "warn: could not set $3 on #$ISSUE"; }
-set_status(){ local o="${STATUS_OPT[$1]:-}"; [ -n "$o" ] || { log "warn: no option id for Status=$1"; return 0; }
-              _set_field "$STATUS_FIELD_ID" "$o" "Status=$1"; }
-set_reason(){ local o="${REASON_OPT[$1]:-}"; [ -n "$o" ] || { log "warn: no option id for Reason=$1"; return 0; }
-              _set_field "$REASON_FIELD_ID" "$o" "Reason=$1"; }
-clear_reason(){ "$GH_BIN" project item-edit --id "$ITEM_ID" --project-id "$PROJECT_ID" \
-                --field-id "$REASON_FIELD_ID" --clear >/dev/null 2>&1 || log "warn: could not clear Reason on #$ISSUE"; }
+# field setters (best-effort: a failed state write warns, never aborts the actual work) — each is the
+# home's one `set-field` write, which resolves the field/option ids itself from the board identifiers.
+set_status(){ _board set-field --id "$ITEM_ID" --status "$1" >/dev/null 2>&1 || log "warn: could not set Status=$1 on #$ISSUE"; }
+set_reason(){ _board set-field --id "$ITEM_ID" --reason "$1" >/dev/null 2>&1 || log "warn: could not set Reason=$1 on #$ISSUE"; }
+clear_reason(){ _board set-field --id "$ITEM_ID" --clear-reason >/dev/null 2>&1 || log "warn: could not clear Reason on #$ISSUE"; }
 comment(){ "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$1" >/dev/null 2>&1 || true; }
 
 # ---- DoR gate (refuse before any work; never invokes the LLM on refusal; no writes) ----

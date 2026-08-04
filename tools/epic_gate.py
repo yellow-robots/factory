@@ -61,26 +61,22 @@ import tomllib
 # sibling-module import (never `tools.dispatch`): production runs this file as a bare script
 # (`tools/dispatch.py` spawns `tools/epic_gate.py` directly), which puts `tools/` at `sys.path[0]` — a
 # `tools.`-prefixed import would only resolve under pytest's repo-root cwd and would crash the sweeper.
+import board_plumbing
 import dispatch
 import textutil
 
-# --- Projects field config (reused from the runner; env-overridable, same live defaults) ---------------
+# --- Projects field config: the identifiers, the field write and the per-issue selection all live in the
+#     one home (tools/board_plumbing.py). ORG is not a board identifier and stays here. The identifiers
+#     are bound HERE by calling the home's resolver FUNCTIONS (each reads the environment live), so this
+#     module's own `importlib.reload` re-reads every override — even though the home module itself is not
+#     reloaded. -------------------------------------------------------------------------------------------
 ORG = os.environ.get("YR_ORG", "yellow-robots")
-PROJECT_NUMBER = int(os.environ.get("PROJECT_NUMBER", "1"))
-PROJECT_ID = os.environ.get("PROJECT_ID", "PVT_kwDOEEAo0M4Ba6Ls")
-STATUS_FIELD_ID = os.environ.get("STATUS_FIELD_ID", "PVTSSF_lADOEEAo0M4Ba6LszhVuZlw")
-REASON_FIELD_ID = os.environ.get("REASON_FIELD_ID", "PVTSSF_lADOEEAo0M4Ba6LszhVzoxI")
-STATUS_OPT = {
-    "Backlog": os.environ.get("OPT_BACKLOG", "b863a902"),
-    "Ready": os.environ.get("OPT_READY", "c85eb5c1"),
-    "In Progress": os.environ.get("OPT_INPROGRESS", "14e415a3"),
-    "In Review": os.environ.get("OPT_INREVIEW", "da2e6a49"),
-    "Done": os.environ.get("OPT_DONE", "e614f531"),
-}
-REASON_OPT = {
-    "Needs-info": os.environ.get("OPT_NEEDSINFO", "803a86fb"),
-    "Blocked": os.environ.get("OPT_BLOCKED", "fe4d566c"),
-}
+PROJECT_NUMBER = board_plumbing.project_number()
+PROJECT_ID = board_plumbing.project_id()
+STATUS_FIELD_ID = board_plumbing.status_field_id()
+REASON_FIELD_ID = board_plumbing.reason_field_id()
+STATUS_OPT = board_plumbing.status_opt()
+REASON_OPT = board_plumbing.reason_opt()
 
 # a child is "in flight / off-track" — the line is busy — while it holds any of these
 BUSY_STATUS = {"Ready", "In Progress", "In Review"}
@@ -571,10 +567,9 @@ def _debt_hold_body():
     )
 
 
-# --- writes (the runner's exact mechanisms) -----------------------------------------------------------
+# --- writes (the one field write, in the board-plumbing home) -----------------------------------------
 def _set_field(gh, item_id, field_id, opt):
-    gh(["project", "item-edit", "--id", item_id, "--project-id", PROJECT_ID,
-        "--field-id", field_id, "--single-select-option-id", opt])
+    board_plumbing.set_field(gh, item_id, field_id, opt)
 
 
 def _comment(gh, repo, number, body):
@@ -593,11 +588,10 @@ def _epic_close_reason(children):
 
 
 def _pi_node(subissue, project_number):
-    """The child's project item for our board (project #project_number), or None if it isn't on the board."""
-    for pi in ((subissue.get("projectItems") or {}).get("nodes") or []):
-        if ((pi.get("project") or {}).get("number")) == project_number:
-            return pi
-    return None
+    """The child's project item for our board (project #project_number), or None if it isn't on the board
+    — the one selection rule, in the board-plumbing home."""
+    nodes = (subissue.get("projectItems") or {}).get("nodes") or []
+    return board_plumbing.select_project_item(nodes, project_number)
 
 
 # --- org-wide board intake: every OPEN issue in a registered repo gets a board item, idempotently -------

@@ -86,6 +86,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | Path | What |
 |---|---|
 | `tools/dev-runner.sh` | the staged build pipeline |
+| `tools/board_plumbing.py` | the one home for the board's plumbing: its project/field/option identifiers, its single field write, and its single per-issue project-item read + selection rule (consumed by the runner, the epic gate and the three operator scripts) |
 | `tools/merge_shadow.py` | merge-decision evaluator + shadow-completion |
 | `tools/dispatch.py` | n8n's build-trigger endpoint (RFC 0004) |
 | `tools/epic_gate.py` | the standing-approval sweep: promotes/self-closes epics, flags stranded claims |

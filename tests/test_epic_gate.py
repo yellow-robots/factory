@@ -26,6 +26,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import epic_gate  # noqa: E402
+import board_plumbing  # noqa: E402  (issue #388: the one home the epic gate now reads its ids from)
 
 REPO = "yellow-robots/yellow-robots"
 
@@ -1215,14 +1216,19 @@ def test_childless_epic_untouched():
 # ============================================================================
 
 def test_defaults_reuse_runner_ids():
-    assert epic_gate.PROJECT_ID == "PVT_kwDOEEAo0M4Ba6Ls"
-    assert epic_gate.STATUS_FIELD_ID == "PVTSSF_lADOEEAo0M4Ba6LszhVuZlw"
-    assert epic_gate.REASON_FIELD_ID == "PVTSSF_lADOEEAo0M4Ba6LszhVzoxI"
-    assert epic_gate.STATUS_OPT == {
-        "Backlog": "b863a902", "Ready": "c85eb5c1", "In Progress": "14e415a3",
-        "In Review": "da2e6a49", "Done": "e614f531",
-    }
-    assert epic_gate.REASON_OPT == {"Needs-info": "803a86fb", "Blocked": "fe4d566c"}
+    """MIGRATED (issue #388, a declared change to an existing test). These assertions used to restate the
+    field-id and option-map literals inline — a second home for them in the suite. The literals now live
+    in exactly one home (tools/board_plumbing.py) and are asserted against that home once, in
+    tests/test_board_plumbing_home.py; the wall-11 guard (tests/test_board_home_wall.py) forbids a second
+    copy. What this test proves is unchanged in spirit: the epic gate OBTAINS every board identifier from
+    that one home — no literal restated here. The env-override-on-reload behaviour is still proven end to
+    end by test_field_ids_env_overridable below (and, for all eleven identifiers, by the pin suite's
+    test_epic_gate_every_board_identifier_is_environment_overridable)."""
+    assert epic_gate.PROJECT_ID == board_plumbing.project_id()
+    assert epic_gate.STATUS_FIELD_ID == board_plumbing.status_field_id()
+    assert epic_gate.REASON_FIELD_ID == board_plumbing.reason_field_id()
+    assert epic_gate.STATUS_OPT == board_plumbing.status_opt()
+    assert epic_gate.REASON_OPT == board_plumbing.reason_opt()
 
 
 def test_field_ids_env_overridable(monkeypatch):
