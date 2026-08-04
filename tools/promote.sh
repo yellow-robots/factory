@@ -5,9 +5,9 @@
 # remember. No LLM anywhere.
 #
 # Refuses (writing nothing — no comment, no status write) when the target issue is closed, absent from
-# project #PROJECT_NUMBER's board, or Type=Feature (an epic — its Ready flip is the YR-EPIC-APPROVAL
-# record, an attended act handled by tools/epic_gate.py, not this command; extending promotion to epics is
-# explicitly out of scope here).
+# project #PROJECT_NUMBER's board, or Type=Feature or Type=Epic (matched case-insensitively, both arms of
+# the vocabulary — an epic — its Ready flip is the YR-EPIC-APPROVAL record, an attended act handled by
+# tools/epic_gate.py, not this command; extending promotion to epics is explicitly out of scope here).
 #
 # Reads and writes the board through the one home (tools/board_plumbing.py): the identifiers, the
 # per-issue project-item read (the authoritative per-issue read — same as tools/epic_gate.py) and its
@@ -55,8 +55,11 @@ IFS=$'\037' read -r STATE ITYPE ITEM_ID _STATUS _REASON <<<"$LINE"
 # ---- refuse gate (before any write; every refusal writes nothing) ----
 [ "$STATE" = "OPEN" ] || refuse "issue #$ISSUE is not open (state: ${STATE:-unknown})"
 [ -n "$ITEM_ID" ]     || refuse "issue #$ISSUE is not on project #$PROJECT_NUMBER's board"
-[ "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" = "feature" ] \
-  && refuse "issue #$ISSUE is Type=Feature (an epic) — epic Ready flips remain an attended act (YR-EPIC-APPROVAL via tools/epic_gate.py), not this command's"
+case "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" in
+  feature|epic)
+    refuse "issue #$ISSUE is Type=$ITYPE (an epic) — epic Ready flips remain an attended act (YR-EPIC-APPROVAL via tools/epic_gate.py), not this command's"
+    ;;
+esac
 
 WHO="$("$GH_BIN" api user --jq .login 2>/dev/null || true)"
 [ -n "$WHO" ] || WHO="${USER:-operator}"
