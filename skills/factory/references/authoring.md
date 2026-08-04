@@ -7,6 +7,11 @@
 > [`documentation-model.md` → *Editing-safely*](documentation-model.md#editing-safely). For gate
 > mechanics, see [`gates.md`](gates.md). For closing (promote-to-Ready onwards), see
 > [`closing.md`](closing.md).
+>
+> **Templates resolve from the skill base** — `skills/factory/templates/`, co-located with
+> `references/` (factory#410). **An empty template read means a wrong path, never licence to search
+> cached plugin versions** — the plugin cache holds many versions side by side, and a version-blind
+> find reads stale canon (the 2026-07-14 incident authored from a stale `0.4.0` template).
 
 ---
 
