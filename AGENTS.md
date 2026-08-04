@@ -112,7 +112,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |
 | `docs/rfcs/` | canonical RFCs |
 | `skills/` | the factory skill (router + references) |
-| `templates/` | upper-pipeline stage templates (spec, feature-rfc, technical-rfc, task, debt-census) |
+| `skills/factory/templates/` | upper-pipeline stage templates (spec, feature-rfc, technical-rfc, task, debt-census) |
 
 ---
 

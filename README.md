@@ -30,7 +30,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/epic_gate.py`, `tools/review_bundle.py`, `tools/check_task.py`, `tools/check_links.py`, `tools/check_model_refs.py`, `tools/check_supersession.py` | the standing-approval sweep; the hashed review bundle; the DoR, crossing-link, stale-reference, and supersession gates |
 | `tools/nit_harvest.py` | the census's nit-harvest arm: recurrence-ranked duplication clusters from the PR comment trail |
 | `tools/promote.sh`, `tools/watch_build.sh`, `tools/board.sh` | operator commands: promote to Ready, watch a build to terminal state, dump the board |
-| `skills/`, `templates/` | the factory skill (router + references); the upper-pipeline stage templates |
+| `skills/`, `skills/factory/templates/` | the factory skill (router + references); the upper-pipeline stage templates |
 
 Full map in [AGENTS.md](AGENTS.md) → *Repo map*.
 

@@ -29,12 +29,30 @@ round-close duties) and templates/debt-census.md (a research doc carrying
 the reachability ledger, baselines, duplication sets, unknowns, and the
 revisit trigger) — house doc-pin style, reading the template files and
 asserting their load-bearing strings.
+
+Extended for Issue #394 — Templates co-locate under the skill base:
+`skills/factory/templates/` is now the one home, symmetric with
+`skills/factory/references/`, and the old repo-root `templates/` must be
+structurally unrepresentable, not just currently absent. The additions
+below are a tree assertion (no `templates/` directory at the repo root)
+plus a directory-membership pin (every template file lives under the new
+home) — derived from the #394 acceptance criteria, not from how the move
+was performed.
 """
 
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TEMPLATES = ROOT / "templates"
+TEMPLATES = ROOT / "skills" / "factory" / "templates"
+OLD_ROOT_TEMPLATES = ROOT / "templates"
+EXPECTED_TEMPLATE_NAMES = {
+    "debt-census.md",
+    "debt-round-spec.md",
+    "feature-rfc.md",
+    "product-spec.md",
+    "task.md",
+    "technical-rfc.md",
+}
 PRODUCT_SPEC = TEMPLATES / "product-spec.md"
 FEATURE_RFC = TEMPLATES / "feature-rfc.md"
 TASK = TEMPLATES / "task.md"
@@ -912,4 +930,35 @@ def test_technical_rfc_gate_touching_worked_example_in_scaffold_is_backticked_an
     assert worked, (
         "templates/technical-rfc.md scaffold is missing an indented, inline-backticked worked "
         "example of the gate-touching marker"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Issue #394 — templates co-locate under the skill base: a tree assertion
+# making the old repo-root `templates/` home structurally unrepresentable
+# (not merely currently absent), plus a directory-membership pin for the
+# new co-located home.
+# ---------------------------------------------------------------------------
+
+def test_no_templates_directory_at_repo_root():
+    assert not OLD_ROOT_TEMPLATES.exists(), (
+        "a 'templates/' directory exists at the repo root — templates must live only under "
+        "skills/factory/templates/, the co-located skill-base home (issue #394); a root-level "
+        "'templates/' recreates the two-homes ambiguity this task closed"
+    )
+
+
+def test_skills_factory_templates_is_a_directory():
+    assert TEMPLATES.is_dir(), (
+        "skills/factory/templates/ does not exist as a directory — this is the one home for "
+        "every template, symmetric with skills/factory/references/"
+    )
+
+
+def test_skills_factory_templates_holds_every_template():
+    actual_names = {path.name for path in TEMPLATES.glob("*.md")}
+    assert actual_names == EXPECTED_TEMPLATE_NAMES, (
+        "skills/factory/templates/ does not hold exactly the expected template set — "
+        f"missing: {EXPECTED_TEMPLATE_NAMES - actual_names or 'none'}, "
+        f"unexpected: {actual_names - EXPECTED_TEMPLATE_NAMES or 'none'}"
     )

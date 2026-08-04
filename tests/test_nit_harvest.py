@@ -313,7 +313,7 @@ def test_cli_requires_a_source(capsys):
 # --- the arm's output lands in the census template and is described in the round reference ---------
 
 def test_debt_census_template_names_the_arm():
-    text = (ROOT / "templates" / "debt-census.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "factory" / "templates" / "debt-census.md").read_text(encoding="utf-8")
     section = text.split("## Duplication / consolidation sets", 1)
     assert len(section) == 2, "debt-census.md is missing the Duplication / consolidation sets section"
     body = section[1]

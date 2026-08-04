@@ -32,7 +32,7 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REFS = ROOT / "skills" / "factory" / "references"
 DEBT_ROUNDS = REFS / "debt-rounds.md"
-DEBT_CENSUS = ROOT / "templates" / "debt-census.md"
+DEBT_CENSUS = ROOT / "skills" / "factory" / "templates" / "debt-census.md"
 MANIFEST = ROOT / ".yr" / "factory.toml"
 
 

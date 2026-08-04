@@ -18,9 +18,9 @@ A probabilistic LLM proposes; the machine-checked gate disposes.
 
 For workspace layout and the repos, see the workspace **`AGENTS.md`** (org orientation). This skill is the
 *how*; the deep rationale is **`factory/AGENTS.md`** + `factory/docs/rfcs/`. The templates are in the
-**factory repo** at `templates/` — they ship inside the installed plugin (a git-sourced plugin is the whole
-repo), always at hand without an external checkout. The documentation model lives authoritatively at
-[`references/documentation-model.md`](references/documentation-model.md).
+**factory repo** at `skills/factory/templates/` — they ship inside the installed plugin (a git-sourced
+plugin is the whole repo), always at hand without an external checkout. The documentation model lives
+authoritatively at [`references/documentation-model.md`](references/documentation-model.md).
 
 ## Two pipelines, one shape
 

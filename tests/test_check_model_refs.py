@@ -145,7 +145,7 @@ def test_agents_md_points_to_skill_documentation_model():
 
 def test_product_spec_template_has_no_vault_01_conventions():
     """templates/product-spec.md must not reference vault 01-conventions."""
-    text = (ROOT / "templates" / "product-spec.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "factory" / "templates" / "product-spec.md").read_text(encoding="utf-8")
     bad_lines = [
         line for line in text.splitlines()
         if "01-conventions" in line
@@ -158,7 +158,7 @@ def test_product_spec_template_has_no_vault_01_conventions():
 
 def test_product_spec_review_output_points_to_documentation_model():
     """templates/product-spec.md Review output pointer must name documentation-model."""
-    text = (ROOT / "templates" / "product-spec.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "factory" / "templates" / "product-spec.md").read_text(encoding="utf-8")
     review_lines = [
         line for line in text.splitlines()
         if "Review output" in line or "Reviewing a doc" in line
@@ -172,7 +172,7 @@ def test_product_spec_review_output_points_to_documentation_model():
 
 def test_feature_rfc_template_has_no_vault_01_conventions():
     """templates/feature-rfc.md must not reference vault 01-conventions."""
-    text = (ROOT / "templates" / "feature-rfc.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "factory" / "templates" / "feature-rfc.md").read_text(encoding="utf-8")
     bad_lines = [
         line for line in text.splitlines()
         if "01-conventions" in line
@@ -185,7 +185,7 @@ def test_feature_rfc_template_has_no_vault_01_conventions():
 
 def test_feature_rfc_review_output_points_to_documentation_model():
     """templates/feature-rfc.md Review output pointer must name documentation-model."""
-    text = (ROOT / "templates" / "feature-rfc.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "factory" / "templates" / "feature-rfc.md").read_text(encoding="utf-8")
     review_lines = [
         line for line in text.splitlines()
         if "Review output" in line or "Reviewing a doc" in line

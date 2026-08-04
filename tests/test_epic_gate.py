@@ -522,7 +522,7 @@ def test_marker_only_in_a_trail_comment_is_not_an_open_question():
 def test_technical_rfc_teaching_line_is_not_an_open_question_end_to_end():
     """The technical-rfc template's own worked example -- read from the file, not retyped -- must not
     fire the open-question grammar. It is inert by indentation + inline-backticking, not by content."""
-    text = (ROOT / "templates" / "technical-rfc.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "factory" / "templates" / "technical-rfc.md").read_text(encoding="utf-8")
     marker = "END ISSUE BODY"
     idx = text.find(marker)
     assert idx != -1, "templates/technical-rfc.md is missing the 'END ISSUE BODY' marker"
@@ -1026,7 +1026,7 @@ def test_technical_rfc_shipped_slot_fires_nothing_end_to_end():
     """The technical-rfc template's shipped per-task-context slot (read from the file, not
     retyped) must not itself fire the gate-touching grammar when pasted verbatim into a child's
     body -- the mirror of the open-question teaching-line pin."""
-    text = (ROOT / "templates" / "technical-rfc.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "factory" / "templates" / "technical-rfc.md").read_text(encoding="utf-8")
     start = text.find("### Slice A")
     end = text.find("### Slice B")
     assert start != -1 and end != -1 and start < end, (

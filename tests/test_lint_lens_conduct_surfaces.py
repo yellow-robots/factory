@@ -323,7 +323,7 @@ def test_repo_map_existing_rows_intact():
         "| `deploy/`",
         "| `docs/rfcs/`",
         "| `skills/`",
-        "| `templates/`",
+        "| `skills/factory/templates/`",
     ):
         assert any(line.strip().startswith(expected_start) for line in table.splitlines()), \
             f"AGENTS.md repo map lost its existing row starting {expected_start!r}"
