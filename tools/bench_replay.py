@@ -84,7 +84,13 @@ OUTCOME_UNGRADED_ENV = "ungraded-environmental"
 
 # a sealed child process must never see a GitHub credential — the solution must be unreachable by API
 # just as it is by tree (the epic's "the seal must survive its own verification" contract).
-CREDENTIAL_ENV_VARS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+CREDENTIAL_ENV_VARS = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "YR_VAULT_API_KEY",
+)
 
 # a check harness that could not even execute (missing/broken toolchain) — same convention as
 # tools/dev-runner.sh's is_env_failure: 126 = found-but-not-executable, 127 = command not found.

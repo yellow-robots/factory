@@ -603,6 +603,16 @@ def test_build_task_spawn_env_is_not_empty_and_not_the_full_parent_environ(tmp_p
     assert "SOME_OTHER_RANDOM_VAR_237" not in got             # not a wholesale copy of the parent either
 
 
+def test_spawn_env_excludes_vault_api_key(monkeypatch):
+    # issue #393: the brain credential (YR_VAULT_API_KEY) must never reach a cold build stage — it is
+    # neither a listed key in _ENV_ALLOW_KEYS nor matched by any of _ENV_ALLOW_PREFIXES (LC_/STUB_/
+    # YR_POOL_), so the default-deny already excludes it; this pins that fact directly against
+    # dispatch._spawn_env() so a future allowlist edit can't silently let it back in.
+    monkeypatch.setenv("YR_VAULT_API_KEY", "top-secret-vault-key-should-never-reach-a-stage")
+    env = dispatch._spawn_env()
+    assert "YR_VAULT_API_KEY" not in env
+
+
 def test_run_sweep_spawn_env_excludes_dispatch_token(tmp_path, monkeypatch):
     # the sweep spawn is the same seam as the build spawn (both go through _spawn_detached) — the
     # acceptance criteria call out "the runner or any stage", which includes the sweeper.

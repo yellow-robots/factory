@@ -207,6 +207,34 @@ def test_credential_present_in_env_fails_verify_seal_directly(tmp_path):
     assert any("credential" in reason.lower() for reason in verdict.reasons)
 
 
+def test_vault_api_key_present_in_env_fails_verify_seal_directly(tmp_path):
+    """issue #393: YR_VAULT_API_KEY (the brain credential) is a member of CREDENTIAL_ENV_VARS alongside
+    the GitHub credentials, so `verify_seal`'s membership check (the tuple's first consumer) must flag
+    it exactly as it flags GH_TOKEN -- pinned directly, independent of `grade()`'s own env assembly."""
+    source_repo, record, _diff, pre_sha, _merge_sha = _make_source_repo(tmp_path)
+    workdir = tmp_path / "sealed"
+    bench_replay.seal_workdir(record, workdir, source_repo)
+
+    poisoned_env = {"PATH": os.environ.get("PATH", ""), "YR_VAULT_API_KEY": "super-secret-vault-key"}
+    verdict = bench_replay.verify_seal(workdir, pre_sha, poisoned_env, source_repo=source_repo)
+
+    assert not verdict.ok
+    assert any("credential" in reason.lower() for reason in verdict.reasons)
+    assert any("YR_VAULT_API_KEY" in reason for reason in verdict.reasons)
+
+
+def test_sealed_env_scrubs_vault_api_key_from_the_parent_environment(tmp_path, monkeypatch):
+    """issue #393: `_sealed_env`'s scrub loop (the tuple's second consumer) must pop YR_VAULT_API_KEY
+    just as it pops the GitHub credentials, so a bench child process can never inherit it from the
+    parent environment it was spawned from."""
+    monkeypatch.setenv("YR_VAULT_API_KEY", "super-secret-vault-key-in-parent-env")
+    source_repo, _record, _diff, _pre_sha, _merge_sha = _make_source_repo(tmp_path)
+
+    env = bench_replay._sealed_env(source_repo, tmp_path / "tmp")
+
+    assert "YR_VAULT_API_KEY" not in env
+
+
 def test_leaked_credential_yields_invalid_seal_end_to_end_and_never_grades(tmp_path, monkeypatch):
     """End-to-end: if the child env `grade()` builds ever carried a GitHub credential, the pipeline
     must catch it before running the check and record invalid-seal, never a graded outcome."""
