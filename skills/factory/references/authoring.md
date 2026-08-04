@@ -124,11 +124,13 @@ hand and the epic's Reason is cleared.
 unindented — either the block form (the marker alone on its own line, then `design:`, `review:`, and
 `who:` lines) or the one-line form (`YR-EPIC-APPROVAL design=… review=… who=…`) — with all three fields
 non-empty: `design` names the governing product-spec/feature-rfc, `review` names the technical-rfc
-review's outcome, `who` names who is attesting it. Posted by the **human**, in an attended operator
-session, record-before-flip (see `AGENTS.md` — *Attended operator sessions*) — never an agent, and never
-satisfied by the epic-gate's own refusal comment, which names the marker and fields only in prose, never
-at column 0. `tools/epic_gate.py`'s `_has_valid_approval` re-reads this record on every sweep; absent,
-unmatched, or short a field, it blocks every child's promotion until the record is corrected.
+review's outcome, `who` names who is attesting it. Posted by the **attended operator session**, under the
+design's standing approval, record-before-flip (see `AGENTS.md` — *Attended operator sessions*) — the
+human's gate sits at design-active, never per-epic, per the owner's ruling of 2026-08-04 ("flipping an
+epic is not my gate"); and never satisfied by the epic-gate's own refusal comment, which names the marker
+and fields only in prose, never at column 0. `tools/epic_gate.py`'s `_has_valid_approval` re-reads this
+record on every sweep; absent, unmatched, or short a field, it blocks every child's promotion until the
+record is corrected.
 
 ---
 

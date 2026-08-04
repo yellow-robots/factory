@@ -877,11 +877,13 @@ def test_authoring_crossing_step_gate_touching_mention_is_inert():
 
 # ---------------------------------------------------------------------------
 # authoring.md — the standing-approval record's grammar and author
-# (issue #344): step 3 must state the YR-EPIC-APPROVAL record's shape -- a
-# comment (never the body) carrying a line beginning the marker at column 0,
-# with non-empty design/review/who fields -- and who may post it (the human,
-# never an agent). Stated inertly, same discipline as the open-question
-# grammar just above it.
+# (issue #344, corrected by issue #406): step 3 must state the
+# YR-EPIC-APPROVAL record's shape -- a comment (never the body) carrying a
+# line beginning the marker at column 0, with non-empty design/review/who
+# fields -- and who may post it: the attended operator session, under the
+# design's standing approval, record-before-flip, with the human's gate at
+# design-active, never per-epic (the owner's ruling of 2026-08-04). Stated
+# inertly, same discipline as the open-question grammar just above it.
 # ---------------------------------------------------------------------------
 
 def test_authoring_crossing_step_states_approval_record_grammar():
@@ -911,14 +913,35 @@ def test_authoring_crossing_step_states_approval_record_lives_in_a_comment_not_t
 
 
 def test_authoring_crossing_step_states_approval_record_author():
-    """The crossing step must state WHO may post the approval record -- the human, never an
-    agent -- and that the record is never satisfied by the gate's own refusal comment."""
+    """The crossing step must state WHO may post the approval record -- the attended operator
+    session, under the design's standing approval, with the human's gate at design-active (never
+    per-epic), naming and dating the owner's ruling -- and that the record is never satisfied by
+    the gate's own refusal comment. It must NOT require the retired human-only wording (issue
+    #406 -- the it-29 inversion: the paragraph used to say the human posts it, "never an agent",
+    which inverted its own AGENTS.md citation)."""
     section = _authoring_crossing_step_text()
     lower = section.lower()
-    assert "human" in lower, \
-        "authoring.md step 3 does not name the human as the approval record's author"
-    assert "never an agent" in lower, \
-        "authoring.md step 3 does not state that the approval record is never posted by an agent"
+    assert "attended operator session" in lower, \
+        "authoring.md step 3 does not name the attended operator session as the approval " \
+        "record's author"
+    assert "standing approval" in lower, \
+        "authoring.md step 3 does not state the record is posted under the design's standing " \
+        "approval"
+    assert "design-active" in lower, \
+        "authoring.md step 3 does not state that the human's gate sits at design-active"
+    assert "never per-epic" in lower, \
+        "authoring.md step 3 does not state that the human's gate is never per-epic"
+    assert "ruling" in lower, \
+        "authoring.md step 3 does not name the owner's ruling backing the corrected author"
+    assert "2026-08-04" in section, \
+        "authoring.md step 3 does not date the owner's ruling"
+    assert "never satisfied by the epic-gate's own refusal comment" in lower, \
+        "authoring.md step 3 does not state that the epic-gate's own refusal comment never " \
+        "satisfies the record"
+    assert "posted by the human" not in lower, \
+        "authoring.md step 3 still carries the retired human-only authorship wording"
+    assert "never an agent" not in lower, \
+        "authoring.md step 3 still carries the retired 'never an agent' authorship wording"
 
 
 def test_authoring_crossing_step_approval_mention_is_inert():
