@@ -79,8 +79,12 @@ doc indistinguishable from a broken one, leaving the steer's own recommended for
 alias slot is exempt, and only on a single line: the target/anchor slot stays visible to the scan, so a
 *wrong* repair (`[[Note#§4]]`, `[[Note#99. No Such Heading|§99]]`) still reports — this scan is the only
 gate on a heading anchor anywhere in the repo, since `check_links` reads only `source_*` frontmatter and
-strips `#anchor` before resolving. This fourth class is wired into BOTH surfaces: integrity mode's sweep,
-and the single-doc draft gate below.
+strips `#anchor` before resolving. Two more forms are exempt for the same reason as the alias — quoting
+the defect rather than committing it: an occurrence inside an inline code span or a fenced block, and an
+occurrence on a line that backtick-cites a repo file path (a token carrying a known repo extension, e.g.
+`.md`, `.py`, `.sh`, `.toml`, `.yml`) — prose citing a repo file's own numbered section was never a brain
+link. This fourth class is wired into BOTH surfaces: integrity mode's sweep, and the single-doc draft gate
+below.
 
 This is an attended-session check like its siblings: advisory-first, wired into nothing.
 
@@ -164,6 +168,20 @@ _ANCHOR_STEER = ("dead reference the brain cannot resolve — use a native ancho
                  "the reading (e.g. [[Note#2. Mechanism map|§2]]). The heading text must match a "
                  "real heading — [[Note#§2]] just moves the dead reference inside the brackets")
 
+# An inline code span never crosses a newline (Markdown's own rule), so this is single-line-safe by
+# construction — no join-the-lines hazard the way a fenced block's own delimiter search would have.
+_CODE_SPAN_RE = re.compile(r"`([^`\n]*)`")
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# A prose line citing a repo file by its backticked path (e.g. `closing.md` §3) was never a brain
+# link — the exemplification/citation class, not the dead-reference class this scan exists to catch.
+_REPO_EXTENSIONS = ("md", "py", "sh", "toml", "yml")
+_REPO_PATH_RE = re.compile(r"^[\w./-]+\.(?:" + "|".join(_REPO_EXTENSIONS) + r")$")
+
+
+def _line_cites_repo_path(line):
+    """True if `line` backtick-quotes a token carrying a known repo file extension."""
+    return any(_REPO_PATH_RE.match(span.strip()) for span in _CODE_SPAN_RE.findall(line))
+
 
 def _blank_alias(m):
     """Replace a matched wikilink's alias with spaces, keeping the rest of the span verbatim.
@@ -193,13 +211,31 @@ def _section_anchor_findings(body):
     references, and NOTHING else in this repo validates a heading anchor (`check_links` reads only
     `source_*` frontmatter and strips `#anchor` before resolving), so this scan is their only
     gate. Blanking the alias alone leaves target and anchor visible, so a mis-repair still reports.
+
+    Two more classes are exempt, both prose quoting the defect form rather than committing it: an
+    occurrence sitting inside an inline code span or a fenced block (a doc *about* this very rule
+    quoting its own broken shape), and an occurrence on a line that backtick-cites a repo file path
+    (a token carrying a known repo extension) — prose citing a repo file's numbered section was never
+    a brain link. The scan stays single-line by contract: fenced-block state is the only thing
+    carried across the `for` loop below, never the line text itself, so an unbalanced fence marker
+    can at most flip that one flag rather than swallow the rest of the document.
     """
     scanned = _ALIAS_SPAN_RE.sub(_blank_alias, body)
     seen = []
-    for m in _SECTION_ANCHOR_RE.finditer(scanned):
-        ref = m.group(0)
-        if ref not in seen:
-            seen.append(ref)
+    in_fence = False
+    for line in scanned.split("\n"):
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence or _line_cites_repo_path(line):
+            continue
+        code_spans = [(m.start(1), m.end(1)) for m in _CODE_SPAN_RE.finditer(line)]
+        for m in _SECTION_ANCHOR_RE.finditer(line):
+            if any(lo <= m.start() and m.end() <= hi for lo, hi in code_spans):
+                continue
+            ref = m.group(0)
+            if ref not in seen:
+                seen.append(ref)
     return [f"§-style anchor reference {ref!r} — {_ANCHOR_STEER}" for ref in seen]
 
 
