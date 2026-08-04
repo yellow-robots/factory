@@ -9,16 +9,18 @@
 # record, an attended act handled by tools/epic_gate.py, not this command; extending promotion to epics is
 # explicitly out of scope here).
 #
-# Reuses tools/dev-runner.sh's Projects field config (same ids, same env overrides) and its
-# `gh project item-edit` setter shape, and reads the issue-side `projectItems` via GraphQL — the
-# authoritative per-issue read, same pattern as tools/epic_gate.py.
+# Reads and writes the board through the one home (tools/board_plumbing.py): the identifiers, the
+# per-issue project-item read (the authoritative per-issue read — same as tools/epic_gate.py) and its
+# selection rule, and the `gh project item-edit` field write all live there. This command restates none
+# of them — it obtains PROJECT_NUMBER (its refusal message) through the home's single `sh-exports`
+# mechanism, reads the issue via `read-issue`, and flips Status via `set-field`.
 set -euo pipefail
 
 GH_BIN="${GH_BIN:-gh}"
-PROJECT_NUMBER="${PROJECT_NUMBER:-1}"
-PROJECT_ID="${PROJECT_ID:-PVT_kwDOEEAo0M4Ba6Ls}"
-STATUS_FIELD_ID="${STATUS_FIELD_ID:-PVTSSF_lADOEEAo0M4Ba6LszhVuZlw}"
-READY_OPT="${OPT_READY:-c85eb5c1}"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOARD_PY="$SELF_DIR/board_plumbing.py"
+_board(){ GH_BIN="$GH_BIN" python3 "$BOARD_PY" "$@"; }
+eval "$(_board sh-exports)"
 
 die()   { echo "promote: ERROR: $*" >&2; exit 1; }
 refuse(){ echo "promote: REFUSED: $*" >&2; exit 3; }
@@ -44,38 +46,11 @@ if [ -z "$REPO" ]; then
 fi
 OWNER="${REPO%/*}"; NAME="${REPO#*/}"
 
-ISSUE_QUERY='query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      state
-      issueType { name }
-      projectItems(first: 20) {
-        nodes {
-          id
-          project { number }
-        }
-      }
-    }
-  }
-}'
-
-OUT="$("$GH_BIN" api graphql -f "query=$ISSUE_QUERY" -F "owner=$OWNER" -F "name=$NAME" -F "number=$ISSUE" 2>/dev/null)" \
+# The authoritative per-issue read + its selection rule, through the one home (the board-plumbing
+# `read-issue`): state, issue type, and the matching board item's id (empty when not on the board).
+LINE="$(_board read-issue "$OWNER" "$NAME" "$ISSUE" 2>/dev/null)" \
   || die "could not query issue #$ISSUE from $REPO"
-
-IFS=$'\t' read -r STATE ITYPE ITEM_ID <<<"$(printf '%s' "$OUT" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-if "data" in d: d = d["data"]
-issue = ((d.get("repository") or {}).get("issue")) or {}
-state = issue.get("state") or ""
-itype = (issue.get("issueType") or {}).get("name") or ""
-item_id = ""
-for pi in ((issue.get("projectItems") or {}).get("nodes") or []):
-    if (pi.get("project") or {}).get("number") == int(sys.argv[1]):
-        item_id = pi.get("id") or ""
-        break
-print("\t".join([state, itype, item_id]))
-' "$PROJECT_NUMBER")"
+IFS=$'\037' read -r STATE ITYPE ITEM_ID _STATUS _REASON <<<"$LINE"
 
 # ---- refuse gate (before any write; every refusal writes nothing) ----
 [ "$STATE" = "OPEN" ] || refuse "issue #$ISSUE is not open (state: ${STATE:-unknown})"
@@ -92,8 +67,7 @@ BODY="$(printf 'YR-PROMOTED\nwho: @%s\nwhy: %s\ndate: %s\n\nPromoted to **Ready*
 # ---- the record, THEN the flip — in that order, by construction ----
 "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$BODY" >/dev/null \
   || die "could not post the promotion-record comment for #$ISSUE — refusing to flip Status without the record landing first"
-"$GH_BIN" project item-edit --id "$ITEM_ID" --project-id "$PROJECT_ID" \
-  --field-id "$STATUS_FIELD_ID" --single-select-option-id "$READY_OPT" >/dev/null \
+_board set-field --id "$ITEM_ID" --status Ready >/dev/null 2>&1 \
   || die "promotion record posted, but the Status=Ready write failed for #$ISSUE — set it by hand or retry"
 
 echo "promote: #$ISSUE -> Ready (record posted by @$WHO)"

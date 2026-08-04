@@ -2,9 +2,10 @@
 # tools/watch_build.sh — operator command: poll one issue's board Status/Reason + PR presence until a
 # terminal state is reached, printing each transition as it happens. No LLM anywhere.
 #
-# Reads the issue-side `projectItems` via GraphQL (authoritative — `gh project item-list` lags ~1 min,
-# same reasoning as tools/epic_gate.py's per-epic reads), same Projects field config as
-# tools/dev-runner.sh (PROJECT_NUMBER, same env overrides).
+# Reads the issue-side `projectItems` through the one home (tools/board_plumbing.py's `read-issue`) — the
+# authoritative per-issue read and its selection rule (`gh project item-list` lags ~1 min, same reasoning
+# as tools/epic_gate.py's per-epic reads). The board identifiers (project number included) and the
+# selection all live in that home; this command restates none of them.
 #
 # Exit codes:
 #   0 — a PR is open and Status is In Review (prints the PR URL)
@@ -14,7 +15,9 @@
 set -euo pipefail
 
 GH_BIN="${GH_BIN:-gh}"
-PROJECT_NUMBER="${PROJECT_NUMBER:-1}"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOARD_PY="$SELF_DIR/board_plumbing.py"
+_board(){ GH_BIN="$GH_BIN" python3 "$BOARD_PY" "$@"; }
 
 die()  { echo "watch-build: ERROR: $*" >&2; exit 1; }
 usage(){ echo "usage: watch_build.sh <issue#> [--repo <owner/name>] [--interval N] [--timeout N]" >&2; exit 2; }
@@ -39,40 +42,13 @@ if [ -z "$REPO" ]; then
 fi
 OWNER="${REPO%/*}"; NAME="${REPO#*/}"
 
-STATUS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      state
-      projectItems(first: 20) {
-        nodes {
-          project { number }
-          status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-          reason: fieldValueByName(name: "Reason") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-        }
-      }
-    }
-  }
-}'
-
-# sets ISSUE_STATE / ITEM_STATUS / ITEM_REASON from the issue-side GraphQL read (the authoritative one).
+# sets ISSUE_STATE / ITEM_STATUS / ITEM_REASON from the issue-side read (the authoritative per-issue read
+# + selection, through the one home).
 fetch_state(){
-  local out
-  out="$("$GH_BIN" api graphql -f "query=$STATUS_QUERY" -F "owner=$OWNER" -F "name=$NAME" -F "number=$ISSUE" 2>/dev/null)" \
+  local line
+  line="$(_board read-issue "$OWNER" "$NAME" "$ISSUE" 2>/dev/null)" \
     || die "could not query issue #$ISSUE from $REPO"
-  IFS=$'\t' read -r ISSUE_STATE ITEM_STATUS ITEM_REASON <<<"$(printf '%s' "$out" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-if "data" in d: d = d["data"]
-issue = ((d.get("repository") or {}).get("issue")) or {}
-state = issue.get("state") or ""
-status = ""; reason = ""
-for pi in ((issue.get("projectItems") or {}).get("nodes") or []):
-    if (pi.get("project") or {}).get("number") == int(sys.argv[1]):
-        status = (pi.get("status") or {}).get("name") or ""
-        reason = (pi.get("reason") or {}).get("name") or ""
-        break
-print("\t".join([state, status, reason]))
-' "$PROJECT_NUMBER")"
+  IFS=$'\037' read -r ISSUE_STATE _ITYPE _ITEM_ID ITEM_STATUS ITEM_REASON <<<"$line"
 }
 
 # sets PR_URL to the open PR whose head branch is task/<issue>-… (dev-runner.sh's BRANCH convention), or "".

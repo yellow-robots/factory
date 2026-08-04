@@ -54,6 +54,10 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# sibling-module import (never `tools.board_plumbing`): dispatch runs as a bare script with `tools/` at
+# `sys.path[0]`, and every sibling that imports dispatch adds `tools/` too — the same seam epic_gate uses.
+import board_plumbing
+
 SELF = pathlib.Path(__file__).resolve()
 DEV_RUNNER = os.environ.get("DEV_RUNNER", str(SELF.parent / "dev-runner.sh"))
 DEV_RUNNER_HOME = os.environ.get("DEV_RUNNER_HOME", str(pathlib.Path.home() / ".cache" / "dev-runner"))
@@ -162,12 +166,11 @@ _ENV_ALLOW_KEYS = {
     "QUOTA_SIGNATURES",
     "PR_STAGE_RETRIES", "PR_STAGE_BACKOFF_BASE", "PR_STAGE_BACKOFF_FACTOR", "PR_STAGE_BACKOFF_MAX",
     "MODELS_REGISTRY",
-    "PROJECT_NUMBER", "PROJECT_ID", "STATUS_FIELD_ID", "REASON_FIELD_ID",
-    "OPT_BACKLOG", "OPT_READY", "OPT_INPROGRESS", "OPT_INREVIEW", "OPT_DONE",
-    "OPT_NEEDSINFO", "OPT_BLOCKED",
+    # the eleven board identifier names come from the one home (board_plumbing.IDENTIFIER_ENV_NAMES),
+    # unioned in below — adding an identifier is one edit there, never a second list to keep in step.
     "LEDGER_TRANSCRIPT_MAX_AGE_DAYS", "LEDGER_TRANSCRIPT_MAX_GB",
     "YR_ORG", "STRANDED_AFTER_MIN", "DEBT_ROUND_EVERY",
-}
+} | set(board_plumbing.IDENTIFIER_ENV_NAMES)
 _ENV_ALLOW_PREFIXES = ("LC_", "STUB_", "YR_POOL_")
 
 
