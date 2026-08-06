@@ -20,6 +20,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/merge_shadow.py` | the merge-decision evaluator + shadow-completion |
 | `tools/board_plumbing.py` | the one home for the board's identifiers, its single field write, and its single per-issue project-item read + selection rule |
 | `models.toml` + `tools/registry.py` | the model registry (data) + its stdlib loader/CLI |
+| `records.toml` + `tools/records.py` | the record registry: every machine-parsed trail grammar in one home (data) + its stdlib loader/CLI |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tools/stage_usage.py`, `tools/textutil.py` | the PR usage-summary comment; small shared text helpers |
 | `tools/bench_corpus.py`, `tools/bench_replay.py`, `tools/bench_report.py`, `tools/verdict_diff.py` | the bench corpus, candidate replay, report aggregation, and gating-vs-shadow verdict diff |
