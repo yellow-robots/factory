@@ -17,6 +17,7 @@ PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
 EPIC_GATE = ROOT / "tools" / "epic_gate.py"
 
 REQUIRED_REFS = [
+    "attended-lane.md",
     "authoring.md",
     "reviewing.md",
     "gates.md",

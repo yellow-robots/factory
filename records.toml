@@ -16,11 +16,14 @@
 #   stage-escape — the log's LAST non-empty line begins "STAGE-BLOCKED: " with a non-empty reason.
 #   json-schema  — a versioned JSON object whose "schema" key names the row.
 #
-# Surfaces: issue-trail · issue-body · pr-trail · run-dir · stage-log · ledger · bench.
+# Surfaces: issue-trail · issue-body · pr-trail · run-dir · stage-log · ledger · bench · vault-doc.
 # Exclusion rule: unversioned per-run artifacts the runner both writes and reads inside one run dir
 # (review-bundle.json, gate-durations.json, usage-<stage>.json) are run-internal files, not
 # shared-surface trail grammars — excluded by rule; a versioned schema for any of them earns a row.
-# (vault-doc joins at slice 3 with the design-side records, per the crossing ruling of 2026-08-07.)
+# vault-doc carries the design-side records (the crossing ruling of 2026-08-07: typed lines in the
+# docs themselves, no new surface). Frontmatter KEYS that tools parse (`crossed_to`, `superseded_by`,
+# `status`) are the documentation model's own declared vocabulary, governed there and excluded here by
+# rule — this registry covers record GRAMMARS on shared surfaces, not frontmatter schemas.
 
 [marker]
 # The single named marker constant (owner-ratified 2026-08-06, it-30 callout (g)): one marker, one
@@ -382,7 +385,17 @@ notes = "The severity valve's record — the valve is measured, never vibed."
 # ── lanes: the mandated-record data the detector reads (authored here, with the canon) ───────────
 
 [lanes]
-design = ["YR-DESIGN-REVIEW", "YR-DESIGN-FIT"]
+design = ["YR-DESIGN-REVIEW", "YR-DESIGN-FIT", "YR-ACCEPT"]
 epic = ["YR-EPIC-APPROVAL"]
 standalone = ["YR-TASK-GATES"]
 close = ["YR-SHIP-WALK", "YR-ROUND-RECORD"]
+
+[[record]]
+name = "YR-HUMAN-INSTRUCTION"
+marker = "YR-HUMAN-INSTRUCTION:"
+mode = "prefix"
+fields = ["who", "act"]
+emitter = "the attended session, recording the human's explicit instruction for an act she decides but does not execute (arming; a push to a shared branch that is not the session's own)"
+readers = ["tools/wall.py (slice 5 — the arming and shared-branch wall conditions)", "tools/check_trail.py"]
+surfaces = ["issue-trail", "pr-trail"]
+notes = "The record a wall condition names must itself be registered — the canon's own rule, applied to the conditions."
