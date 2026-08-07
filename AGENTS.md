@@ -26,8 +26,11 @@ doubt (an invalid or missing record raises `Needs-info` rather than guessing). T
 un-Readying an epic — remains the human's veto; a standalone task with no governing design keeps the
 original per-task human promotion. The **output** gate — **merge the PR** — is **factory-executed for an
 armed repo under fail-closed conditions** (`auto_merge = true`, sentinel clear): squash-merged with a
-durable `YR-MERGE: MERGED` record, else `YR-MERGE: BLOCKED` and a stop for the human. Every **other** repo
-stays **human-merged**.
+durable `YR-MERGE: MERGED` record, else `YR-MERGE: BLOCKED` and a stop for the human. The gate model as
+ruled (it-30): the human's technical judgment sits at the technical-RFC decision surface, not at the PR;
+the shadow phase is pre-arming qualification (once armed, no shadow merges); an attended hand-merge is
+categorically refused; a repo **not yet armed** keeps the human click as a named transitional exception —
+low-value by ruling, never the design. Arming is the norm for factory-built repos.
 
 ### Task lifecycle (state machine — RFC 0003)
 

@@ -16,7 +16,11 @@ flipping a governed epic to Ready, promoting its next pre-approved slice, and cl
 above it has no standing approval to run on, so it keeps the original per-task human promotion — and its
 **body inherits the design gates** (ruled 2026-07-13): governed work's WHAT was adversarially reviewed and
 fit-checked upstream before anything crossed; a standalone task's body is that design, so the same cold
-gates run on the body itself before the human promote. The pipeline verifies the code *against* the
+gates run on the body itself before the human promote — and since it-30 the promote act itself is walled
+(`tools/promote.sh` demands the gates record before its own promotion record), and standalone-shipped
+work earns a defined, recorded close: a standalone task is a round of one, emitting the ship-walk trace
+and round-record counts for its scope (the step set, the walled-act map, and the record vocabulary live
+in [`attended-lane.md`](attended-lane.md) and `records.toml` — cited, never restated here). The pipeline verifies the code *against* the
 acceptance criteria — unreviewed criteria make a flawed build pass green, which is why saving this gate
 buys brittleness, not time (the org-level twin is `AGENTS.md`'s *hands-on is not unreviewed*: who authors
 is orthogonal to whether it is independently verified).

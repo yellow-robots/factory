@@ -1004,12 +1004,16 @@ def test_onboarding_md_names_the_non_delegable_acts_once_plainly():
 
 
 def test_onboarding_md_non_delegable_acts_are_attended_human_work():
-    """The non-delegable acts must be stated as attended, human-only work — no agent performs them."""
+    """The non-delegable acts: the DECISION is exclusively the human's — the it-30 alignment words
+    it as decision-vs-execution (a session may execute arming under explicit instruction, never
+    decide it), preserving the intent no agent ever decides these acts."""
     lower = _normalized(_onboarding_text())
-    assert "attended, human work" in lower or "attended human work" in lower, \
-        "onboarding.md does not state the non-delegable acts are attended, human work"
+    assert "decision is exclusively the human's" in lower or "attended, human work" in lower, \
+        "onboarding.md does not state the non-delegable acts' decision is exclusively the human's"
     assert "no agent" in lower, \
-        "onboarding.md does not state that no agent performs the non-delegable acts"
+        "onboarding.md does not state that no agent performs/decides the non-delegable acts"
+    assert "never decides it" in lower, \
+        "onboarding.md dropped the it-30 decision-vs-execution arming alignment"
 
 
 def test_authoring_md_names_first_iteration_for_new_repo_case():
