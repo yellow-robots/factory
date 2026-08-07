@@ -61,6 +61,18 @@ consequences is one-way.
 | Skill release | the freeze checks' records (the release scan's results, recorded) | fail-closed |
 | Write-path class: off-table vault write · commit minted on the human's git identity without the standing trailer discipline | **categorical** — the decision table names the sanctioned rows; the trailer discipline names the authoring model | fail-closed |
 
+## The human's checkpoints (what the coordination arm surfaces)
+
+Her gates, stated here so the delivered slice compiles them rather than an agent recalling them:
+
+- setting a design `active` — the input gate; the accept act rides it
+- ruling the callouts on a draft spec
+- promoting a standalone task to Ready
+- the merge click on a repo not yet armed (the named transitional exception)
+- arming decisions — hers exclusively, executed only under her explicit instruction
+- triggering the ship-walk at close
+- the cord-pull veto — un-Readying an epic, at any time
+
 ## The output-gate model (ruled 2026-08-06, clarified same day)
 
 The human's technical judgment sits at the **technical-RFC decision surface** — no new mandatory
