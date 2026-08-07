@@ -26,14 +26,14 @@ independent review and the adherence bench, never with a wall).
 
 Each step emits the named record on the shared trail; the registry row carries the grammar.
 
-| # | Step | Record (registry row) | Surface |
+| # | Step | Trace it leaves (registry row where the trace is a record) | Surface |
 |---|---|---|---|
-| 1 | Backlog capture / sweep | the seed file (capture form); the spec's sweep line | vault-doc |
+| 1 | Backlog capture / sweep | the seed file (capture form) and the spec's sweep line — doc content, not a record grammar | vault-doc |
 | 2 | Cold adversarial review | `YR-DESIGN-REVIEW` | vault-doc |
 | 3 | Architect fit check | `YR-DESIGN-FIT` | vault-doc |
 | 4 | The accept act | `YR-ACCEPT` (+ tombstone pairs, sweep run) | vault-doc |
-| 5 | The crossing stamp | `crossed_to` (frontmatter key) | vault-doc |
-| 6 | The technical-rfc review | the review + dispositions on the epic trail | issue-trail |
+| 5 | The crossing stamp | `crossed_to` — a frontmatter key, governed by the documentation model, not a record grammar | vault-doc |
+| 6 | The technical-rfc review | the review and its per-finding dispositions on the epic trail — prose under the review discipline, not a record grammar | issue-trail |
 | 7 | The standing-approval record | `YR-EPIC-APPROVAL` | issue-trail |
 | 8 | The standalone gates record | `YR-TASK-GATES` — demanded at the promote act itself | issue-trail |
 | 9 | Record-before-flip | `YR-BOARD-FLIP` | issue-trail |
@@ -53,10 +53,10 @@ consequences is one-way.
 | Act | Condition | Stance |
 |---|---|---|
 | PR merge (attended hand-merge) | **categorical** — no record licenses it; merges execute through the evaluator | fail-closed |
-| Shared-branch push | `main`: categorical (the branch protection's client-side voice) · the session's own `task/<n>-<slug>` branch: lawful · any other shared branch: requires the record of the human's explicit instruction | fail-closed |
+| Shared-branch push | `main`: categorical (the branch protection's client-side voice) · the session's own `task/<n>-<slug>` branch: lawful · any other shared branch: requires `YR-HUMAN-INSTRUCTION` | fail-closed |
 | Board Status/Reason write | `YR-BOARD-FLIP` record on the trail before the flip (runner and epic-gate callers exempt — their records are their own) | fail-closed |
-| Vault lifecycle stamp (`active` / `superseded`) | the accept act's provenance (`YR-ACCEPT` in the accepting doc; review + fit records present) | fail-closed |
-| Arming edit (`auto_merge`) | the record attributing the human's explicit instruction — arming is decided exclusively by the human, executed only under that instruction | fail-closed |
+| Vault lifecycle stamp (`active` / `superseded`) | the accept act's provenance — `YR-ACCEPT` in the accepting doc, with `YR-DESIGN-REVIEW` and `YR-DESIGN-FIT` present | fail-closed |
+| Arming edit (`auto_merge`) | `YR-HUMAN-INSTRUCTION` attributing her decision — arming is decided exclusively by the human, executed only under that instruction | fail-closed |
 | Filing a crossing | the governing design's `status` is `active` — resolved from the vault; unreadable or unresolvable refuses | fail-closed |
 | Skill release | the freeze checks' records (the release scan's results, recorded) | fail-closed |
 | Write-path class: off-table vault write · commit minted on the human's git identity without the standing trailer discipline | **categorical** — the decision table names the sanctioned rows; the trailer discipline names the authoring model | fail-closed |
@@ -81,7 +81,7 @@ the **bounded slice**, three parts, compiled from this reference's two tables pl
 pointer list, composed at delivery with the round's current position and next step (the state-machine
 view): (1) the step set with position, (2) the walled-act map, (3) canon pointers with the **human's
 checkpoints marked** — the harness coordinates the human the same way it coordinates the agent; when
-a round reaches a step needing her input, the surface she already watches names it, never her memory.
+a round reaches a step needing her input, the surface she already watches — the board item or the session's close report — names it, never her memory.
 Session close is checked: a session that executed a walled act or emitted a mandated record is
 refused a silent close while mandatory traces are missing (the refusal names each); a second
 consecutive close with traces unchanged proceeds loud and records the override. The close report and
