@@ -131,8 +131,12 @@ def _promote_multi_response(*, state="OPEN", itype="Task", nodes):
 
 
 def _promote_env(tmp, binp, resp, issue="7"):
+    # STUB_COMMENTS carries the standalone gates record the it-30 promote-act wall demands before
+    # promote.sh writes anything; these pins exercise the plumbing past that wall.
+    gates = "YR-TASK-GATES\nreview: cold pass, findings dispositioned\nfit: FIT\nwho: operator"
     return {**os.environ, "GH_BIN": str(binp / "gh"), "STUB_ISSUE_RESPONSE": resp,
-            "STUB_CALLS_LOG": str(tmp / "calls.log"), "STUB_REPO": "test/repo"}
+            "STUB_CALLS_LOG": str(tmp / "calls.log"), "STUB_REPO": "test/repo",
+            "STUB_COMMENTS": json.dumps([gates])}
 
 
 def _watch_multi_response(*, state="OPEN", nodes):

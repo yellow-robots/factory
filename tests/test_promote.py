@@ -41,13 +41,20 @@ def _response(*, state="OPEN", itype="Task", item_id="ITEM1", project_number=1, 
     }}}})
 
 
-def _env(tmp, binp, **kw):
+# The standalone gates record the promote-act wall demands (it-30, epic #415: the direct lane's fit
+# check is enforced AT the promote act, not only downstream at claim). Every promote happy path now
+# stubs it onto the trail; `_env(..., gates=False)` models its absence for the refusal test.
+GATES_RECORD = "YR-TASK-GATES\nreview: cold pass, findings dispositioned\nfit: FIT\nwho: operator"
+
+
+def _env(tmp, binp, *, gates=True, **kw):
     return {
         **os.environ,
         "GH_BIN": str(binp / "gh"),
         "STUB_ISSUE_RESPONSE": _response(**kw),
         "STUB_CALLS_LOG": str(tmp / "calls.log"),
         "STUB_REPO": "test/repo",
+        "STUB_COMMENTS": json.dumps([GATES_RECORD] if gates else []),
     }
 
 
@@ -65,6 +72,18 @@ def _writes(calls):
 
 
 # ============ happy path: record before flip, by construction ============
+
+def test_the_promote_act_wall_refuses_without_the_gates_record_and_writes_nothing(tmp_path):
+    """it-30 (epic #415): the standalone lane's fit check is enforced AT the promote act, not only
+    downstream at claim time. Without the YR-TASK-GATES record on the trail, promote.sh refuses
+    before any write — and the refusal names the rule, per the lane's talking-wall discipline."""
+    binp = _bin(tmp_path)
+    r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, gates=False))
+    assert r.returncode != 0
+    assert "YR-TASK-GATES" in r.stderr
+    writes = _writes(_calls(tmp_path))
+    assert writes == [], f"the wall refused but something was written: {writes}"
+
 
 def test_comment_posted_strictly_before_status_flip(tmp_path):
     binp = _bin(tmp_path)

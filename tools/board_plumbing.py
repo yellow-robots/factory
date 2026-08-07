@@ -109,9 +109,55 @@ def _gh(argv):
 
 
 # --- the one field write (the runner's exact `gh project item-edit` mechanism) ------------------------
+def _attended_wall(item_id):
+    """The board-write wall's agnostic half (it-30, attended-lane.md): an ATTENDED caller needs the
+    typed record-before-flip (`YR-BOARD-FLIP`) somewhere on the trail of the issue this item fronts,
+    before the write.
+
+    **Caller class is DECLARED, never sniffed.** The machinery — the runner, the epic gate, the
+    dispatch service — declares itself with `YR_MACHINERY=1`; its own records are its trail, so it
+    passes untouched. Everything else that runs under a Claude session (`CLAUDECODE`) is attended and
+    walled. The declaration is load-bearing: an early sniff-only form keyed on `CLAUDECODE` alone
+    refused the runner's OWN integration tests, because pytest inside an attended session inherits
+    that variable — the machinery must be able to say what it is rather than be guessed at.
+
+    Fail-closed: an attended caller whose record cannot be verified is refused with the rule named.
+    `YR_BOARD_WALL_OFF=1` is the explicit, single-purpose escape for the wall's own repair work."""
+    if os.environ.get("YR_MACHINERY") or os.environ.get("YR_BOARD_WALL_OFF"):
+        return
+    if not os.environ.get("CLAUDECODE"):
+        return
+    try:
+        out = subprocess.run(
+            ["gh", "api", "graphql", "-f",
+             "query=query($id:ID!){node(id:$id){... on ProjectV2Item{content{... on Issue{number repository{nameWithOwner} body comments(last:100){nodes{body}}}}}}}",
+             "-F", f"id={item_id}",
+             "--jq", "[.data.node.content.body, (.data.node.content.comments.nodes[].body)] | join(\"\\u0000\")"],
+            capture_output=True, text=True, timeout=20)
+        if out.returncode != 0:
+            raise RuntimeError(out.stderr.strip())
+        texts = out.stdout.split("\u0000")
+        lines = [l for t in texts for l in t.splitlines()]
+        # `records.toml`'s YR-BOARD-FLIP row is mode=prefix: the RAW line begins with the marker at
+        # column 0. Spelled inline rather than through `textutil` because this home imports stdlib
+        # only, by standing invariant — the agreement test in tests/test_wall.py pins this literal
+        # to the registry row so the two can never drift.
+        if any(l.startswith("YR-BOARD-FLIP:") for l in lines):
+            return
+        raise RuntimeError("no YR-BOARD-FLIP record on the trail")
+    except Exception as e:  # noqa: BLE001 — every unevaluable path refuses, naming what it could not read
+        raise RuntimeError(
+            f"board_plumbing: REFUSED [board-write] — an attended board write requires the "
+            f"YR-BOARD-FLIP record on the issue's trail first (record-before-flip, typed; "
+            f"attended-lane.md). Could not verify: {e}")
+
+
 def set_field(gh, item_id, field_id, opt=None):
     """Set (or, when `opt` is None, clear) a single-select field on a board item — the one field write.
-    `--single-select-option-id <opt>` for a set; `--clear` for the clear variant. `gh` runs a gh argv."""
+    `--single-select-option-id <opt>` for a set; `--clear` for the clear variant. `gh` runs a gh argv.
+    Attended callers pass the it-30 wall first (`_attended_wall`); runner/epic-gate callers are
+    untouched by construction (no CLAUDECODE in their environments)."""
+    _attended_wall(item_id)
     argv = ["project", "item-edit", "--id", item_id, "--project-id", project_id(), "--field-id", field_id]
     if opt is None:
         argv.append("--clear")

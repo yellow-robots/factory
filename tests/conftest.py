@@ -16,3 +16,18 @@ import pytest
 @pytest.fixture(autouse=True)
 def _dev_runner_home(tmp_path, monkeypatch):
     monkeypatch.setenv("DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+
+
+@pytest.fixture(autouse=True)
+def _suite_is_machinery(monkeypatch):
+    """The suite declares itself machinery (it-30, epic #415 — the attended board-write wall).
+
+    The wall in `tools/board_plumbing.set_field` walls ATTENDED board writes: callers running under a
+    Claude session (`CLAUDECODE`) that have not declared themselves machinery (`YR_MACHINERY`). The
+    suite runs the factory's own machinery — and it runs *inside* attended sessions, inheriting
+    `CLAUDECODE`, which is precisely how the first sniff-only form of that wall refused the runner's
+    own integration tests. So the declaration is made once, here, for every test: a test that means
+    to exercise the ATTENDED path opts in explicitly (`monkeypatch.delenv("YR_MACHINERY")` plus
+    `setenv("CLAUDECODE", "1")` — see `tests/test_wall.py`), the same opt-in shape the fixture above
+    uses for `DEV_RUNNER_HOME`."""
+    monkeypatch.setenv("YR_MACHINERY", "1")
