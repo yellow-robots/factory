@@ -31,35 +31,49 @@ SKILL = REPO / "skills" / "factory" / "SKILL.md"
 # exists to fix — fail loud, fix the tables.
 MAX_BYTES = 12_000
 
-# The human's checkpoints, marked in part 3 (the coordination arm). Derived from the ruled gate
-# model: her gates, not the agent's duties.
-HUMAN_CHECKPOINTS = (
-    "design `active` (the accept act rides it)",
-    "callout rulings on a draft spec",
-    "standalone promote",
-    "the not-yet-armed repo's merge click (transitional exception)",
-    "arming decisions (exclusively hers)",
-    "the ship-walk trigger at close",
-    "the cord-pull veto, any time",
-)
+def _section(text: str, heading: str) -> str:
+    """The body of the `## heading` section — bounded at the next `## `. Unbounded search was a
+    silent-wrong-canon hazard (a moved or emptied table let the NEXT section's table be delivered
+    under this heading, exit 0); the bound makes a canon reshape fail loud instead."""
+    m = re.search(rf"^## {re.escape(heading)}.*?$", text, flags=re.M)
+    if not m:
+        raise SystemExit(f"compile_slice: ERROR: heading not found in attended-lane.md: {heading!r} "
+                         f"— the canon was reshaped; the compiler reads its tables by heading")
+    return text[m.end():].split("\n## ")[0]
 
 
 def _extract_table(text: str, heading: str) -> str:
-    """The markdown table under `heading` — the first pipe-table block after it, verbatim."""
-    m = re.search(rf"^## {re.escape(heading)}.*?$", text, flags=re.M)
-    if not m:
-        raise SystemExit(f"compile_slice: ERROR: heading not found in attended-lane.md: {heading!r}")
-    rest = text[m.end():]
-    t = re.search(r"((?:^\|.*\n)+)", rest, flags=re.M)
+    """The markdown table inside `heading`'s own section, verbatim."""
+    t = re.search(r"((?:^\|.*\n)+)", _section(text, heading), flags=re.M)
     if not t:
         raise SystemExit(f"compile_slice: ERROR: no table under heading: {heading!r}")
     return t.group(1).rstrip()
 
 
+def _human_checkpoints(text: str) -> str:
+    """The checkpoint list, read from canon — never authored here. A hardcoded copy in this file
+    would be a third authority beside the canon and the registry, editable only by hand, which the
+    round's own drift contract forbids."""
+    bullets = [l.rstrip() for l in _section(text, "The human's checkpoints (what the coordination arm surfaces)").splitlines()
+               if l.startswith("- ")]
+    if not bullets:
+        raise SystemExit("compile_slice: ERROR: attended-lane.md carries no human-checkpoint bullets")
+    return "\n".join(bullets)
+
+
 def _router_rows(text: str) -> str:
-    rows = [l for l in text.splitlines() if l.startswith("| **") and "references/" in l]
-    if not rows:
-        raise SystemExit("compile_slice: ERROR: no router rows found in SKILL.md")
+    """The router table — header, separator, and operation rows — from SKILL.md's own table block."""
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.startswith("| Operation ")), None)
+    if start is None:
+        raise SystemExit("compile_slice: ERROR: SKILL.md's router table header not found")
+    rows = []
+    for l in lines[start:]:
+        if not l.startswith("|"):
+            break
+        rows.append(l)
+    if len(rows) < 4:
+        raise SystemExit("compile_slice: ERROR: SKILL.md's router table is empty")
     return "\n".join(rows)
 
 
@@ -74,8 +88,9 @@ def compile_slice() -> str:
                            for name, wanted in sorted(lanes.items()))
     out = f"""# The attended lane — the delivered slice (compiled; never hand-edited)
 
-You are in a factory workspace. This slice is the lane's operating ground: the step set, the walled
-acts, and where depth lives. The runtime position element below it is composed at delivery.
+Delivered at session start to every attended session in a workspace carrying the factory plugin.
+WHERE the work is factory work, this slice is the lane's operating ground — the step set, the walled
+acts, and where depth lives; the position element below is composed at delivery.
 
 ## 1 · The mandatory step set (each step emits its record)
 
@@ -95,8 +110,8 @@ Load the reference for the operation you are performing (the factory skill's rou
 {_router_rows(skill)}
 
 **The human's checkpoints — surfaced, never remembered** (when a round reaches one, the surface she
-watches names it):
-{chr(10).join(f"- {c}" for c in HUMAN_CHECKPOINTS)}
+watches — the board item or the session's close report — names it):
+{_human_checkpoints(lane)}
 
 *A record absent from `records.toml` is unsanctioned. Walls check existence and grammar only —
 genuineness stays with independent review and the adherence bench. Fail loud; the talking wall
@@ -113,7 +128,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="compile the attended lane's delivered slice")
     ap.add_argument("--out", type=Path, default=None, help="write here instead of stdout")
     args = ap.parse_args(argv)
-    text = compile_slice()
+    try:
+        text = compile_slice()
+    except records.RegistryError as e:
+        # A registry defect is the likeliest real failure; it must reach the banner as ITSELF, never
+        # as the head of a traceback (legible failure, derivable recovery).
+        raise SystemExit(f"compile_slice: ERROR: the record registry does not load: {e}")
     if args.out:
         args.out.write_text(text, encoding="utf-8")
     else:
