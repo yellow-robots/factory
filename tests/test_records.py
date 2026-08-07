@@ -34,10 +34,15 @@ def test_live_registry_loads_and_validates(reg):
     assert len(records.records(reg)) >= 20
 
 
-def test_lanes_absent_means_nothing_mandated(reg):
-    # The lanes table is the canon slice's data (slice 3). Until it lands, the detector's contract
-    # is zero mandates — the loader returns an empty mapping, never an error.
-    assert records.lanes(reg) == {}
+def test_lanes_authored_with_the_canon(reg):
+    # The lanes table is the canon slice's data (slice 3, same PR as the canon tables). Every lane
+    # maps to registered records — the shape rule the loader enforces, pinned live here. The
+    # absent-means-nothing-mandated contract stays pinned on fixtures in test_check_trail.py.
+    lanes = records.lanes(reg)
+    assert set(lanes) >= {"design", "epic", "standalone", "close"}
+    names = {r["name"] for r in records.records(reg)}
+    for lane, wanted in lanes.items():
+        assert wanted and set(wanted) <= names, lane
 
 
 def test_every_yr_family_marker_is_under_the_umbrella(reg):

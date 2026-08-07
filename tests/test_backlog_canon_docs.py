@@ -218,8 +218,19 @@ def test_ideas_backlog_typed_write_caveat():
     assert "processFrontMatter" in body, (
         "ideas-backlog section does not name processFrontMatter as a typed write path"
     )
-    assert re.search(r"FS\s+creation", body, re.IGNORECASE), (
-        "ideas-backlog section does not name FS creation as a typed write path"
+    # it-30 repair (epic #415): the caveat used to name "FS creation" as a typed write path, and a
+    # session read that as a SANCTION, wrote off-table, and corrupted a spec's frontmatter. The pin
+    # follows the letter: the caveat now names the decision table's MCP frontmatter row as the second
+    # typed path, and says plainly that the table — the sole authority on sanctioned paths — carries
+    # no filesystem row. Asserting the old claim would pin the defect.
+    assert re.search(r"MCP\s+frontmatter\s+row", body, re.IGNORECASE), (
+        "ideas-backlog typed-write caveat no longer names the MCP frontmatter row as the typed path"
+    )
+    assert re.search(r"no\s+filesystem\s+row", body, re.IGNORECASE), (
+        "ideas-backlog typed-write caveat no longer states the decision table has no filesystem row"
+    )
+    assert re.search(r"never\s+a\s+sanction|not\s+a\s+sanction", body, re.IGNORECASE), (
+        "ideas-backlog typed-write caveat no longer states it is a typing statement, never a sanction"
     )
 
 

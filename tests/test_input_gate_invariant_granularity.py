@@ -181,8 +181,9 @@ def test_agents_md_output_gate_is_factory_executed_for_armed_repos():
         "AGENTS.md input-gate paragraph must still name 'merge the PR' as the output gate"
     assert re.search(r"factory.executed", para, re.IGNORECASE), \
         "AGENTS.md output gate no longer describes the factory-executed merge for armed repos (#38)"
-    assert re.search(r"human.merged|a human merges", para, re.IGNORECASE), \
-        "AGENTS.md output gate dropped the human-merged fallback for non-armed repos"
+    assert re.search(r"human.merged|a human merges|human click", para, re.IGNORECASE), \
+        "AGENTS.md output gate dropped the human-merge fallback for non-armed repos " \
+        "(it-30 words it as the named transitional exception's human click)"
     assert not re.search(r"human merges every pr", para, re.IGNORECASE), \
         "AGENTS.md still asserts 'a human merges every PR', which #38 (autonomous merge) overturns"
 

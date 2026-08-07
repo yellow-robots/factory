@@ -16,11 +16,14 @@
 #   stage-escape — the log's LAST non-empty line begins "STAGE-BLOCKED: " with a non-empty reason.
 #   json-schema  — a versioned JSON object whose "schema" key names the row.
 #
-# Surfaces: issue-trail · issue-body · pr-trail · run-dir · stage-log · ledger · bench.
+# Surfaces: issue-trail · issue-body · pr-trail · run-dir · stage-log · ledger · bench · vault-doc.
 # Exclusion rule: unversioned per-run artifacts the runner both writes and reads inside one run dir
 # (review-bundle.json, gate-durations.json, usage-<stage>.json) are run-internal files, not
 # shared-surface trail grammars — excluded by rule; a versioned schema for any of them earns a row.
-# (vault-doc joins at slice 3 with the design-side records, per the crossing ruling of 2026-08-07.)
+# vault-doc carries the design-side records (the crossing ruling of 2026-08-07: typed lines in the
+# docs themselves, no new surface). Frontmatter KEYS that tools parse (`crossed_to`, `superseded_by`,
+# `status`) are the documentation model's own declared vocabulary, governed there and excluded here by
+# rule — this registry covers record GRAMMARS on shared surfaces, not frontmatter schemas.
 
 [marker]
 # The single named marker constant (owner-ratified 2026-08-06, it-30 callout (g)): one marker, one
@@ -306,3 +309,93 @@ emitter = "tools/verdict_diff.py"
 readers = ["tools/bench_report.py"]
 surfaces = ["bench", "run-dir"]
 notes = ""
+
+# ── the attended lane's own records (minted at it-30 slice 3; grammars this file owns) ───────────
+
+[[record]]
+name = "YR-DESIGN-REVIEW"
+marker = "YR-DESIGN-REVIEW:"
+mode = "prefix"
+fields = ["who", "verdict"]
+emitter = "the independent cold reviewer's record, typed into the reviewed vault doc"
+readers = ["tools/check_trail.py (design lane)"]
+surfaces = ["vault-doc"]
+notes = "The design-side surface ruling (2026-08-07, epic #415): typed lines in the docs themselves."
+
+[[record]]
+name = "YR-DESIGN-FIT"
+marker = "YR-DESIGN-FIT:"
+mode = "prefix"
+fields = ["who", "verdict"]
+emitter = "the architect's fit verdict, typed into the vault doc at the spec-ready moment"
+readers = ["tools/check_trail.py (design lane)"]
+surfaces = ["vault-doc"]
+notes = ""
+
+[[record]]
+name = "YR-ACCEPT"
+marker = "YR-ACCEPT:"
+mode = "prefix"
+fields = ["who", "date"]
+emitter = "the accepting session's provenance line in the accepted doc (tombstones + sweep ride the act)"
+readers = ["tools/check_trail.py (design lane)"]
+surfaces = ["vault-doc"]
+notes = ""
+
+[[record]]
+name = "YR-BOARD-FLIP"
+marker = "YR-BOARD-FLIP:"
+mode = "prefix"
+fields = ["who", "to"]
+emitter = "an attended session, on the issue trail before any board Status/Reason write (record-before-flip, typed)"
+readers = ["tools/check_trail.py", "tools/board_plumbing.py wall (slice 5 — future reader, not at tip)"]
+surfaces = ["issue-trail"]
+notes = "Runner and epic-gate board writes are exempt — their own records are their trail."
+
+[[record]]
+name = "YR-SHIP-WALK"
+marker = "YR-SHIP-WALK:"
+mode = "prefix"
+fields = ["who", "scope"]
+emitter = "the ship-walk session's trace on the epic (or standalone task) trail"
+readers = ["tools/check_trail.py (close lane)"]
+surfaces = ["issue-trail"]
+notes = "The walk's trigger is a surfaced checkpoint at close, never a memory."
+
+[[record]]
+name = "YR-ROUND-RECORD"
+marker = "YR-ROUND-RECORD:"
+mode = "prefix"
+fields = ["refusals", "records-demanded", "detector-findings", "escalations"]
+emitter = "the closing session, on the epic (or standalone task) trail"
+readers = ["tools/check_trail.py (close lane)", "the human (prices counts against attended attention)"]
+surfaces = ["issue-trail"]
+notes = "The counts the spec's final criterion names; the pricing judgment stays the human's."
+
+[[record]]
+name = "YR-ESCALATION"
+marker = "YR-ESCALATION:"
+mode = "prefix"
+fields = ["act", "why"]
+emitter = "the agent, at the decision surface, when implications are severe (a one-way door)"
+readers = ["tools/check_trail.py", "the round record's counts"]
+surfaces = ["issue-trail"]
+notes = "The severity valve's record — the valve is measured, never vibed."
+
+# ── lanes: the mandated-record data the detector reads (authored here, with the canon) ───────────
+
+[lanes]
+design = ["YR-DESIGN-REVIEW", "YR-DESIGN-FIT", "YR-ACCEPT"]
+epic = ["YR-EPIC-APPROVAL"]
+standalone = ["YR-TASK-GATES"]
+close = ["YR-SHIP-WALK", "YR-ROUND-RECORD"]
+
+[[record]]
+name = "YR-HUMAN-INSTRUCTION"
+marker = "YR-HUMAN-INSTRUCTION:"
+mode = "prefix"
+fields = ["who", "act"]
+emitter = "the attended session, recording the human's explicit instruction for an act she decides but does not execute (arming; a push to a shared branch that is not the session's own)"
+readers = ["tools/wall.py (slice 5 — the arming and shared-branch wall conditions)", "tools/check_trail.py"]
+surfaces = ["issue-trail", "pr-trail"]
+notes = "The record a wall condition names must itself be registered — the canon's own rule, applied to the conditions."
