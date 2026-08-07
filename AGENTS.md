@@ -106,6 +106,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `models.toml` + `tools/registry.py` | the model registry + loader/CLI |
 | `records.toml` + `tools/records.py` | the record registry: every machine-parsed trail grammar in one home — emitter, readers, surfaces, grammar mode, the `YR-` marker as one named constant — + loader/CLI (it-30) |
 | `tools/check_trail.py` | the trail-shape detector: presence + grammar of a lane's mandated records, registry-driven, surface-dispatched, content-blind — walk/census tooling, advisory-tier (it-30) |
+| `tools/compile_slice.py` + `hooks/` | the attended lane's delivery: the bounded slice compiled from the canon tables (never hand-edited) + the plugin's SessionStart hook composing the runtime position at delivery, loud-non-blocking (it-30) |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/bench_corpus.py` | derives the replayable bench corpus from a repo's merged task PRs |
