@@ -1,0 +1,308 @@
+# records.toml — the record registry: one machine-readable home for every machine-parsed trail grammar
+# (it-30 slice 1, epic #415; governing design: product-spec 01-attended-lane-runner, ruling (g)).
+#
+# One row per grammar a tool parses off a shared surface. A record absent from this registry is
+# unsanctioned (the canon states that authority; this file is the home the statement points at).
+# Rows are deliberately flat and dumb: name, marker/literal, emitter, readers, surfaces, mode, notes.
+# The tree is the territory — every row cites its emitter and reader sites; the agreement tests in
+# tests/test_records.py pin the inline literals that predate this file to their rows.
+#
+# Grammar modes (the closed vocabulary; tools/textutil.py holds the two shared anchoring modes):
+#   prefix       — the RAW line begins with the marker at column 0 (textutil MARKER_PREFIX).
+#   sentinel     — the line, stripped, IS exactly the literal (textutil MARKER_SENTINEL).
+#   strict-line  — whole-line equality after stripping only trailing whitespace, stricter than
+#                  prefix; fields ride the same comment on their own lines.
+#   verdict-line — column-0 "VERDICT:" lines; the gate judges the LAST one, exactly "VERDICT: APPROVE".
+#   stage-escape — the log's LAST non-empty line begins "STAGE-BLOCKED: " with a non-empty reason.
+#   json-schema  — a versioned JSON object whose "schema" key names the row.
+#
+# Surfaces: issue-trail · issue-body · pr-trail · run-dir · stage-log · ledger · bench.
+# Exclusion rule: unversioned per-run artifacts the runner both writes and reads inside one run dir
+# (review-bundle.json, gate-durations.json, usage-<stage>.json) are run-internal files, not
+# shared-surface trail grammars — excluded by rule; a versioned schema for any of them earns a row.
+# (vault-doc joins at slice 3 with the design-side records, per the crossing ruling of 2026-08-07.)
+
+[marker]
+# The single named marker constant (owner-ratified 2026-08-06, it-30 callout (g)): one marker, one
+# umbrella. A future marker change is one edit here plus a migration round, never a hunt.
+yr = "YR-"
+
+# ── merge records ────────────────────────────────────────────────────────────────────────────────
+
+[[record]]
+name = "YR-MERGE"
+marker = "YR-MERGE:"
+mode = "prefix"
+emitter = "tools/merge_shadow.py (the merge evaluator's durable decision record: MERGED / BLOCKED)"
+readers = ["tools/merge_shadow.py (re-evaluation reads the prior record; the shadow-complete window locates records via RECORD_MARKER_TOKENS :61 / _last_merge_record :252)", "humans on the PR trail"]
+surfaces = ["pr-trail"]
+notes = "The armed output gate's record; never overturned by a re-evaluation (issue #70)."
+
+[[record]]
+name = "YR-MERGE-SHADOW"
+marker = "YR-MERGE-SHADOW:"
+mode = "prefix"
+emitter = "tools/merge_shadow.py (the shadow lane's WOULD-MERGE / WOULD-BLOCK record)"
+readers = ["tools/merge_shadow.py shadow-complete window (RECORD_MARKER_TOKENS :61, _last_merge_record :252)", "humans"]
+surfaces = ["pr-trail"]
+notes = "Shadow records blockquote transcripts; never carries a gating verdict."
+
+# ── promotion & approval records ─────────────────────────────────────────────────────────────────
+
+[[record]]
+name = "YR-EPIC-APPROVAL"
+marker = "YR-EPIC-APPROVAL"
+mode = "prefix"
+fields = ["design", "review", "who"]
+emitter = "the attended operator session (a comment on the epic's trail, record-before-flip)"
+readers = ["tools/epic_gate.py _has_valid_approval (:420, mode=prefix; block or one-line form)"]
+surfaces = ["issue-trail"]
+notes = "All three fields non-empty; the epic-gate blocks every child's promotion without it."
+
+[[record]]
+name = "YR-TASK-GATES"
+marker = "YR-TASK-GATES"
+mode = "strict-line"
+fields = ["review", "fit", "who"]
+emitter = "the attended session that ran the standalone lane's review + fit check (issue comment)"
+readers = ["tools/dev-runner.sh claim-time DoR gate (~:882: MARKER/FIELDS, whole-line equality)", "tools/promote.sh promote-act wall (slice 5 — future reader, not at tip)"]
+surfaces = ["issue-trail"]
+notes = "fit: refuses the placeholder set (n/a, none, exempt, skipped, tbd, -). YR-PROMOTED / YR-AUTO-PROMOTED never satisfy it."
+
+[[record]]
+name = "YR-PROMOTED"
+marker = "YR-PROMOTED"
+mode = "prefix"
+fields = ["who", "why", "date"]
+emitter = "tools/promote.sh (:68 — the record lands before the Status flip, by construction)"
+readers = ["humans"]
+surfaces = ["issue-trail"]
+notes = "Standalone-task human promotion record. Distinct-marker rule: the claim gate's whole-line equality never matches it, by construction."
+
+[[record]]
+name = "YR-AUTO-PROMOTED"
+marker = "YR-AUTO-PROMOTED"
+mode = "prefix"
+emitter = "tools/epic_gate.py (:491 — the standing-approval sweep's promotion record)"
+readers = ["humans"]
+surfaces = ["issue-trail"]
+notes = "Epic-child mechanical promotion record."
+
+# ── the epic-gate's declaration & raise grammars ─────────────────────────────────────────────────
+
+[[record]]
+name = "YR-GATE-TOUCHING"
+marker = "YR-GATE-TOUCHING:"
+mode = "prefix"
+emitter = "the architect, in a slice's own filed body (a duty of the crossing, non-empty reason)"
+readers = ["tools/epic_gate.py (:462, mode=prefix — refuses that child's promotion)"]
+surfaces = ["issue-body"]
+notes = "Gate evolution is attended work; the pipeline builds under fixed gates."
+
+[[record]]
+name = "YR-OPEN-QUESTION"
+marker = "YR-OPEN-QUESTION:"
+mode = "prefix"
+emitter = "a design author (must never ride a filed epic — the airlock rule)"
+readers = ["tools/epic_gate.py (:452, mode=prefix — blocks every slice while present)"]
+surfaces = ["issue-body"]
+notes = "Presence-only judgment; disposition is rewriting the line off the grammar."
+
+[[record]]
+name = "YR-EPIC-GATE: no-approval"
+marker = "YR-EPIC-GATE: no-approval"
+mode = "prefix"
+emitter = "tools/epic_gate.py (refusal comment)"
+readers = ["tools/epic_gate.py _has_marker dedup (~:1011)"]
+surfaces = ["issue-trail"]
+notes = "Raise family: the sweep's own refusal records, deduped by their own markers."
+
+[[record]]
+name = "YR-EPIC-GATE: not-a-task"
+marker = "YR-EPIC-GATE: not-a-task"
+mode = "prefix"
+emitter = "tools/epic_gate.py (refusal comment — the untyped-child raise)"
+readers = ["tools/epic_gate.py _has_marker dedup (~:1011)"]
+surfaces = ["issue-trail"]
+notes = "The attended-lane hold: first open untyped child raises Blocked, loudly."
+
+[[record]]
+name = "YR-EPIC-GATE: not-onboarded"
+marker = "YR-EPIC-GATE: not-onboarded"
+mode = "prefix"
+emitter = "tools/epic_gate.py (refusal comment)"
+readers = ["tools/epic_gate.py _has_marker dedup"]
+surfaces = ["issue-trail"]
+notes = "Raise family."
+
+[[record]]
+name = "YR-EPIC-GATE: open-questions"
+marker = "YR-EPIC-GATE: open-questions"
+mode = "prefix"
+emitter = "tools/epic_gate.py (refusal comment)"
+readers = ["tools/epic_gate.py _has_marker dedup"]
+surfaces = ["issue-trail"]
+notes = "Raise family."
+
+[[record]]
+name = "YR-EPIC-GATE: gate-touching"
+marker = "YR-EPIC-GATE: gate-touching"
+mode = "prefix"
+emitter = "tools/epic_gate.py (refusal comment)"
+readers = ["tools/epic_gate.py _has_marker dedup"]
+surfaces = ["issue-trail"]
+notes = "Raise family."
+
+[[record]]
+name = "YR-EPIC-GATE: stranded claim"
+marker = "YR-EPIC-GATE: stranded claim"
+mode = "prefix"
+emitter = "tools/epic_gate.py (:297 — In Progress with no live build)"
+readers = ["humans"]
+surfaces = ["issue-trail"]
+notes = "Raise family; advisory to the human, no state written."
+
+# ── debt-round grammars ──────────────────────────────────────────────────────────────────────────
+
+[[record]]
+name = "YR-DEBT-LEDGER"
+marker = "YR-DEBT-LEDGER"
+mode = "sentinel"
+fields = ["items", "net-lines"]
+emitter = "the debt round's census/scaffold (epic body/trail)"
+readers = ["tools/epic_gate.py _has_ledger_verdict (:478-483, mode=sentinel + _extract_field)"]
+surfaces = ["issue-trail"]
+notes = "The debt epic's self-close verdict record."
+
+[[record]]
+name = "YR-DEBT-DUE"
+marker = "YR-DEBT-DUE"
+mode = "sentinel"
+emitter = "tools/epic_gate.py (:847 — the debt-due raise)"
+readers = ["tools/epic_gate.py (:821, :830 — sentinel + search dedup)"]
+surfaces = ["issue-trail"]
+notes = "Debt cadence raise."
+
+[[record]]
+name = "YR-DEBT-HOLD"
+marker = "YR-DEBT-HOLD"
+mode = "sentinel"
+emitter = "tools/epic_gate.py (:561)"
+readers = ["tools/epic_gate.py (:938, mode=sentinel)"]
+surfaces = ["issue-trail"]
+notes = "Debt-round hold record."
+
+[[record]]
+name = "YR-ITERATION-KIND"
+marker = "YR-ITERATION-KIND: tech-debt"
+mode = "sentinel"
+emitter = "a debt epic's author (body line)"
+readers = ["tools/epic_gate.py (:472 — DEBT_KIND_LINE, mode=sentinel)"]
+surfaces = ["issue-body"]
+notes = "The whole literal is the sentinel; only the tech-debt kind exists today."
+
+# ── census & review-seat grammars ────────────────────────────────────────────────────────────────
+
+[[record]]
+name = "YR-NIT"
+marker = "YR-NIT:"
+mode = "prefix"
+fields = ["tag", "path", "line"]
+emitter = "reviewers (PR comments; tag=<blocker|nit> path=<path> [line=<n>] — <sentence>)"
+readers = ["tools/nit_harvest.py (:56 NIT_PREFIX, mode=prefix on the RAW line)"]
+surfaces = ["pr-trail"]
+notes = "The census's structured findings channel."
+
+[[record]]
+name = "YR-LENS"
+marker = "YR-LENS (advisory)"
+mode = "prefix"
+emitter = "tools/dev-runner.sh (:2352 — the consumer-quality lens's advisory comment, first line)"
+readers = ["humans (advisory; no machine reader at tip)"]
+surfaces = ["pr-trail"]
+notes = "Advisory only; never gates."
+
+[[record]]
+name = "YR-SHADOW-REVIEW"
+marker = "YR-SHADOW-REVIEW:"
+mode = "prefix"
+emitter = "tools/dev-runner.sh (:2295 — the shadow seat's verdict token + blockquoted transcript)"
+readers = ["humans (no machine reader at tip — verdict_diff reads run-dir transcripts, never this comment)"]
+surfaces = ["pr-trail"]
+notes = "Never a line-anchored gating verdict; transcript always blockquoted."
+
+[[record]]
+name = "YR-VERDICT-DIFF"
+marker = "YR-VERDICT-DIFF:"
+mode = "prefix"
+emitter = "tools/verdict_diff.py (:90 — the gating-vs-shadow diff comment)"
+readers = ["tools/bench_report.py"]
+surfaces = ["pr-trail"]
+notes = "Pairs one gating round with its shadow round."
+
+# ── the two unprefixed grammars (brought under the umbrella, ruling (g)) ─────────────────────────
+
+[[record]]
+name = "VERDICT"
+marker = "VERDICT:"
+mode = "verdict-line"
+emitter = "the review stage (the review's line-anchored verdict; run-dir review.md and the PR comment)"
+readers = ["tools/dev-runner.sh review gate (:321-326, :2129-2132 — the LAST verdict line must be exactly 'VERDICT: APPROVE')", "tools/review_bundle.py (:58, column-0 startswith)"]
+surfaces = ["run-dir", "pr-trail"]
+notes = "Only the gating review's own comment ever carries it line-anchored; shadow/bench comments blockquote."
+
+[[record]]
+name = "STAGE-BLOCKED"
+marker = "STAGE-BLOCKED: "
+mode = "stage-escape"
+emitter = "an implement/test stage's final reply (last non-empty line, non-empty reason)"
+readers = ["tools/dev-runner.sh (:1554-1566 — the case-arm routes to the Blocked outcome)"]
+surfaces = ["stage-log"]
+notes = "The consolidation sibling (it-32) redefines the no-block refusal disposition and registers it here at its crossing."
+
+# ── versioned JSON record schemas ────────────────────────────────────────────────────────────────
+
+[[record]]
+name = "yr-ledger-row/1"
+marker = "yr-ledger-row/1"
+mode = "json-schema"
+emitter = "tools/ledger.py append (:185 ROW_SCHEMA — one JSONL row per runner invocation)"
+readers = ["tools/ledger.py per-model / report"]
+surfaces = ["ledger"]
+notes = "Absent cost_unit reads as the pre-#313 era; re-derived at read time."
+
+[[record]]
+name = "yr-merge-record/1"
+marker = "yr-merge-record/1"
+mode = "json-schema"
+emitter = "tools/merge_shadow.py render_comment (:216 — the fenced ```yr-merge-record JSON block inside every merge/shadow record comment; SCHEMA at :53)"
+readers = ["tools/merge_shadow.py _extract_record (:224-235 — re-evaluation and shadow-complete parse it back)"]
+surfaces = ["pr-trail"]
+notes = "The fence word yr-merge-record is itself part of the parse grammar."
+
+[[record]]
+name = "yr-bench-corpus/1"
+marker = "yr-bench-corpus/1"
+mode = "json-schema"
+emitter = "tools/bench_corpus.py (:25)"
+readers = ["tools/bench_replay.py (:447, :522)"]
+surfaces = ["bench"]
+notes = "Self-contained for sealed replay — the corpus's own standing rule."
+
+[[record]]
+name = "yr-bench-result/1"
+marker = "yr-bench-result/1"
+mode = "json-schema"
+emitter = "tools/bench_replay.py (:48)"
+readers = ["tools/bench_report.py"]
+surfaces = ["bench"]
+notes = ""
+
+[[record]]
+name = "yr-verdict-diff/1"
+marker = "yr-verdict-diff/1"
+mode = "json-schema"
+emitter = "tools/verdict_diff.py"
+readers = ["tools/bench_report.py"]
+surfaces = ["bench", "run-dir"]
+notes = ""
