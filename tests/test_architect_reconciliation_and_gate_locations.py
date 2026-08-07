@@ -116,12 +116,17 @@ def test_architect_earn_test_new_arm_cites_the_mandate_it_answers_to():
 # closing.md is the surface being reconciled to; it is not itself edited
 # ---------------------------------------------------------------------------
 
-def test_closing_md_is_byte_identical_to_the_base_ref():
-    base = _base_ref_text("skills/factory/references/closing.md")
-    assert _text(CLOSING) == base, (
-        "closing.md changed -- its promote checklist is the surface the architect "
-        "earn-test and the direct-lane sequence are being reconciled to, and per this "
-        "issue's own constraint it is not edited"
+def test_closing_md_keeps_the_reconciled_promote_surface():
+    # The original byte-identity form was that issue's OWN scope constraint ("this issue does
+    # not edit closing.md") frozen as a standing pin -- state masquerading as rule: it would
+    # structurally block every legitimate future closing.md change (first fired by it-30's
+    # standalone-close addition, which the governing spec's own EARS mandates). Retired at
+    # it-30 to its intent: the reconciled promote surface -- the mandate the earn-test and
+    # direct-lane sequence were reconciled TO -- stays present and unweakened.
+    text = _text(CLOSING)
+    assert "record-before-flip" in text and "promote" in text, (
+        "closing.md lost the reconciled promote surface (record-before-flip on the trail "
+        "before the Status flip)"
     )
 
 

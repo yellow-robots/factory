@@ -717,7 +717,9 @@ def test_agents_md_describes_factory_executed_output_gate():
     text = (ROOT / "AGENTS.md").read_text().lower()
     assert "factory-executed" in text                            # the output gate is factory-executed...
     assert "armed" in text and "auto_merge" in text
-    assert "human-merged" in text                                # ...for armed repos, human-merged otherwise
+    # ...and the not-yet-armed fallback stays described — worded since it-30 as the named
+    # transitional exception's human click (the ruled gate model), not "human-merged".
+    assert "human-merged" in text or "human click" in text
 
 
 def test_dispatch_md_documents_the_sentinel_kill_switch():
