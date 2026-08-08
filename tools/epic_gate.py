@@ -66,6 +66,11 @@ import board_plumbing
 import dispatch
 import textutil
 
+# The machinery declares itself (it-30, attended-lane.md): the sweep's board writes carry their own
+# records (YR-AUTO-PROMOTED and the raise family), so the attended board-write wall passes them
+# untouched. Declared here, at the sweeper's own entry, rather than sniffed from the environment.
+os.environ.setdefault("YR_MACHINERY", "1")
+
 # --- Projects field config: the identifiers, the field write and the per-issue selection all live in the
 #     one home (tools/board_plumbing.py). ORG is not a board identifier and stays here. The identifiers
 #     are bound HERE by calling the home's resolver FUNCTIONS (each reads the environment live), so this

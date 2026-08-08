@@ -61,6 +61,13 @@ case "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" in
     ;;
 esac
 
+# The promote-act wall (it-30, attended-lane.md): the standalone lane's gates record is demanded AT
+# the promote act itself — validated through the registry (tools/wall.py -> records.toml), no third
+# grammar copy. YR-PROMOTED / YR-AUTO-PROMOTED never satisfy it, by marker. Fail-closed: the wall's
+# refusal writes nothing and names the rule on stderr.
+python3 "$SELF_DIR/wall.py" promote-check "$OWNER/$NAME" "$ISSUE" --gh "$GH_BIN" \
+  || refuse "the promote wall refused (see the rule above): a standalone promote needs the YR-TASK-GATES record on the trail first"
+
 WHO="$("$GH_BIN" api user --jq .login 2>/dev/null || true)"
 [ -n "$WHO" ] || WHO="${USER:-operator}"
 DATE="$(date -u +%Y-%m-%d)"

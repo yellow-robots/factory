@@ -39,6 +39,12 @@
 #   assumes about the deployment's init.
 set -euo pipefail
 
+# The machinery declares itself (it-30, attended-lane.md): the runner's board writes carry their own
+# records, so the attended board-write wall in tools/board_plumbing.py passes them untouched. The
+# declaration is explicit rather than sniffed — a runner invoked from inside an attended session
+# (its own integration tests, a hand-run build) is still the machinery.
+export YR_MACHINERY=1
+
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"; GH_BIN="${GH_BIN:-gh}"; GIT_BIN="${GIT_BIN:-git}"
 EFFORT="${EFFORT:-high}"
 # Model roles come from the registry (models.toml via tools/registry.py) — the single model surface;

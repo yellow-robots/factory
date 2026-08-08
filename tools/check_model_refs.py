@@ -41,7 +41,6 @@ _ALLOWLISTED_LINE_SUBSTRINGS = frozenset({
     "Relocated from the vault `01-conventions`",
 })
 
-
 def _rel(path, root):
     return str(path.relative_to(root)).replace("\\", "/")
 
