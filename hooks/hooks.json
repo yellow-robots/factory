@@ -15,7 +15,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit|mcp__obsidian__vault_patch",
+        "matcher": "Bash|Write|Edit|mcp__obsidian__vault_patch|mcp__obsidian__vault_write|mcp__obsidian__vault_append",
         "hooks": [
           {
             "type": "command",

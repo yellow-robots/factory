@@ -1,0 +1,224 @@
+{
+ "header": "GENERATED from process.toml v1.0.0 sha256:7bee83ab0dab72ae \u2014 never hand-edit",
+ "vectors": [
+  {
+   "kind": "journal-independence",
+   "binding": "board.write.gh-cli",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh project item-edit --id ITEM --project-id PVT_kwDOEEAo0M4Ba6Ls --field-id PVTSSF_lADOEEAo0M4Ba6LszhVuZlw --single-select-option-id c85eb5c1"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "board.write.funnel",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "python3 tools/board_plumbing.py set-field --id ITEM --status Ready"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "board.write.graphql",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh api graphql -f query=\"mutation { updateProjectV2ItemFieldValue(input: {}) }\""
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "merge.gh-cli",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh pr merge 1 --repo yellow-robots/factory --squash"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "merge.graphql",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh api graphql -f query=\"mutation { mergePullRequest(input: {}) }\""
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "merge.rest",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh api repos/yellow-robots/factory/pulls/1/merge -X PUT"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "design.stamp.obsidian-mcp",
+   "act": {
+    "tool_name": "mcp__obsidian__vault_patch",
+    "tool_input": {
+     "targetType": "frontmatter",
+     "target": "status",
+     "path": "04 projects/x.md",
+     "content": "active"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "design.stamp.app-write",
+   "act": {
+    "tool_name": "mcp__obsidian__vault_write",
+    "tool_input": {
+     "path": "04 projects/x.md",
+     "content": "active"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "design.stamp.fs-write",
+   "act": {
+    "tool_name": "Write",
+    "tool_input": {
+     "file_path": "$YR_VAULT_ROOT/04 projects/x.md",
+     "content": "---\nstatus: active\n---\n"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "arming.fs",
+   "act": {
+    "tool_name": "Edit",
+    "tool_input": {
+     "file_path": "/tmp/x/.yr/factory.toml",
+     "old_string": "auto_merge = false",
+     "new_string": "auto_merge = true"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "push.main",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "git push origin HEAD:main"
+    }
+   }
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.standalone",
+   "guard": 0,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.blocked->ready.unblock",
+   "guard": 0,
+   "predicate": "facet_is"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.blocked->ready.unblock",
+   "guard": 1,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-child",
+   "guard": 0,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-child",
+   "guard": 1,
+   "predicate": "record_absent"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.in-review->done.native",
+   "guard": 0,
+   "predicate": "store_is"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.ready->done.epic-close",
+   "guard": 0,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.ready->done.epic-close",
+   "guard": 1,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "pr.approved->merged.evaluator",
+   "guard": 0,
+   "predicate": "store_is"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "pr.approved->merged.evaluator",
+   "guard": 1,
+   "predicate": "store_is"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "pr.approved->merged.evaluator",
+   "guard": 2,
+   "predicate": "evaluator_pass"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active",
+   "guard": 0,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active",
+   "guard": 1,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active",
+   "guard": 2,
+   "predicate": "record_absent"
+  },
+  {
+   "kind": "same-transition",
+   "acts": [
+    {
+     "tool_name": "Bash",
+     "tool_input": {
+      "command": "gh project item-edit --id ITEM --project-id PVT_kwDOEEAo0M4Ba6Ls --field-id PVTSSF_lADOEEAo0M4Ba6LszhVuZlw --single-select-option-id c85eb5c1"
+     }
+    },
+    {
+     "tool_name": "Bash",
+     "tool_input": {
+      "command": "python3 tools/board_plumbing.py set-field --id ITEM --status Ready"
+     }
+    }
+   ],
+   "note": "the funnel spelling and the raw spelling write the same store the same value, so they resolve the SAME transition and the SAME guards \u2014 the funnel is covered, never special-cased"
+  }
+ ]
+}

@@ -37,8 +37,10 @@ Each step emits the named record on the shared trail; the registry row carries t
 | 7 | The standing-approval record | `YR-EPIC-APPROVAL` | issue-trail |
 | 8 | The standalone gates record | `YR-TASK-GATES` — demanded at the promote act itself | issue-trail |
 | 9 | Record-before-flip | `YR-BOARD-FLIP` | issue-trail |
-| 10 | The ship-walk trace | `YR-SHIP-WALK` — the close names the pending walk; the trigger is a surfaced checkpoint, never a memory | issue-trail |
-| 11 | The round record | `YR-ROUND-RECORD` — the close's observable counts | issue-trail |
+| 10 | The promote's own emission | `YR-PROMOTED` (standalone funnel) / `YR-AUTO-PROMOTED` (the epic gate's mechanical child promote) — landed by construction at the funnel, so a promoted trail without one means the flip happened outside it (a compiled-mandate addition, ruling 3) | issue-trail |
+| 11 | The ship-walk trace | `YR-SHIP-WALK` — the close names the pending walk; the trigger is a surfaced checkpoint, never a memory | issue-trail |
+| 12 | The round record | `YR-ROUND-RECORD` — the close's observable counts | issue-trail |
+| 13 | The armed merge's record | `YR-MERGE` — the evaluator's durable decision, the compiled `merge` lane's one mandate | pr-trail |
 
 Reification adds records, never new duties. The design-side records (steps 2–4) are **typed lines in
 the vault docs themselves** — no new surface (the crossing ruling of 2026-08-07, epic #415).
@@ -48,18 +50,22 @@ the vault docs themselves** — no new surface (the crossing ruling of 2026-08-0
 The enforcement layer checks the stated condition and disposes per the stated stance, naming the
 missing record or the categorical rule. Stances are judged per act by consequences (owner, 2026-08-06)
 — and door classification judges **consequences, never diffs**: a reversible change with irreversible
-consequences is one-way.
+consequences is one-way. **This table mirrors `process.toml` — the enforcing model — as of v1.0.0**:
+stances here restate the model's *derived* stances for teaching; on any disagreement the model rules,
+and the fully generated splice (`build/walled-acts.md`) replaces this hand table when the delivery
+rewiring lands (a named v1 deferral in the model's own header).
 
 | Act | Condition | Stance |
 |---|---|---|
-| PR merge (attended hand-merge) | **categorical** — no record licenses it; merges execute through the evaluator | fail-closed |
-| Shared-branch push | `main`: categorical (the branch protection's client-side voice) · the session's own `task/<n>-<slug>` branch: lawful · any other shared branch: requires `YR-HUMAN-INSTRUCTION` | fail-closed |
-| Board Status/Reason write | `YR-BOARD-FLIP` record on the trail before the flip (runner and epic-gate callers exempt — their records are their own) | fail-closed |
-| Vault lifecycle stamp (`active` / `superseded`) | the accept act's provenance — `YR-ACCEPT` in the accepting doc, with `YR-DESIGN-REVIEW` and `YR-DESIGN-FIT` present | fail-closed |
-| Arming edit (`auto_merge`) | `YR-HUMAN-INSTRUCTION` attributing her decision — arming is decided exclusively by the human, executed only under that instruction | fail-closed |
-| Filing a crossing | the governing design's `status` is `active` — resolved from the vault; unreadable or unresolvable refuses | fail-closed |
-| Skill release | the freeze checks' records (the release scan's results, recorded) | fail-closed |
-| Write-path class: off-table vault write · commit minted on the human's git identity without the standing trailer discipline | **categorical** — the decision table names the sanctioned rows; the trailer discipline names the authoring model | fail-closed |
+| PR merge (attended hand-merge) | **categorical** — `pr.merged` is writable by no attended class, and the merge transition's one actor word is `machinery`; no record licenses it | fail-closed |
+| Shared-branch push | `main`/`master` (force-push spellings included): categorical — only GitHub's own squash-on-merge advances them (the store's permission tier) · the session's own `task/<n>-<slug>` branch: lawful · any other shared branch: **not yet walled by the engine** — the `YR-HUMAN-INSTRUCTION` wall is a named model amendment owed; the conduct expectation (record the instruction) stands meanwhile | fail-closed (main) · advisory (other shared, v1) |
+| Board Status/Reason write | judged by the transition the write resolves to, from where the machine actually is: a standalone promote demands `YR-TASK-GATES` and **asks the human** (propose at a one-way door); an unblock demands a `YR-BOARD-FLIP` **fresh since the board item last changed** and must clear the stale Reason; the runner's claim is machinery's own lawful row | fail-closed |
+| Vault lifecycle stamp (`active`) | the activation's guards — `YR-DESIGN-REVIEW` and `YR-DESIGN-FIT` present in the doc, no `YR-OPEN-QUESTION` riding it — with `YR-ACCEPT` mandated as the post; the exact MCP stamp **asks the human** | fail-closed |
+| Arming edit (`auto_merge`) | **categorical** — `manifest.auto_merge` is writable by the human alone; no record licenses an agent's or machinery's arming edit (`YR-HUMAN-INSTRUCTION` remains the record of her instruction on the trail, not a license the wall reads) | fail-closed |
+| Filing a crossing | the governing design's `status` is `active` — **not yet walled by the engine** (v1); the epic gate's own approval check still guards the promotion side downstream | advisory (v1) |
+| Skill release | **not yet walled by the engine** — the release lane (release record + validation-gated release, ruling 6) is its own slice; v1 deliberately removes the old unconditional refusal that mutually blocked the release act (gap 57) | advisory (v1) |
+| Off-table vault write | a blind file write cannot confirm the effect it might have, so the wall **advises, never denies** (an over-matching binding may never refuse); the sanctioned rows stay the decision table's | advisory |
+| Commit minted on the human's git identity | the standing trailer discipline — the visible commit message carries `Co-Authored-By:`; an editor-driven body is invisible pre-execution and is named uncovered, never guessed at | fail-closed |
 
 ## The human's checkpoints (what the coordination arm surfaces)
 

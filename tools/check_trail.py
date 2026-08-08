@@ -109,16 +109,29 @@ def _missing_fields(row: dict, texts: list[str]) -> list[str]:
     return best_missing or []
 
 
-def check_texts(reg: dict, lane: str, texts_by_surface: dict[str, list[str]]) -> list[str]:
+def check_texts(reg: dict, lane: str, texts_by_surface: dict[str, list[str]],
+                lanes_map: dict | None = None, forbids_map: dict | None = None) -> list[str]:
     """The core: findings for one lane against pre-fetched surface texts. Pure — no network, no
-    filesystem — so fixtures exercise every path."""
-    lanes = records.lanes(reg)
+    filesystem — so fixtures exercise every path. The lane mandates COMPILE from process.toml
+    (`records.lanes` delegates there); a fixture passes its own `lanes_map`/`forbids_map`."""
+    if lanes_map is None:
+        lanes_map = records.lanes(reg)
+        if forbids_map is None:
+            forbids_map = records.lane_forbids(reg)
+    lanes = lanes_map
+    forbids_map = forbids_map or {}
     if not lanes:
-        return []  # nothing mandated — the canon slice has not authored the data yet
+        return []  # nothing mandated — an empty compiled mandate set
     wanted = lanes.get(lane)
     if wanted is None:
-        return [f"lane {lane!r}: not in the lanes table (lanes: {', '.join(sorted(lanes))})"]
+        return [f"lane {lane!r}: not in the compiled lanes (lanes: {', '.join(sorted(lanes))})"]
     findings = []
+    for name in forbids_map.get(lane, []):
+        row = records.get(reg, name)
+        texts = [t for s in row["surfaces"] for t in texts_by_surface.get(s, [])]
+        if texts and _marker_present(row, texts):
+            findings.append(f"{lane}: {name}: must-not-carry record PRESENT "
+                            f"(marker {row['marker']!r} — the airlock rule)")
     for name in wanted:
         row = records.get(reg, name)
         texts = [t for s in row["surfaces"] for t in texts_by_surface.get(s, [])]
@@ -194,15 +207,16 @@ def _cli(argv: list[str] | None = None) -> int:
     ap.add_argument("--pr", type=int, action="append", default=[], help="PR number (repeatable) — fills pr-trail")
     ap.add_argument("--vault-root", type=Path, default=None)
     ap.add_argument("--vault-doc", action="append", default=[], help="vault-relative doc path (repeatable) — fills vault-doc")
+    ap.add_argument("--scope-created", default=None,
+                    help="ISO date the scope (issue/doc) was created; a scope predating the model's "
+                         "effective date is version-scoped out (ruling 3: judge by schema version, "
+                         "never accumulated date carve-outs — this is the v1.0.0 version table's one row)")
     args = ap.parse_args(argv)
     try:
         reg = records.load(args.registry)
     except records.RegistryError as e:
         print(f"check_trail: ERROR: {e}", file=sys.stderr)
         return 2
-    if not records.lanes(reg):
-        print("check_trail: nothing mandated — the lanes table is absent or empty (the canon slice authors it)")
-        return 0
     texts: dict[str, list[str]] = {}
     try:
         for n in args.issue:
@@ -219,7 +233,29 @@ def _cli(argv: list[str] | None = None) -> int:
     except RuntimeError as e:
         print(f"check_trail: ERROR: {e}", file=sys.stderr)
         return 2
-    findings = check_texts(reg, args.lane, texts)
+    if args.scope_created:
+        try:
+            import process
+            model = process.load(registry=reg)
+            effective = next(a["date"] for a in model["amendment"]
+                             if a["version"] == model["model"]["version"])
+            if str(args.scope_created)[:10] < str(effective):
+                print(f"check_trail: version-scoped — the scope predates model "
+                      f"v{model['model']['version']} (effective {effective}); its mandates do not "
+                      f"apply to this trail")
+                return 0
+        except Exception as e:  # noqa: BLE001 — scoping is best-effort; the mandates still run
+            print(f"check_trail: NOTE: version scoping unavailable ({e})", file=sys.stderr)
+    try:
+        lanes_map = records.lanes(reg)
+        forbids_map = records.lane_forbids(reg)
+    except records.RegistryError as e:
+        print(f"check_trail: ERROR: {e}", file=sys.stderr)
+        return 2
+    if not lanes_map:
+        print("check_trail: nothing mandated — the compiled lane mandates are empty")
+        return 0
+    findings = check_texts(reg, args.lane, texts, lanes_map=lanes_map, forbids_map=forbids_map)
     for f in findings:
         print(f)
     if findings:

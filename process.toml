@@ -1,0 +1,1073 @@
+# process.toml — the factory's machine-readable process model. Sibling of records.toml.
+# (it-30, the enforcement layer's model; design: the vault's architecture/state-machine/model-design,
+#  built under the six rulings of 2026-08-08 recorded in 04-state-machine-and-rulings.)
+#
+# Four surfaces compile from this file and are NEVER hand-authored:
+#   1. the walled-act map              process.py compile acts        -> build/walled-acts.md
+#   2. the detector's lane mandates    process.py compile lanes       -> build/lanes.toml
+#   3. the session-start slice         process.py compile slice       -> build/slice-static.md
+#   4. the close report                process.py close-report        -> Stop additionalContext
+#   (+ build/conformance.json — generated test vectors; the promises reach the code)
+#
+# Record GRAMMARS are cited by name from records.toml and never restated. There is no field in
+# this schema in which a marker, a regex, or a field list can be spelled.
+#
+# THERE IS NO `stance` FIELD AND NO `enforcement` FIELD. Both are derived. A fail-open wall
+# cannot be typed; it can only be lied into existence by mislabelling a `door`, which is one
+# semantically loaded word sitting next to `to` in the diff.
+#
+# v1 scope, named plainly (each absence is an [[amendment]] owed by its own slice, not an oversight):
+#   * the epic Ready flip row lands with its tool (ruling 5's slice) — it needs the issue-type
+#     facet to separate it from the standalone promote without breaking determinism;
+#   * the release lane (plugin.version store, release record, validation-gated release) lands with
+#     ruling 6's slice — v1 deliberately does not re-create the release-wall/release-act mutual
+#     block the excavation ranked as gap 57;
+#   * a machinery act that resolves NO transition is OBSERVED, never refused (journaled, visible in
+#     the close report) — fail-closed refusal for unmodeled machinery writes would wedge the
+#     autonomous pipeline this model is forbidden to break (ruling 1's rationale); the attended
+#     class stays fail-closed per `caller_default`;
+#   * the delivered SessionStart slice still splices the canon's hand map (hooks/deliver.sh →
+#     compile_slice.py) — rewiring delivery to `build/slice-static.md` is the slice-4 migration's
+#     own change; until it lands the hand map is kept ALIGNED to this model and the model rules on
+#     any disagreement;
+#   * probe DRIFT detection lives in `process.py decay` (advisory, loud); enforcement's decay input
+#     is age-based (`verified_on` + `recheck_days`) until the decay CLI's findings are wired into a
+#     stored downgrade — on_drift = "downgrade" names the intent, the wiring is owed;
+#   * an attended epic Ready flip is refused with the STANDALONE row's teaching (no epic row exists
+#     yet, so the refusal demands YR-TASK-GATES) — mis-teaching accepted until ruling 5's tool and
+#     its issue-type facet land.
+
+[model]
+contract = "yr-process/1"
+version = "1.0.0"
+records_registry = "records.toml"
+change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
+slice_max_bytes = 12000                 # compile_slice.py's shipped bound, carried over
+compiled = ["build/walled-acts.md", "build/lanes.toml",
+            "build/slice-static.md", "build/conformance.json"]
+
+# ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.0.0"
+date = "2026-08-08"
+kind = "widen"
+touches = ["task.backlog->ready.standalone", "task.blocked->ready.unblock",
+           "task.backlog->ready.epic-child", "task.ready->in-progress.claim",
+           "task.in-progress->in-review.pr-open", "task.in-review->done.native",
+           "task.ready->done.epic-close", "pr.approved->merged.evaluator",
+           "design-doc.draft->active"]
+reason = "first authored version: the model the walls compile from, built against the it-30 excavation under the rulings of 2026-08-08"
+review = "yellow-robots/factory#420"
+who = "@jbrey"
+
+# ── authority boundary: plugin hooks are USER-scoped, so the lane must know where it ends ────
+[boundary]
+marker_files = [".yr/factory.toml"]     # any ancestor carrying one is factory-governed
+roots = ["$YR_WORKSPACE", "$YR_VAULT_ROOT"]
+outside_scope = "observe"               # never refuse outside our world
+caller_env = "YR_CALLER"                # the DECLARED caller class — never sniffed from the env
+caller_default = "attended-agent"       # fail-closed: the walled class is the default, so a test
+                                        # must opt OUT of enforcement, never into it
+caller_trust = "declared"               # printed verbatim in every compiled surface: this is a
+                                        # speed bump and the model says so out loud
+
+# ── observability: constants, so a reviewer sees them in the diff ────────────────────────────
+[observability]
+journal = "$YR_WALL_STATE/journal.jsonl"
+written = "after-decision"              # constant; the loader rejects any other value
+may_influence_decisions = false         # constant; the loader rejects `true`
+best_effort = true                      # constant; the loader rejects `false`
+
+# ── sources: the ONLY I/O. Predicates are pure functions over what a source fetched. ─────────
+[[source]]
+id = "issue-trail"
+fetches = "the issue body plus every comment body, one text each (fields complete within ONE text)"
+impl = "tools/sources.py:issue_trail"
+vendor = "github"
+timeout_s = 20
+cache = "per-decision"
+
+[[source]]
+id = "pr-trail"
+fetches = "the PR body plus every comment body"
+impl = "tools/sources.py:pr_trail"
+vendor = "github"
+timeout_s = 20
+cache = "per-decision"
+
+[[source]]
+id = "board-item"
+fetches = "the ProjectV2 item fronting an issue: Status/Reason, updatedAt, and the issue it fronts"
+impl = "tools/sources.py:board_item"
+vendor = "github"
+timeout_s = 20
+cache = "per-decision"
+
+[[source]]
+id = "pr-state"
+fetches = "state, reviewDecision, mergedAt for one PR"
+impl = "tools/sources.py:pr_state"
+vendor = "github"
+timeout_s = 20
+cache = "per-decision"
+
+[[source]]
+id = "vault-doc"
+fetches = "one vault markdown file, frontmatter included"
+impl = "tools/sources.py:vault_doc"
+vendor = "obsidian"
+timeout_s = 5
+cache = "per-decision"
+
+[[source]]
+id = "manifest-at-base-tip"
+fetches = "the target repo's .yr/factory.toml at origin/main's tip (the merge evaluator's contract)"
+impl = "tools/sources.py:manifest_at_base_tip"
+vendor = "git"
+timeout_s = 10
+cache = "per-decision"
+
+[[source]]
+id = "host-file"
+fetches = "existence of a host file (the merge sentinel)"
+impl = "tools/sources.py:host_file"
+vendor = "host"
+timeout_s = 5
+cache = "per-decision"
+
+# ── stores: where a state PHYSICALLY lives. No state without one. ────────────────────────────
+[[store]]
+id = "board.status"
+kind = "board-single-select"
+vendor = "github"
+location = "Projects v2 single-select STATUS on the shared 'Yellow Robots — Dev' board"
+identifiers = "tools/board_plumbing.py:status_field_id(), :status_opt()"   # CITED, never copied
+values = ["Backlog", "Ready", "In Progress", "In Review", "Done"]
+read = "source.board-item"
+writable_by = ["human", "attended-agent", "machinery", "external-service"]
+guarded = true
+change_clock = "ProjectV2Item.updatedAt"
+unknown_value_policy = "unknown"
+
+  # NOTE what is absent: `tools/board_plumbing.py set-field` is NOT a write path. It shells out to
+  # `gh project item-edit`, so it is covered by the gh-cli row like every other caller. The rejected
+  # wall matched the literal string "board_plumbing.py" — the lawful, self-checking door — and so
+  # denied the funnel while leaving every bypass open. Coverage is declared per EFFECT PATH, and an
+  # implementation file is not a path.
+  [[store.write_path]]
+  id = "gh-cli"
+  how = "gh project item-edit --field-id <STATUS> --single-select-option-id <OPT>"
+  observable = true
+
+  [[store.write_path]]
+  id = "graphql"
+  how = "updateProjectV2ItemFieldValue / clearProjectV2ItemFieldValue from any GraphQL client"
+  observable = true
+
+  [[store.write_path]]
+  id = "funnel"
+  how = "python3 tools/board_plumbing.py set-field — a DISTINCT act at hook granularity: the gh subprocess it spawns is invisible to PreToolUse, so the funnel argv is its own door"
+  observable = true
+
+  [[store.write_path]]
+  id = "web-ui"
+  how = "a human moving the card, or GitHub's native close->Done automation"
+  observable = false
+  detected_by = "YR-BOARD-FLIP"
+
+[[store]]
+id = "board.reason"
+kind = "board-single-select"
+vendor = "github"
+location = "Projects v2 single-select REASON on the same board"
+identifiers = "tools/board_plumbing.py:reason_field_id(), :reason_opt()"
+values = ["", "Needs-info", "Blocked"]  # "" is a real value; it becomes the named state `none`
+read = "source.board-item"
+writable_by = ["human", "attended-agent", "machinery"]
+guarded = true
+change_clock = "ProjectV2Item.updatedAt"
+unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "gh-cli"
+  how = "gh project item-edit --field-id <REASON> (--single-select-option-id <OPT> | --clear)"
+  observable = true
+
+  [[store.write_path]]
+  id = "graphql"
+  how = "updateProjectV2ItemFieldValue / clearProjectV2ItemFieldValue"
+  observable = true
+
+  [[store.write_path]]
+  id = "funnel"
+  how = "python3 tools/board_plumbing.py set-field --reason/--clear-reason"
+  observable = true
+
+  [[store.write_path]]
+  id = "web-ui"
+  how = "the Projects UI"
+  observable = false
+  detected_by = "YR-BOARD-FLIP"
+
+[[store]]
+id = "pr.merged"
+kind = "pr-attribute"
+vendor = "github"
+location = "the pull request's merged bit"
+identifiers = "gh pr view --json mergedAt"
+values = ["false", "true"]
+read = "source.pr-state"
+writable_by = ["human", "machinery", "external-service"]
+guarded = true
+unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "gh-cli"
+  how = "gh pr merge"
+  observable = true
+
+  [[store.write_path]]
+  id = "graphql"
+  how = "the mergePullRequest GraphQL mutation"
+  observable = true
+
+  [[store.write_path]]
+  id = "rest"
+  how = "PUT /repos/{owner}/{repo}/pulls/{n}/merge (gh api or any REST client)"
+  observable = true
+
+  [[store.write_path]]
+  id = "web-ui"
+  how = "the merge button"
+  observable = false
+  detected_by = "YR-MERGE"
+
+[[store]]
+id = "pr.status"
+kind = "pr-attribute"
+vendor = "github"
+location = "derived: merged -> 'merged'; reviewDecision APPROVED -> 'approved'; else 'open'"
+identifiers = "gh pr view --json state,reviewDecision,mergedAt"
+values = ["open", "approved", "merged"]
+read = "source.pr-state"
+writable_by = ["human", "attended-agent", "machinery", "external-service"]
+guarded = false                         # read-only composite; the ACT writes pr.merged
+unknown_value_policy = "unknown"
+
+[[store]]
+id = "doc.frontmatter.status"
+kind = "frontmatter-key"
+vendor = "obsidian"
+location = "the `status` frontmatter key of a vault design doc"
+identifiers = "the documentation model's declared lifecycle vocabulary"
+values = ["draft", "active", "superseded", "rejected"]
+read = "source.vault-doc"
+writable_by = ["human", "attended-agent"]
+guarded = true
+unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "mcp-patch"
+  how = "mcp__obsidian__vault_patch targeting frontmatter/status"
+  observable = true
+
+  [[store.write_path]]
+  id = "app-write"
+  how = "mcp__obsidian__vault_write / vault_append rewriting the whole file"
+  observable = true
+
+  [[store.write_path]]
+  id = "fs"
+  how = "Write/Edit on a vault path"
+  observable = true
+
+  [[store.write_path]]
+  id = "cli"
+  how = "the `obsidian` CLI or REST API from a shell"
+  observable = false
+  detected_by = "YR-ACCEPT"
+
+[[store]]
+id = "manifest.auto_merge"
+kind = "manifest-key"
+vendor = "git"
+location = "auto_merge in a repo's .yr/factory.toml, read from the base ref's tip at decision time"
+identifiers = "the manifest key the merge evaluator re-reads (AGENTS.md conventions)"
+values = ["false", "true"]
+read = "source.manifest-at-base-tip"
+writable_by = ["human"]                 # ARMING IS THE HUMAN'S — the categorical wall is this line
+guarded = true
+unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "fs"
+  how = "Write/Edit on any .yr/factory.toml touching the auto_merge key"
+  observable = true
+
+  [[store.write_path]]
+  id = "shell"
+  how = "sed -i / tee / cat > onto a manifest from a shell"
+  observable = false
+  detected_by = "YR-HUMAN-INSTRUCTION"
+
+[[store]]
+id = "host.merge_sentinel"
+kind = "host-file"
+vendor = "host"
+location = "~yr-factory/.cache/dev-runner/merge-killswitch on yr-host"
+identifiers = "deploy/DISPATCH.md"
+values = ["clear", "thrown"]
+read = "source.host-file"
+writable_by = ["human"]
+guarded = false                         # throwing/clearing is unrecorded today — gap 39, owed a slice
+unknown_value_policy = "unknown"
+
+[[store]]
+id = "git.ref.main"
+kind = "git-ref"
+vendor = "git"
+location = "refs/heads/main (and master) on origin, for every factory-governed repo"
+identifiers = "the repo's default branch"
+values = ["advanced"]
+read = "source.host-file"               # never read; this store exists for its write permission
+writable_by = ["external-service"]      # only GitHub's squash-on-merge advances main
+guarded = true
+unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "git-push"
+  how = "git push with a refspec targeting main/master (bare push included, resolved via HEAD)"
+  observable = true
+
+  [[store.write_path]]
+  id = "web-merge"
+  how = "GitHub advancing main on a merge"
+  observable = false
+  detected_by = "YR-MERGE"
+
+# ── machines: facets are ORDERED; facets[0] is PRIMARY and is what transitions move ──────────
+[[machine]]
+id = "task"
+subject = "one GitHub issue of Type Task or Epic, as it sits on the shared Dev board"
+scope = "repo+issue"
+facets = ["status", "reason"]
+note = "RFC 0003's state machine. Reason is the off-track facet, normalised out of Status."
+
+[[machine]]
+id = "pr"
+subject = "one pull request of a factory build"
+scope = "repo+pr"
+facets = ["state"]
+
+[[machine]]
+id = "design-doc"
+subject = "one vault design document (spec / feature-rfc / supporting doc)"
+scope = "vault-path"
+facets = ["status"]
+
+# ── states: id + the LITERAL stored value (rule P: a permutation of the store's values) ──────
+[[state]]
+machine = "task"
+facet = "status"
+id = "backlog"
+store = "board.status"
+value = "Backlog"
+initial = true
+
+[[state]]
+machine = "task"
+facet = "status"
+id = "ready"
+store = "board.status"
+value = "Ready"
+
+[[state]]
+machine = "task"
+facet = "status"
+id = "in-progress"
+store = "board.status"
+value = "In Progress"
+
+[[state]]
+machine = "task"
+facet = "status"
+id = "in-review"
+store = "board.status"
+value = "In Review"
+
+[[state]]
+machine = "task"
+facet = "status"
+id = "done"
+store = "board.status"
+value = "Done"
+terminal = true
+
+[[state]]
+machine = "task"
+facet = "reason"
+id = "none"
+store = "board.reason"
+value = ""                              # naming the cleared field is what lets a post write it
+
+[[state]]
+machine = "task"
+facet = "reason"
+id = "needs-info"
+store = "board.reason"
+value = "Needs-info"
+
+[[state]]
+machine = "task"
+facet = "reason"
+id = "blocked"
+store = "board.reason"
+value = "Blocked"
+
+[[state]]
+machine = "pr"
+facet = "state"
+id = "open"
+store = "pr.status"
+value = "open"
+initial = true
+
+[[state]]
+machine = "pr"
+facet = "state"
+id = "approved"
+store = "pr.status"
+value = "approved"
+
+[[state]]
+machine = "pr"
+facet = "state"
+id = "merged"
+store = "pr.status"
+value = "merged"
+terminal = true
+
+[[state]]
+machine = "design-doc"
+facet = "status"
+id = "draft"
+store = "doc.frontmatter.status"
+value = "draft"
+initial = true
+
+[[state]]
+machine = "design-doc"
+facet = "status"
+id = "active"
+store = "doc.frontmatter.status"
+value = "active"
+
+[[state]]
+machine = "design-doc"
+facet = "status"
+id = "superseded"
+store = "doc.frontmatter.status"
+value = "superseded"
+terminal = true
+
+[[state]]
+machine = "design-doc"
+facet = "status"
+id = "rejected"
+store = "doc.frontmatter.status"
+value = "rejected"
+terminal = true
+
+# ── lanes: names and scope only. MEMBERSHIP IS DERIVED from transition.lane. ─────────────────
+[[lane]]
+id = "standalone"
+subject = "a standalone task with no governing design"
+scope = "repo+issue"
+
+[[lane]]
+id = "epic"
+subject = "an epic child promoted under a standing approval"
+scope = "repo+issue"
+
+[[lane]]
+id = "design"
+subject = "a vault design doc's lifecycle"
+scope = "vault-path"
+
+[[lane]]
+id = "merge"
+subject = "the armed output gate"
+scope = "repo+pr"
+
+[[lane]]
+id = "close"
+subject = "an iteration's close duties on the epic's trail"
+scope = "repo+issue"
+
+# ── evaluators: the delegation seam. DELEGATE, never re-implement. ───────────────────────────
+[[evaluator]]
+id = "merge"
+argv = ["python3", "tools/merge_shadow.py", "evaluate", "--repo", "{scope.repo}", "--pr", "{scope.pr}"]
+conditions_display = ["ci_green", "freshness", "terminal_approval", "rank_gate", "sentinel", "shadow_complete"]
+timeout_s = 120
+contract = "exit 0 pass; exit 1 fail with the failed-condition id as stdout's first line; any other code, a timeout or an OSError is UNKNOWN"
+note = """The merge conditions are ITS conditions, in ITS order, with ITS fail-closed semantics.
+This model holds no copy: `conditions_display` is a DISPLAY list so the slice can say
+"still needs: freshness" without this model knowing what freshness is."""
+
+# ── transitions: the ONLY table a guard can attach to ────────────────────────────────────────
+
+[[transition]]
+id = "task.backlog->ready.standalone"
+machine = "task"
+from = "backlog"
+to = "ready"
+lane = "standalone"
+actor = ["human", "attended-agent"]
+agent_may = "propose"
+door = "one-way"
+because = "the standalone lane's human input gate: no governing design carries the approval, and promotion starts an autonomous build that opens a PR"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-TASK-GATES" }
+  why = "the standalone lane's review + fit gate; YR-PROMOTED never satisfies it"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "ready" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-PROMOTED" }
+
+[[transition]]
+id = "task.blocked->ready.unblock"
+machine = "task"
+from = "in-progress"
+to = "ready"
+lane = "standalone"
+actor = ["human", "attended-agent"]
+agent_may = "execute"
+door = "reversible"
+because = "unblocking is the same board write as promotion and a DIFFERENT rule: the Reason that justified the block must not survive the unblock"
+
+  [[transition.guard]]
+  predicate = "facet_is"
+  args = { facet = "reason", state = "blocked" }
+  why = "this is the unblock; a clean In Progress -> Ready is a different row"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-BOARD-FLIP" }
+  why = "record-before-flip, typed"
+  window = "since-store-change"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "ready" }
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "reason", state = "none" }
+
+[[transition]]
+id = "task.backlog->ready.epic-child"
+machine = "task"
+from = "backlog"
+to = "ready"
+lane = "epic"
+actor = ["machinery"]
+door = "reversible"
+because = "the epic gate's mechanical promotion under a standing approval; the cord-pull (un-Readying) is the human's veto, so the door is reversible"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-EPIC-APPROVAL" }
+  why = "the standing approval on the epic's trail licenses every child promotion beneath it"
+
+  [[transition.guard]]
+  predicate = "record_absent"
+  args = { record = "YR-OPEN-QUESTION" }
+  why = "the airlock rule: an open question on the epic blocks mechanical promotion"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "ready" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-AUTO-PROMOTED" }
+
+[[transition]]
+id = "task.ready->in-progress.claim"
+machine = "task"
+from = "ready"
+to = "in-progress"
+actor = ["machinery"]
+door = "reversible"
+writes_unguarded_facets = ["reason"]
+unguarded_why = { reason = "the claim clears a stale bounce Reason by value, by design (tools/dev-runner.sh claim step)" }
+because = "the runner's claim: the dispatched build takes the task"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "in-progress" }
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "reason", state = "none" }
+
+[[transition]]
+id = "task.in-progress->in-review.pr-open"
+machine = "task"
+from = "in-progress"
+to = "in-review"
+actor = ["machinery"]
+door = "reversible"
+because = "the runner opened the PR; the build reached its terminal stage"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "in-review" }
+
+[[transition]]
+id = "task.in-review->done.native"
+machine = "task"
+from = "in-review"
+to = "done"
+lane = "merge"
+actor = ["external-service"]
+door = "one-way"
+because = "we do not gate GitHub; the native close->Done board move is detected, never prevented"
+
+  [[transition.guard]]
+  predicate = "store_is"
+  args = { store = "pr.merged", value = "true" }
+  why = "native close->Done follows the merge, never precedes it"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "done" }
+
+[[transition]]
+id = "task.ready->done.epic-close"
+machine = "task"
+from = "ready"
+to = "done"
+lane = "close"
+actor = ["external-service"]
+door = "one-way"
+because = "the epic's self-close: the board move is GitHub's, and the close duties ride as guards so a close without its records is a detector finding — gap 15's fix, detection-tier"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-SHIP-WALK" }
+  why = "the round's ship-walk trace on the epic's trail before the epic reaches Done"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-ROUND-RECORD" }
+  why = "the round record (refusals · records-demanded · detector-findings · escalations) lands at close"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "done" }
+
+[[transition]]
+id = "pr.approved->merged.evaluator"
+machine = "pr"
+from = "approved"
+to = "merged"
+lane = "merge"
+actor = ["machinery"]                   # NOT attended-agent. The categorical refusal is this word.
+door = "one-way"
+because = "the armed output gate; an attended hand-merge is refused because no actor class an attended session belongs to may perform this transition — no special 'categorical' concept is needed"
+
+  [[transition.guard]]
+  predicate = "store_is"
+  args = { store = "manifest.auto_merge", value = "true" }
+  why = "an unarmed repo keeps the human's click (the named transitional exception)"
+
+  [[transition.guard]]
+  predicate = "store_is"
+  args = { store = "host.merge_sentinel", value = "clear" }
+  why = "the host kill switch is not thrown"
+
+  [[transition.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "merge" }
+  why = "every merge condition holds, in the evaluator's own order with its own fail-closed semantics"
+
+  [[transition.post]]
+  predicate = "store_is"
+  args = { store = "pr.merged", value = "true" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-MERGE" }
+
+[[transition]]
+id = "design-doc.draft->active"
+machine = "design-doc"
+from = "draft"
+to = "active"
+lane = "design"
+actor = ["human", "attended-agent"]
+agent_may = "propose"
+door = "one-way"
+because = "the human input gate — what gets built; the standing approval under which the epic gate promotes slices mechanically"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-DESIGN-REVIEW" }
+  why = "the cold adversarial review, typed into the doc"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-DESIGN-FIT" }
+  why = "the architect's fit verdict at the spec-ready moment"
+
+  [[transition.guard]]
+  predicate = "record_absent"
+  args = { record = "YR-OPEN-QUESTION" }
+  why = "the airlock rule: an open question blocks the activation"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "active" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-ACCEPT" }
+
+# ── invariants: act hygiene with NO state semantics. Named as the weaker tier it is. ─────────
+[[invariant]]
+id = "git.commit.trailer"
+title = "an attended commit credits the authoring model"
+tool = "Bash"
+actor = ["attended-agent"]
+door = "reversible"
+authority = "AGENTS.md conventions"
+does_not_cover = ["an editor-driven commit (the body is not visible pre-execution)",
+                  "git commit --amend of a body written earlier",
+                  "combined short flags beyond -am (-sam, -anm, ...)",
+                  "any porcelain wrapper"]
+
+  [invariant.match]
+  kind = "argv"
+  program = "git"
+  subcommands = ["commit"]
+  flags_any = ["-m", "--message", "-am", "-F", "--file"]
+
+  [[invariant.guard]]
+  predicate = "act_field_contains"
+  args = { field = "message", literal = "Co-Authored-By:" }
+  why = "the authoring model is credited in the commit body"
+
+# ═══════════════════ THE SEAM ═════════════════════════════════════════════════════════════════
+# Everything below is VENDOR-COUPLED. A port.* row may cite a neutral id; a neutral row may
+# NEVER cite a port.* id. Loader-enforced, one direction.
+
+[port.transport.anthropic-claude-code]  # STANCE -> mechanism. Verified empirically (harness-contract).
+event_pre = "PreToolUse"
+event_close = "Stop"
+refuse = { permissionDecision = "deny" }
+escalate = { permissionDecision = "ask" }        # the native human escalation at a one-way door
+advise = { hookSpecificOutput = "additionalContext" }   # the advisory stance, finally transported
+observe = { permissionDecision = "defer" }
+block_exit_code = 2
+note = "any other non-zero exit is INVISIBLE and lets the call through; decisions go on stdout"
+
+[[port.probe]]
+id = "gh.project.surface"
+vendor = "github"
+subject = "the `gh project` subcommand surface the board bindings match against"
+fingerprint_cmd = "gh project --help"
+fingerprint = "sha256:d83b3f0ed0cfc2ec14acc7c19a280f7f7d63c273d27bf4404848652c0686c6be"
+verified_on = "2026-08-08"
+recheck_days = 30
+on_drift = "downgrade"
+
+[[port.probe]]
+id = "gh.pr.surface"
+vendor = "github"
+subject = "the `gh pr` subcommand surface the merge bindings match against"
+fingerprint_cmd = "gh pr --help"
+fingerprint = "sha256:8fadf5a93324bd6981de3a960bd1c5140a91bfd9ee8b265d3ff975440a1db9dd"
+verified_on = "2026-08-08"
+recheck_days = 30
+on_drift = "downgrade"
+
+[[port.probe]]
+id = "gh.api.surface"
+vendor = "github"
+subject = "the `gh api` surface the GraphQL/REST bindings match against"
+fingerprint_cmd = "gh api --help"
+fingerprint = "sha256:2ce9ad6c5b2a84d2c807223986b2c55679606410fac805cf3d76b8de6e2cd272"
+verified_on = "2026-08-08"
+recheck_days = 30
+on_drift = "downgrade"
+
+# ── bindings: an observed ACT -> a STORE and a VALUE. BY EFFECT. No `transition` key exists. ─
+
+[[port.binding]]
+id = "board.write.gh-cli"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"
+does_not_cover = ["argv assembled at runtime inside a script the hook never sees",
+                  "a write issued by a process spawned before the hook fires"]
+probe = "gh.project.surface"
+verified_on = "2026-08-08"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "argv"
+  program = "gh"
+  subcommands = ["project", "item-edit"]
+
+  [[port.binding.writes]]
+  store = "board.status"
+  write_path = "gh-cli"
+  selects_when = { kind = "flag-equals", flag = "--field-id", source = "board_plumbing.status_field_id" }
+  value = { kind = "option-id", flag = "--single-select-option-id", map = "board_plumbing.status_opt" }
+
+  [[port.binding.writes]]
+  store = "board.reason"
+  write_path = "gh-cli"
+  selects_when = { kind = "flag-equals", flag = "--field-id", source = "board_plumbing.reason_field_id" }
+  value = { kind = "option-id", flag = "--single-select-option-id", map = "board_plumbing.reason_opt", clear_flag = "--clear", clear_to = "" }
+
+[[port.binding]]
+id = "board.write.funnel"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"                     # set-field's argv carries the option NAME verbatim
+does_not_cover = ["a caller importing board_plumbing as a module (no argv for the hook to see)",
+                  "an invocation through `python` rather than `python3`"]
+probe = "none"
+verified_on = "2026-08-08"
+recheck_days = 90
+
+  # This is COVERAGE of the funnel door, not a wall against it: the rejected slice matched this
+  # same spelling to DENY the one lawful, self-checking path while every bypass stayed open. Here
+  # the funnel act resolves to the SAME transitions as the raw `gh project item-edit` spelling and
+  # is judged by the SAME guards — the conformance vectors pin that equivalence.
+  [port.binding.match]
+  kind = "argv"
+  program = "python3"
+  subcommands_include = ["set-field"]
+  subcommand_contains = "board_plumbing.py"
+
+  [[port.binding.writes]]
+  store = "board.status"
+  write_path = "funnel"
+  selects_when = { kind = "flag-present", flags = ["--status"] }
+  value = { kind = "flag-literal", flag = "--status" }
+
+  [[port.binding.writes]]
+  store = "board.reason"
+  write_path = "funnel"
+  selects_when = { kind = "flag-present", flags = ["--reason", "--clear-reason"] }
+  value = { kind = "flag-literal", flag = "--reason", clear_flag = "--clear-reason", clear_to = "" }
+
+[[port.binding]]
+id = "board.write.graphql"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"
+does_not_cover = ["a query supplied on stdin or via a heredoc, never present in argv",
+                  "a non-gh HTTP client such as curl with a PAT"]
+probe = "gh.api.surface"
+verified_on = "2026-08-08"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "graphql-mutation"
+  mutations = ["updateProjectV2ItemFieldValue", "clearProjectV2ItemFieldValue"]
+
+  [[port.binding.writes]]
+  store = "board.status"
+  write_path = "graphql"
+  value = { kind = "graphql-variable" }
+
+  [[port.binding.writes]]
+  store = "board.reason"
+  write_path = "graphql"
+  value = { kind = "graphql-variable" }
+
+[[port.binding]]
+id = "merge.gh-cli"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"
+does_not_cover = ["a wrapper script", "a merge queue", "gh alias set shortcuts"]
+probe = "gh.pr.surface"
+verified_on = "2026-08-08"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "argv"
+  program = "gh"
+  subcommands = ["pr", "merge"]
+
+  [[port.binding.writes]]
+  store = "pr.merged"
+  write_path = "gh-cli"
+  value = { kind = "literal", literal = "true" }
+
+[[port.binding]]
+id = "merge.graphql"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"
+does_not_cover = ["a query supplied on stdin or via a heredoc, never present in argv",
+                  "a non-gh HTTP client such as curl with a PAT"]
+probe = "gh.api.surface"
+verified_on = "2026-08-08"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "graphql-mutation"
+  mutations = ["mergePullRequest", "enablePullRequestAutoMerge"]
+
+  [[port.binding.writes]]
+  store = "pr.merged"
+  write_path = "graphql"
+  value = { kind = "literal", literal = "true" }
+
+[[port.binding]]
+id = "merge.rest"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "over-matching"
+over_matches = "any `gh api` call whose path mentions /merge — it cannot confirm the verb or the endpoint shape from argv alone"
+does_not_cover = ["curl or any non-gh REST client with a PAT"]
+probe = "gh.api.surface"
+verified_on = "2026-08-08"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "argv"
+  program = "gh"
+  subcommands = ["api"]
+  operand_contains = "/merge"
+
+  [[port.binding.writes]]
+  store = "pr.merged"
+  write_path = "rest"
+  value = { kind = "literal", literal = "true" }
+
+[[port.binding]]
+id = "design.stamp.obsidian-mcp"
+vendor = "obsidian"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "mcp__obsidian__vault_patch"
+precision = "exact"                     # structured input, key/value equality — no text anywhere
+does_not_cover = ["a patch replacing the whole frontmatter block"]
+probe = "none"
+verified_on = "2026-08-08"
+recheck_days = 60
+
+  [port.binding.match]
+  kind = "mcp-tool"
+  tool = "mcp__obsidian__vault_patch"
+  arg_equals = { targetType = "frontmatter", target = "status" }
+
+  [[port.binding.writes]]
+  store = "doc.frontmatter.status"
+  write_path = "mcp-patch"
+  value = { kind = "frontmatter-value", arg = "content" }
+
+[[port.binding]]
+id = "design.stamp.app-write"
+vendor = "obsidian"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "mcp__obsidian__vault_write"
+precision = "over-matching"
+over_matches = "every whole-file app write, most of which are not a lifecycle stamp; it cannot isolate the status key from a full-file payload"
+does_not_cover = ["mcp__obsidian__vault_patch outside frontmatter/status (its own row)", "obsidian eval"]
+probe = "none"
+verified_on = "2026-08-08"
+recheck_days = 180
+
+  [port.binding.match]
+  kind = "mcp-tool"
+  tools = ["mcp__obsidian__vault_write", "mcp__obsidian__vault_append"]
+
+  [[port.binding.writes]]
+  store = "doc.frontmatter.status"
+  write_path = "app-write"
+  value = { kind = "frontmatter-value", arg = "__none__" }
+
+[[port.binding]]
+id = "design.stamp.fs-write"
+vendor = "obsidian"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Write|Edit"
+precision = "over-matching"             # -> this binding can NEVER refuse; it advises
+over_matches = "every vault .md write, most of which are not a lifecycle stamp; it cannot read the frontmatter it is about to write, so it cannot confirm the effect"
+does_not_cover = ["MultiEdit until its own row is added", "a symlinked path", "a path built at runtime"]
+probe = "none"
+verified_on = "2026-08-08"
+recheck_days = 180
+
+  [port.binding.match]
+  kind = "path-write"
+  path_under = "$YR_VAULT_ROOT"
+  path_glob = "**/*.md"
+
+  [[port.binding.writes]]
+  store = "doc.frontmatter.status"
+  write_path = "fs"
+  value = { kind = "frontmatter-value", arg = "__none__" }
+
+[[port.binding]]
+id = "arming.fs"
+vendor = "git"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Write|Edit"
+precision = "exact"                     # the new content is fully visible pre-execution
+does_not_cover = ["sed -i / cat > from a shell (the store's `shell` path, detected)",
+                  "an edit renaming the key before flipping it"]
+probe = "none"
+verified_on = "2026-08-08"
+recheck_days = 90
+
+  [port.binding.match]
+  kind = "path-write"
+  path_suffix = ".yr/factory.toml"
+  content_mentions = "auto_merge"
+
+  [[port.binding.writes]]
+  store = "manifest.auto_merge"
+  write_path = "fs"
+  value = { kind = "toml-key" }
+
+[[port.binding]]
+id = "push.main"
+vendor = "git"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"                     # the target is resolved from the repository, never the text
+does_not_cover = ["a push from a process spawned before the hook fires",
+                  "a push through a wrapper the unwrap pass does not know"]
+probe = "none"
+verified_on = "2026-08-08"
+recheck_days = 90
+
+  [port.binding.match]
+  kind = "git-refspec"
+  targets = ["main", "master"]
+
+  [[port.binding.writes]]
+  store = "git.ref.main"
+  write_path = "git-push"
+  value = { kind = "literal", literal = "advanced" }
