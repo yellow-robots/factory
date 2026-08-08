@@ -118,6 +118,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `qa/` | consumer quality content — the advisory lens (`qa/lens.py`) and the blocking cardinality guards (`qa/cardinality.py` + its rule set `qa/cardinality.toml`); distinct from the platform machinery in `tools/` |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |
 | `docs/rfcs/` | canonical RFCs |
+| `docs/state-machine/` | the factory's own state machine, excavated from the tree (it-30): nine lane files of cited states/transitions/actors + the ranked gap list, the **verified** Claude Code hook contract, and the proposed `process.toml` model the enforcement layer compiles from — generated, not hand-edited |
 | `skills/` | the factory skill (router + references) |
 | `skills/factory/templates/` | upper-pipeline stage templates (spec, feature-rfc, technical-rfc, task, debt-census) |
 

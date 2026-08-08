@@ -36,25 +36,74 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import records  # noqa: E402
 import textutil  # noqa: E402
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 STATE_DIR = Path(os.environ.get("YR_WALL_STATE", Path.home() / ".cache" / "yr-attended"))
 VAULT_ROOT = Path(os.environ.get("YR_VAULT_ROOT", "/srv/obsidian/vaults/obsidian"))
 GH_TIMEOUT = int(os.environ.get("YR_WALL_GH_TIMEOUT", "20"))
 
 
+# ── who this engine speaks to ────────────────────────────────────────────────────────────────────
+
+def in_scope(cwd: Path | None = None) -> bool:
+    """Does this session's working directory belong to the factory's world?
+
+    Plugin hooks are USER-scoped: without this check the walls fire in every session in every
+    directory — a personal repo's untrailered commit refused, a `git push origin main` anywhere
+    refused. The lane's authority ends where factory work ends, so the engine speaks only inside a
+    factory-governed tree: a repo carrying `.yr/factory.toml` (the manifest that makes a repo the
+    factory's), the factory repo itself, or anything under `$YR_WORKSPACE` (the vault included —
+    the write-path class is a factory rule about the design brain).
+
+    Machinery is out of scope too: a cold pipeline stage inherits `YR_MACHINERY` from the runner,
+    exactly as delivery already honours it (`hooks/deliver.sh`) — one declaration, both halves.
+    """
+    if os.environ.get("YR_MACHINERY"):
+        return False
+    here = (cwd or Path.cwd()).resolve()
+    workspace = Path(os.environ.get("YR_WORKSPACE", REPO_ROOT.parent)).resolve()
+    for d in (here, *here.parents):
+        if (d / ".yr" / "factory.toml").is_file():
+            return True
+        if (d / ".claude-plugin" / "plugin.json").is_file() and (d / "tools" / "dev-runner.sh").is_file():
+            return True  # the factory repo itself
+        if d == workspace or d == VAULT_ROOT:
+            return True
+    return False
+
+
 # ── counts: the round record's raw material ──────────────────────────────────────────────────────
 
 def _emit_event(kind: str, session_id: str, act: str, detail: str) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    row = {"ts": int(time.time()), "kind": kind, "session": session_id, "act": act, "detail": detail}
-    with open(STATE_DIR / "counts.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps(row) + "\n")
+    """Counting must never decide an act. An unwritable state dir used to raise out of `decide()`,
+    the hook then exited non-zero with no decision — and a PreToolUse hook that errors lets the call
+    THROUGH. So the wall failed OPEN on every act whenever its bookkeeping broke, the exact inverse
+    of the canon's rule. Bookkeeping is now best-effort and silent; the refusal is what matters."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        row = {"ts": int(time.time()), "kind": kind, "session": session_id, "act": act, "detail": detail}
+        with open(STATE_DIR / "counts.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
 
 
 def read_counts(session_id: str | None = None) -> list[dict]:
+    """Tolerant by construction: one truncated line (a killed session) used to raise and disable the
+    close check permanently, for every future session, silently."""
     p = STATE_DIR / "counts.jsonl"
-    if not p.is_file():
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except OSError:
         return []
-    rows = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue  # a partial write from a killed session: skip the line, keep the ledger
     return [r for r in rows if session_id is None or r.get("session") == session_id]
 
 
@@ -209,10 +258,6 @@ def decide(hook: dict) -> dict | None:
         reason += f" — resolved status: {status or 'unresolvable'}"
     if act == "crossing-file" and ev.get("unreadable"):
         reason += " — the body could not be read; a fail-closed wall that cannot evaluate refuses, naming what it could not read"
-    if act == "board-write":
-        m = re.search(r"set-field.*?(\d+)|(\d+)\s*$", ev.get("command") or "")
-        # The in-funnel half (board_plumbing) carries the authoritative check with the issue number
-        # it actually writes; the hook half refuses here only to route through the funnel's message.
     _emit_event("refusal", session, act, reason[:200])
     return {
         "hookSpecificOutput": {
@@ -235,7 +280,6 @@ def close_check(hook: dict) -> dict | None:
     if not events:
         return None
     refusals = [e for e in events if e["kind"] == "refusal"]
-    overrides = [e for e in events if e["kind"] == "close-override"]
     blocks = [e for e in events if e["kind"] == "close-block"]
     unresolved = [e for e in refusals if not any(
         p["kind"] == "pass" and p["act"] == e["act"] and p["ts"] >= e["ts"] for p in events)]
@@ -276,6 +320,41 @@ def _comment_bodies(gh_bin: str, repo: str, issue: str) -> list[str] | None:
     for c in (data.get("comments") or []):
         bodies.append(c.get("body") or "" if isinstance(c, dict) else str(c))
     return bodies
+
+
+def board_check(item_id: str, gh_bin: str = "gh") -> int:
+    """The board-write condition, evaluated HERE rather than in `board_plumbing` — the home imports
+    stdlib only, and a hand-rolled marker matcher outside `textutil` is refused tree-wide (the it-28
+    anti-recurrence guard). One implementation, two callers: the funnel shells out to this, and the
+    hook's raw-evasion classification resolves the same item.
+
+    Condition: the issue this board item fronts carries the typed `YR-BOARD-FLIP` record — record
+    before flip. Fail-closed: a condition that cannot be evaluated refuses, naming what it could not
+    read."""
+    reg = records.load()
+    row = records.get(reg, "YR-BOARD-FLIP")
+    query = ("query($id:ID!){node(id:$id){... on ProjectV2Item{content{... on Issue{"
+             "body comments(last:100){nodes{body}}}}}}}")
+    try:
+        out = subprocess.run(
+            [gh_bin, "api", "graphql", "-f", f"query={query}", "-F", f"id={item_id}",
+             "--jq", '[.data.node.content.body, (.data.node.content.comments.nodes[].body)] | join("\\u0000")'],
+            capture_output=True, text=True, timeout=GH_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"wall: REFUSED [board-write] — the item's trail could not be read ({e}); a fail-closed "
+              f"wall that cannot evaluate refuses (attended-lane.md)", file=sys.stderr)
+        return 1
+    if out.returncode != 0:
+        print(f"wall: REFUSED [board-write] — the item's trail could not be read "
+              f"({out.stderr.strip()[:160]}); a fail-closed wall that cannot evaluate refuses", file=sys.stderr)
+        return 1
+    lines = [l for t in out.stdout.split("\0") for l in t.splitlines()]
+    if any(textutil.marker_line_matches(l, row["marker"], mode=textutil.MARKER_PREFIX) for l in lines):
+        return 0
+    print(f"wall: REFUSED [board-write] — an attended board write requires the {row['marker']} record "
+          f"on the issue's trail first (record-before-flip, typed; attended-lane.md). Post it, then "
+          f"write.", file=sys.stderr)
+    return 1
 
 
 def promote_check(repo: str, issue: str, gh_bin: str = "gh") -> int:
