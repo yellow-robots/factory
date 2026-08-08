@@ -29,7 +29,6 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/bench_corpus.py`, `tools/bench_replay.py`, `tools/bench_report.py`, `tools/verdict_diff.py` | the bench corpus, candidate replay, report aggregation, and gating-vs-shadow verdict diff |
 | `deploy/` | the dispatch systemd service, the n8n workflow, and switch-on notes (`DISPATCH.md`) |
 | `docs/rfcs/` | implemented technical RFCs — 0001 workflow, 0002 runner, 0003 task state, 0004 dispatch, 0005 upper-pipeline. Unimplemented designs live in the Obsidian brain. |
-| `docs/state-machine/` | the factory's own state machine as excavated from the tree — cited states, transitions and actors per lane, where code and canon disagree, the ranked gap list, and the verified harness contract the enforcement layer stands on |
 | `tests/` | pytest suite (stubbed: no live LLM, no network) |
 | `qa/` | consumer quality content — the advisory lens (`qa/lens.py`) and the blocking cardinality guards (`qa/cardinality.py` + its rule set `qa/cardinality.toml`); distinct from the platform machinery in `tools/` |
 | `tools/epic_gate.py`, `tools/review_bundle.py`, `tools/check_task.py`, `tools/check_links.py`, `tools/check_model_refs.py`, `tools/check_supersession.py` | the standing-approval sweep; the hashed review bundle; the DoR, crossing-link, stale-reference, and supersession gates |

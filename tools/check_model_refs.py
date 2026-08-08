@@ -41,14 +41,6 @@ _ALLOWLISTED_LINE_SUBSTRINGS = frozenset({
     "Relocated from the vault `01-conventions`",
 })
 
-# Directory prefixes (relative to scan-root) holding GENERATED evidence rather than living text.
-# Same reasoning as `is_frozen_bench_evidence` above: these surfaces quote the tree — including
-# this scanner's own `_PATTERN` literal — verbatim and by design, so a living-text guard must not
-# read them. The it-30 state-machine excavation is generated from the tree and describes this very
-# gate; scanning it makes any document ABOUT the guard trip the guard.
-_SKIP_PREFIXES = ("docs/state-machine/",)
-
-
 def _rel(path, root):
     return str(path.relative_to(root)).replace("\\", "/")
 
@@ -68,8 +60,6 @@ def scan(scan_root):
         if rel in _SKIP_FILES:
             continue
         if is_frozen_bench_evidence(rel):
-            continue
-        if rel.startswith(_SKIP_PREFIXES):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
