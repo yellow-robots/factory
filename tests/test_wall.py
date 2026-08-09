@@ -327,6 +327,7 @@ def test_close_reports_missing_postconditions_and_blocks_once(model, tmp_path, m
     record post never landed is surfaced (and counted as a detector finding) — never silent."""
     import json as _json
     monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: [])
     _stub_trail(monkeypatch, ["no promote record here"])
     process.journal_append(model, [{"ts": 100, "transition_id": "task.backlog->ready.standalone",
                                     "binding_id": "board.write.gh-cli",
@@ -340,6 +341,7 @@ def test_close_reports_missing_postconditions_and_blocks_once(model, tmp_path, m
 
 def test_close_blocks_once_then_overrides_loud(model, tmp_path, monkeypatch):
     monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: [])
     process.journal_append(model, [{"ts": 100, "transition_id": "pr.approved->merged.evaluator",
                                     "binding_id": "merge.gh-cli", "scope": {}, "stance": "refuse",
                                     "caller": "attended-agent"}], "sC")
@@ -351,6 +353,79 @@ def test_close_blocks_once_then_overrides_loud(model, tmp_path, monkeypatch):
     assert "OVERRIDE" in second["hookSpecificOutput"]["additionalContext"]
     kinds = [r["stance"] for r in process.journal_rows(model, "sC")]
     assert "close-block" in kinds and "close-override" in kinds
+
+
+def test_close_clean_session_is_silent(model, tmp_path, monkeypatch):
+    """#428: a session with journal rows but NO actionable trace ends silent — and the same
+    fixture emits once a trace IS actionable, so the silence is the decision, not a dead path."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: [])
+    process.journal_append(model, [{"ts": 100, "transition_id": "store:doc.frontmatter.status",
+                                    "binding_id": "design.stamp.app-write", "scope": {},
+                                    "stance": "advise", "caller": "attended-agent"}], "sQ")
+    assert wall.close({"session_id": "sQ"}) is None
+    process.journal_append(model, [{"ts": 200, "transition_id": "pr.approved->merged.evaluator",
+                                    "binding_id": "merge.gh-cli", "scope": {}, "stance": "refuse",
+                                    "caller": "attended-agent"}], "sQ")
+    out = wall.close({"session_id": "sQ"})
+    assert out is not None and out.get("decision") == "block"
+    assert "close report — " in out["reason"]
+
+
+def test_close_recovered_refusal_is_clean_silence(model, tmp_path, monkeypatch):
+    """#428: counts never decide — a refusal later resolved by a lawful pass leaves refusals >= 1
+    in the journal and a SILENT close (clean = no actionable trace, never counts-zero)."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: [])
+    process.journal_append(model, [
+        {"ts": 100, "transition_id": "store:manifest.auto_merge", "binding_id": "fs.write",
+         "scope": {}, "stance": "refuse", "caller": "attended-agent"},
+        {"ts": 200, "transition_id": "store:manifest.auto_merge", "binding_id": "fs.write",
+         "scope": {}, "stance": "observe", "caller": "human"}], "sR")
+    assert wall.close({"session_id": "sR"}) is None
+
+
+def test_close_error_row_emits_never_silent(model, tmp_path, monkeypatch):
+    """#428: a wall crash (stance `error`) appears in no count, but a session whose walls crashed
+    is never clean — the close emits, non-blocking, naming the crash."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: [])
+    process.journal_append(model, [
+        {"ts": 100, "transition_id": "store:doc.frontmatter.status", "binding_id": None,
+         "scope": {}, "stance": "advise", "caller": "attended-agent"},
+        {"ts": 110, "transition_id": None, "binding_id": None, "scope": {}, "stance": "error",
+         "caller": "?", "detail": "synthetic crash"}], "sE")
+    out = wall.close({"session_id": "sE"})
+    assert out is not None and "decision" not in out
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "ERROR" in ctx and "synthetic crash" in ctx and "never clean" in ctx
+
+
+def test_close_drift_announces_once_per_session(model, tmp_path, monkeypatch):
+    """#428 lands ruling 1B's close-report drift surface BOUNDED: an outstanding finding is
+    announced at most once per session (drift is durable repo state — unbounded announcement is
+    the wake/stop loop again). check_drift is stubbed: the drift tier stays advisory and the
+    gating suite never asserts real build/ freshness."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift",
+                        lambda m: ["build/lanes.toml: STALE against process.toml v1.0.0"])
+    process.journal_append(model, [{"ts": 100, "transition_id": "store:doc.frontmatter.status",
+                                    "binding_id": "design.stamp.app-write", "scope": {},
+                                    "stance": "advise", "caller": "attended-agent"}], "sD")
+    first = wall.close({"session_id": "sD"})
+    assert first is not None and "decision" not in first
+    assert "DRIFT (advisory)" in first["hookSpecificOutput"]["additionalContext"]
+    assert wall.close({"session_id": "sD"}) is None
+    kinds = [r["stance"] for r in process.journal_rows(model, "sD")]
+    assert "drift-advised" in kinds
+
+
+def test_close_rows_empty_stays_silent_even_when_drifted(model, tmp_path, monkeypatch):
+    """#428: a rows-empty session never announces drift — the SessionStart banner is the
+    every-session drift surface; the close speaks only to sessions with in-scope activity."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: ["build/lanes.toml: STALE"])
+    assert wall.close({"session_id": "sNothing"}) is None
 
 
 def test_model_not_loading_is_loud_but_never_blocks(monkeypatch):

@@ -132,6 +132,10 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   `.venv/bin/python -m pytest tests/ -q` — the checkout's own venv. A cut build worktree carries no
   `.venv`: the build gate runs the manifest's `check_cmd` (bare `pytest tests/ -q`), and build stages
   use `python3 -m pytest` / bare `pytest` (the manifest's `stage_conduct` says so where it counts).
+  **An attended session on the workspace host runs targeted suites only** (the files its change
+  touches); the full suite is server CI's to certify on the PR head — a full local run is too costly
+  for the workspace VPS and duplicates the certification CI performs anyway (owner ruling
+  2026-08-09, on the #428 round; two full runs that day died of host contention at 35%).
 - **Workspace & manifest:** checkout is `$YR_WORKSPACE/<name>` (default `factory/../..`); per-repo
   `.yr/factory.toml` sets `check_cmd`, `model`/`review_model`, `base_ref`, `auto_merge` (default false),
   `merge_ci_timeout` (the merge evaluator's bounded in-flight CI wait in seconds; `MERGE_CI_TIMEOUT` env
