@@ -18,10 +18,11 @@ TESTS_DIR = pathlib.Path(__file__).resolve().parent
 PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
 THIS_FILE = pathlib.Path(__file__).resolve()
 
-# Same shape as the issue's own verification command:
-#   grep -rn 'version.*== "0\.' tests/
-POSITIVE_PIN_RE = re.compile(r'version.*==\s*"0\.')
-NEGATIVE_PIN_RE = re.compile(r'version.*!=\s*"0\.')
+# Same shape as the issue's own verification command (grep -rn 'version.*== "0\.'
+# tests/), generalized past the 0.x era: the guard's subject is *any* pinned
+# plugin version, and 1.0.0 must be as visible to it as 0.10.0 was.
+POSITIVE_PIN_RE = re.compile(r'version.*==\s*"\d')
+NEGATIVE_PIN_RE = re.compile(r'version.*!=\s*"\d')
 
 
 def _test_py_files():
@@ -46,7 +47,7 @@ def test_exactly_one_positive_version_pin_suite_wide():
     """AC: keep exactly one `== <current plugin version>` pin, in one home."""
     hits = _matching_lines(POSITIVE_PIN_RE)
     assert len(hits) == 1, (
-        "expected exactly one '== \"0.x\"' plugin-version pin across tests/, "
+        "expected exactly one '== \"<version>\"' plugin-version pin across tests/, "
         f"found {len(hits)}: {hits}"
     )
 
@@ -54,7 +55,7 @@ def test_exactly_one_positive_version_pin_suite_wide():
 def test_no_negative_version_vestiges_remain():
     """AC: delete the three negative vestiges (!= "0.6.0", != "0.5.0", != "0.7.1")."""
     hits = _matching_lines(NEGATIVE_PIN_RE)
-    assert not hits, f"stale '!= \"0.x\"' version vestige(s) remain: {hits}"
+    assert not hits, f"stale '!= \"<version>\"' vestige(s) remain: {hits}"
 
 
 def test_canonical_pin_tracks_plugin_json_current_version():
