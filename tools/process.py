@@ -1245,11 +1245,13 @@ def journal_rows(model: dict, session_id: str | None = None) -> list[dict] | Non
     return [r for r in rows if session_id is None or r.get("session") == session_id]
 
 
-def close_report(model: dict, session_id: str) -> tuple[str, bool]:
+def close_report(model: dict, session_id: str,
+                 journal_announcements: bool = True) -> tuple[str, bool]:
     """The compiled close report (surface 4). Tracks MANDATED TRACES — the postconditions of the
     transitions this session was PERMITTED to perform — rather than its own refusals (the design
     names refusal-tracking the backwards shape). Record posts are re-evaluated live, per scope;
-    an unreadable journal renders UNKNOWN, never ok. Returns (text, should_block_once)."""
+    an unreadable journal renders UNKNOWN, never ok. Returns (text, should_block_once); empty
+    text is the silent exit — no actionable trace, nothing to say (issue #428)."""
     rows = journal_rows(model, session_id)
     if rows is None:
         return ("close report: UNKNOWN (journal unreadable) — a report that cannot see is never a "
@@ -1261,10 +1263,11 @@ def close_report(model: dict, session_id: str) -> tuple[str, bool]:
     escalated = [r for r in rows if r.get("stance") == "escalate"]
     overrides = [r for r in rows if r.get("stance") == "close-override"]
     blocks = [r for r in rows if r.get("stance") == "close-block"]
+    errors = [r for r in rows if r.get("stance") == "error"]
     tids = {t["id"]: t for t in model.get("transition") or []}
 
     # postconditions of permitted transitions, re-read NOW (the design's LEFT BEHIND / MISSING)
-    missing_posts, post_lines, seen_posts = [], [], set()
+    missing_posts, unknown_posts, post_lines, seen_posts = [], [], [], set()
     for r in rows:
         tid = r.get("transition_id")
         if r.get("stance") not in ("observe", "escalate") or tid not in tids:
@@ -1286,12 +1289,26 @@ def close_report(model: dict, session_id: str) -> tuple[str, bool]:
                 post_lines.append(f"MISSING: {tid} was permitted and its mandated "
                                   f"`{po['args']['record']}` record is not on the trail")
             elif res.state == "UNKNOWN":
+                unknown_posts.append((tid, po["args"]["record"]))
                 post_lines.append(f"UNKNOWN: {tid}: `{po['args']['record']}` could not be "
                                   f"re-read ({res.reason}) — never counted as ok")
 
     unresolved = [r for r in refused if not any(
         p.get("stance") == "observe" and p.get("transition_id") == r.get("transition_id")
         and p.get("ts", 0) >= r.get("ts", 0) for p in rows)]
+
+    # Drift — ruling 1B's close-report surface, bounded: durable repo state must never re-create
+    # the wake/stop loop, so an outstanding finding is announced at most once per session (the
+    # `drift-advised` marker row is the bound; a changed finding is a fresh announcement).
+    advised = {r.get("finding") for r in rows if r.get("stance") == "drift-advised"}
+    fresh_drift = [p for p in check_drift(model) if p not in advised]
+
+    # The silent exit: clean means NO ACTIONABLE TRACE — nothing unresolved, missing, unknown,
+    # or errored, and no drift announcement due. Counts alone never decide: a refusal later
+    # resolved lawfully leaves a nonzero count and a clean session.
+    if not (unresolved or missing_posts or unknown_posts or errors or fresh_drift):
+        return "", False
+
     counts = {"refusals": len(refused),
               "records-demanded": len({r.get("failed_record") for r in refused
                                        if r.get("failed_record")}),
@@ -1302,6 +1319,12 @@ def close_report(model: dict, session_id: str) -> tuple[str, bool]:
     for r in unresolved:
         lines.append(f"UNRESOLVED: {r.get('transition_id')} was refused and no later lawful pass "
                      f"is journaled")
+    for r in errors:
+        lines.append(f"ERROR: the wall crashed on an act "
+                     f"({str(r.get('detail') or 'no detail journaled')[:120]}) — a session whose "
+                     f"walls crashed is never clean")
+    for p in fresh_drift:
+        lines.append(f"DRIFT (advisory): {p}")
     touched_stores = {r.get("transition_id", "").removeprefix("store:")
                       for r in rows if str(r.get("transition_id", "")).startswith("store:")}
     touched_stores |= {sid for r in rows if r.get("transition_id") in tids
@@ -1325,6 +1348,13 @@ def close_report(model: dict, session_id: str) -> tuple[str, bool]:
                          f"({len(overrides) + 1} total)")
         else:
             block = True
+    if fresh_drift and journal_announcements:
+        # The marker records an announcement that already happened; this write cannot influence
+        # the decision it records. Fail-soft like every journal write.
+        journal_append(model, [{"ts": int(time.time()), "transition_id": "close",
+                                "binding_id": None, "scope": {}, "stance": "drift-advised",
+                                "caller": "attended-agent", "finding": p} for p in fresh_drift],
+                       session_id)
     return "\n".join(lines), block
 
 
@@ -1478,7 +1508,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             print(f"process: {n}")
         return 0
     if args.cmd == "close-report":
-        text, block = close_report(model, args.session)
+        # A read-named preview never consumes the Stop hook's once-per-session drift announcement.
+        text, block = close_report(model, args.session, journal_announcements=False)
         if text:
             print(text)
         return 3 if block else 0
