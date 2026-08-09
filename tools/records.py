@@ -37,6 +37,11 @@ MODES = ("prefix", "sentinel", "strict-line", "verdict-line", "stage-escape", "j
 # crossing ruling of 2026-08-07) — present in the vocabulary so the canon slice adds rows, not code.
 SURFACES = ("issue-trail", "issue-body", "pr-trail", "run-dir", "stage-log", "ledger", "bench", "vault-doc")
 
+# The closed actor-class vocabulary — ONE authority; tools/process.py imports it from here. Every
+# record row carries a typed `emitted_by` list (the process model's rule S column) beside the prose
+# `emitter`.
+ACTORS = ("human", "attended-agent", "machinery", "external-service")
+
 
 class RegistryError(ValueError):
     """A malformed registry is a loud failure, never a silent fallback."""
@@ -74,6 +79,11 @@ def _validate(data: dict, p: Path) -> None:
             raise RegistryError(f"{p}: {name}: marker missing or not a string")
         if not r.get("emitter") or not isinstance(r.get("emitter"), str):
             raise RegistryError(f"{p}: {name}: emitter missing")
+        emitted_by = r.get("emitted_by")
+        if not isinstance(emitted_by, list) or not emitted_by or any(
+                cls not in ACTORS for cls in emitted_by):
+            raise RegistryError(f"{p}: {name}: emitted_by must be a non-empty list drawn from "
+                                f"{ACTORS} (the process model's rule S column)")
         readers = r.get("readers")
         if not isinstance(readers, list) or not readers or any(
                 not isinstance(x, str) or not x for x in readers):
@@ -91,16 +101,9 @@ def _validate(data: dict, p: Path) -> None:
         fields = r.get("fields", [])
         if not isinstance(fields, list) or any(not isinstance(f, str) or not f for f in fields):
             raise RegistryError(f"{p}: {name}: fields must be a list of non-empty strings")
-    lanes_tbl = data.get("lanes")
-    if lanes_tbl is not None:
-        if not isinstance(lanes_tbl, dict):
-            raise RegistryError(f"{p}: [lanes] must be a table of lane -> list of record names")
-        for lane, wanted in lanes_tbl.items():
-            if not isinstance(wanted, list) or any(not isinstance(w, str) or not w for w in wanted):
-                raise RegistryError(f"{p}: lanes.{lane}: must be a list of non-empty record names")
-            for w in wanted:
-                if w not in seen:
-                    raise RegistryError(f"{p}: lanes.{lane}: unregistered record {w!r}")
+    if data.get("lanes") is not None:
+        raise RegistryError(f"{p}: a [lanes] table no longer lives here — lane mandates compile "
+                            f"from process.toml (one authority; the it-30 model migration)")
 
 
 def marker_constant(data: dict) -> str:
@@ -119,9 +122,25 @@ def get(data: dict, name: str) -> dict:
 
 
 def lanes(data: dict) -> dict:
-    """The lane → mandated-records mapping. Absent or empty means nothing mandated (the detector's
-    contract): the data is authored by the canon slice, never by this loader."""
-    return dict(data.get("lanes") or {})
+    """The lane → mandated-records mapping, DELEGATED to the process model (the migration's 'one
+    authority' rule): mandates compile from process.toml's transitions, never from registry data.
+    Loud on a non-loading model — a silently-empty mandate set would disable the detector unnoticed."""
+    try:
+        import process
+        mandate, _forbid = process.lanes(process.load(registry=data))
+        return mandate
+    except Exception as e:  # noqa: BLE001 — surface the model failure as a registry failure, loud
+        raise RegistryError(f"lane mandates unavailable — process.toml does not load: {e}")
+
+
+def lane_forbids(data: dict) -> dict:
+    """The lane → must-not-carry mapping (record_absent guards), same delegation."""
+    try:
+        import process
+        _mandate, forbid = process.lanes(process.load(registry=data))
+        return forbid
+    except Exception as e:  # noqa: BLE001
+        raise RegistryError(f"lane forbids unavailable — process.toml does not load: {e}")
 
 
 def _cli(argv: list[str] | None = None) -> int:

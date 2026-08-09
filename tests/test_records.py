@@ -102,14 +102,19 @@ def test_missing_readers_refused(tmp_path):
         records.load(p)
 
 
-def test_lanes_validated_when_present(tmp_path):
-    base = '[marker]\nyr = "YR-"\n[[record]]\nname = "X"\nmarker = "X:"\nmode = "prefix"\nemitter = "e"\nreaders = ["y"]\nsurfaces = ["pr-trail"]\n'
-    good = _write(tmp_path, base + '[lanes]\nattended = ["X"]\n')
-    assert records.lanes(records.load(good)) == {"attended": ["X"]}
-    bad = tmp_path / "bad.toml"
-    bad.write_text(base + '[lanes]\nattended = ["NEVER-MINTED"]\n', encoding="utf-8")
-    with pytest.raises(records.RegistryError, match="unregistered record"):
-        records.load(bad)
+def test_lanes_table_is_refused_and_emitted_by_required(tmp_path):
+    """The migration's one-authority rule: lane mandates compile from process.toml, so a registry
+    [lanes] table is refused loud; and every row carries the typed emitted_by column (rule S)."""
+    base = ('[marker]\nyr = "YR-"\n[[record]]\nname = "X"\nmarker = "X:"\nmode = "prefix"\n'
+            'emitter = "e"\nemitted_by = ["machinery"]\nreaders = ["y"]\nsurfaces = ["pr-trail"]\n')
+    with pytest.raises(records.RegistryError, match="no longer lives here"):
+        records.load(_write(tmp_path, base + '[lanes]\nattended = ["X"]\n'))
+    no_eb = base.replace('emitted_by = ["machinery"]\n', "")
+    with pytest.raises(records.RegistryError, match="emitted_by"):
+        records.load(_write(tmp_path, no_eb))
+    bad_cls = base.replace('["machinery"]', '["robot-overlord"]')
+    with pytest.raises(records.RegistryError, match="emitted_by"):
+        records.load(_write(tmp_path, bad_cls))
 
 
 def test_merge_record_schema_registered(reg):

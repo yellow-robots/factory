@@ -23,6 +23,9 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `records.toml` + `tools/records.py` | the record registry: every machine-parsed trail grammar in one home (data) + its stdlib loader/CLI |
 | `tools/check_trail.py` | the trail-shape detector: are a lane's mandated records present and well-formed, content-blind |
 | `tools/compile_slice.py` + `hooks/` | the attended lane's delivered slice (compiled from the canon tables) + the session-start delivery hook |
+| `process.toml`, `tools/process.py` + `build/` | the process model (machines · transitions · guards · stores · bindings; stance and enforcement derived, never authored), its engine, and the compiled surfaces |
+| `tools/predicates.py`, `tools/sources.py`, `tools/acts.py` | the engine's three seams: pure tri-state predicates, the one I/O home, the act normalizer + typed matchers |
+| `tools/wall.py` | the attended lane's walls: a loop over the model's compiled rows — the hook shim over `process.decide`, refusals that name the rule, the close report, the journal |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tools/stage_usage.py`, `tools/textutil.py` | the PR usage-summary comment; small shared text helpers |
 | `tools/bench_corpus.py`, `tools/bench_replay.py`, `tools/bench_report.py`, `tools/verdict_diff.py` | the bench corpus, candidate replay, report aggregation, and gating-vs-shadow verdict diff |

@@ -13,6 +13,15 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 
+
+def _attended_env(**extra):
+    """Delivery is for ATTENDED sessions; the suite declares itself machinery (tests/conftest.py),
+    and the hook correctly skips machinery. A delivery test opts back into the attended path — the
+    same explicit opt-in shape tests/test_wall.py uses."""
+    env = dict(os.environ, **extra)
+    env.pop("YR_MACHINERY", None)
+    return env
+
 import compile_slice  # noqa: E402
 
 
@@ -107,7 +116,7 @@ def test_deliver_sh_is_executable_and_loud_non_blocking_on_compile_failure(tmp_p
     fake_root = tmp_path / "root"
     (fake_root / "tools").mkdir(parents=True)
     (fake_root / "tools" / "compile_slice.py").write_text("import sys; sys.exit('broken on purpose')")
-    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(fake_root))
+    env = _attended_env(CLAUDE_PLUGIN_ROOT=str(fake_root))
     out = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env)
     assert out.returncode == 0
     payload = json.loads(out.stdout)
@@ -116,7 +125,7 @@ def test_deliver_sh_is_executable_and_loud_non_blocking_on_compile_failure(tmp_p
 
 
 def test_deliver_sh_happy_path_carries_slice_and_position(tmp_path):
-    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(REPO), PATH=str(tmp_path) + os.pathsep + os.environ["PATH"])
+    env = _attended_env(CLAUDE_PLUGIN_ROOT=str(REPO), PATH=str(tmp_path) + os.pathsep + os.environ["PATH"])
     # stub gh so the position element is deterministic and offline
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\necho 'PR#999 CLEAN: stubbed'\n")
@@ -130,7 +139,7 @@ def test_deliver_sh_happy_path_carries_slice_and_position(tmp_path):
 
 
 def test_deliver_sh_position_failure_is_loud_non_blocking(tmp_path):
-    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(REPO), PATH=str(tmp_path) + os.pathsep + os.environ["PATH"])
+    env = _attended_env(CLAUDE_PLUGIN_ROOT=str(REPO), PATH=str(tmp_path) + os.pathsep + os.environ["PATH"])
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\nexit 1\n")
     gh.chmod(0o755)
@@ -150,7 +159,7 @@ def test_a_multibyte_error_tail_still_emits_a_loud_banner(tmp_path):
     (fake_root / "tools" / "compile_slice.py").write_text(
         "import sys; sys.stderr.write('x'*298 + '\\u2014 the real reason lives at the end'); sys.exit(1)",
         encoding="utf-8")
-    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(fake_root))
+    env = _attended_env(CLAUDE_PLUGIN_ROOT=str(fake_root))
     out = subprocess.run(["bash", str(REPO / "hooks" / "deliver.sh")],
                          capture_output=True, text=True, env=env)
     assert out.returncode == 0
@@ -178,7 +187,7 @@ def test_position_is_repo_aware_not_hardcoded():
 
 def test_deliver_sh_leaves_no_temp_files(tmp_path):
     before = set(Path("/tmp").glob("tmp.*.err"))
-    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(REPO), PATH=str(tmp_path) + os.pathsep + os.environ["PATH"])
+    env = _attended_env(CLAUDE_PLUGIN_ROOT=str(REPO), PATH=str(tmp_path) + os.pathsep + os.environ["PATH"])
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\nexit 1\n")
     gh.chmod(0o755)

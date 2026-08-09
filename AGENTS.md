@@ -104,9 +104,13 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/board.sh` | operator: one-shot org-wide board TSV |
 | `tools/stage_usage.py`, `tools/textutil.py` | PR usage-summary comment; shared text helpers |
 | `models.toml` + `tools/registry.py` | the model registry + loader/CLI |
-| `records.toml` + `tools/records.py` | the record registry: every machine-parsed trail grammar in one home — emitter, readers, surfaces, grammar mode, the `YR-` marker as one named constant — + loader/CLI (it-30) |
-| `tools/check_trail.py` | the trail-shape detector: presence + grammar of a lane's mandated records, registry-driven, surface-dispatched, content-blind — walk/census tooling, advisory-tier (it-30) |
+| `records.toml` + `tools/records.py` | the record registry: every machine-parsed trail grammar in one home — emitter, the typed `emitted_by` actor classes, readers, surfaces, grammar mode, the `YR-` marker as one named constant — + loader/CLI; lane mandates COMPILE from the process model, never from registry data (it-30) |
+| `process.toml` + `tools/process.py` | the process model and its engine: machines/transitions/guards/stores/bindings with `stance` and `enforcement` DERIVED (no field to author), the loader's fail-closed rule set (the load-time tier gates via the suite, per ruling 1), the four compiled surfaces under `build/`, the decision path the walls run, the journal, and the close report (it-30) |
+| `tools/predicates.py`, `tools/sources.py`, `tools/acts.py` | the engine's three seams: the closed predicate vocabulary (pure, tri-state, no `__bool__`), the ONLY I/O home (every fetch bounded, stubbed in tests), and the act normalizer + typed matcher vocabulary (no substring, no regex) (it-30) |
+| `build/` | the compiled surfaces — walled-act map, lane mandates (with the version table row), static slice, conformance vectors — `GENERATED from process.toml`, committed so a model diff shows its consequences; freshness is `process.py check --drift`, advisory-loud by ruling |
+| `tools/check_trail.py` | the trail-shape detector: presence + grammar of a lane's mandated records, model-compiled mandates + must-not-carry, surface-dispatched, content-blind, version-scoped via `--scope-created` — walk/census tooling, advisory-tier (it-30) |
 | `tools/compile_slice.py` + `hooks/` | the attended lane's delivery: the bounded slice compiled from the canon tables (never hand-edited) + the plugin's SessionStart hook composing the runtime position at delivery, loud-non-blocking (it-30) |
+| `tools/wall.py` | the attended lane's walls, rebuilt as a loop over the process model's compiled rows: the PreToolUse/Stop hook shim over `process.decide`, a non-loading model answered LOUD and non-blocking, the promote wall delegating to the engine's transition-check, and the journal view the round record reads (it-30) |
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/bench_corpus.py` | derives the replayable bench corpus from a repo's merged task PRs |

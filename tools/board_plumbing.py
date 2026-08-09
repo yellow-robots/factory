@@ -111,7 +111,13 @@ def _gh(argv):
 # --- the one field write (the runner's exact `gh project item-edit` mechanism) ------------------------
 def set_field(gh, item_id, field_id, opt=None):
     """Set (or, when `opt` is None, clear) a single-select field on a board item — the one field write.
-    `--single-select-option-id <opt>` for a set; `--clear` for the clear variant. `gh` runs a gh argv."""
+    `--single-select-option-id <opt>` for a set; `--clear` for the clear variant. `gh` runs a gh argv.
+
+    There is no in-funnel wall here, by the it-30 model migration: this function shells out to
+    `gh project item-edit`, so it is covered by the SAME `board.write.gh-cli` binding as every other
+    caller — one classification, both doors, judged by the same transition guards. The rejected
+    in-funnel matcher denied the lawful, self-checking door while leaving every bypass open (the
+    excavation's inverted wall), and its inline marker literal was the it-28 guard's one red."""
     argv = ["project", "item-edit", "--id", item_id, "--project-id", project_id(), "--field-id", field_id]
     if opt is None:
         argv.append("--clear")
