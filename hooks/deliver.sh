@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# hooks/deliver.sh — unconditional canon delivery (it-30 slice 4, epic #415).
+# hooks/deliver.sh — canon delivery from the compiled surfaces, inside the boundary
+# (it-31 slice 8, epic #432; the it-30 slice-4 canon splice is retired).
 #
-# SessionStart (startup|clear|compact|resume): emit the compiled bounded slice + the runtime position
-# element, as additionalContext. Delivery is independent of the session recognizing factory work —
-# that is the whole point (the recognition gate is what degrades).
+# SessionStart (startup|clear|compact|resume): emit build/slice-static.md (GENERATED from
+# process.toml, committed with the model) plus the runtime position element composed by
+# tools/compile_slice.py — as additionalContext. Delivery is independent of the session
+# recognizing factory work; that is the whole point (the recognition gate is what degrades).
 #
-# Two stances, both load-bearing:
-#   * LOUD — every failure says what failed, in words that carry the reason (the tail of the error,
-#     never its head: a truncated traceback names nothing). A silent delivery is a failed delivery.
+# Three stances, all load-bearing:
+#   * LOUD — every failure says what failed, in words that carry the reason (the tail of the
+#     error, never its head). A silent delivery is a failed delivery.
 #   * NON-BLOCKING — the hook always exits 0 and never withholds the session; the human is never
 #     locked out by the machinery's own defect.
+#   * SILENT OUTSIDE THE BOUNDARY — the engine's own in_scope rule (via compile_slice --in-scope)
+#     judges the session's cwd; outside the factory's declared world, no slice, no banner, no
+#     bytes. Only a CLEAN out-of-scope verdict (exit 3) suppresses delivery — a crashed boundary
+#     check banners loudly instead (a crash is never silence).
 #
-# The machinery is not attended: a cold pipeline stage inherits YR_MACHINERY from the runner and gets
-# no attended-lane canon — the same one declaration that governs the walls (slice 5).
+# The machinery is not attended: a cold pipeline stage inherits YR_MACHINERY from the runner and
+# gets no attended-lane canon — the same one declaration that governs the walls.
 set -u
 
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -41,8 +47,8 @@ emit_literal() {  # last-resort path: no temp file available
 }
 
 banner() {  # loud, non-blocking, and derivable: the reason plus where the canon lives
-  printf 'YR-DELIVERY-FAILURE: the attended lane%s slice was not delivered — %s. Load the canon by hand: %s/skills/factory/references/attended-lane.md (loud, non-blocking — it-30).' \
-    "'s" "$1" "$ROOT"
+  printf 'YR-DELIVERY-FAILURE: the attended lane%s slice was not delivered — %s. Load the canon by hand: %s/build/slice-static.md (+ %s/skills/factory/references/attended-lane.md) (loud, non-blocking).' \
+    "'s" "$1" "$ROOT" "$ROOT"
 }
 
 if [ -z "$TMP" ]; then
@@ -50,40 +56,42 @@ if [ -z "$TMP" ]; then
   exit 0
 fi
 
-if ! python3 "$ROOT/tools/compile_slice.py" --out "$TMP" 2> "$ERR"; then
-  # The TAIL of the error carries the reason; the head of a traceback carries nothing.
+# The session's cwd rides the SessionStart payload on stdin; absent, the hook's own cwd stands in.
+HOOK_JSON="$(cat 2>/dev/null || true)"
+CWD="$(printf '%s' "$HOOK_JSON" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("cwd") or "")
+except Exception:
+    print("")' 2>/dev/null || true)"
+[ -n "$CWD" ] || CWD="$PWD"
+
+# The boundary gate: 0 = inside; 3 = a CLEAN outside verdict (silence); anything else banners.
+python3 "$ROOT/tools/compile_slice.py" --in-scope "$CWD" 2> "$ERR"
+RC=$?
+if [ "$RC" = "3" ]; then exit 0; fi
+if [ "$RC" != "0" ]; then
   reason="$(tr '\n' ' ' < "$ERR" | tail -c 400)"
-  banner "${reason:-the compiler failed with no message}" > "$TMP"
+  banner "the boundary check failed: ${reason:-no message}" > "$TMP"
   emit "$TMP"
   exit 0
 fi
 
-# The runtime position element — composed at delivery, never cached into the artifact. Repo-aware:
-# the position of the round in THIS repo, not a hardcoded one (a factory-hardcoded read told a
-# website session the factory's PRs were its position).
-{
-  printf '\n## Position (composed at delivery — %s)\n\n' "$(date -u +%Y-%m-%dT%H:%MZ)"
-  # the stored probe-drift downgrades, named where the session reads (it-31 slice 6) — cheap
-  # (no probing), loud, non-blocking
-  DEG="$(timeout 10 python3 "$ROOT/tools/process.py" decay --stored-note 2>/dev/null || true)"
-  if [ -n "$DEG" ]; then printf '%s\n' "$DEG"; fi
-  REPO="$(timeout 10 gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
-  if [ -z "$REPO" ]; then
-    printf 'Position unavailable: this directory resolves to no GitHub repo (loud, non-blocking) — read the board by hand.\n'
-  else
-    printf 'Repo: %s\n' "$REPO"
-    if PRS="$(timeout 15 gh pr list --repo "$REPO" --state open \
-          --json number,title,mergeStateStatus \
-          --jq 'map("PR#\(.number) \(.mergeStateStatus): \(.title)") | join("\n")' 2>/dev/null)"; then
-      if [ -n "$PRS" ]; then printf 'Open PRs:\n%s\n' "$PRS"; else printf 'No open PRs.\n'; fi
-    else
-      printf 'PR read unavailable (gh failed or timed out) — loud, non-blocking.\n'
-    fi
-    if BOARD="$(timeout 20 bash "$ROOT/tools/board.sh" 2>/dev/null | awk -F'\t' -v r="${REPO#*/}" '$2==r {print "  #" $1" ["$5"] "$6}' | head -12)"; then
-      if [ -n "$BOARD" ]; then printf 'Board (this repo, open items):\n%s\n' "$BOARD"; fi
-    fi
-  fi
-} >> "$TMP"
+# The static half: the model's own compiled surface, served verbatim.
+if ! cat "$ROOT/build/slice-static.md" > "$TMP" 2> "$ERR"; then
+  reason="$(tr '\n' ' ' < "$ERR" | tail -c 400)"
+  banner "the compiled surface build/slice-static.md is unreadable: ${reason:-no message}" > "$TMP"
+  emit "$TMP"
+  exit 0
+fi
+
+# The position half — composed at delivery, never cached into the artifact; loud, non-blocking.
+if ! python3 "$ROOT/tools/compile_slice.py" --position >> "$TMP" 2> "$ERR"; then
+  {
+    printf '\n## Position (composed at delivery)\n\n'
+    printf 'Position unavailable (the composer failed) — loud, non-blocking; read the board by hand.\n'
+  } >> "$TMP"
+fi
 
 emit "$TMP"
 exit 0

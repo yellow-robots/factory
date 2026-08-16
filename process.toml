@@ -21,13 +21,9 @@
 #     the close report) — fail-closed refusal for unmodeled machinery writes would wedge the
 #     autonomous pipeline this model is forbidden to break (ruling 1's rationale); the attended
 #     class stays fail-closed per `caller_default`;
-#   * the delivered SessionStart slice still splices the canon's hand map (hooks/deliver.sh →
-#     compile_slice.py) — rewiring delivery to `build/slice-static.md` is the slice-4 migration's
-#     own change; until it lands the hand map is kept ALIGNED to this model and the model rules on
-#     any disagreement;
 [model]
 contract = "yr-process/1"
-version = "1.5.0"
+version = "1.5.1"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 13000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
@@ -37,6 +33,15 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.5.1"
+date = "2026-08-17"
+kind = "editorial"
+touches = []
+reason = "delivery rewired to the compiled surfaces (it-31 slice 8): hooks/deliver.sh serves build/slice-static.md verbatim plus the composed position, inside the engine's own boundary (silent outside, per-surface negatives pinned); the canon's hand walled-act table and the header's slice-4-migration bullet retire — no model semantics changed"
+review = "yellow-robots/factory#440"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.5.0"
 date = "2026-08-17"

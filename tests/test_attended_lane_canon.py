@@ -78,25 +78,37 @@ def test_the_rounds_own_records_carry_rows_and_fields(reg):
         assert set(row.get("fields") or []) == fields, name
 
 
-def test_every_walled_act_carries_condition_and_stance(lane_text):
-    """The map is TOTAL — the spec's own demand. Every row between the map's header and the next
-    section must carry a stance cell; a row with an empty stance is a gap the walls would guess at."""
-    block = lane_text.split("## The walled-act map")[1].split("\n## ")[0]
-    rows = [l for l in block.splitlines() if l.startswith("|") and "---" not in l][1:]
-    assert len(rows) >= 8, "the walled-act map lost rows"
+def test_every_walled_act_carries_condition_and_stance():
+    """The map is TOTAL — the spec's own demand, re-anchored to the GENERATED surface (it-31
+    slice 8: the canon's hand table retired). Every compiled row carries a condition cell and a
+    stance from the closed vocabulary; a row with an empty stance is a gap the walls would guess
+    at."""
+    text = (REPO / "build" / "walled-acts.md").read_text(encoding="utf-8")
+    rows = [l for l in text.splitlines()
+            if l.startswith("| transition |") or l.startswith("| invariant |")]
+    assert len(rows) >= 40, "the compiled walled-act map lost rows"
     for r in rows:
         cells = [c.strip() for c in r.strip("|").split("|")]
-        assert len(cells) == 3 and cells[1] and cells[2], f"walled-act row lacks condition or stance: {r}"
-        assert "fail-closed" in cells[2] or "advisory" in cells[2], f"unknown stance: {r}"
+        assert len(cells) >= 8 and cells[4] and cells[5], \
+            f"compiled row lacks condition or stance: {r[:120]}"
+        assert cells[5] in ("refuse", "escalate", "advise", "observe"), \
+            f"unknown stance {cells[5]!r}: {r[:120]}"
 
 
-def test_the_records_the_walls_condition_on_are_registered(lane_text, reg):
-    """A wall condition may not name a record the registry does not carry (the review's improvement
-    2: the arming and shared-branch conditions once named an unregistered 'human instruction'
-    record, which would have forced slice 5's walls to invent a predicate)."""
+def test_the_canon_points_at_the_generated_map(lane_text):
+    """The hand table retired IN FAVOR OF the splice — the section must route to it, not vanish."""
     block = lane_text.split("## The walled-act map")[1].split("\n## ")[0]
+    assert "build/walled-acts.md" in block
+    assert not any(l.startswith("| PR merge") or l.startswith("| Act |")
+                   for l in block.splitlines()), "the hand table returned beside the generated one"
+
+
+def test_the_records_the_walls_condition_on_are_registered(reg):
+    """A wall condition may not name a record the registry does not carry — judged on the
+    GENERATED map, where every condition the walls actually enforce is spelled."""
+    text = (REPO / "build" / "walled-acts.md").read_text(encoding="utf-8")
     registered = {r["name"] for r in records.records(reg)}
-    for name in set(re.findall(r"`(YR-[A-Z-]+)`", block)):
+    for name in set(re.findall(r"`(YR-[A-Z-]+)`", text)):
         assert name in registered, f"{name} conditions a wall but is unregistered"
 
 

@@ -54,6 +54,12 @@ def close(hook: dict, *, no_journal: bool = False) -> dict | None:
     model, err = _load_model()
     if model is None:
         return None  # the pre-tool half already tells the session, loudly, on every act
+    # The boundary governs every lane surface (it-31 slice 8): a Stop outside the factory's
+    # declared world hears nothing — the close report is the lane's instrument, not a global one.
+    # Absent cwd falls back to the process cwd, the same resolution decide() uses.
+    here = Path(hook.get("cwd") or Path.cwd())
+    if not process.in_scope(model, here):
+        return None
     session = hook.get("session_id") or ""
     text, should_block = process.close_report(model, session,
                                               journal_announcements=not no_journal)

@@ -114,8 +114,8 @@ def test_header_bullet_retired_and_version_bumped(model):
     newest = model["amendment"][0]
     assert newest["version"] == model["model"]["version"], \
         "the newest amendment row IS the current version (newest-first discipline)"
-    assert "plugin.release.validated" in newest["touches"]
-    assert "#439" in newest["review"]
+    slice7 = next(a for a in model["amendment"] if "#439" in a.get("review", ""))
+    assert "plugin.release.validated" in slice7["touches"]
 
 
 def test_conformance_vectors_cover_the_release_bindings(model):
@@ -445,9 +445,14 @@ def test_worktree_dir_reclaimed_when_add_fails(monkeypatch, tmp_path):
 
 # ── the canon row moves with the model ───────────────────────────────────────────────────────────
 
-def test_canon_release_row_is_walled_now():
-    text = (REPO / "skills/factory/references/attended-lane.md").read_text(encoding="utf-8")
-    row = next(l for l in text.splitlines() if l.startswith("| Skill release |"))
-    assert "not yet walled" not in row
-    assert "fail-closed" in row
-    assert "tools/release.py" in row and "YR-RELEASE" in row
+def test_canon_release_act_is_walled_now():
+    """The release act left advisory-v1: the canon carries no 'not yet walled' residue, and the
+    GENERATED map (the walled-act authority since it-31 slice 8) carries the release rows with the
+    record their condition names."""
+    canon = (REPO / "skills/factory/references/attended-lane.md").read_text(encoding="utf-8")
+    assert "not yet walled" not in canon
+    gen = (REPO / "build" / "walled-acts.md").read_text(encoding="utf-8")
+    release_rows = [l for l in gen.splitlines() if "release.gh-cli" in l or "release.funnel" in l]
+    assert release_rows, "the generated map lost the release rows"
+    lanes_txt = (REPO / "build" / "lanes.toml").read_text(encoding="utf-8")
+    assert "YR-RELEASE" in lanes_txt, "the release lane's mandate left the compiled lanes"
