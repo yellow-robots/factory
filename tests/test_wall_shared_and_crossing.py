@@ -186,6 +186,42 @@ def test_push_head_resolves_to_the_current_branch(model, monkeypatch):
     assert "git.ref.main" in denied["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_flag_first_force_push_of_own_task_branch_flows(model, monkeypatch):
+    """Re-review round 3, finding 1: the lane's canonical rebase-then-force spellings — flag
+    between push and remote — flow for the session's own task branch; the swallowed remote name
+    never resurrects as a phantom branch."""
+    import acts
+    monkeypatch.setattr(acts, "_current_branch", lambda: "main")
+    for cmd in ("git push --force origin task/12-x",
+                "git push -f origin task/12-x",
+                "git push --force-with-lease origin task/12-x"):
+        out, rows = process.decide(model, _bash(cmd), env=ATTENDED)
+        assert out is None and rows == [], cmd
+
+
+def test_stuck_lease_value_is_never_a_refspec(model, monkeypatch):
+    """Re-review round 3, finding 2: `--force-with-lease=<branch>:<sha>` is git's safest force
+    form — the stuck value was never a swallow, and its SHA is never walled as a branch."""
+    import acts
+    monkeypatch.setattr(acts, "_current_branch", lambda: "main")
+    out, rows = process.decide(
+        model, _bash("git push origin --force-with-lease=task/12-x:abc123 task/12-x"),
+        env=ATTENDED)
+    assert out is None and rows == []
+
+
+def test_set_upstream_swallow_reaches_the_wall(model, reg, monkeypatch):
+    """Re-review round 3, finding 3: the reclaim is argv-general — `-u`'s swallowed refspec
+    reaches the right wall in both directions."""
+    import acts
+    monkeypatch.setattr(acts, "_current_branch", lambda: "main")
+    _stub_branch_route(monkeypatch, texts=["chatter"])
+    shared, _ = process.decide(model, _bash("git push origin -u integration"), env=ATTENDED)
+    assert shared is not None and shared["hookSpecificOutput"]["permissionDecision"] == "deny"
+    own, rows = process.decide(model, _bash("git push origin -u task/12-x"), env=ATTENDED)
+    assert own is None and rows == []
+
+
 def test_force_swallow_spellings_reach_the_wall(model, reg, monkeypatch):
     """Re-review finding 2: the middle-order force spellings — flag between remote and refspec —
     are reclaimed as operands: the shared wall and the categorical main wall both hold."""

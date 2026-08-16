@@ -277,17 +277,22 @@ def refspec_targets(seg: dict) -> list[str]:
     if seg.get("program") != "git" or "push" not in (seg.get("subcommands") or []) + (seg.get("operands") or []):
         return []
     flags = dict(seg.get("flags") or {})
-    # the flag parser eats the next token as any flag's value; for push's VALUELESS flags that
-    # swallowed token is really an operand — reclaim it (the review's force-swallow finding:
-    # `git push origin --force integration` must reach the wall, and `--force main` the
-    # categorical one)
-    reclaimed = [v for k in ("--force", "-f", "--force-with-lease", "--tags", "--follow-tags",
-                             "--atomic", "--no-verify", "--dry-run", "--prune")
-                 if isinstance((v := flags.get(k)), str) and v]
+    # The flag parser eats the next token as ANY flag's value; for push, only a short list of
+    # flags actually takes a separate-token value — every other swallowed token is really an
+    # operand, reclaimed from the argv walk (the review's three rounds on #437: the curated list
+    # missed members, and reclaiming from the flags dict cannot tell `--flag=v` — never a
+    # swallow — from `--flag v`). Reclaimed tokens then pass the SAME name/remote filters as
+    # ordinary operands, so a swallowed remote name never resurrects as a phantom branch.
+    value_taking = ("-o", "--push-option", "--repo", "--receive-pack", "--exec",
+                    "--recurse-submodules", "--delete", "-d")
+    argv = seg.get("argv") or []
+    reclaimed = [argv[i + 1] for i, tok in enumerate(argv[:-1])
+                 if tok.startswith("-") and "=" not in tok and tok not in value_taking
+                 and not argv[i + 1].startswith("-")]
     out = [v for k in ("--delete", "-d") if isinstance((v := flags.get(k)), str)
            and not v.startswith("refs/tags/")]
-    candidates = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or [])
-                  if o not in ("push", "origin", "upstream")] + reclaimed
+    candidates = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or []) + reclaimed
+                  if o not in ("push", "origin", "upstream")]
     saw_refspec_operand = bool(candidates) or any(k in flags for k in ("--delete", "-d", "--tags"))
     for o in candidates:
         if _remote_shaped(o):
