@@ -436,18 +436,35 @@ def _index(model: dict) -> None:
 
 # ── derivations (code, not data) ─────────────────────────────────────────────────────────────────
 
-def stance(caller: str, t: dict, guards_ok: bool | None, binding: dict | None) -> str:
+def stance(caller: str, t: dict, guards_ok: bool | None, binding: dict | None,
+           headless: bool = False) -> str:
     if caller not in t["actor"]:
         s = "refuse"                       # categorical for this class; guards unread
     elif guards_ok is False:
         s = "refuse"                       # FALSE and UNKNOWN are the same answer
     elif caller == "attended-agent" and t.get("agent_may") == "propose":
         s = "escalate"
+        if headless:
+            s = "refuse"                   # propose has no one to propose to: ask fails open
+                                           # unattended (harness-contract §3b) — a fail-closed
+                                           # one-way door refuses instead (it-31 slice 2)
     else:
         s = "observe"
     if binding and binding.get("precision") == "over-matching" and s in ("refuse", "escalate"):
         s = "advise"                       # a binding that cannot confirm the effect may never deny
     return s
+
+
+def is_headless(model: dict, hook: dict) -> bool:
+    """The transport's declared no-human signal, read from the hook payload — never inferred
+    inside the engine (the one-way port rule: the vendor block declares, the neutral derivation
+    consumes a boolean). Field absent = interactive, today's behavior."""
+    decl = ((model.get("port") or {}).get("transport") or {}) \
+        .get("anthropic-claude-code", {}).get("headless") or {}
+    field = decl.get("field")
+    if not field:
+        return False
+    return hook.get(field) in (decl.get("values") or [])
 
 
 def decay(binding: dict, today: _dt.date | None = None) -> str:
@@ -565,6 +582,21 @@ def render(g: dict, model: dict) -> str:
     return why
 
 
+def _headless_line(model: dict) -> str:
+    """The headless rule + the blind-write residual, printed wherever the map could otherwise
+    overclaim (it-31 slice 2). Empty when the transport declares no signal."""
+    decl = ((model.get("port") or {}).get("transport") or {}) \
+        .get("anthropic-claude-code", {}).get("headless") or {}
+    if not decl.get("field"):
+        return ""
+    vals = "/".join(decl.get("values") or [])
+    return (f"headless: where the hook payload's `{decl['field']}` is {vals}, a propose-gated "
+            f"one-way transition REFUSES instead of asking — ask fails open unattended (verified, "
+            f"harness-contract); other unattended contexts are unclaimed by the contract and keep "
+            f"today's ask; the blind-write residual stands — an over-matching binding advises, "
+            f"never denies, detection-tier.")
+
+
 def _gen_header(model: dict, model_path: Path | None = None) -> str:
     raw = (model_path or MODEL_PATH).read_bytes()
     sha = hashlib.sha256(raw).hexdigest()[:16]
@@ -630,7 +662,8 @@ def compile_acts(model: dict) -> str:
     lines = [f"<!-- {_gen_header(model)} -->", "", "# The walled-act map — compiled",
              "",
              f"caller_trust = `{model['boundary']['caller_trust']}` — this boundary is declared, "
-             f"not proven.", ""]
+             f"not proven.",
+             _headless_line(model), ""]
     lines.append("| tier | act (binding) | caller | effect | condition | stance | on-fail | door | enforcement | chokepoint | open paths | because |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in rows:
@@ -671,6 +704,7 @@ def compile_slice(model: dict) -> str:
                  "review and the bench.")
     parts.append("- an act matching no binding is OBSERVED, never silently permitted as lawful — "
                  "silence is absence of coverage, not permission.")
+    parts.append("- " + _headless_line(model))
     for inv in model.get("invariant") or []:
         parts.append(f"- conduct: {inv['title']} ({', '.join(inv.get('does_not_cover') or [])} "
                      f"are not covered).")
@@ -989,6 +1023,7 @@ def _decide(model: dict, hook: dict, env: dict | None, cwd: Path | None):  # noq
     if not in_scope(model, Path(here)) and not (target and in_scope(model, Path(target).parent)):
         return None, []                    # out of scope: observe, silence, no I/O at all
     caller = resolve_caller(model, env)
+    headless = is_headless(model, hook)
     maps = _value_maps()
     journal: list[dict] = []
     decisions: list[tuple[str, str, str]] = []   # (stance, reason, ref)
@@ -1010,7 +1045,8 @@ def _decide(model: dict, hook: dict, env: dict | None, cwd: Path | None):  # noq
             for w in bd.get("writes") or []:
                 if not acts_mod.selects(w.get("selects_when"), {**seg, "fields": act["fields"]}, maps):
                     continue
-                st, reason, ref, meta = _dispose_hit(model, bd, w, seg, act, caller)
+                st, reason, ref, meta = _dispose_hit(model, bd, w, seg, act, caller,
+                                                     headless=headless)
                 decisions.append((st, reason, ref))
                 journal.append(_jrow(ref, bd["id"], caller, st, meta))
     for inv in model.get("invariant") or []:
@@ -1049,7 +1085,7 @@ def _jrow(ref: str, binding: str | None, caller: str, st: str, meta: dict | None
 
 
 def _dispose_hit(model: dict, bd: dict, w: dict, seg: dict, act: dict,
-                 caller: str) -> tuple[str, str, str, dict]:
+                 caller: str, headless: bool = False) -> tuple[str, str, str, dict]:
     store = model["_stores"][w["store"]]
     over = bd.get("precision") == "over-matching"
     meta: dict = {"scope": {}}
@@ -1162,10 +1198,16 @@ def _dispose_hit(model: dict, bd: dict, w: dict, seg: dict, act: dict,
         return st, (f"wall: {'NOTE' if over else 'REFUSED'} [{t['id']}] — {col}: "
                     f"{render(g, model)}" + (f" ({res.reason})" if res.reason else "") +
                     f". {t['because']}"), t["id"], meta
-    final = stance(caller, t, True, bd)
+    final = stance(caller, t, True, bd, headless=headless)
     if final == "escalate":
         return "escalate", (f"wall: PROPOSED [{t['id']}] — guards hold; this transition is the "
                             f"human's to answer (door {t['door']}). {t['because']}"), t["id"], meta
+    if final == "refuse":
+        return "refuse", (f"wall: REFUSED [{t['id']}] — guards hold and this transition is the "
+                          f"human's to answer, but the escalation has no human to reach (the "
+                          f"transport's declared headless signal is present, and ask fails open "
+                          f"unattended — harness-contract §3b); a fail-closed one-way door refuses "
+                          f"instead of asking nobody. {t['because']}"), t["id"], meta
     return "observe", "", t["id"], meta
 
 

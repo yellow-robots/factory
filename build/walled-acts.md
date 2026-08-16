@@ -1,8 +1,9 @@
-<!-- GENERATED from process.toml v1.0.0 sha256:7bee83ab0dab72ae — never hand-edit -->
+<!-- GENERATED from process.toml v1.1.0 sha256:fce33568e84fdb8d — never hand-edit -->
 
 # The walled-act map — compiled
 
 caller_trust = `declared` — this boundary is declared, not proven.
+headless: where the hook payload's `permission_mode` is bypassPermissions, a propose-gated one-way transition REFUSES instead of asking — ask fails open unattended (verified, harness-contract); other unattended contexts are unclaimed by the contract and keep today's ask; the blind-write residual stands — an over-matching binding advises, never denies, detection-tier.
 
 | tier | act (binding) | caller | effect | condition | stance | on-fail | door | enforcement | chokepoint | open paths | because |
 |---|---|---|---|---|---|---|---|---|---|---|---|
