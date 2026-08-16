@@ -88,7 +88,7 @@ def test_headless_promote_refuses_instead_of_asking(model, reg, monkeypatch):
                                             permission_mode="bypassPermissions"), env=ATTENDED)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     reason = out["hookSpecificOutput"]["permissionDecisionReason"]
-    assert "no human" in reason or "no one to propose to" in reason
+    assert "cannot reach a human" in reason
     assert rows and rows[0]["stance"] == "refuse"
 
 
@@ -154,6 +154,44 @@ def test_compiled_surfaces_print_the_headless_rule(model):
     for text in (acts_out, slice_out):
         assert "headless" in text.lower()
         assert "over-matching" in text.lower() or "blind-write" in text.lower()
+
+
+def test_overmatching_binding_still_advises_headless(model, tmp_path, monkeypatch):
+    """The blind-write residual at the derivation level (the review's pin): headless never
+    promotes an over-matching binding to a denier — the clamp runs after the narrowing."""
+    doc = _vault_doc(tmp_path, monkeypatch, "---\nstatus: draft\n---\n")
+    hook = {"tool_name": "Write", "session_id": "sHB", "permission_mode": "bypassPermissions",
+            "tool_input": {"file_path": str(doc), "content": "---\nstatus: active\n---\n"}}
+    out, _ = process.decide(model, hook, env=ATTENDED)
+    assert "additionalContext" in out["hookSpecificOutput"]
+    assert "permissionDecision" not in out["hookSpecificOutput"]
+
+
+def test_machinery_caller_headless_unchanged(model, monkeypatch):
+    """The pipeline is unaffected: machinery's lawful claim flows identically under the headless
+    signal — the narrowing lives in the propose branch machinery never enters."""
+    _stub_board(monkeypatch, "Ready")
+    _stub_trail(monkeypatch, ["chatter"])
+    cmd = (f"gh project item-edit --id ITEM --project-id {board_plumbing.project_id()} "
+           f"--field-id {board_plumbing.status_field_id()} "
+           f"--single-select-option-id {board_plumbing.status_opt()['In Progress']}")
+    out, rows = process.decide(model, _bash(cmd, permission_mode="bypassPermissions"),
+                               env={"YR_CALLER": "machinery"})
+    assert out is None
+    assert rows and rows[0]["stance"] == "observe"
+
+
+def test_malformed_headless_declaration_refuses_to_load(tmp_path):
+    """Rule H (the review's fold): a malformed declaration must fail the load, never degrade
+    silently to interactive — that direction re-opens the fail-open ask."""
+    text = (REPO / "process.toml").read_text(encoding="utf-8")
+    good = 'headless = { field = "permission_mode", values = ["bypassPermissions"] }'
+    assert good in text, "fixture anchor drifted — realign with process.toml"
+    bad = tmp_path / "process.toml"
+    bad.write_text(text.replace(good, 'headless = { field = "", values = [] }', 1),
+                   encoding="utf-8")
+    with pytest.raises(process.ModelError):
+        process.load(bad)
 
 
 def test_transport_declares_the_headless_signal(model):

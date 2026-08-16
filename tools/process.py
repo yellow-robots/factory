@@ -374,6 +374,19 @@ def _validate(model: dict, reg: dict, p: str | Path) -> None:  # noqa: C901 — 
                                  f"overlapping caller class — runtime never picks between rules "
                                  f"(determinism)")
 
+    # rule H (it-31 slice 2, the review's fold): a declared headless signal must be well-shaped —
+    # a malformed declaration would otherwise degrade SILENTLY to interactive, i.e. toward the
+    # fail-open ask the declaration exists to close.
+    h = (((model.get("port") or {}).get("transport") or {})
+         .get("anthropic-claude-code") or {}).get("headless")
+    if h is not None:
+        if not isinstance(h.get("field"), str) or not h["field"]:
+            raise ModelError("[port.transport].headless: `field` must be a non-empty string")
+        vals = h.get("values")
+        if not isinstance(vals, list) or not vals or not all(isinstance(v, str) and v for v in vals):
+            raise ModelError("[port.transport].headless: `values` must be a non-empty array of "
+                             "non-empty strings")
+
 
 def _check_predicate(g: dict, tid: str, reg: dict, stores: dict, evaluators: dict,
                      machines: dict, states: list, t: dict, tier: str) -> None:
@@ -704,7 +717,9 @@ def compile_slice(model: dict) -> str:
                  "review and the bench.")
     parts.append("- an act matching no binding is OBSERVED, never silently permitted as lawful — "
                  "silence is absence of coverage, not permission.")
-    parts.append("- " + _headless_line(model))
+    hl = _headless_line(model)
+    if hl:
+        parts.append("- " + hl)
     for inv in model.get("invariant") or []:
         parts.append(f"- conduct: {inv['title']} ({', '.join(inv.get('does_not_cover') or [])} "
                      f"are not covered).")
@@ -1204,10 +1219,12 @@ def _dispose_hit(model: dict, bd: dict, w: dict, seg: dict, act: dict,
                             f"human's to answer (door {t['door']}). {t['because']}"), t["id"], meta
     if final == "refuse":
         return "refuse", (f"wall: REFUSED [{t['id']}] — guards hold and this transition is the "
-                          f"human's to answer, but the escalation has no human to reach (the "
-                          f"transport's declared headless signal is present, and ask fails open "
-                          f"unattended — harness-contract §3b); a fail-closed one-way door refuses "
-                          f"instead of asking nobody. {t['because']}"), t["id"], meta
+                          f"human's to answer, but the escalation cannot reach a human under this "
+                          f"permission mode (the transport's declared headless signal is present, "
+                          f"and ask fails open there — harness-contract §3b); a fail-closed "
+                          f"one-way door refuses instead of asking nobody. Re-run without the "
+                          f"bypass mode, or the human performs the act. {t['because']}"), \
+               t["id"], meta
     return "observe", "", t["id"], meta
 
 
