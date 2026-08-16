@@ -90,6 +90,35 @@ def test_set_names_the_files_it_cannot_validate(staged, capsys):
     assert "wall.py" in out.out + out.err and "not validated" in (out.out + out.err)
 
 
+def test_duplicate_basename_in_the_set_refuses(staged, tmp_path):
+    """The review's major: argv order must never decide which edit is judged — a duplicate
+    basename fails the set loudly instead of silently shadowing the loser."""
+    staged_model, staged_registry = staged
+    twin_dir = tmp_path / "twin"
+    twin_dir.mkdir()
+    twin = twin_dir / "process.toml"
+    twin.write_text((REPO / "process.toml").read_text(encoding="utf-8"), encoding="utf-8")
+    with pytest.raises(process.ModelError, match="duplicate basename"):
+        process.load_set([staged_model, twin, staged_registry])
+
+
+def test_registry_only_set_judged_against_the_tree_model(tmp_path):
+    """A registry-only set composes with the TREE's model, both directions: adding a row is
+    lawful; renaming a row the model's guards cite refuses naming the break."""
+    reg_text = (REPO / "records.toml").read_text(encoding="utf-8")
+    grown = tmp_path / "records.toml"
+    grown.write_text(reg_text + NEW_ROW, encoding="utf-8")
+    model = process.load_set([grown])
+    assert "YR-STAGED-PROBE" in {r["name"] for r in model["_registry"]["record"]}
+    broken = tmp_path / "sub" / "records.toml"
+    broken.parent.mkdir()
+    assert 'name = "YR-TASK-GATES"' in reg_text
+    broken.write_text(reg_text.replace('name = "YR-TASK-GATES"',
+                                       'name = "YR-TASK-GATES-RENAMED"', 1), encoding="utf-8")
+    with pytest.raises(process.ModelError):
+        process.load_set([broken])
+
+
 def test_cli_set_passes_and_per_file_fails(staged, tmp_path):
     staged_model, staged_registry = staged
     rc_set = process.main(["validate", "--set", str(staged_model), str(staged_registry)])

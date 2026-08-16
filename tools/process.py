@@ -107,10 +107,17 @@ def _keys(table: dict, kind: str, where: str) -> None:
 def _set_roles(files: list[Path]) -> tuple[Path, Path, list[Path]]:
     """Which staged file plays which role: the model by the model file's own basename, the
     registry by the STAGED model's own `records_registry` reference (the crossing's gotcha —
-    never the tree's), everything else an extra the load-time tier has no rules for."""
+    never the tree's), everything else an extra the load-time tier has no rules for. A set file
+    whose basename matches the reference wins over the reference's own path — the set's file IS
+    the proposed end state of that reference. Duplicate basenames refuse (the review's finding):
+    argv order must never decide which edit is judged."""
     import tomllib
     by_name: dict[str, Path] = {}
     for p in files:
+        if p.name in by_name and by_name[p.name] != p:
+            raise ModelError(f"duplicate basename in the set: {p.name!r} appears as both "
+                             f"{by_name[p.name]} and {p} — argv order must never decide which "
+                             f"edit is judged; stage one file per role")
         by_name.setdefault(p.name, p)
     model_path = by_name.get(MODEL_PATH.name, MODEL_PATH)
     try:
