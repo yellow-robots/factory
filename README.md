@@ -33,7 +33,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `docs/rfcs/` | implemented technical RFCs — 0001 workflow, 0002 runner, 0003 task state, 0004 dispatch, 0005 upper-pipeline. Unimplemented designs live in the Obsidian brain. |
 | `tests/` | pytest suite (stubbed: no live LLM, no network) |
 | `qa/` | consumer quality content — the advisory lens (`qa/lens.py`) and the blocking cardinality guards (`qa/cardinality.py` + its rule set `qa/cardinality.toml`); distinct from the platform machinery in `tools/` |
-| `tools/epic_gate.py`, `tools/review_bundle.py`, `tools/check_task.py`, `tools/check_links.py`, `tools/check_model_refs.py`, `tools/check_supersession.py` | the standing-approval sweep; the hashed review bundle; the DoR, crossing-link, stale-reference, and supersession gates |
+| `tools/epic_gate.py`, `tools/design_resolver.py`, `tools/review_bundle.py`, `tools/check_task.py`, `tools/check_links.py`, `tools/check_model_refs.py`, `tools/check_supersession.py` | the standing-approval sweep; the governing-design resolver; the hashed review bundle; the DoR, crossing-link, stale-reference, and supersession gates |
 | `tools/nit_harvest.py` | the census's nit-harvest arm: recurrence-ranked duplication clusters from the PR comment trail |
 | `tools/promote.sh`, `tools/watch_build.sh`, `tools/board.sh` | operator commands: promote to Ready, watch a build to terminal state, dump the board |
 | `skills/`, `skills/factory/templates/` | the factory skill (router + references); the upper-pipeline stage templates |

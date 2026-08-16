@@ -93,6 +93,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/merge_shadow.py` | merge-decision evaluator + shadow-completion |
 | `tools/dispatch.py` | n8n's build-trigger endpoint (RFC 0004) |
 | `tools/epic_gate.py` | the standing-approval sweep: promotes/self-closes epics, flags stranded claims |
+| `tools/design_resolver.py` | the governing-design resolver (it-31 slice 4): parses an epic body's Source line, reads the design's status through the vault — the epic-flip guard's evaluator, one seam |
 | `tools/review_bundle.py` | the canonical, hashed per-run review bundle |
 | `tools/check_task.py` | the DoR self-containedness gate for a Ready task |
 | `tools/check_links.py` | the crossing-link (`source_*`) resolver/gate |
