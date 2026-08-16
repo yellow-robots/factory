@@ -125,6 +125,72 @@ def test_stored_note_prints_only_when_degraded(model, tmp_path, monkeypatch, cap
     assert rc2 == 0 and "COVERAGE DEGRADED" in out2 and "gh.pr.surface" in out2
 
 
+def test_downgrades_path_rides_the_journal_fallback(model, monkeypatch):
+    """Review major 1: with YR_WALL_STATE unset — the production default — the store must sit
+    beside the journal (which already carries the unset-var fallback), never at a literal
+    `$YR_WALL_STATE/` in the cwd."""
+    monkeypatch.delenv("YR_WALL_STATE", raising=False)
+    p = process._downgrades_path(model)
+    assert p == process.journal_path(model).parent / "downgrades.json"
+    assert "$" not in str(p)
+
+
+def test_decay_downgrade_pinned_directly(model):
+    bd = next(b for b in model["port"]["binding"] if b.get("probe") == "gh.pr.surface")
+    assert process.decay(bd, downgrades={"gh.pr.surface": {}}) == "drifted"
+    assert process.decay(bd, downgrades={}) in ("fresh", "stale")
+
+
+def test_enforcement_downgrade_pinned_exactly(model):
+    """Review medium 3, sharpened: downgrading gh.pr.surface moves the merge row's gh-cli path
+    from live to open (open_paths grows), and downgrading every probe flips partial->detected."""
+    t = next(t for t in model["transition"] if t["id"] == "pr.approved->merged.evaluator")
+    base_val, base_open = process.enforcement(t, model)
+    one_val, one_open = process.enforcement(
+        t, model, downgrades={"gh.pr.surface": {"drifted_on": "2026-08-16"}})
+    assert len(one_open) > len(base_open)
+    all_probes = {pr["id"]: {} for pr in model["port"]["probe"]}
+    all_val, _ = process.enforcement(t, model, downgrades=all_probes)
+    assert (base_val, all_val) == ("partial", "detected")
+
+
+def test_close_report_names_the_sentinel_route_when_it_mattered(model, tmp_path, monkeypatch):
+    """Review major 2: the readers' half becomes reachable — a session whose journaled act's
+    transition GUARDS on the sentinel gets the NOT-OBSERVED line naming YR-OUTPUT-SWITCH."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: [])
+    process.journal_append(model, [{"ts": 100, "transition_id": "pr.approved->merged.evaluator",
+                                    "binding_id": "merge.gh-cli", "scope": {}, "stance": "refuse",
+                                    "caller": "attended-agent"}], "sG")
+    text, _ = process.close_report(model, "sG", journal_announcements=False)
+    assert "ssh on yr-host" in text          # the sentinel write path's own words
+    assert "YR-OUTPUT-SWITCH" in text
+
+
+def test_stale_probe_ids_prune_on_write(model, tmp_path, monkeypatch):
+    """Review low 5: a downgrade entry for a probe no longer in the model prunes on the next
+    decay write — the remedy the note names can actually clear it."""
+    import hashlib
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    (tmp_path / "state").mkdir(parents=True)
+    (tmp_path / "state" / "downgrades.json").write_text(
+        json.dumps({"ghost.probe": {"drifted_on": "2026-08-01"}}), encoding="utf-8")
+
+    class _Out:
+        stdout = b"surface"
+
+    monkeypatch.setattr(process.subprocess, "run", lambda *a, **k: _Out())
+    real = {pr["id"]: pr["fingerprint"] for pr in model["port"]["probe"]}
+    try:
+        for pr in model["port"]["probe"]:
+            pr["fingerprint"] = "sha256:" + hashlib.sha256(b"surface").hexdigest()
+        process.run_decay(model)
+        assert "ghost.probe" not in process.stored_downgrades(model)
+    finally:
+        for pr in model["port"]["probe"]:
+            pr["fingerprint"] = real[pr["id"]]
+
+
 def test_compiled_acts_ignore_session_state(model, tmp_path, monkeypatch):
     baseline = process.compile_acts(model)
     monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))

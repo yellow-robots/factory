@@ -540,8 +540,10 @@ def is_headless(model: dict, hook: dict) -> bool:
 
 
 def _downgrades_path(model: dict) -> Path:
-    raw = model["observability"]["journal"]
-    return Path(os.path.expandvars(raw)).parent / "downgrades.json"
+    # beside the journal, THROUGH journal_path — which carries the unset-YR_WALL_STATE fallback
+    # the production default needs (the review's major on #438: a bare expandvars litters a
+    # literal `$YR_WALL_STATE/` directory into the cwd)
+    return journal_path(model).parent / "downgrades.json"
 
 
 def stored_downgrades(model: dict) -> dict:
@@ -1658,6 +1660,12 @@ def close_report(model: dict, session_id: str,
                       for r in rows if str(r.get("transition_id", "")).startswith("store:")}
     touched_stores |= {sid for r in rows if r.get("transition_id") in tids
                        for sid in _stores_written(tids[r["transition_id"]], model)}
+    # guard-READ stores too (the #438 review's major 2): a session whose act's transition guards
+    # on an unobservable store — the merge row's sentinel — hears that store's detection route
+    # exactly where it mattered; a purely-unwritable store would otherwise never reach any reader
+    touched_stores |= {g["args"]["store"] for r in rows if r.get("transition_id") in tids
+                       for g in tids[r["transition_id"]].get("guard") or []
+                       if g["predicate"] == "store_is"}
     for sid in sorted(touched_stores):
         store = model["_stores"].get(sid)
         if not store:
@@ -1718,6 +1726,12 @@ def run_decay(model: dict) -> list[str]:
                                     "subject": pr.get("subject", "")}
         else:
             downgrades.pop(pr["id"], None)      # the surface matches again: self-heal
+    declared = {pr["id"] for pr in (model.get("port") or {}).get("probe") or []}
+    downgrades = {k: v for k, v in downgrades.items() if k in declared}
+    # ^ a probe removed from the model prunes with it (the review's finding: a ghost entry the
+    #   named remedy could never clear). BROKEN probes neither drift nor heal by design: a
+    #   previously-drifted broken probe stays conservatively downgraded, and a never-drifted one
+    #   is caught by the binding-age backstop (recheck_days) — the advisory tier's tradeoff.
     try:
         p = _downgrades_path(model)
         p.parent.mkdir(parents=True, exist_ok=True)
