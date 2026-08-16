@@ -82,7 +82,16 @@ _board(){ GH_BIN="$GH_BIN" python3 "$BOARD_PY" "$@"; }
 eval "$(_board sh-exports)"
 
 die()  { echo "dev-runner: ERROR: $*" >&2; exit 1; }
-gate() { echo "dev-runner: NOT READY: $*" >&2; exit 3; }   # DoR refusal — distinct exit code
+gate() {   # DoR refusal — distinct exit code
+  echo "dev-runner: NOT READY: $*" >&2
+  # it-31 slice 9: the refusal reaches the ledger as its own fail-soft row (informs, never gates) —
+  # the crossover's cost evidence stops under-counting refused invocations. The `|| true` and the
+  # discarded output are the contract: this line may never block, fail, or reorder the refusal,
+  # and the exit code below stays 3, read from no pipe.
+  python3 "$SELF_DIR/ledger.py" refusal --ledger-dir "$DEV_RUNNER_HOME/ledger" \
+    --repo "${REPO:-unknown}" --issue "${ISSUE:-0}" --site gate --reason "$*" >/dev/null 2>&1 || true
+  exit 3
+}
 reeval_refuse() { echo "dev-runner: RE-EVALUATE REFUSED: $*" >&2; exit 3; }  # --re-evaluate refusal, same family as gate
 log()  { echo "dev-runner: $*" >&2; }
 usage(){ echo "usage: dev-runner.sh <issue#> [--repo <owner/name>] [--dry-run] [--re-evaluate <pr#>]" >&2; exit 2; }

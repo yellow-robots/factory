@@ -183,6 +183,21 @@ def prune_transcripts(runs_dir, *, max_age_days, max_gb):
 # ---------------------------------------------------------------------------
 
 ROW_SCHEMA = "yr-ledger-row/1"
+REFUSAL_SCHEMA = "yr-ledger-refusal/1"
+
+
+def build_refusal_row(*, repo, issue, site, reason, ts):
+    """One fail-soft row per DoR refusal (it-31 slice 9): a refused invocation is work the factory
+    performed, so the crossover's cost evidence counts it — while the cost aggregates themselves
+    skip these rows (no stages, no tokens, no outcome)."""
+    return {"schema": REFUSAL_SCHEMA, "repo": repo, "task": f"{repo}#{issue}",
+            "site": site, "reason": reason, "ts_end": ts}
+
+
+def _build_rows(rows):
+    """The build-row population every COST aggregate reads: refusal rows (and any future foreign
+    schema) are excluded here, in one place, so mixed rows.jsonl stays correct forever."""
+    return [r for r in rows if r.get("schema") != REFUSAL_SCHEMA]
 
 # Fixed per-run log artifacts that can still hold an UNEXTRACTED result envelope on an rc != 0 stage (the
 # CLI never reached a clean exit, so tools/dev-runner.sh's capture_stage_usage was never called and the
@@ -422,7 +437,7 @@ def per_model_view(rows):
     repairs.check + repairs.review across its rows, divided by runs); `verdict_outcomes` (a count per
     distinct outcome.type, straight from each row's own `outcome` field)."""
     by_model = {}
-    for r in rows:
+    for r in _build_rows(rows):
         model = (r.get("models") or {}).get("build")
         bucket = by_model.setdefault(model, {"runs": 0, "merged": 0, "cost": 0.0, "repairs": 0,
                                               "verdict_outcomes": {}})
@@ -448,7 +463,9 @@ def per_model_view(rows):
 
 def close_time_cost(rows):
     """Standing read (1) — the close-time cost line: total `shadow_cost_usd` and the per-merged-task
-    figure, over whatever rows the caller already narrowed to a repo/window (`filter_rows()`)."""
+    figure, over whatever rows the caller already narrowed to a repo/window (`filter_rows()`).
+    Cost is a BUILD-row figure: refusal rows are excluded here (it-31 slice 9)."""
+    rows = _build_rows(rows)
     total = sum(_row_shadow_cost(r) for r in rows)
     merged = sum(1 for r in rows if (r.get("outcome") or {}).get("type") == "merged")
     return {"total_shadow_cost_usd": total, "merged_count": merged,
@@ -457,12 +474,38 @@ def close_time_cost(rows):
 
 def crossover_cost_axis(rows, *, factory_repo="yellow-robots/factory"):
     """Standing read (2) — the crossover cost axis: the same close-time-cost figure, split into the
-    factory's own repo vs every other (product) repo over the same window. `rows` should be
-    window-filtered only (via `filter_rows()`, repo=None) — this function does the repo split itself,
-    comparing two repo populations at once rather than being pre-narrowed to one."""
+    factory's own repo vs every other (product) repo over the same window, plus the REFUSED
+    invocation count per split (it-31 slice 9: the cost evidence stops under-counting refused
+    work). `rows` should be window-filtered only (via `filter_rows()`, repo=None) — this function
+    does the repo split itself, comparing two repo populations at once rather than being
+    pre-narrowed to one."""
     factory_rows = [r for r in rows if r.get("repo") == factory_repo]
     product_rows = [r for r in rows if r.get("repo") != factory_repo]
-    return {"factory": close_time_cost(factory_rows), "product": close_time_cost(product_rows)}
+    out = {"factory": close_time_cost(factory_rows), "product": close_time_cost(product_rows)}
+    for key, pop in (("factory", factory_rows), ("product", product_rows)):
+        out[key]["refused_invocations"] = sum(
+            1 for r in pop if r.get("schema") == REFUSAL_SCHEMA)
+    return out
+
+
+def crossover_comment_body(ledger_dir, *, verdict, who, since="", until=""):
+    """The YR-CROSSOVER record's body (it-31 slice 9): the cost field carries the crossover-cost
+    axis actually read — both splits, refused invocations counted — so the verdict's evidence is in
+    the record itself; the pricing judgment stays the human's."""
+    rows = filter_rows(load_rows(ledger_dir), since=since or None, until=until or None)
+    axis = crossover_cost_axis(rows)
+    f, p = axis["factory"], axis["product"]
+    window = f"; window {since or 'start'}..{until or 'now'}" if (since or until) else ""
+    cost = (f"factory ${f['total_shadow_cost_usd']:.2f} over {f['merged_count']} merged builds "
+            f"(+{f['refused_invocations']} refused) vs product ${p['total_shadow_cost_usd']:.2f} "
+            f"over {p['merged_count']} merged builds (+{p['refused_invocations']} refused)"
+            f"{window}")
+    return (f"YR-CROSSOVER\n"
+            f"cost: {cost}\n"
+            f"verdict: {verdict}\n"
+            f"who: {who}\n\n"
+            "The crossover test's typed verdict (it-31 slice 9): the cost evidence above is the "
+            "ledger's crossover-cost axis, read at close — the pricing judgment stays the human's.")
 
 
 def daily_weighted_tokens(rows):
@@ -471,7 +514,7 @@ def daily_weighted_tokens(rows):
     a per-repo one). Bucketed by the date portion (first 10 chars) of each row's `ts_end`; a row with no
     `ts_end` contributes to no bucket."""
     by_day = {}
-    for r in rows:
+    for r in _build_rows(rows):
         day = (r.get("ts_end") or "")[:10]
         if not day:
             continue
@@ -509,6 +552,39 @@ def _cli_per_model(args):
     rows = filter_rows(load_rows(args.ledger_dir), repo=args.repo or None,
                         since=args.since or None, until=args.until or None)
     print(json.dumps(per_model_view(rows), sort_keys=True))
+    return 0
+
+
+def _cli_refusal(args):
+    """Fail-soft by contract: the refusing caller (dev-runner's gate(), exit 3) must never be
+    blocked, failed, or altered by its own observability — any error is a stderr note, exit 0."""
+    try:
+        row = build_refusal_row(repo=args.repo, issue=args.issue, site=args.site,
+                                reason=args.reason,
+                                ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        append_row(args.ledger_dir, row)
+    except Exception as e:  # noqa: BLE001 — informs, never gates
+        print(f"ledger: refusal row not appended ({e}) — fail-soft, the refusal stands",
+              file=sys.stderr)
+    return 0
+
+
+def _cli_crossover(args):
+    import subprocess
+    body = crossover_comment_body(args.ledger_dir, verdict=args.verdict, who=args.who,
+                                  since=args.since, until=args.until)
+    if args.test_mode:
+        print("TEST-MODE: no trail write — the record only")
+        print(body)
+        return 0
+    gh = os.environ.get("GH_BIN", "gh")
+    out = subprocess.run([gh, "issue", "comment", str(args.issue), "--repo", args.repo,
+                          "--body", body], capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        print(f"ledger: crossover comment failed: {(out.stderr or out.stdout or '').strip()[:300]}",
+              file=sys.stderr)
+        return 1
+    print(f"crossover: YR-CROSSOVER posted on {args.repo}#{args.issue} (verdict={args.verdict})")
     return 0
 
 
@@ -569,6 +645,26 @@ def main(argv=None):
     p_app.add_argument("--ts-end", required=True)
     p_app.add_argument("--wall-seconds", type=int, required=True)
     p_app.set_defaults(func=_cli_append)
+
+    p_ref = sub.add_parser("refusal", help="append one fail-soft yr-ledger-refusal/1 row (it-31 slice 9: gate() refusals reach the ledger; never blocks, never changes the caller's exit)")
+    p_ref.add_argument("--ledger-dir", required=True)
+    p_ref.add_argument("--repo", required=True)
+    p_ref.add_argument("--issue", required=True)
+    p_ref.add_argument("--site", required=True, help="the refusing site, e.g. 'gate'")
+    p_ref.add_argument("--reason", required=True)
+    p_ref.set_defaults(func=_cli_refusal)
+
+    p_xo = sub.add_parser("crossover", help="post the YR-CROSSOVER record on an epic's trail (it-31 slice 9: the cost evidence is this ledger's crossover-cost axis)")
+    p_xo.add_argument("--ledger-dir", required=True)
+    p_xo.add_argument("--repo", required=True)
+    p_xo.add_argument("--issue", required=True, help="the closing epic's issue number")
+    p_xo.add_argument("--verdict", required=True)
+    p_xo.add_argument("--who", required=True)
+    p_xo.add_argument("--since", default="")
+    p_xo.add_argument("--until", default="")
+    p_xo.add_argument("--test-mode", action="store_true",
+                      help="print the record; write nothing to any trail")
+    p_xo.set_defaults(func=_cli_crossover)
 
     p_pm = sub.add_parser("per-model", help="the per-model aggregate view over rows.jsonl (issue #207)")
     p_pm.add_argument("--ledger-dir", required=True, help="the ledger dir (e.g. $DEV_RUNNER_HOME/ledger); rows.jsonl lives here")

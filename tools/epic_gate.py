@@ -63,7 +63,9 @@ import tomllib
 # (`tools/dispatch.py` spawns `tools/epic_gate.py` directly), which puts `tools/` at `sys.path[0]` — a
 # `tools.`-prefixed import would only resolve under pytest's repo-root cwd and would crash the sweeper.
 import board_plumbing
+import check_trail
 import dispatch
+import records
 import textutil
 
 # The machinery declares itself (it-30, attended-lane.md): the sweep's board writes carry their own
@@ -350,6 +352,7 @@ DEBT_KIND_LINE = "YR-ITERATION-KIND: tech-debt"
 LEDGER_MARKER = "YR-DEBT-LEDGER"
 HOLD_MARKER = "YR-DEBT-HOLD"
 DUE_MARKER = "YR-DEBT-DUE"
+CLOSE_HOLD_MARKER = "YR-CLOSE-HOLD"
 
 # --- the per-epic refusal markers: one condition token per site, so each refusal's own comment record
 # --- is keyed on its own line, never satisfiable by a different refusal's record.
@@ -555,6 +558,36 @@ def _open_questions_body(lines):
         f"or removed:\n\n{named}\n\n"
         "Disposition each marker line, then the next sweep resumes promotion on its own — no Reason to "
         "clear."
+    )
+
+
+def _close_records_findings(body, comments):
+    """The compiled close-lane mandates (the model's own, via the registry's delegation), judged by
+    the detector's core over the epic's trail — presence AND grammar, pure, no network. A mandate
+    source that does not load is a fail-closed finding, never a silent pass (it-31 slice 9)."""
+    try:
+        reg = records.load()
+        lanes_map = records.lanes(reg)
+        forbids_map = records.lane_forbids(reg)
+    except Exception as e:  # noqa: BLE001 — Needs-info over guessing (the epic-gate's own rule)
+        return [f"the close-lane mandate source does not load ({e}) — holding fail-closed"]
+    return check_trail.check_texts(reg, "close", {"issue-trail": [body] + list(comments)},
+                                   lanes_map=lanes_map, forbids_map=forbids_map)
+
+
+def _close_hold_body(findings):
+    # The debt lesson (see _debt_hold_body): never spell a mandated field as a bare `key: value`
+    # line — each finding rides a "- "-indented line, so a prefix-mode marker can never anchor at
+    # column 0 inside this comment.
+    joined = "\n".join(f"- {f}" for f in findings)
+    return (
+        f"{CLOSE_HOLD_MARKER}\n\n"
+        "This Feature epic has no open children left, but its mandated close records are not on the "
+        "trail — the epic-gate will not self-close it until they are (the model's close-lane "
+        "mandates, judged by the detector's own grammar check; it-31 slice 9). Missing:\n\n"
+        f"{joined}\n\n"
+        "Land the close records (the closing session's own duty) and the next sweep self-closes "
+        "this epic, or close it attended and clear the Reason."
     )
 
 
@@ -949,6 +982,24 @@ def _process_epic(gh, epic, project_number, status_field_id, reason_field_id, st
             if epic["reason"] != "Needs-info":
                 _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
             return [{"epic": epic["number"], "action": "hold"}]
+        # The close arm (it-31 slice 9): a finished NON-debt epic holds until its mandated close
+        # records exist on the trail — the model's compiled close-lane mandates, judged by the
+        # detector's own core (presence + grammar). The debt sibling above is the exemplar and
+        # stays byte-identical: a debt epic's hold is the ledger verdict's, exactly as before.
+        if not _is_debt_epic(body):
+            findings = _close_records_findings(body, comments)
+            if findings:
+                already_held = any(
+                    any(textutil.marker_line_matches(line, CLOSE_HOLD_MARKER, mode="sentinel")
+                        for line in c.splitlines())
+                    for c in comments
+                )
+                if not already_held:
+                    _comment(gh, epic["repo"], epic["number"], _close_hold_body(findings))
+                if epic["reason"] != "Needs-info":
+                    _set_field(gh, epic["item_id"], reason_field_id, reason_opt["Needs-info"])
+                return [{"epic": epic["number"], "action": "hold-close",
+                         "missing": len(findings)}]
         reason = _epic_close_reason(children)
         _close_issue(gh, epic["repo"], epic["number"], reason)
         return [{"epic": epic["number"], "action": "close", "reason": reason}]
@@ -1190,6 +1241,9 @@ def main(argv=None):
             print(f"epic-gate: closed epic #{a['epic']} (reason={a['reason']})")
         elif a["action"] == "hold":
             print(f"epic-gate: held epic #{a['epic']} (debt epic awaiting a ledger verdict)")
+        elif a["action"] == "hold-close":
+            print(f"epic-gate: held epic #{a['epic']} for its close records "
+                  f"({a['missing']} mandate finding(s) — see the YR-CLOSE-HOLD comment)")
         elif a["action"] == "bounce-standalone":
             print(f"epic-gate: bounced #{a['item']} to Backlog/Needs-info (repo not onboarded)")
         elif a["action"] == "raise-standalone":
