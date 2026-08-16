@@ -1320,7 +1320,8 @@ does_not_cover = ["a push from a process spawned before the hook fires",
                   "a push whose remote is addressed by URL (the URL operand is skipped, not judged)",
                   "a remote named other than origin/upstream (its branches read against the same rule)",
                   "tag pushes: refs/tags/... and --tags are skipped (a tag is not a branch — the release route); a tag pushed by its BARE name is ref-ambiguous and stays walled fail-closed, the full-ref spelling being the derivable route",
-                  "an @-carrying refspec with a slashed destination reads remote-shaped and is skipped; an scp remote with a single-component path reads as a refspec and refuses fail-closed"]
+                  "an @-carrying refspec with a slashed destination reads remote-shaped and is skipped; an scp remote with a single-component path reads as a refspec and refuses fail-closed",
+                  "a -C directory literally named `push` followed by a second global value-taking flag shifts the reclaim walk one token — a phantom false-deny, fail-closed"]
 probe = "none"
 verified_on = "2026-08-16"
 recheck_days = 90
