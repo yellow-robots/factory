@@ -68,9 +68,10 @@ def close(hook: dict, *, no_journal: bool = False) -> dict | None:
         return {"decision": "block",
                 "reason": (text + "\n\nResolve the unresolved traces, or close again to proceed "
                                   "loud — the override is journaled and the close report carries it.")}
-    if "OVERRIDE:" in text and not no_journal:
-        # "OVERRIDE:" is the proceed-loud line's prefix; the standing "OVERRIDDEN:" line never
-        # journals another override row — bookkeeping must not multiply (it-31 slice 1)
+    if any(ln.startswith("OVERRIDE:") for ln in text.splitlines()) and not no_journal:
+        # Line-anchored: only the proceed-loud line's own prefix journals the override row —
+        # never the standing "OVERRIDDEN:" line, never free text inside an ERROR detail
+        # (bookkeeping must not multiply; it-31 slice 1)
         process.journal_append(model, [{"ts": int(time.time()), "transition_id": "close",
                                         "binding_id": None, "scope": {}, "stance": "close-override",
                                         "caller": "attended-agent"}], session)

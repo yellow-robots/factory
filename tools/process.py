@@ -1086,8 +1086,10 @@ def _dispose_hit(model: dict, bd: dict, w: dict, seg: dict, act: dict,
     meta["scope"] = {k: v for k, v in ctx.scope.items() if k in ("repo", "issue", "pr", "path")}
 
     # same-value (it-31 slice 1): an act that provably cannot change the store's value is not
-    # judged as that store's transition — the no-op observes, it never refuses
-    if candidates:
+    # judged as that store's transition — the no-op observes, it never refuses. Proven only for
+    # a plain set: a mutating patch operation (append/prepend) changes the value even when its
+    # content equals it (the review's finding on #433), so anything but replace falls through.
+    if candidates and act["fields"].get("operation") in (None, "replace"):
         primary0 = _primary_facet(model, candidates[0]["machine"])
         cur0 = ctx.current.get(primary0)
         if isinstance(cur0, str):
@@ -1286,7 +1288,7 @@ def close_report(model: dict, session_id: str,
 
     # postconditions of permitted transitions, re-read NOW (the design's LEFT BEHIND / MISSING)
     missing_posts, unknown_posts, seen_posts = [], [], set()
-    missing_lines, unknown_lines, missing_anchors = [], [], []
+    missing_lines, unknown_lines = [], []
     for r in rows:
         tid = r.get("transition_id")
         if r.get("stance") not in ("observe", "escalate") or tid not in tids:
@@ -1305,7 +1307,6 @@ def close_report(model: dict, session_id: str,
             res = _eval_guard(ctx, t, po, act={"fields": {}})
             if res.state == "FALSE":
                 missing_posts.append((tid, po["args"]["record"]))
-                missing_anchors.append(r.get("ts", 0))
                 missing_lines.append(f"MISSING: {tid} was permitted and its mandated "
                                      f"`{po['args']['record']}` record is not on the trail")
             elif res.state == "UNKNOWN":
@@ -1313,12 +1314,20 @@ def close_report(model: dict, session_id: str,
                 unknown_lines.append(f"UNKNOWN: {tid}: `{po['args']['record']}` could not be "
                                      f"re-read ({res.reason}) — never counted as ok")
 
-    # Terminal refusals (it-31 slice 1, #433): a refusal that resolved NO transition (`store:*`
-    # id) has no lawful later pass by construction — the wall found no transition for the act as
-    # performed, so the refusal was the correct FINAL outcome. Recorded once as `refusal-terminal`
-    # (bookkeeping, like `drift-advised`: the row records a disposition already decided and cannot
-    # influence this decision), excluded from the cycle immediately, never demanded again.
-    terminal = [r for r in refused if r.get("transition_id") not in tids]
+    def _resolved(r: dict) -> bool:
+        return any(p.get("stance") == "observe"
+                   and p.get("transition_id") == r.get("transition_id")
+                   and p.get("ts", 0) >= r.get("ts", 0) for p in rows)
+
+    # Terminal refusals (it-31 slice 1, #433): a `store:*` refusal means the wall found NO
+    # transition for the act as performed — the refusal was the correct FINAL outcome, with no
+    # lawful later pass by construction. Recorded once as `refusal-terminal` (bookkeeping, like
+    # `drift-advised`: the row records a disposition already decided and cannot influence this
+    # decision), excluded from the cycle immediately, never demanded again. Narrow by design
+    # (the review's findings on #433): an `invariant:*` refusal IS retry-resolvable and stays in
+    # the cycle, and a store refusal a later same-tid observe resolved is not terminal either.
+    terminal = [r for r in refused
+                if str(r.get("transition_id", "")).startswith("store:") and not _resolved(r)]
     if terminal and journal_announcements:
         already = {(r.get("transition_id"), r.get("refusal_ts")) for r in rows
                    if r.get("stance") == "refusal-terminal"}
@@ -1329,12 +1338,13 @@ def close_report(model: dict, session_id: str,
                                     "transition_id": r.get("transition_id"),
                                     "binding_id": r.get("binding_id"),
                                     "scope": r.get("scope") or {},
-                                    "stance": "refusal-terminal", "caller": "attended-agent",
+                                    "stance": "refusal-terminal",
+                                    "caller": r.get("caller", "attended-agent"),
                                     "refusal_ts": r.get("ts", 0)} for r in fresh_terminal],
                            session_id)
-    unresolved = [r for r in refused if r.get("transition_id") in tids and not any(
-        p.get("stance") == "observe" and p.get("transition_id") == r.get("transition_id")
-        and p.get("ts", 0) >= r.get("ts", 0) for p in rows)]
+    unresolved = [r for r in refused
+                  if not str(r.get("transition_id", "")).startswith("store:")
+                  and not _resolved(r)]
 
     # Drift — ruling 1B's close-report surface, bounded: durable repo state must never re-create
     # the wake/stop loop, so an outstanding finding is announced at most once per session (the
@@ -1343,15 +1353,27 @@ def close_report(model: dict, session_id: str,
     fresh_drift = [p for p in check_drift(model) if p not in advised]
 
     # The quiesce ladder (it-31 slice 1): the wall's own bookkeeping rows never re-arm a block —
-    # `newest` reads only the actionable traces (unresolved refusals, the rows that established a
-    # missing post) — and an override newer than every actionable trace is TERMINAL for that
-    # state: block at most once, proceed loud at most once, then — traces unchanged — silence.
+    # `newest` reads only the actionable traces — and an override newer than every actionable
+    # trace is TERMINAL for that state: block at most once, proceed loud at most once, then —
+    # traces unchanged — silence. Two review-hardened details (#433): ordering is (ts, journal
+    # row index), so a new trace in the SAME epoch second as the override still re-arms; and a
+    # missing post is anchored at its ANNOUNCEMENT (the `missing-advised` marker row), so an
+    # absence first detected after the override was never covered by it and still gets its cycle
+    # — an unannounced missing post anchors at +infinity.
+    _index = {id(r): i for i, r in enumerate(rows)}
+
+    def _ord(r: dict) -> tuple:
+        return (r.get("ts", 0), _index.get(id(r), -1))
+
+    advised_missing = {(r.get("post_tid"), r.get("record")): _ord(r)
+                       for r in rows if r.get("stance") == "missing-advised"}
+    missing_anchors = [advised_missing.get(key, (float("inf"), 0)) for key in missing_posts]
     block = False
     overridden = 0
     if unresolved or missing_posts:
-        latest_block = max((r.get("ts", 0) for r in blocks), default=0)
-        latest_override = max((r.get("ts", 0) for r in overrides), default=0)
-        newest = max([r.get("ts", 0) for r in unresolved] + missing_anchors, default=0)
+        latest_block = max((_ord(r) for r in blocks), default=(0, -1))
+        latest_override = max((_ord(r) for r in overrides), default=(0, -1))
+        newest = max([_ord(r) for r in unresolved] + missing_anchors, default=(0, -1))
         if overrides and latest_override >= newest and latest_override >= latest_block:
             overridden = len(unresolved) + len(missing_posts)
             unresolved, missing_posts, missing_lines = [], [], []
@@ -1359,6 +1381,15 @@ def close_report(model: dict, session_id: str,
             pass                            # the one loud proceed; the OVERRIDE line lands below
         else:
             block = True
+    if missing_posts and journal_announcements:
+        # The announcement marker anchors the trace (bookkeeping, like `drift-advised`); written
+        # only when the MISSING lines actually render, once per (transition, record).
+        fresh_missing = [key for key in missing_posts if key not in advised_missing]
+        if fresh_missing:
+            journal_append(model, [{"ts": int(time.time()), "transition_id": "close",
+                                    "binding_id": None, "scope": {}, "stance": "missing-advised",
+                                    "caller": "attended-agent", "post_tid": tid, "record": rec}
+                                   for tid, rec in fresh_missing], session_id)
 
     # The silent exit: clean means NO ACTIONABLE TRACE — nothing unresolved, missing, unknown,
     # or errored, and no drift announcement due. Counts alone never decide: a refusal later
@@ -1381,8 +1412,8 @@ def close_report(model: dict, session_id: str,
         lines.append(f"OVERRIDDEN: {overridden} trace(s) stand overridden, recorded — unchanged "
                      f"traces never re-arm the close")
     for r in errors:
-        lines.append(f"ERROR: the wall crashed on an act "
-                     f"({str(r.get('detail') or 'no detail journaled')[:120]}) — a session whose "
+        detail = str(r.get("detail") or "no detail journaled")[:120].replace("\n", " ")
+        lines.append(f"ERROR: the wall crashed on an act ({detail}) — a session whose "
                      f"walls crashed is never clean")
     for p in fresh_drift:
         lines.append(f"DRIFT (advisory): {p}")
