@@ -273,19 +273,20 @@ def _match_mcp(spec: dict, act: dict) -> bool:
     return True
 
 
-# The only acts whose effect is FULLY visible in their text: an append cannot remove existing
-# text, and an Edit's effect is exactly old_string -> new_string. A whole-file write (Write,
-# vault_write) deletes by OMISSION — content lacking the key truncates it away — so token
-# absence is no evidence there and the advisory stands (the review's finding on #433).
-REMOVAL_SAFE_TOOLS = ("mcp__obsidian__vault_append", "Edit")
+# The only act whose effect is FULLY decidable from its text: an APPEND can neither remove nor
+# replace existing text. A whole-file write (Write, vault_write) deletes by OMISSION — content
+# lacking the key truncates it away — and an Edit's match SITE is unknowable from the act alone
+# (a bare value substring lands inside the key's own line), so both keep their advisory
+# (the two review passes on #433).
+REMOVAL_SAFE_TOOLS = ("mcp__obsidian__vault_append",)
 
 
 def cannot_touch_key(act: dict, key: str) -> bool:
-    """Act-side evidence for an over-matching frontmatter binding (it-31 slice 1): a removal-safe
-    act whose every visible text can neither open a frontmatter fence (`---`) nor carry the
-    `<key> :` token (spaced colon included — YAML accepts it) provably cannot write that
-    frontmatter key. Evidence absent (no visible text, or a tool that can delete by omission)
-    -> False, the advisory stands — the walls' decidable-from-the-act-alone standard."""
+    """Act-side evidence for an over-matching frontmatter binding (it-31 slice 1): an append
+    whose visible text can neither open a frontmatter fence (`---`) nor carry the `<key> :`
+    token (spaced colon included — YAML accepts it) provably cannot write that frontmatter key.
+    Evidence absent (no visible text, or any tool that can remove or replace text) -> False,
+    the advisory stands — the walls' decidable-from-the-act-alone standard."""
     if act.get("tool") not in REMOVAL_SAFE_TOOLS:
         return False
     fields = act.get("fields") or {}

@@ -157,9 +157,10 @@ def test_append_that_cannot_touch_frontmatter_is_silent(model, tmp_path, monkeyp
 
 
 def test_whole_file_writes_keep_the_advisory(model, tmp_path, monkeypatch):
-    """Review finding 1: Write / vault_write REPLACE the file — content omitting the key deletes
-    it by truncation, so token absence is NOT evidence of no-change there. The exemption covers
-    only removal-safe acts (append; Edit whose visible halves are token-free)."""
+    """Review finding 1 + re-review finding 1: only an APPEND is removal-safe. Write /
+    vault_write replace the file (content omitting the key deletes it by truncation), and an
+    Edit's match site is unknowable from the act alone (a bare VALUE substring lands inside the
+    key's line) — all three keep the advisory."""
     doc = _vault_doc(tmp_path, monkeypatch, "---\nstatus: draft\n---\nbody\n")
     fs = {"tool_name": "Write", "session_id": "sW",
           "tool_input": {"file_path": str(doc), "content": "plain prose, no fences at all"}}
@@ -172,8 +173,45 @@ def test_whole_file_writes_keep_the_advisory(model, tmp_path, monkeypatch):
     edit = {"tool_name": "Edit", "session_id": "sW",
             "tool_input": {"file_path": str(doc), "old_string": "body",
                            "new_string": "body, amended"}}
-    out3, rows3 = process.decide(model, edit, env=ATTENDED)
-    assert out3 is None and rows3 and rows3[0]["stance"] == "observe"
+    out3, _ = process.decide(model, edit, env=ATTENDED)
+    assert out3 is not None and "additionalContext" in out3["hookSpecificOutput"]
+
+
+def test_edit_value_substring_cannot_slip_the_wall(model, tmp_path, monkeypatch):
+    """Re-review finding 1, the exact attack: Edit old_string="draft" matches INSIDE
+    `status: draft` and produces `status: active` — the input-gate transition — so an Edit is
+    never exempt: token absence proves the text isn't the key's line, not where the match lands."""
+    doc = _vault_doc(tmp_path, monkeypatch, "---\nstatus: draft\n---\nbody\n")
+    edit = {"tool_name": "Edit", "session_id": "sE2",
+            "tool_input": {"file_path": str(doc), "old_string": "draft",
+                           "new_string": "active"}}
+    out, _ = process.decide(model, edit, env=ATTENDED)
+    assert out is not None and "additionalContext" in out["hookSpecificOutput"]
+
+
+def test_missing_post_in_a_second_scope_rearms(model, tmp_path, monkeypatch):
+    """Re-review finding 2: the missing-advised anchor is scope-aware — issue 2's missing record
+    is a NEW trace even after issue 1's identical (transition, record) pair was overridden."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setattr(process, "check_drift", lambda m: [])
+    _stub_trail(monkeypatch, ["no promote record here"])
+    process.journal_append(model, [{"ts": 100, "transition_id": "task.backlog->ready.standalone",
+                                    "binding_id": "board.write.gh-cli",
+                                    "scope": {"repo": "r/r", "issue": "1"},
+                                    "stance": "observe", "caller": "human"}], "sSc")
+    hook = {"session_id": "sSc"}
+    assert wall.close(hook).get("decision") == "block"
+    assert "OVERRIDE" in wall.close(hook)["hookSpecificOutput"]["additionalContext"]
+    assert wall.close(hook) is None
+    process.journal_append(model, [{"ts": int(time.time()),
+                                    "transition_id": "task.backlog->ready.standalone",
+                                    "binding_id": "board.write.gh-cli",
+                                    "scope": {"repo": "r/r", "issue": "2"},
+                                    "stance": "observe", "caller": "human"}], "sSc")
+    fourth = wall.close(hook)
+    assert fourth is not None and fourth.get("decision") == "block"
+    assert "OVERRIDE" in wall.close(hook)["hookSpecificOutput"]["additionalContext"]
+    assert wall.close(hook) is None
 
 
 def test_spaced_colon_edit_keeps_the_advisory(model, tmp_path, monkeypatch):

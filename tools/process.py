@@ -1306,7 +1306,8 @@ def close_report(model: dict, session_id: str,
             ctx.scope.update({k: v for k, v in scope.items() if v})
             res = _eval_guard(ctx, t, po, act={"fields": {}})
             if res.state == "FALSE":
-                missing_posts.append((tid, po["args"]["record"]))
+                missing_posts.append((tid, po["args"]["record"], scope.get("repo"),
+                                      scope.get("issue"), scope.get("path")))
                 missing_lines.append(f"MISSING: {tid} was permitted and its mandated "
                                      f"`{po['args']['record']}` record is not on the trail")
             elif res.state == "UNKNOWN":
@@ -1315,6 +1316,11 @@ def close_report(model: dict, session_id: str,
                                      f"re-read ({res.reason}) — never counted as ok")
 
     def _resolved(r: dict) -> bool:
+        # Accepted residual (re-review NIT, #433): for a `store:*` refusal any later same-store
+        # observe counts — an unrelated exempted act can suppress the terminal bookkeeping row.
+        # The close decision is identical either way (silent); only the round record's raw
+        # material loses a disposition line, and distinguishing "real resolution" from
+        # coincidence needs evidence the journal does not carry.
         return any(p.get("stance") == "observe"
                    and p.get("transition_id") == r.get("transition_id")
                    and p.get("ts", 0) >= r.get("ts", 0) for p in rows)
@@ -1365,8 +1371,11 @@ def close_report(model: dict, session_id: str,
     def _ord(r: dict) -> tuple:
         return (r.get("ts", 0), _index.get(id(r), -1))
 
-    advised_missing = {(r.get("post_tid"), r.get("record")): _ord(r)
-                       for r in rows if r.get("stance") == "missing-advised"}
+    # Scope rides the key (re-review finding 2, #433): issue 2's missing record is a NEW trace
+    # even after issue 1's identical (transition, record) pair was announced and overridden.
+    advised_missing = {(r.get("post_tid"), r.get("record"), (r.get("scope") or {}).get("repo"),
+                       (r.get("scope") or {}).get("issue"), (r.get("scope") or {}).get("path")):
+                       _ord(r) for r in rows if r.get("stance") == "missing-advised"}
     missing_anchors = [advised_missing.get(key, (float("inf"), 0)) for key in missing_posts]
     block = False
     overridden = 0
@@ -1387,9 +1396,12 @@ def close_report(model: dict, session_id: str,
         fresh_missing = [key for key in missing_posts if key not in advised_missing]
         if fresh_missing:
             journal_append(model, [{"ts": int(time.time()), "transition_id": "close",
-                                    "binding_id": None, "scope": {}, "stance": "missing-advised",
-                                    "caller": "attended-agent", "post_tid": tid, "record": rec}
-                                   for tid, rec in fresh_missing], session_id)
+                                    "binding_id": None,
+                                    "scope": {k: v for k, v in
+                                              zip(("repo", "issue", "path"), key[2:]) if v},
+                                    "stance": "missing-advised", "caller": "attended-agent",
+                                    "post_tid": key[0], "record": key[1]}
+                                   for key in fresh_missing], session_id)
 
     # The silent exit: clean means NO ACTIONABLE TRACE — nothing unresolved, missing, unknown,
     # or errored, and no drift announcement due. Counts alone never decide: a refusal later
