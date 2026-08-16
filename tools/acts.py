@@ -273,6 +273,21 @@ def _match_mcp(spec: dict, act: dict) -> bool:
     return True
 
 
+def cannot_touch_key(act: dict, key: str) -> bool:
+    """Act-side evidence for an over-matching frontmatter binding (it-31 slice 1): every visible
+    written text can neither open a frontmatter fence (`---`) nor carry the `<key>:` token, so the
+    act provably cannot write that frontmatter key. Evidence absent (no visible text) -> False,
+    the advisory stands — the same decidable-from-the-act-alone standard the walls already use.
+    For Edit acts the removed text counts too: deleting the key's line changes frontmatter."""
+    fields = act.get("fields") or {}
+    parts = [fields.get("content"), fields.get("old_string")]
+    seen = [p for p in parts if isinstance(p, str) and p.strip()]
+    if not seen:
+        return False
+    token = f"{key}:"
+    return all("---" not in p and token not in p for p in seen)
+
+
 # ── value extractors: one implementation per VALUE_KIND. None = UNKNOWN. ─────────────────────────
 
 def extract_value(value_spec: dict, seg: dict, maps: dict[str, dict]) -> str | None:
