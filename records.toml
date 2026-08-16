@@ -364,6 +364,28 @@ surfaces = ["vault-doc"]
 notes = ""
 
 [[record]]
+name = "YR-EPIC-READY"
+marker = "YR-EPIC-READY"
+mode = "prefix"
+fields = ["design", "who"]
+emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitter = "the epic-flip funnel (tools/promote.sh), record-before-flip — deliberately no separate why: the design IS the why"
+readers = ["tools/check_trail.py (epic lane)", "tools/process.py (the epic-flip transition's post)"]
+surfaces = ["issue-trail"]
+notes = "Ruling 5's record (it-31 slice 4): sibling of YR-PROMOTED, minted at the crossing of #432."
+
+[[record]]
+name = "SOURCE-LINE"
+marker = "**Source:**"
+mode = "prefix"
+fields = []
+emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitter = "the crossing session, filing the epic body's provenance line (the airlock's one crossing-link)"
+readers = ["tools/design_resolver.py"]
+surfaces = ["issue-trail"]
+notes = "The third unprefixed grammar (VERDICT:/STAGE-BLOCKED: precedent): the resolver parses the [[wikilink]] to the governing design (it-31 slice 4)."
+
+[[record]]
 name = "YR-ACCEPT"
 marker = "YR-ACCEPT:"
 mode = "prefix"

@@ -1,14 +1,14 @@
-# GENERATED from process.toml v1.1.0 sha256:fce33568e84fdb8d — never hand-edit
+# GENERATED from process.toml v1.2.0 sha256:d5d59632baf8eee2 — never hand-edit
 # The detector's lane mandates, compiled from the transitions (surface 2).
 
 [meta]
-model_version = "1.1.0"
+model_version = "1.2.0"
 effective = "2026-08-16"
 
 [mandate]
 close = ["YR-ROUND-RECORD", "YR-SHIP-WALK"]
 design = ["YR-ACCEPT", "YR-DESIGN-FIT", "YR-DESIGN-REVIEW"]
-epic = ["YR-AUTO-PROMOTED", "YR-EPIC-APPROVAL"]
+epic = ["YR-AUTO-PROMOTED", "YR-EPIC-APPROVAL", "YR-EPIC-READY"]
 merge = ["YR-MERGE"]
 standalone = ["YR-PROMOTED", "YR-TASK-GATES"]
 

@@ -140,6 +140,9 @@ def test_refuses_issue_absent_from_board_writes_nothing(tmp_path):
 
 
 def test_refuses_type_feature_epic_writes_nothing(tmp_path):
+    """Since it-31 slice 4 the Feature arm is ruling 5's conditional funnel, not a categorical
+    refusal: HERE the harness carries no approval and no resolvable design, so the epic-flip
+    wall refuses fail-closed and writes nothing — the pin's teeth are unchanged."""
     binp = _bin(tmp_path)
     r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, itype="Feature"))
     assert r.returncode != 0

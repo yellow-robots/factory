@@ -409,9 +409,21 @@ def _validate(model: dict, reg: dict, p: str | Path) -> None:  # noqa: C901 — 
             if t1["machine"] != t2["machine"] or t1["from"] != t2["from"] or t1["to"] != t2["to"]:
                 continue
             if set(t1["actor"]) & set(t2["actor"]):
+                # disjoint discriminators (it-31 slice 4): two same-shape rows may coexist when
+                # both guard the SAME non-primary facet to DIFFERENT states — provably disjoint,
+                # and the runtime narrows by reading that facet
+                prim = machines[t1["machine"]]["facets"][0]
+
+                def _disc(t):
+                    return {g["args"]["facet"]: g["args"]["state"] for g in t.get("guard") or []
+                            if g["predicate"] == "facet_is" and g["args"]["facet"] != prim}
+                d1, d2 = _disc(t1), _disc(t2)
+                if any(f in d2 and d2[f] != v for f, v in d1.items()):
+                    continue
                 raise ModelError(f"transitions {t1['id']} / {t2['id']}: same machine, from, to and an "
                                  f"overlapping caller class — runtime never picks between rules "
-                                 f"(determinism)")
+                                 f"(determinism); make them disjoint with facet_is guards on a "
+                                 f"shared non-primary facet")
 
     # rule H (it-31 slice 2, the review's fold): a declared headless signal must be well-shaped —
     # a malformed declaration would otherwise degrade SILENTLY to interactive, i.e. toward the
@@ -588,9 +600,18 @@ def _primary_facet(model: dict, machine: str) -> str:
 
 
 def _on_course(model: dict, t: dict) -> bool:
+    """Off-course = the transition guards an OFF-TRACK facet (a writable, guarded one — the
+    unblock's reason=blocked shape): a repair path never mandates lane records. A guard on a
+    read-only discriminator facet (store guarded=false — issue.type, it-31 slice 4) is course
+    routing, not repair, and keeps the transition on course."""
     p = _primary_facet(model, t["machine"])
-    return not any(g["predicate"] == "facet_is" and g["args"]["facet"] != p
-                   for g in t.get("guard") or [])
+    for g in t.get("guard") or []:
+        if g["predicate"] != "facet_is" or g["args"]["facet"] == p:
+            continue
+        store_id = model["_facet_store"].get((t["machine"], g["args"]["facet"]))
+        if (model["_stores"].get(store_id) or {}).get("guarded", True):
+            return False
+    return True
 
 
 def lanes(model: dict) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -944,7 +965,8 @@ def _eval_guard(ctx: _Ctx, t: dict, g: dict, act: dict) -> predicates.Result:
     if pred == "evaluator_pass":
         ev = ctx.model["_evaluators"][args["evaluator"]]
         argv = [a.replace("{scope.repo}", ctx.scope.get("repo", ""))
-                 .replace("{scope.pr}", ctx.scope.get("pr", "")) for a in ev["argv"]]
+                 .replace("{scope.pr}", ctx.scope.get("pr", ""))
+                 .replace("{scope.issue}", ctx.scope.get("issue", "")) for a in ev["argv"]]
         try:
             out = subprocess.run(argv, capture_output=True, text=True,
                                  timeout=int(ev.get("timeout_s") or 120))
@@ -1006,9 +1028,10 @@ def _resolve_scope_and_state(ctx: _Ctx, store_id: str, act: dict, seg: dict) -> 
             if ok:
                 ctx.scope.update({"repo": data["repo"], "issue": data["issue"],
                                   "store_changed": data.get("updatedAt") or ""})
-                for facet, key in (("status", "status"), ("reason", "reason")):
-                    sid = ctx.model["_value_state"].get(("task", facet, data[key]))
-                    ctx.current[facet] = sid if sid else ("UNKNOWN", f"board {facet} reads {data[key]!r}")
+                for facet, key in (("status", "status"), ("reason", "reason"), ("type", "itype")):
+                    val = data.get(key, "")
+                    sid = ctx.model["_value_state"].get(("task", facet, val))
+                    ctx.current[facet] = sid if sid else ("UNKNOWN", f"board {facet} reads {val!r}")
                 return
             ctx.current["status"] = ("UNKNOWN", str(data))
             ctx.current["reason"] = ("UNKNOWN", str(data))
@@ -1221,6 +1244,38 @@ def _dispose_hit(model: dict, bd: dict, w: dict, seg: dict, act: dict,
                    f"store:{w['store']}", meta
 
     lawful = [t for t in live if caller in t["actor"]]
+    if len(lawful) > 1 and not why:
+        # discriminator narrowing (it-31 slice 4): same-shape rows are disjoint on a non-primary
+        # facet (the loader proved it); read that facet and keep the matching row — unreadable
+        # discriminator refuses fail-closed, and no match refuses for the attended class
+        narrowed = []
+        for tc in lawful:
+            keep = True
+            for g in tc.get("guard") or []:
+                if g["predicate"] != "facet_is" or g["args"]["facet"] == primary:
+                    continue
+                cur = ctx.current.get(g["args"]["facet"])
+                if cur is None or isinstance(cur, tuple):
+                    st = "advise" if over else "refuse"
+                    detail = cur[1] if isinstance(cur, tuple) else "unread"
+                    return st, (f"wall: {'NOTE' if over else 'REFUSED'} [{w['store']}] — the "
+                                f"`{g['args']['facet']}` facet could not be read ({detail}); a "
+                                f"fail-closed wall that cannot tell the rows apart refuses"), \
+                           f"store:{w['store']}", meta
+                if cur != g["args"]["state"]:
+                    keep = False
+                    break
+            if keep:
+                narrowed.append(tc)
+        if not narrowed:
+            if caller in ("machinery", "external-service"):
+                return "observe", "", f"store:{w['store']}", meta
+            st = "advise" if over else "refuse"
+            return st, (f"wall: {'NOTE' if over else 'REFUSED'} [{w['store']}] — no lawful "
+                        f"transition matches this issue's shape (its discriminating facets rule "
+                        f"out every candidate: "
+                        f"{', '.join(t['id'] for t in lawful)})"), f"store:{w['store']}", meta
+        lawful = narrowed
     if not lawful:
         sanctioned = sorted({a for t in live for a in t["actor"]})
         st = "advise" if over else "refuse"
@@ -1606,9 +1661,9 @@ def transition_check(model: dict, tid: str, scope: dict) -> tuple[int, list[str]
     if scope.get("repo") and scope.get("issue"):
         ok, data = sources.issue_board_position(scope["repo"], scope["issue"])
         if ok:
-            for facet in ("status", "reason"):
-                sid = model["_value_state"].get((t["machine"], facet, data.get(facet, "")))
-                ctx.current[facet] = sid or ("UNKNOWN", f"{facet} reads {data.get(facet)!r}")
+            for facet, key in (("status", "status"), ("reason", "reason"), ("type", "itype")):
+                sid = model["_value_state"].get((t["machine"], facet, data.get(key, "")))
+                ctx.current[facet] = sid or ("UNKNOWN", f"{facet} reads {data.get(key)!r}")
     failures = []
     for g in t.get("guard") or []:
         res = _eval_guard(ctx, t, g, act={"fields": {}})

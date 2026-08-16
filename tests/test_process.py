@@ -56,7 +56,7 @@ def test_compiled_lanes_reproduce_the_design_trace(model):
     mandate, forbid = process.lanes(model)
     assert mandate == {
         "standalone": ["YR-PROMOTED", "YR-TASK-GATES"],
-        "epic": ["YR-AUTO-PROMOTED", "YR-EPIC-APPROVAL"],
+        "epic": ["YR-AUTO-PROMOTED", "YR-EPIC-APPROVAL", "YR-EPIC-READY"],
         "design": ["YR-ACCEPT", "YR-DESIGN-FIT", "YR-DESIGN-REVIEW"],
         "close": ["YR-ROUND-RECORD", "YR-SHIP-WALK"],
         "merge": ["YR-MERGE"],
@@ -131,7 +131,8 @@ def test_rule_c2_unobservable_path_needs_detected_by(reg):
 def test_rule_r_an_unregistered_record_is_a_load_error(reg):
     m = _raw()
     t = next(t for t in m["transition"] if t["id"] == "task.backlog->ready.standalone")
-    t["guard"][0]["args"]["record"] = "YR-NEVER-MINTED"
+    g = next(g for g in t["guard"] if g["predicate"] == "record_present")
+    g["args"]["record"] = "YR-NEVER-MINTED"
     _expect_error(m, reg, "unregistered record")
 
 
@@ -325,7 +326,8 @@ def test_predicates_module_is_pure_no_io_imports():
 def test_funnel_and_raw_spellings_reach_the_same_transition(model, vectors, monkeypatch):
     _fail_all_sources(monkeypatch)
     monkeypatch.setattr(sources, "board_item", lambda item_id: (True, {
-        "status": "Backlog", "reason": "", "updatedAt": "", "repo": "r/r", "issue": "1"}))
+        "status": "Backlog", "reason": "", "itype": "Task", "updatedAt": "",
+        "repo": "r/r", "issue": "1"}))
     monkeypatch.setattr(sources, "issue_trail", lambda repo, issue: (True, ["chatter"]))
     v = next(v for v in vectors if v["kind"] == "same-transition")
     reasons = []

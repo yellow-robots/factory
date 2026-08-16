@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.1.0 sha256:fce33568e84fdb8d — never hand-edit -->
+<!-- GENERATED from process.toml v1.2.0 sha256:d5d59632baf8eee2 — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 
@@ -7,6 +7,7 @@
 **task** — one GitHub issue of Type Task or Epic, as it sits on the shared Dev board
 - status (store `board.status`, board-single-select): `backlog`='Backlog' · `ready`='Ready' · `in-progress`='In Progress' · `in-review`='In Review' · `done`='Done'
 - reason (store `board.reason`, board-single-select): `none`='' · `needs-info`='Needs-info' · `blocked`='Blocked'
+- type (store `issue.type`, issue-field): `task`='Task' · `feature`='Feature' · `epic`='Epic'
 
 **pr** — one pull request of a factory build
 - state (store `pr.status`, pr-attribute): `open`='open' · `approved`='approved' · `merged`='merged'
@@ -15,8 +16,12 @@
 - status (store `doc.frontmatter.status`, frontmatter-key): `draft`='draft' · `active`='active' · `superseded`='superseded' · `rejected`='rejected'
 
 ## The transitions — who may move what, under which conditions
-- **task.backlog->ready.standalone** [human/attended-agent; door one-way; partial; chokepoint: none — client-side hook coverage only] — the standalone lane's review + fit gate; YR-PROMOTED never satisfies it. the standalone lane's human input gate: no governing design carries the approval, and promotion starts an autonomous build that opens a PR
+- **task.backlog->ready.standalone** [human/attended-agent; door one-way; partial; chokepoint: none — client-side hook coverage only] — the discriminator: a Feature flip is the epic lane's own row, never this one (it-31 slice 4); the standalone lane's review + fit gate; YR-PROMOTED never satisfies it. the standalone lane's human input gate: no governing design carries the approval, and promotion starts an autonomous build that opens a PR
   - open: board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
+- **task.backlog->ready.epic-flip** [human/attended-agent; door one-way; partial; chokepoint: none — client-side hook coverage only] — the discriminator: this is the epic lane's flip; a Task promotes through the standalone row; the standing approval on the epic's trail — the technical-rfc review's attestation; the airlock rule: an open question on the epic blocks the flip; the governing design resolves from the epic body's Source line and is active — the input gate's standing approval actually stands. ruling 5: the act that converts a standing approval into autonomous building — preconditions checked before the write, record-before-flip, postconditions after; the cord-pull stays the human's veto
+  - open: board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
+- **task.ready-blocked->ready.unraise** [human/attended-agent; door reversible; partial; chokepoint: none — client-side hook coverage only] — this is the un-raise; a clean Ready has nothing to clear; record-before-flip, typed, fresh since the board item last changed. clearing a hold's Reason from Ready is the unblock's own record-before-flip discipline (the observed #432 gap); the raise may lawfully return on the next sweep — the hold is the attended epic's standing state
+  - open: board.reason.web-ui: the Projects UI (detected by YR-BOARD-FLIP); board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
 - **task.blocked->ready.unblock** [human/attended-agent; door reversible; partial; chokepoint: none — client-side hook coverage only] — this is the unblock; a clean In Progress -> Ready is a different row; record-before-flip, typed. unblocking is the same board write as promotion and a DIFFERENT rule: the Reason that justified the block must not survive the unblock
   - open: board.reason.web-ui: the Projects UI (detected by YR-BOARD-FLIP); board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
 - **task.backlog->ready.epic-child** [machinery; door reversible; partial; chokepoint: none — client-side hook coverage only] — the standing approval on the epic's trail licenses every child promotion beneath it; the airlock rule: an open question on the epic blocks mechanical promotion. the epic gate's mechanical promotion under a standing approval; the cord-pull (un-Readying) is the human's veto, so the door is reversible
