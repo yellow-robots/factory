@@ -158,23 +158,46 @@ def test_delete_spellings_are_walled(model, reg, monkeypatch):
 
 
 def test_tag_pushes_by_full_ref_flow_and_bare_names_stay_walled(model, monkeypatch):
-    """Review finding 4: a tag pushed by its full ref is skipped (slice 7's release path pushes
-    refs/tags/...); a bare name is ref-ambiguous and stays walled fail-closed — the documented
-    direction, loud, with the full-ref spelling as the derivable route."""
+    """Review findings 4 + re-review 1: a tag pushed by its full ref is skipped AND never falls
+    through to current-branch attribution — pinned from a simulated MAIN checkout, the release
+    route's own shape; a bare name is ref-ambiguous and stays walled fail-closed."""
+    import acts
+    monkeypatch.setattr(acts, "_current_branch", lambda: "main")
     _stub_branch_route(monkeypatch, texts=["chatter"])
-    ok, rows = process.decide(model, _bash("git push origin refs/tags/skill/v1.4.0"), env=ATTENDED)
-    assert ok is None
-    tags_only, _ = process.decide(model, _bash("git push origin --tags"), env=ATTENDED)
-    assert tags_only is None
+    for cmd in ("git push origin refs/tags/skill/v1.4.0",
+                "git push origin refs/tags/v1.0:refs/tags/v1.0",
+                "git push origin --tags"):
+        ok, rows = process.decide(model, _bash(cmd), env=ATTENDED)
+        assert ok is None, cmd
     bare, _ = process.decide(model, _bash("git push origin v1.0.0"), env=ATTENDED)
     assert bare is not None and bare["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_push_head_resolves_to_the_current_branch(model, monkeypatch):
-    """Review finding 5: `git push origin HEAD` resolves through the repository — on a task
-    branch it flows exactly like naming the branch."""
+    """Review finding 5, environment-pinned (re-review 3): `HEAD` resolves through the
+    repository — a task branch flows, a main checkout denies categorically."""
+    import acts
+    monkeypatch.setattr(acts, "_current_branch", lambda: "task/437-walls-amendments")
     out, rows = process.decide(model, _bash("git push origin HEAD"), env=ATTENDED)
     assert out is None and rows == []
+    monkeypatch.setattr(acts, "_current_branch", lambda: "main")
+    denied, _ = process.decide(model, _bash("git push origin HEAD"), env=ATTENDED)
+    assert denied is not None and denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "git.ref.main" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_force_swallow_spellings_reach_the_wall(model, reg, monkeypatch):
+    """Re-review finding 2: the middle-order force spellings — flag between remote and refspec —
+    are reclaimed as operands: the shared wall and the categorical main wall both hold."""
+    _stub_branch_route(monkeypatch, texts=["chatter"])
+    for cmd in ("git push origin --force integration",
+                "git push origin -f integration",
+                "git push origin --tags integration"):
+        out, _ = process.decide(model, _bash(cmd), env=ATTENDED)
+        assert out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny", cmd
+    main_force, _ = process.decide(model, _bash("git push origin --force main"), env=ATTENDED)
+    assert main_force is not None
+    assert "git.ref.main" in main_force["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_ref_containing_at_still_walled(model, monkeypatch):

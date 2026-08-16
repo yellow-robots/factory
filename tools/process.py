@@ -915,6 +915,7 @@ class _Ctx:
         self.scope: dict[str, str] = {}
         self.current: dict[str, object] = {}
         self.reads: dict[str, object] = {}
+        self.route_note = ""            # a scope-routing failure worth naming in the refusal
 
 
 def _fetch_surface_texts(ctx: _Ctx, row: dict, act: dict) -> list[str] | None:
@@ -1089,6 +1090,8 @@ def _resolve_scope_and_state(ctx: _Ctx, store_id: str, act: dict, seg: dict) -> 
             ok_p, pr = sources.pr_for_branch(repo, dsts[0])
             if ok_p:
                 ctx.scope["pr"] = pr
+            else:
+                ctx.route_note = pr     # "no open PR fronts..." / "two open PRs..." — named in the deny
         # the tip state is deliberately left UNREAD: pretending it is known would trip the
         # same-value exemption (slice 1) and observe the push as a no-op; the single candidate's
         # guards evaluate on the fail-closed unreadable-current path instead
@@ -1342,6 +1345,7 @@ def _dispose_hit(model: dict, bd: dict, w: dict, seg: dict, act: dict,
             meta["failed_record"] = g["args"].get("record")
         return st, (f"wall: {'NOTE' if over else 'REFUSED'} [{t['id']}] — {col}: "
                     f"{render(g, model)}" + (f" ({res.reason})" if res.reason else "") +
+                    (f" [route: {ctx.route_note}]" if ctx.route_note else "") +
                     f". {t['because']}"), t["id"], meta
     final = stance(caller, t, True, bd, headless=headless)
     if final == "escalate":

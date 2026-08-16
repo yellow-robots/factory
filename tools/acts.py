@@ -276,12 +276,22 @@ def refspec_targets(seg: dict) -> list[str]:
     walled fail-closed, the full-ref spelling being the derivable route."""
     if seg.get("program") != "git" or "push" not in (seg.get("subcommands") or []) + (seg.get("operands") or []):
         return []
-    flags = seg.get("flags") or {}
+    flags = dict(seg.get("flags") or {})
+    # the flag parser eats the next token as any flag's value; for push's VALUELESS flags that
+    # swallowed token is really an operand — reclaim it (the review's force-swallow finding:
+    # `git push origin --force integration` must reach the wall, and `--force main` the
+    # categorical one)
+    reclaimed = [v for k in ("--force", "-f", "--force-with-lease", "--tags", "--follow-tags",
+                             "--atomic", "--no-verify", "--dry-run", "--prune")
+                 if isinstance((v := flags.get(k)), str) and v]
     out = [v for k in ("--delete", "-d") if isinstance((v := flags.get(k)), str)
            and not v.startswith("refs/tags/")]
-    ops = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or [])
-           if o not in ("push", "origin", "upstream") and not _remote_shaped(o)]
-    for o in ops:
+    candidates = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or [])
+                  if o not in ("push", "origin", "upstream")] + reclaimed
+    saw_refspec_operand = bool(candidates) or any(k in flags for k in ("--delete", "-d", "--tags"))
+    for o in candidates:
+        if _remote_shaped(o):
+            continue
         dst = (o.split(":", 1)[1] if ":" in o else o).lstrip("+")   # +main is a FORCE push
         if dst.startswith("refs/tags/"):
             continue
@@ -290,8 +300,10 @@ def refspec_targets(seg: dict) -> list[str]:
             dst = _current_branch()
         if dst:
             out.append(dst)
-    delete_or_tags = out or any(k in flags for k in ("--delete", "-d", "--tags"))
-    if not delete_or_tags:  # bare `git push`: the target is the current branch
+    if not saw_refspec_operand:
+        # bare `git push`: the target is the current branch. The fallback belongs ONLY to a push
+        # naming no refspec at all — an operand skipped as a tag or remote must never be
+        # re-attributed to the checkout's branch (the review's fold-introduced finding)
         cur = _current_branch()
         if cur:
             out.append(cur)
