@@ -50,22 +50,28 @@ def pre_tool(hook: dict, *, no_journal: bool = False) -> dict | None:
     return out
 
 
-def close(hook: dict) -> dict | None:
+def close(hook: dict, *, no_journal: bool = False) -> dict | None:
     model, err = _load_model()
     if model is None:
         return None  # the pre-tool half already tells the session, loudly, on every act
     session = hook.get("session_id") or ""
-    text, should_block = process.close_report(model, session)
+    text, should_block = process.close_report(model, session,
+                                              journal_announcements=not no_journal)
     if not text:
         return None
     if should_block:
-        process.journal_append(model, [{"ts": int(time.time()), "transition_id": "close",
-                                        "binding_id": None, "scope": {}, "stance": "close-block",
-                                        "caller": "attended-agent"}], session)
+        if not no_journal:
+            process.journal_append(model, [{"ts": int(time.time()), "transition_id": "close",
+                                            "binding_id": None, "scope": {},
+                                            "stance": "close-block",
+                                            "caller": "attended-agent"}], session)
         return {"decision": "block",
                 "reason": (text + "\n\nResolve the unresolved traces, or close again to proceed "
                                   "loud — the override is journaled and the close report carries it.")}
-    if "OVERRIDE" in text:
+    if any(ln.startswith("OVERRIDE:") for ln in text.splitlines()) and not no_journal:
+        # Line-anchored: only the proceed-loud line's own prefix journals the override row —
+        # never the standing "OVERRIDDEN:" line, never free text inside an ERROR detail
+        # (bookkeeping must not multiply; it-31 slice 1)
         process.journal_append(model, [{"ts": int(time.time()), "transition_id": "close",
                                         "binding_id": None, "scope": {}, "stance": "close-override",
                                         "caller": "attended-agent"}], session)
@@ -107,7 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     p_pre = sub.add_parser("pre-tool", help="PreToolUse: hook JSON on stdin -> decision JSON (or silence)")
     p_pre.add_argument("--dry-run", action="store_true",
                        help="test mode: decide without touching the journal")
-    sub.add_parser("close", help="Stop: hook JSON on stdin -> close report / block (or silence)")
+    p_close = sub.add_parser("close",
+                             help="Stop: hook JSON on stdin -> close report / block (or silence)")
+    p_close.add_argument("--dry-run", action="store_true",
+                         help="test mode: decide without touching the journal")
     p_prom = sub.add_parser("promote-check", help="the promote wall (called by promote.sh)")
     p_prom.add_argument("repo")
     p_prom.add_argument("issue")
@@ -126,7 +135,8 @@ def main(argv: list[str] | None = None) -> int:
         hook = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return 0  # unreadable hook input: stay silent — never brick the session on our own defect
-    out = pre_tool(hook, no_journal=args.dry_run) if args.cmd == "pre-tool" else close(hook)
+    out = (pre_tool(hook, no_journal=args.dry_run) if args.cmd == "pre-tool"
+           else close(hook, no_journal=args.dry_run))
     if out:
         print(json.dumps(out))
     return 0
