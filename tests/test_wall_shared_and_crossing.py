@@ -222,6 +222,24 @@ def test_set_upstream_swallow_reaches_the_wall(model, reg, monkeypatch):
     assert own is None and rows == []
 
 
+def test_global_git_options_never_reclaim_phantom_refspecs(model, reg, monkeypatch):
+    """Re-review round 4: git's global value-taking options before `push` (-C, -c) are outside
+    the walk — their values are never refspecs; the real refspec still reaches the right wall."""
+    import acts
+    monkeypatch.setattr(acts, "_current_branch", lambda: "main")
+    _stub_branch_route(monkeypatch, texts=["chatter"])
+    own, rows = process.decide(
+        model, _bash("git -C /opt/yellow-robots/factory push origin task/12-x"), env=ATTENDED)
+    assert own is None and rows == []
+    cfg, rows2 = process.decide(
+        model, _bash("git -c push.default=simple push origin task/12-x"), env=ATTENDED)
+    assert cfg is None and rows2 == []
+    shared, _ = process.decide(
+        model, _bash("git -C /tmp push origin integration"), env=ATTENDED)
+    assert shared is not None and shared["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "YR-HUMAN-INSTRUCTION" in shared["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 def test_force_swallow_spellings_reach_the_wall(model, reg, monkeypatch):
     """Re-review finding 2: the middle-order force spellings — flag between remote and refspec —
     are reclaimed as operands: the shared wall and the categorical main wall both hold."""

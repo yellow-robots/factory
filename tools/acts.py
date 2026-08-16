@@ -286,9 +286,13 @@ def refspec_targets(seg: dict) -> list[str]:
     value_taking = ("-o", "--push-option", "--repo", "--receive-pack", "--exec",
                     "--recurse-submodules", "--delete", "-d")
     argv = seg.get("argv") or []
-    reclaimed = [argv[i + 1] for i, tok in enumerate(argv[:-1])
-                 if tok.startswith("-") and "=" not in tok and tok not in value_taking
-                 and not argv[i + 1].startswith("-")]
+    # the walk is scoped to argv AFTER the `push` token: push's option grammar starts there, and
+    # git's global value-taking flags before it (`-C <path>`, `-c <k>=<v>`, --git-dir …) must
+    # never have their values reclaimed as phantom refspecs (the review's round-4 finding)
+    start = argv.index("push") + 1 if "push" in argv else len(argv)
+    reclaimed = [argv[i + 1] for i in range(start, len(argv) - 1)
+                 if (tok := argv[i]).startswith("-") and "=" not in tok
+                 and tok not in value_taking and not argv[i + 1].startswith("-")]
     out = [v for k in ("--delete", "-d") if isinstance((v := flags.get(k)), str)
            and not v.startswith("refs/tags/")]
     candidates = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or []) + reclaimed
