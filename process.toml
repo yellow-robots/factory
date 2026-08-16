@@ -17,9 +17,6 @@
 # semantically loaded word sitting next to `to` in the diff.
 #
 # v1 scope, named plainly (each absence is an [[amendment]] owed by its own slice, not an oversight):
-#   * the release lane (plugin.version store, release record, validation-gated release) lands with
-#     ruling 6's slice — v1 deliberately does not re-create the release-wall/release-act mutual
-#     block the excavation ranked as gap 57;
 #   * a machinery act that resolves NO transition is OBSERVED, never refused (journaled, visible in
 #     the close report) — fail-closed refusal for unmodeled machinery writes would wedge the
 #     autonomous pipeline this model is forbidden to break (ruling 1's rationale); the attended
@@ -30,14 +27,25 @@
 #     any disagreement;
 [model]
 contract = "yr-process/1"
-version = "1.4.0"
+version = "1.5.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
-slice_max_bytes = 12000                 # compile_slice.py's shipped bound, carried over
+slice_max_bytes = 13000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
+                                        # for the release lane's rows (it-31 slice 7) — a
+                                        # deliberate widening, never a silent truncation
 compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.5.0"
+date = "2026-08-17"
+kind = "widen"
+touches = ["plugin.release.validated"]
+reason = "the release lane (ruling 6, it-31 slice 7): a skill release is a validation-gated, git-native act — tools/release.py refuses on failing validation (model loads at the commit, server CI green via the squash-source PR's tree-equal head, no compiled-surface drift) then creates the annotated skill/vX.Y.Z tag and the GitHub Release carrying YR-RELEASE; the walls see both the funnel and the raw spelling as the same propose-gated one-way door, and the header's owed release-lane bullet retires"
+review = "yellow-robots/factory#439"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.4.0"
 date = "2026-08-16"
@@ -178,6 +186,14 @@ fetches = "existence of a host file (the merge sentinel)"
 impl = "tools/sources.py:host_file"
 vendor = "host"
 timeout_s = 5
+cache = "per-decision"
+
+[[source]]
+id = "release"
+fetches = "the repo's GitHub Releases, one text per Release: tag-name line + body (the YR-RELEASE record rides the body, fields complete within ONE text)"
+impl = "tools/sources.py:releases"
+vendor = "github"
+timeout_s = 20
 cache = "per-decision"
 
 # ── stores: where a state PHYSICALLY lives. No state without one. ────────────────────────────
@@ -432,6 +448,28 @@ unknown_value_policy = "unknown"
   observable = false
   detected_by = "YR-HUMAN-INSTRUCTION"
 
+[[store]]
+id = "plugin.version"
+kind = "git-ref"
+vendor = "github"
+location = "the annotated skill/vX.Y.Z tag + GitHub Release pair on the repo (the typed release LINE; content delivery is main's own walled advance — a bare tag with no Release and no record is not a release)"
+identifiers = "tools/release.py:TAG_PREFIX (the tag namespace); the Release body carries YR-RELEASE"
+values = ["released"]
+read = "source.release"
+writable_by = ["human", "attended-agent"]
+guarded = true
+unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "funnel"
+  how = "python3 tools/release.py ship|backfill — the validation-gated funnel (tag + Release + record in one act)"
+  observable = true
+
+  [[store.write_path]]
+  id = "gh-release"
+  how = "a raw `gh release create` outside the funnel"
+  observable = true
+
 # ── machines: facets are ORDERED; facets[0] is PRIMARY and is what transitions move ──────────
 [[machine]]
 id = "task"
@@ -466,6 +504,13 @@ subject = "one shared origin branch that is neither main nor a task branch"
 scope = "repo+pr"
 facets = ["tip"]
 note = "it-31 slice 5: exists so the shared push's instruction guard has a transition to attach to; the branch's open PR is the record's routable trail."
+
+[[machine]]
+id = "plugin"
+subject = "one repo's typed release line — the skill/vX.Y.Z tag + Release pair a version is typed by"
+scope = "repo"
+facets = ["version"]
+note = "it-31 slice 7 (ruling 6): exists so the release act has a transition to attach to — the validation delegates to tools/release.py (the evaluator seam), and the YR-RELEASE post is the record both the funnel and the walls demand."
 
 [[machine]]
 id = "design-doc"
@@ -645,6 +690,14 @@ store = "doc.frontmatter.status"
 value = "rejected"
 terminal = true
 
+[[state]]
+machine = "plugin"
+facet = "version"
+id = "released"
+store = "plugin.version"
+value = "released"
+initial = true
+
 # ── lanes: names and scope only. MEMBERSHIP IS DERIVED from transition.lane. ─────────────────
 [[lane]]
 id = "standalone"
@@ -670,6 +723,11 @@ scope = "repo+pr"
 id = "close"
 subject = "an iteration's close duties on the epic's trail"
 scope = "repo+issue"
+
+[[lane]]
+id = "release"
+subject = "the skill release — a validation-gated, git-native act typed by its record"
+scope = "repo"
 
 # ── evaluators: the delegation seam. DELEGATE, never re-implement. ───────────────────────────
 [[evaluator]]
@@ -701,6 +759,18 @@ contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's
 note = """The one governing-design resolver (the crossing's disposition 4): parses the epic body's
 Source line (registry row SOURCE-LINE) and reads the design's status through the vault. Slice 5's
 crossing invariant delegates to this same seam — one implementation, cited, never copied."""
+
+[[evaluator]]
+id = "release-validation"
+argv = ["python3", "tools/release.py", "validate", "--repo", "{scope.repo}"]
+conditions_display = ["model_loads", "server_ci_green", "no_drift"]
+timeout_s = 600
+contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
+note = """The release wall's seam (it-31 slice 7, ruling 6): validation is the tool's own —
+the model loads at the commit and build/ is drift-free (judged in a worktree AT the commit, by
+that commit's own tools), and server CI is green there (the squash-source PR's tree-equal head
+rollup — CI runs on PR heads, never on main's squash commits). This model holds no copy:
+`conditions_display` is a DISPLAY list, the tool owns the semantics."""
 
 # ── transitions: the ONLY table a guard can attach to ────────────────────────────────────────
 
@@ -1097,6 +1167,30 @@ because = "the human input gate — what gets built; the standing approval under
   args = { record = "YR-ACCEPT" }
 
 # ── invariants: act hygiene with NO state semantics. Named as the weaker tier it is. ─────────
+[[transition]]
+id = "plugin.release.validated"
+machine = "plugin"
+from = "released"
+to = "released"
+lane = "release"
+actor = ["human", "attended-agent"]
+agent_may = "propose"
+door = "one-way"
+because = "a published version reaches every attended session the moment the plugin reloads — consequences are one-way even where the diff is revertible; validation is delegated to the funnel (tools/release.py), whose refusal is the deterministic gate, and the record types the version exactly once"
+
+  [[transition.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "release-validation" }
+  why = "the release conditions are the tool's own, in its order, with its fail-closed semantics: model_loads, server_ci_green, no_drift"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "version", state = "released" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-RELEASE" }
+
 [[invariant]]
 id = "crossing.governing-design-active"
 title = "a filed crossing's governing design is active"
@@ -1481,3 +1575,77 @@ recheck_days = 90
   store = "git.ref.main"
   write_path = "git-push"
   value = { kind = "literal", literal = "advanced" }
+
+# COVERAGE of the funnel door, not a wall against it (the board funnel's own discipline): the
+# funnel act resolves to the SAME transition as the raw `gh release create` spelling and is judged
+# by the SAME guards — the conformance vectors pin that equivalence. `validate` is deliberately not
+# matched: judging is not a write. One binding per subcommand because `subcommands_include` is a
+# conjunction (every listed token must be present), never an OR.
+[[port.binding]]
+id = "release.funnel-ship"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"                     # the argv carries the subcommand verbatim
+does_not_cover = ["a caller importing release as a module (no argv for the hook to see)",
+                  "an invocation through `python` rather than `python3`"]
+probe = "none"
+verified_on = "2026-08-17"
+recheck_days = 90
+
+  [port.binding.match]
+  kind = "argv"
+  program = "python3"
+  subcommands_include = ["ship"]
+  subcommand_contains = "release.py"
+
+  [[port.binding.writes]]
+  store = "plugin.version"
+  write_path = "funnel"
+  value = { kind = "literal", literal = "released" }
+
+[[port.binding]]
+id = "release.funnel-backfill"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"                     # the argv carries the subcommand verbatim
+does_not_cover = ["a caller importing release as a module (no argv for the hook to see)",
+                  "an invocation through `python` rather than `python3`"]
+probe = "none"
+verified_on = "2026-08-17"
+recheck_days = 90
+
+  [port.binding.match]
+  kind = "argv"
+  program = "python3"
+  subcommands_include = ["backfill"]
+  subcommand_contains = "release.py"
+
+  [[port.binding.writes]]
+  store = "plugin.version"
+  write_path = "funnel"
+  value = { kind = "literal", literal = "released" }
+
+[[port.binding]]
+id = "release.gh-cli"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"
+does_not_cover = ["a Release created through the web UI (the human's own surface)",
+                  "a REST/GraphQL release creation via curl or gh api (unmatched, observed only)",
+                  "a bare tag push: refs/tags/... is skipped by the refspec matcher by design — a tag with no Release and no record is not a release, and the missing YR-RELEASE is the detectable residue"]
+probe = "gh.pr.surface"
+verified_on = "2026-08-17"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "argv"
+  program = "gh"
+  subcommands = ["release", "create"]
+
+  [[port.binding.writes]]
+  store = "plugin.version"
+  write_path = "gh-release"
+  value = { kind = "literal", literal = "released" }

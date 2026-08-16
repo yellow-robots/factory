@@ -16,7 +16,8 @@
 #   stage-escape — the log's LAST non-empty line begins "STAGE-BLOCKED: " with a non-empty reason.
 #   json-schema  — a versioned JSON object whose "schema" key names the row.
 #
-# Surfaces: issue-trail · issue-body · pr-trail · run-dir · stage-log · ledger · bench · vault-doc.
+# Surfaces: issue-trail · issue-body · pr-trail · run-dir · stage-log · ledger · bench · vault-doc
+# · release (the GitHub Release object riding a skill/vX.Y.Z tag — it-31 slice 7, ruling 6).
 # Exclusion rule: unversioned per-run artifacts the runner both writes and reads inside one run dir
 # (review-bundle.json, gate-durations.json, usage-<stage>.json) are run-internal files, not
 # shared-surface trail grammars — excluded by rule; a versioned schema for any of them earns a row.
@@ -450,6 +451,17 @@ emitter = "the agent, at the decision surface, when implications are severe (a o
 readers = ["tools/check_trail.py", "the round record's counts"]
 surfaces = ["issue-trail"]
 notes = "The severity valve's record — the valve is measured, never vibed."
+
+[[record]]
+name = "YR-RELEASE"
+marker = "YR-RELEASE"
+mode = "prefix"
+fields = ["version", "commit", "validation", "who"]
+emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitter = "tools/release.py (the validation-gated, git-native release act — ship mode at a round's close, backfill mode for the retroactive pair; the same body rides the annotated tag's message)"
+readers = ["tools/sources.py:releases (the release-surface fetcher the walk tooling and the bench read)", "tools/check_trail.py (release lane)", "humans on the repo's Releases page"]
+surfaces = ["release"]
+notes = "Ruling 6's record (it-31 slice 7), minted at the crossing of #432: a version is typed exactly once — the tag anchors the commit, validation names the evidence (model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift)."
 
 # ── lanes: the mandated-record data the detector reads (authored here, with the canon) ───────────
 

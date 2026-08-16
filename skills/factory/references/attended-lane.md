@@ -41,6 +41,7 @@ Each step emits the named record on the shared trail; the registry row carries t
 | 11 | The ship-walk trace | `YR-SHIP-WALK` — the close names the pending walk; the trigger is a surfaced checkpoint, never a memory | issue-trail |
 | 12 | The round record | `YR-ROUND-RECORD` — the close's observable counts | issue-trail |
 | 13 | The armed merge's record | `YR-MERGE` — the evaluator's durable decision, the compiled `merge` lane's one mandate | pr-trail |
+| 14 | The release's record | `YR-RELEASE` — the validation-gated release act's typed record (ruling 6 — it-31 slice 7): the Release body and the annotated tag's message carry it, and the round's own close release is the funnel's live run | release |
 
 Reification adds records, never new duties. The design-side records (steps 2–4) are **typed lines in
 the vault docs themselves** — no new surface (the crossing ruling of 2026-08-07, epic #415).
@@ -64,7 +65,7 @@ rewiring lands (a named v1 deferral in the model's own header).
 | Arming edit (`auto_merge`) | **categorical** — `manifest.auto_merge` is writable by the human alone; no record licenses an agent's or machinery's arming edit. BOTH directions of her own act owe `YR-OUTPUT-SWITCH` on the trail (it-31 slice 6, gap 39): the record documents, it never licenses | fail-closed |
 | Output-gate switches (un-arm; sentinel throw/clear) | the human's own acts — ssh on yr-host for the sentinel, her manifest edit for un-arming — each owing a `YR-OUTPUT-SWITCH` record (`switch`/`to`/`who`); detection where prevention cannot reach: the close report names the missing route in any session whose acts read the switch | advisory (detection-tier) |
 | Filing a crossing | the governing design's `status` is `active` — evaluated by the engine over the act's own body (it-31 slice 5: the resolver judges the Source line; a body without one is not a crossing and passes by construction); the epic gate's own approval check still guards the promotion side downstream | fail-closed |
-| Skill release | **not yet walled by the engine** — the release lane (release record + validation-gated release, ruling 6) is its own slice; v1 deliberately removes the old unconditional refusal that mutually blocked the release act (gap 57) | advisory (v1) |
+| Skill release | a validation-gated, git-native act through `tools/release.py` (ruling 6 — it-31 slice 7): the funnel refuses on failing validation (model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift), then the annotated `skill/vX.Y.Z` tag + GitHub Release carry `YR-RELEASE`; the raw `gh release create` spelling resolves to the same propose-gated one-way door — interactive **asks the human**, headless refuses | fail-closed |
 | Off-table vault write | a blind file write cannot confirm the effect it might have, so the wall **advises, never denies** (an over-matching binding may never refuse); the sanctioned rows stay the decision table's | advisory |
 | Commit minted on the human's git identity | the standing trailer discipline — the visible commit message carries `Co-Authored-By:`; an editor-driven body is invisible pre-execution and is named uncovered, never guessed at | fail-closed |
 

@@ -1,5 +1,5 @@
 {
- "header": "GENERATED from process.toml v1.4.0 sha256:3532a48c0117adfa \u2014 never hand-edit",
+ "header": "GENERATED from process.toml v1.5.0 sha256:adf9cb5881b69818 \u2014 never hand-edit",
  "vectors": [
   {
    "kind": "journal-independence",
@@ -125,6 +125,36 @@
     "tool_name": "Bash",
     "tool_input": {
      "command": "git push origin HEAD:main"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "release.funnel-ship",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "python3 tools/release.py ship --version 1.0.3"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "release.funnel-backfill",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "python3 tools/release.py backfill --version 1.0.3"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "release.gh-cli",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh release create skill/v1.0.3 --repo yellow-robots/factory --notes x"
     }
    }
   },
@@ -259,6 +289,12 @@
    "transition": "design-doc.draft->active",
    "guard": 2,
    "predicate": "record_absent"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "plugin.release.validated",
+   "guard": 0,
+   "predicate": "evaluator_pass"
   },
   {
    "kind": "same-transition",

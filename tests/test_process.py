@@ -60,6 +60,7 @@ def test_compiled_lanes_reproduce_the_design_trace(model):
         "design": ["YR-ACCEPT", "YR-DESIGN-FIT", "YR-DESIGN-REVIEW"],
         "close": ["YR-ROUND-RECORD", "YR-SHIP-WALK"],
         "merge": ["YR-MERGE"],
+        "release": ["YR-RELEASE"],
     }
     assert forbid == {"epic": ["YR-OPEN-QUESTION"], "design": ["YR-OPEN-QUESTION"]}
 
@@ -281,7 +282,8 @@ def test_journal_independence_decisions_identical_with_journal_unwritable(model,
 # UNKNOWN is never a pass (the disposition table's left column, consumed per generated vector)
 _EXACT_DENY = {"board.write.gh-cli", "board.write.funnel", "board.write.graphql",
                "merge.gh-cli", "merge.graphql", "arming.fs", "push.main", "push.shared",
-               "design.stamp.obsidian-mcp"}
+               "design.stamp.obsidian-mcp",
+               "release.funnel-ship", "release.funnel-backfill", "release.gh-cli"}
 
 
 def test_unknown_always_disposes_closed_never_open(model, vectors, monkeypatch):

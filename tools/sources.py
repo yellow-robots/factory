@@ -218,3 +218,20 @@ def host_file(path: Path) -> tuple[bool, bool]:
         return True, Path(path).exists()
     except OSError as e:
         return False, str(e)  # type: ignore[return-value]
+
+
+def releases(repo: str) -> tuple[bool, list[str]] | tuple[bool, str]:
+    """The repo's GitHub Releases as one text per Release — tag name line + body (the YR-RELEASE
+    record rides the body; fields must be complete within ONE text, so texts are never joined).
+    Bounded like every fetcher; the walk tooling and the bench read this surface."""
+    ok, out = _run(["gh", "api", f"repos/{repo}/releases", "--paginate"], timeout=GH_TIMEOUT)
+    if not ok:
+        return False, out
+    try:
+        data = json.loads(out or "[]")
+    except (json.JSONDecodeError, ValueError) as e:
+        return False, f"releases unparseable: {e}"
+    if not isinstance(data, list):
+        return False, "releases unparseable: not a list"
+    return True, [f"{r.get('tag_name') or ''}\n{r.get('body') or ''}"
+                  for r in data if isinstance(r, dict)]

@@ -860,9 +860,15 @@ def _example_act(bd: dict) -> dict | None:
         sub = " ".join(bd["match"].get("subcommands") or [])
         tail = {"project item-edit": _board_cmd().removeprefix("gh "),
                 "pr merge": "pr merge 1 --repo yellow-robots/factory --squash",
+                "release create": "release create skill/v1.0.3 --repo yellow-robots/factory --notes x",
                 "api": "api repos/yellow-robots/factory/pulls/1/merge -X PUT"}.get(sub)
         return {"tool_name": "Bash", "tool_input": {"command": f"gh {tail}"}} if tail else None
     if mk == "argv" and bd["match"].get("subcommand_contains"):
+        frag = bd["match"]["subcommand_contains"]
+        if "release.py" in frag:
+            sub = (bd["match"].get("subcommands_include") or ["ship"])[0]
+            return {"tool_name": "Bash", "tool_input": {
+                "command": f"python3 tools/release.py {sub} --version 1.0.3"}}
         return {"tool_name": "Bash", "tool_input": {
             "command": "python3 tools/board_plumbing.py set-field --id ITEM --status Ready"}}
     if mk == "graphql-mutation":

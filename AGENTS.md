@@ -94,6 +94,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/dispatch.py` | n8n's build-trigger endpoint (RFC 0004) |
 | `tools/epic_gate.py` | the standing-approval sweep: promotes/self-closes epics, flags stranded claims |
 | `tools/design_resolver.py` | the governing-design resolver (it-31 slice 4): parses an epic body's Source line, reads the design's status through the vault — the epic-flip guard's evaluator, one seam |
+| `tools/release.py` | the validation-gated, git-native skill release act (it-31 slice 7, ruling 6): refuses unless the model loads at the commit, server CI is green there (the squash-source PR's tree-equal head), and build/ carries no drift — then annotated tag `skill/vX.Y.Z` + GitHub Release carrying `YR-RELEASE`; backfill mode types the pre-tool pair; `--test-mode` writes nothing |
 | `tools/review_bundle.py` | the canonical, hashed per-run review bundle |
 | `tools/check_task.py` | the DoR self-containedness gate for a Ready task |
 | `tools/check_links.py` | the crossing-link (`source_*`) resolver/gate |
