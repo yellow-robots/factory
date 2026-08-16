@@ -495,9 +495,14 @@ def test_python_face_pr_list_tick_advances(tmp_path):
 
 
 def test_python_face_issue_view_prints_comments(tmp_path):
+    """Since #436 the face also serves the body (STUB_BODY, default empty) — sources.issue_trail
+    reads body,comments, and the epic-flip funnel's Source line lives in the body."""
     r = _run_python_face(tmp_path, ["issue", "view", "7"], {"STUB_COMMENTS": json.dumps(["a", "b"])})
     assert r.returncode == 0
-    assert json.loads(r.stdout) == {"comments": ["a", "b"]}
+    assert json.loads(r.stdout) == {"body": "", "comments": ["a", "b"]}
+    r2 = _run_python_face(tmp_path, ["issue", "view", "7"],
+                          {"STUB_COMMENTS": json.dumps(["a"]), "STUB_BODY": "the body"})
+    assert json.loads(r2.stdout) == {"body": "the body", "comments": ["a"]}
 
 
 def test_python_face_unhandled_call_exits_nonzero_no_output(tmp_path):

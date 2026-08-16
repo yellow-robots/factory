@@ -198,9 +198,12 @@ def test_epic_gate_selection_picks_nothing_when_no_project_item_matches():
 
 def test_promote_selection_picks_the_node_whose_project_number_matches(tmp_path):
     binp = tp._bin(tmp_path)
+    # only the RIGHT node carries a Status: since #436 the engine's from-state check reads the
+    # selected node, so picking ITEM-WRONG now also reads an unreadable status and refuses —
+    # the selection pin's teeth sharpened, not padded
     resp = _promote_multi_response(nodes=[
         {"id": "ITEM-WRONG", "project": {"number": 99}},
-        {"id": "ITEM-RIGHT", "project": {"number": 1}},
+        {"id": "ITEM-RIGHT", "project": {"number": 1}, "status": {"name": "Backlog"}},
     ])
     r = tp._run(["7", "--repo", "test/repo"], _promote_env(tmp_path, binp, resp))
     assert r.returncode == 0, r.stderr
@@ -411,7 +414,8 @@ def test_promote_identifiers_are_environment_overridable(tmp_path):
 
 def test_promote_project_number_is_environment_overridable(tmp_path):
     binp = tp._bin(tmp_path)
-    resp = _promote_multi_response(nodes=[{"id": "ITEM-42", "project": {"number": 42}}])
+    resp = _promote_multi_response(nodes=[{"id": "ITEM-42", "project": {"number": 42},
+                                           "status": {"name": "Backlog"}}])
     env = _promote_env(tmp_path, binp, resp)
     env["PROJECT_NUMBER"] = "42"
     r = tp._run(["7", "--repo", "test/repo"], env)

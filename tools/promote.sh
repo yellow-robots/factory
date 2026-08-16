@@ -4,10 +4,11 @@
 # the status mutation in code, so record-before-flip is a fact about the call order, not a convention to
 # remember. No LLM anywhere.
 #
-# Refuses (writing nothing — no comment, no status write) when the target issue is closed, absent from
-# project #PROJECT_NUMBER's board, or Type=Feature or Type=Epic (matched case-insensitively, both arms of
-# the vocabulary — an epic — its Ready flip is the YR-EPIC-APPROVAL record, an attended act handled by
-# tools/epic_gate.py, not this command; extending promotion to epics is explicitly out of scope here).
+# Refuses (writing nothing — no comment, no status write) when the target issue is closed or absent
+# from project #PROJECT_NUMBER's board. A Type=Feature issue takes the EPIC-FLIP path (ruling 5,
+# it-31 slice 4): preconditions through the engine's transition-check, the YR-EPIC-READY record
+# before the flip, the written state verified after — refusing fail-closed when any precondition
+# does not hold. Type=Epic still refuses (the epic-type-vs-feature divergence, open seed).
 #
 # Reads and writes the board through the one home (tools/board_plumbing.py): the identifiers, the
 # per-issue project-item read (the authoritative per-issue read — same as tools/epic_gate.py) and its
@@ -56,8 +57,32 @@ IFS=$'\037' read -r STATE ITYPE ITEM_ID _STATUS _REASON <<<"$LINE"
 [ "$STATE" = "OPEN" ] || refuse "issue #$ISSUE is not open (state: ${STATE:-unknown})"
 [ -n "$ITEM_ID" ]     || refuse "issue #$ISSUE is not on project #$PROJECT_NUMBER's board"
 case "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" in
-  feature|epic)
-    refuse "issue #$ISSUE is Type=$ITYPE (an epic) — epic Ready flips remain an attended act (YR-EPIC-APPROVAL via tools/epic_gate.py), not this command's"
+  feature)
+    # Ruling 5 (it-31 slice 4): the epic Ready flip's own funnel — preconditions checked through
+    # the engine's transition-check (the standing approval on the trail, no open question riding
+    # the epic, the governing design resolves and is active), the YR-EPIC-READY record landing
+    # BEFORE the flip, and the written state verified after. Fail-closed: a refusal writes nothing.
+    python3 "$SELF_DIR/process.py" transition-check "task.backlog->ready.epic-flip" \
+        --repo "$OWNER/$NAME" --issue "$ISSUE" \
+      || refuse "the epic-flip wall refused (see the rules above): the approval, the open-question rule, or the governing design's activation does not hold for #$ISSUE"
+    WHO="$("$GH_BIN" api user --jq .login 2>/dev/null || true)"
+    [ -n "$WHO" ] || WHO="${USER:-operator}"
+    DESIGN="$(python3 "$SELF_DIR/design_resolver.py" name --repo "$OWNER/$NAME" --issue "$ISSUE" 2>/dev/null || true)"
+    [ -n "$DESIGN" ] || refuse "the governing design's name could not be resolved from #$ISSUE's Source line — the record must name its design"
+    BODY="$(printf 'YR-EPIC-READY\ndesign: %s\nwho: @%s\n\nFlipped to **Ready** via `tools/promote.sh` (the epic lane'"'"'s funnel, ruling 5): the standing approval converts to autonomous building; the cord-pull stays the human'"'"'s veto. This record lands before the Status flip, by construction.' "$DESIGN" "$WHO")"
+    "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$BODY" >/dev/null \
+      || die "could not post the epic-flip record for #$ISSUE — refusing to flip Status without the record landing first"
+    _board set-field --id "$ITEM_ID" --status Ready >/dev/null 2>&1 \
+      || die "epic-flip record posted, but the Status=Ready write failed for #$ISSUE — set it by hand or retry"
+    VERIFY="$(_board read-issue "$OWNER" "$NAME" "$ISSUE" 2>/dev/null || true)"
+    IFS=$'\037' read -r _VS _VT _VI VSTATUS _VR <<<"$VERIFY"
+    [ "$VSTATUS" = "Ready" ] \
+      || die "postcondition failed: #$ISSUE reads Status='$VSTATUS' after the flip — verify by hand"
+    echo "promote: epic #$ISSUE -> Ready (YR-EPIC-READY posted by @$WHO; design: $DESIGN)"
+    exit 0
+    ;;
+  epic)
+    refuse "issue #$ISSUE is Type=Epic — the Epic-typed governing shape is invisible to the epic gate (the epic-type-vs-feature divergence, open seed); file governing issues as Type=Feature"
     ;;
 esac
 

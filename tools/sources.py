@@ -93,7 +93,7 @@ def board_item(item_id: str) -> tuple[bool, dict] | tuple[bool, str]:
         "query($id:ID!){node(id:$id){... on ProjectV2Item{updatedAt "
         "fieldValues(first:20){nodes{... on ProjectV2ItemFieldSingleSelectValue{name field{... on "
         "ProjectV2SingleSelectField{name}}}}} "
-        "content{... on Issue{number repository{nameWithOwner}}}}}}"
+        "content{... on Issue{number issueType{name} repository{nameWithOwner}}}}}}"
     )
     ok, out = _run(["gh", "api", "graphql", "-f", f"query={query}", "-F", f"id={item_id}"])
     if not ok:
@@ -111,6 +111,7 @@ def board_item(item_id: str) -> tuple[bool, dict] | tuple[bool, str]:
     return True, {
         "status": fields.get("Status", ""),
         "reason": fields.get("Reason", ""),
+        "itype": ((content.get("issueType") or {}).get("name")) or "",
         "updatedAt": node.get("updatedAt") or "",
         "repo": ((content.get("repository") or {}).get("nameWithOwner")) or "",
         "issue": str(content.get("number") or ""),
@@ -118,22 +119,38 @@ def board_item(item_id: str) -> tuple[bool, dict] | tuple[bool, str]:
 
 
 def issue_board_position(repo: str, issue: str) -> tuple[bool, dict] | tuple[bool, str]:
-    """Status/Reason for an issue addressed by repo+number (the scope a trail act carries)."""
-    ok, out = _run(["gh", "issue", "view", str(issue), "--repo", repo,
-                    "--json", "projectItems"])
+    """Status/Reason/type for an issue addressed by repo+number (the scope a trail act carries).
+    Mirrors board_plumbing's proven per-issue read shape (issueType + projectItems via
+    fieldValueByName) AND its selection rule — the node whose project number matches the board's
+    (cited from the one home, never copied): a first-item-any-project read would let a foreign
+    board's item answer for the Dev board's state (the #436 review's finding)."""
+    import board_plumbing
+    owner, _, name = repo.partition("/")
+    query = (
+        "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){"
+        "issue(number:$number){issueType{name} projectItems(first:20){nodes{"
+        "project{number} "
+        'status: fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}} '
+        'reason: fieldValueByName(name:"Reason"){... on ProjectV2ItemFieldSingleSelectValue{name}}'
+        "}}}}}"
+    )
+    ok, out = _run(["gh", "api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}",
+                    "-F", f"name={name}", "-F", f"number={issue}"])
     if not ok:
         return False, out
     try:
-        items = json.loads(out or "{}").get("projectItems") or []
-    except (json.JSONDecodeError, ValueError) as e:
-        return False, f"projectItems unparseable: {e}"
-    if not items:
-        return False, "no board item fronts this issue"
-    it = items[0]
-    return True, {"status": (it.get("status") or {}).get("name", "") if isinstance(it.get("status"), dict)
-                  else it.get("status") or "",
-                  "reason": (it.get("reason") or {}).get("name", "") if isinstance(it.get("reason"), dict)
-                  else it.get("reason") or ""}
+        node = json.loads(out or "{}")["data"]["repository"]["issue"] or {}
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+        return False, f"board position unparseable: {e}"
+    items = ((node.get("projectItems") or {}).get("nodes")) or []
+    wanted = board_plumbing.project_number()
+    matched = [i for i in items if ((i.get("project") or {}).get("number")) == wanted]
+    if not matched:
+        return False, f"no item on project #{wanted} fronts this issue"
+    it = matched[0]
+    return True, {"status": ((it.get("status") or {}).get("name")) or "",
+                  "reason": ((it.get("reason") or {}).get("name")) or "",
+                  "itype": ((node.get("issueType") or {}).get("name")) or ""}
 
 
 def pr_state(repo: str, pr: str) -> tuple[bool, dict] | tuple[bool, str]:

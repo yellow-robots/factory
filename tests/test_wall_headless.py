@@ -52,9 +52,10 @@ def _flip_text(reg):
     return row["marker"] + " unblock\n" + "\n".join(f"{f}: x" for f in row["fields"]) + "\n"
 
 
-def _stub_board(monkeypatch, status, reason=""):
+def _stub_board(monkeypatch, status, reason="", itype="Task"):
     monkeypatch.setattr(sources, "board_item", lambda item_id: (True, {
-        "status": status, "reason": reason, "updatedAt": "2026-08-08T00:00:00Z",
+        "status": status, "reason": reason, "itype": itype,
+        "updatedAt": "2026-08-08T00:00:00Z",
         "repo": "yellow-robots/factory", "issue": "420"}))
 
 

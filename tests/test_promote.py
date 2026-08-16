@@ -30,10 +30,15 @@ def _bin(tmp):
     return b
 
 
-def _response(*, state="OPEN", itype="Task", item_id="ITEM1", project_number=1, on_board=True):
+def _response(*, state="OPEN", itype="Task", item_id="ITEM1", project_number=1, on_board=True,
+              status="Backlog", reason=""):
+    """The item now carries Status/Reason: since #436 the engine's transition-check judges the
+    from-state too (a funnel must never rewind the machine), so the stub serves where it sits."""
     nodes = []
     if on_board:
-        nodes.append({"id": item_id, "project": {"number": project_number}})
+        nodes.append({"id": item_id, "project": {"number": project_number},
+                      "status": ({"name": status} if status else None),
+                      "reason": ({"name": reason} if reason else None)})
     return json.dumps({"data": {"repository": {"issue": {
         "state": state,
         "issueType": ({"name": itype} if itype else None),
@@ -140,8 +145,55 @@ def test_refuses_issue_absent_from_board_writes_nothing(tmp_path):
 
 
 def test_refuses_type_feature_epic_writes_nothing(tmp_path):
+    """Since it-31 slice 4 the Feature arm is ruling 5's conditional funnel, not a categorical
+    refusal: HERE the harness carries no approval and no resolvable design, so the epic-flip
+    wall refuses fail-closed and writes nothing — the pin's teeth are unchanged."""
     binp = _bin(tmp_path)
     r = _run(["7", "--repo", "test/repo"], _env(tmp_path, binp, itype="Feature"))
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
+APPROVAL_RECORD = "YR-EPIC-APPROVAL\ndesign: 01-x\nreview: approved after the cold pass\nwho: operator"
+
+
+def test_epic_flip_happy_path_record_before_flip_and_verified(tmp_path):
+    """Ruling 5's SHALLs end to end in bash (it-31 slice 4): preconditions pass through the
+    engine, the YR-EPIC-READY comment lands strictly BEFORE the item-edit, exactly one of each
+    write, and the postcondition re-read verifies Ready (the after-edit stub shape)."""
+    binp = _bin(tmp_path)
+    vault = tmp_path / "vault"
+    doc = vault / "04 projects" / "x" / "01-x.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("---\nstatus: active\n---\nbody\n", encoding="utf-8")
+    env = _env(tmp_path, binp, itype="Feature")
+    env["STUB_BODY"] = "**Source:** product-spec [[04 projects/x/01-x]] (Obsidian design brain)"
+    env["STUB_COMMENTS"] = json.dumps([APPROVAL_RECORD])
+    env["STUB_ISSUE_RESPONSE_AFTER_EDIT"] = _response(itype="Feature", status="Ready")
+    env["YR_VAULT_ROOT"] = str(vault)
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode == 0, f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    calls = _calls(tmp_path)
+    comment_idx = [i for i, c in enumerate(calls) if c[:2] == ["issue", "comment"]]
+    edit_idx = [i for i, c in enumerate(calls) if c[:2] == ["project", "item-edit"]]
+    assert len(comment_idx) == 1 and len(edit_idx) == 1
+    assert comment_idx[0] < edit_idx[0]                     # record BEFORE flip, by construction
+    body_call = calls[comment_idx[0]]
+    assert any("YR-EPIC-READY" in a for a in body_call)
+    assert any("04 projects/x/01-x" in a for a in body_call)
+
+
+def test_epic_flip_refuses_when_design_is_not_active_writes_nothing(tmp_path):
+    binp = _bin(tmp_path)
+    vault = tmp_path / "vault"
+    doc = vault / "04 projects" / "x" / "01-x.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("---\nstatus: draft\n---\nbody\n", encoding="utf-8")
+    env = _env(tmp_path, binp, itype="Feature")
+    env["STUB_BODY"] = "**Source:** product-spec [[04 projects/x/01-x]] (Obsidian design brain)"
+    env["STUB_COMMENTS"] = json.dumps([APPROVAL_RECORD])
+    env["YR_VAULT_ROOT"] = str(vault)
+    r = _run(["7", "--repo", "test/repo"], env)
     assert r.returncode != 0
     assert not _writes(_calls(tmp_path))
 

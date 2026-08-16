@@ -48,9 +48,10 @@ def _flip_text(reg):
     return row["marker"] + " unblock\n" + "\n".join(f"{f}: x" for f in row["fields"]) + "\n"
 
 
-def _stub_board(monkeypatch, status, reason=""):
+def _stub_board(monkeypatch, status, reason="", itype="Task"):
     monkeypatch.setattr(sources, "board_item", lambda item_id: (True, {
-        "status": status, "reason": reason, "updatedAt": "2026-08-08T00:00:00Z",
+        "status": status, "reason": reason, "itype": itype,
+        "updatedAt": "2026-08-08T00:00:00Z",
         "repo": "yellow-robots/factory", "issue": "420"}))
 
 
@@ -442,14 +443,14 @@ def test_model_not_loading_is_loud_but_never_blocks(monkeypatch):
 
 def test_promote_check_passes_with_gates_record(model, reg, monkeypatch):
     monkeypatch.setattr(sources, "issue_board_position",
-                        lambda repo, issue: (True, {"status": "Backlog", "reason": ""}))
+                        lambda repo, issue: (True, {"status": "Backlog", "reason": "", "itype": "Task"}))
     _stub_trail(monkeypatch, [_gates_text(reg)])
     assert wall.promote_check("yellow-robots/factory", "1") == 0
 
 
 def test_promote_check_refuses_without_record_and_on_unreadable_trail(model, reg, monkeypatch, capsys):
     monkeypatch.setattr(sources, "issue_board_position",
-                        lambda repo, issue: (True, {"status": "Backlog", "reason": ""}))
+                        lambda repo, issue: (True, {"status": "Backlog", "reason": "", "itype": "Task"}))
     _stub_trail(monkeypatch, ["YR-PROMOTED\n"])   # the funnel's own record never satisfies the gate
     assert wall.promote_check("yellow-robots/factory", "1") == 1
     assert "YR-TASK-GATES" in capsys.readouterr().err

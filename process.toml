@@ -17,8 +17,6 @@
 # semantically loaded word sitting next to `to` in the diff.
 #
 # v1 scope, named plainly (each absence is an [[amendment]] owed by its own slice, not an oversight):
-#   * the epic Ready flip row lands with its tool (ruling 5's slice) — it needs the issue-type
-#     facet to separate it from the standalone promote without breaking determinism;
 #   * the release lane (plugin.version store, release record, validation-gated release) lands with
 #     ruling 6's slice — v1 deliberately does not re-create the release-wall/release-act mutual
 #     block the excavation ranked as gap 57;
@@ -33,13 +31,9 @@
 #   * probe DRIFT detection lives in `process.py decay` (advisory, loud); enforcement's decay input
 #     is age-based (`verified_on` + `recheck_days`) until the decay CLI's findings are wired into a
 #     stored downgrade — on_drift = "downgrade" names the intent, the wiring is owed;
-#   * an attended epic Ready flip is refused with the STANDALONE row's teaching (no epic row exists
-#     yet, so the refusal demands YR-TASK-GATES) — mis-teaching accepted until ruling 5's tool and
-#     its issue-type facet land.
-
 [model]
 contract = "yr-process/1"
-version = "1.1.0"
+version = "1.2.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 12000                 # compile_slice.py's shipped bound, carried over
@@ -47,6 +41,16 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.2.0"
+date = "2026-08-16"
+kind = "widen"
+touches = ["task.backlog->ready.epic-flip", "task.backlog->ready.standalone",
+           "task.ready-blocked->ready.unraise"]
+reason = "ruling 5's slice (it-31 slice 4): the issue-type facet, the epic-flip row with its tool and records, the governing-design resolver as an evaluator, the standalone row's type discriminator, and the Ready+Blocked unraise row closing the observed #432 gap; the v1 mis-teaching retires"
+review = "yellow-robots/factory#436"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.1.0"
 date = "2026-08-16"
@@ -320,6 +324,18 @@ unknown_value_policy = "unknown"
   detected_by = "YR-HUMAN-INSTRUCTION"
 
 [[store]]
+id = "issue.type"
+kind = "issue-field"
+vendor = "github"
+location = "the issue's native Type (Task / Feature / Epic), read off the board item it fronts"
+identifiers = "tools/board_plumbing.py read-issue (itype column); source.board-item issueType{name}"
+values = ["Task", "Feature", "Epic"]
+read = "source.board-item"
+writable_by = ["human"]                 # Type changes are the human's; the walls only READ it
+guarded = false                         # a discriminator, never a walled write surface
+unknown_value_policy = "unknown"
+
+[[store]]
 id = "host.merge_sentinel"
 kind = "host-file"
 vendor = "host"
@@ -359,8 +375,8 @@ unknown_value_policy = "unknown"
 id = "task"
 subject = "one GitHub issue of Type Task or Epic, as it sits on the shared Dev board"
 scope = "repo+issue"
-facets = ["status", "reason"]
-note = "RFC 0003's state machine. Reason is the off-track facet, normalised out of Status."
+facets = ["status", "reason", "type"]
+note = "RFC 0003's state machine. Reason is the off-track facet, normalised out of Status; type is the read-only discriminator that separates the standalone promote from the epic flip (it-31 slice 4)."
 
 [[machine]]
 id = "pr"
@@ -432,6 +448,27 @@ facet = "reason"
 id = "blocked"
 store = "board.reason"
 value = "Blocked"
+
+[[state]]
+machine = "task"
+facet = "type"
+id = "task"
+store = "issue.type"
+value = "Task"
+
+[[state]]
+machine = "task"
+facet = "type"
+id = "feature"
+store = "issue.type"
+value = "Feature"
+
+[[state]]
+machine = "task"
+facet = "type"
+id = "epic"
+store = "issue.type"
+value = "Epic"
 
 [[state]]
 machine = "pr"
@@ -524,6 +561,16 @@ note = """The merge conditions are ITS conditions, in ITS order, with ITS fail-c
 This model holds no copy: `conditions_display` is a DISPLAY list so the slice can say
 "still needs: freshness" without this model knowing what freshness is."""
 
+[[evaluator]]
+id = "governing-design"
+argv = ["python3", "tools/design_resolver.py", "check", "--repo", "{scope.repo}", "--issue", "{scope.issue}"]
+conditions_display = ["design_active"]
+timeout_s = 30
+contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
+note = """The one governing-design resolver (the crossing's disposition 4): parses the epic body's
+Source line (registry row SOURCE-LINE) and reads the design's status through the vault. Slice 5's
+crossing invariant delegates to this same seam — one implementation, cited, never copied."""
+
 # ── transitions: the ONLY table a guard can attach to ────────────────────────────────────────
 
 [[transition]]
@@ -538,6 +585,11 @@ door = "one-way"
 because = "the standalone lane's human input gate: no governing design carries the approval, and promotion starts an autonomous build that opens a PR"
 
   [[transition.guard]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "task" }
+  why = "the discriminator: a Feature flip is the epic lane's own row, never this one (it-31 slice 4)"
+
+  [[transition.guard]]
   predicate = "record_present"
   args = { record = "YR-TASK-GATES" }
   why = "the standalone lane's review + fit gate; YR-PROMOTED never satisfies it"
@@ -547,8 +599,84 @@ because = "the standalone lane's human input gate: no governing design carries t
   args = { facet = "status", state = "ready" }
 
   [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "task" }      # the discriminator is read-only: unchanged, re-read
+
+  [[transition.post]]
   predicate = "record_present"
   args = { record = "YR-PROMOTED" }
+
+[[transition]]
+id = "task.backlog->ready.epic-flip"
+machine = "task"
+from = "backlog"
+to = "ready"
+lane = "epic"
+actor = ["human", "attended-agent"]
+agent_may = "propose"
+door = "one-way"
+because = "ruling 5: the act that converts a standing approval into autonomous building — preconditions checked before the write, record-before-flip, postconditions after; the cord-pull stays the human's veto"
+
+  [[transition.guard]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "feature" }
+  why = "the discriminator: this is the epic lane's flip; a Task promotes through the standalone row"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-EPIC-APPROVAL" }
+  why = "the standing approval on the epic's trail — the technical-rfc review's attestation"
+
+  [[transition.guard]]
+  predicate = "record_absent"
+  args = { record = "YR-OPEN-QUESTION" }
+  why = "the airlock rule: an open question on the epic blocks the flip"
+
+  [[transition.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "governing-design" }
+  why = "the governing design resolves from the epic body's Source line and is active — the input gate's standing approval actually stands"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "ready" }
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "feature" }   # the discriminator is read-only: unchanged, re-read
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-EPIC-READY" }
+
+[[transition]]
+id = "task.ready-blocked->ready.unraise"
+machine = "task"
+from = "ready"
+to = "ready"
+actor = ["human", "attended-agent"]
+agent_may = "execute"
+door = "reversible"
+because = "clearing a hold's Reason from Ready is the unblock's own record-before-flip discipline (the observed #432 gap); the raise may lawfully return on the next sweep — the hold is the attended epic's standing state"
+
+  [[transition.guard]]
+  predicate = "facet_is"
+  args = { facet = "reason", state = "blocked" }
+  why = "this is the un-raise; a clean Ready has nothing to clear"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-BOARD-FLIP" }
+  why = "record-before-flip, typed, fresh since the board item last changed"
+  window = "since-store-change"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "ready" }
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "reason", state = "none" }
 
 [[transition]]
 id = "task.blocked->ready.unblock"

@@ -37,7 +37,7 @@ Each step emits the named record on the shared trail; the registry row carries t
 | 7 | The standing-approval record | `YR-EPIC-APPROVAL` | issue-trail |
 | 8 | The standalone gates record | `YR-TASK-GATES` — demanded at the promote act itself | issue-trail |
 | 9 | Record-before-flip | `YR-BOARD-FLIP` | issue-trail |
-| 10 | The promote's own emission | `YR-PROMOTED` (standalone funnel) / `YR-AUTO-PROMOTED` (the epic gate's mechanical child promote) — landed by construction at the funnel, so a promoted trail without one means the flip happened outside it (a compiled-mandate addition, ruling 3) | issue-trail |
+| 10 | The promote's own emission | `YR-PROMOTED` (standalone funnel) / `YR-AUTO-PROMOTED` (the epic gate's mechanical child promote) / `YR-EPIC-READY` (the epic flip's own funnel, ruling 5 — it-31 slice 4: record-before-flip through `tools/promote.sh`'s Feature arm) — landed by construction at the funnel, so a promoted trail without one means the flip happened outside it (a compiled-mandate addition, ruling 3) | issue-trail |
 | 11 | The ship-walk trace | `YR-SHIP-WALK` — the close names the pending walk; the trigger is a surfaced checkpoint, never a memory | issue-trail |
 | 12 | The round record | `YR-ROUND-RECORD` — the close's observable counts | issue-trail |
 | 13 | The armed merge's record | `YR-MERGE` — the evaluator's durable decision, the compiled `merge` lane's one mandate | pr-trail |
