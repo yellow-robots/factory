@@ -104,6 +104,45 @@ def _keys(table: dict, kind: str, where: str) -> None:
 
 # ── load + validate ──────────────────────────────────────────────────────────────────────────────
 
+def _set_roles(files: list[Path]) -> tuple[Path, Path, list[Path]]:
+    """Which staged file plays which role: the model by the model file's own basename, the
+    registry by the STAGED model's own `records_registry` reference (the crossing's gotcha —
+    never the tree's), everything else an extra the load-time tier has no rules for. A set file
+    whose basename matches the reference wins over the reference's own path — the set's file IS
+    the proposed end state of that reference. Duplicate basenames refuse (the review's finding):
+    argv order must never decide which edit is judged."""
+    import tomllib
+    by_name: dict[str, Path] = {}
+    for p in files:
+        if p.name in by_name and by_name[p.name] != p:
+            raise ModelError(f"duplicate basename in the set: {p.name!r} appears as both "
+                             f"{by_name[p.name]} and {p} — argv order must never decide which "
+                             f"edit is judged; stage one file per role")
+        by_name.setdefault(p.name, p)
+    model_path = by_name.get(MODEL_PATH.name, MODEL_PATH)
+    try:
+        m = tomllib.loads(Path(model_path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ModelError(f"model not found: {model_path}")
+    except tomllib.TOMLDecodeError as e:
+        raise ModelError(f"model does not parse: {model_path}: {e}")
+    rr = (m.get("model") or {}).get("records_registry") or "records.toml"
+    registry_path = by_name.get(Path(rr).name,
+                                Path(rr) if Path(rr).is_absolute() else REPO_ROOT / rr)
+    consumed = {model_path, registry_path}
+    return model_path, registry_path, [p for p in files if p not in consumed]
+
+
+def load_set(files: list[Path]) -> dict:
+    """Change-set staging (it-31 slice 3, ruling: the owner's test-mode second duty): overlay the
+    declared files onto the tree and load the END state — a group of gate-touching edits invalid
+    per-file and valid together stops fighting the load-time tier one edit at a time. The shipped
+    tree's own gate (ruling 1) is untouched: this validates a proposal, it never makes a broken
+    tree load."""
+    model_path, registry_path, _ = _set_roles([Path(f) for f in files])
+    return load(Path(model_path), records.load(Path(registry_path)))
+
+
 def load(path: Path | None = None, registry: dict | None = None) -> dict:
     import tomllib
     p = path or MODEL_PATH
@@ -1585,7 +1624,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     ap = argparse.ArgumentParser(description="the process model: loader, compilers, engine")
     ap.add_argument("--model", type=Path, default=None)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("validate", help="load + every rule; exit 0 loaded, 1 broken (the gating tier)")
+    p_v = sub.add_parser("validate",
+                         help="load + every rule; exit 0 loaded, 1 broken (the gating tier)")
+    p_v.add_argument("--set", nargs="+", type=Path, default=None, metavar="FILE",
+                     help="change-set staging: judge the declared files' END state as a group "
+                          "instead of the tree (the shipped tree's own gate is untouched)")
     p_c = sub.add_parser("compile", help="compile a surface (or all) into build/")
     p_c.add_argument("surface", choices=["acts", "lanes", "slice", "conformance", "all"])
     p_chk = sub.add_parser("check", help="advisory checks")
@@ -1604,6 +1647,22 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     p_cr = sub.add_parser("close-report", help="the compiled close report for a session")
     p_cr.add_argument("--session", required=True)
     args = ap.parse_args(argv)
+
+    if args.cmd == "validate" and getattr(args, "set", None):
+        files = [Path(f) for f in args.set]
+        try:
+            mp, rp, extras = _set_roles(files)
+            staged = load_set(files)
+        except (ModelError, records.RegistryError) as e:
+            print(f"process: SET DOES NOT LOAD — the staged end state is broken: {e}",
+                  file=sys.stderr)
+            return 1
+        for x in extras:
+            print(f"process: {x.name}: not validated — the load-time tier has no rules for it "
+                  f"(part of the set, judged by its own gates)")
+        print(f"process: set ok — the end state loads, v{staged['model']['version']} "
+              f"({mp.name} + {rp.name})")
+        return 0
 
     try:
         model = load(args.model)
