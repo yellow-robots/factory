@@ -28,12 +28,9 @@
 #     compile_slice.py) — rewiring delivery to `build/slice-static.md` is the slice-4 migration's
 #     own change; until it lands the hand map is kept ALIGNED to this model and the model rules on
 #     any disagreement;
-#   * probe DRIFT detection lives in `process.py decay` (advisory, loud); enforcement's decay input
-#     is age-based (`verified_on` + `recheck_days`) until the decay CLI's findings are wired into a
-#     stored downgrade — on_drift = "downgrade" names the intent, the wiring is owed;
 [model]
 contract = "yr-process/1"
-version = "1.3.0"
+version = "1.4.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 12000                 # compile_slice.py's shipped bound, carried over
@@ -41,6 +38,16 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.4.0"
+date = "2026-08-16"
+kind = "widen"
+touches = ["arming.armed->disarmed.unarm", "arming.disarmed->armed.arm",
+           "sentinel.clear->thrown.throw", "sentinel.thrown->clear.clear"]
+reason = "the output gate's switches leave a trail (gap 39, it-31 slice 6): both arming directions and the sentinel pair owe YR-OUTPUT-SWITCH — detection where prevention cannot reach; and probe drift persists as a stored downgrade the liveness derivation consumes, the delivered slice naming the degradation (the header's owed wiring, retired)"
+review = "yellow-robots/factory#438"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.3.0"
 date = "2026-08-16"
@@ -346,7 +353,7 @@ unknown_value_policy = "unknown"
   id = "shell"
   how = "sed -i / tee / cat > onto a manifest from a shell"
   observable = false
-  detected_by = "YR-HUMAN-INSTRUCTION"
+  detected_by = "YR-OUTPUT-SWITCH"      # both directions of the switch owe the record (slice 6)
 
 [[store]]
 id = "issue.type"
@@ -369,8 +376,15 @@ identifiers = "deploy/DISPATCH.md"
 values = ["clear", "thrown"]
 read = "source.host-file"
 writable_by = ["human"]
-guarded = false                         # throwing/clearing is unrecorded today — gap 39, owed a slice
+guarded = true                          # gap 39 closed (it-31 slice 6): pure detection tier — every
+                                        # write path is unobservable, flagged by the missing record
 unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "ssh"
+  how = "touch/rm of the sentinel file over ssh on yr-host (the human's own act)"
+  observable = false
+  detected_by = "YR-OUTPUT-SWITCH"
 
 [[store]]
 id = "git.ref.main"
@@ -431,6 +445,20 @@ id = "pr"
 subject = "one pull request of a factory build"
 scope = "repo+pr"
 facets = ["state"]
+
+[[machine]]
+id = "arming"
+subject = "one repo's auto_merge switch — the output gate's master arm"
+scope = "repo"
+facets = ["state"]
+note = "it-31 slice 6 (gap 39): both directions of the switch owe YR-OUTPUT-SWITCH; the acts stay the human's alone (the permission tier walls every agent), so the rows exist for the record posts and the map, never as an agent path."
+
+[[machine]]
+id = "sentinel"
+subject = "the host merge kill switch on yr-host"
+scope = "host"
+facets = ["state"]
+note = "it-31 slice 6 (gap 39): pure detection tier — the acts happen over ssh where no wall can see; the record is the trail."
 
 [[machine]]
 id = "shared-ref"
@@ -547,6 +575,36 @@ id = "merged"
 store = "pr.status"
 value = "merged"
 terminal = true
+
+[[state]]
+machine = "arming"
+facet = "state"
+id = "disarmed"
+store = "manifest.auto_merge"
+value = "false"
+initial = true
+
+[[state]]
+machine = "arming"
+facet = "state"
+id = "armed"
+store = "manifest.auto_merge"
+value = "true"
+
+[[state]]
+machine = "sentinel"
+facet = "state"
+id = "clear"
+store = "host.merge_sentinel"
+value = "clear"
+initial = true
+
+[[state]]
+machine = "sentinel"
+facet = "state"
+id = "thrown"
+store = "host.merge_sentinel"
+value = "thrown"
 
 [[state]]
 machine = "shared-ref"
@@ -916,6 +974,74 @@ because = "the armed output gate; an attended hand-merge is refused because no a
   [[transition.post]]
   predicate = "record_present"
   args = { record = "YR-MERGE" }
+
+[[transition]]
+id = "arming.armed->disarmed.unarm"
+machine = "arming"
+from = "armed"
+to = "disarmed"
+actor = ["human"]
+door = "reversible"
+because = "un-arming is the human's own manifest edit, and it owes the same record arming does — the output gate's master switches carry a trail in both directions (gap 39, it-31 slice 6)"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "state", state = "disarmed" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-OUTPUT-SWITCH" }
+
+[[transition]]
+id = "arming.disarmed->armed.arm"
+machine = "arming"
+from = "disarmed"
+to = "armed"
+actor = ["human"]
+door = "one-way"
+because = "arming starts autonomous merging — decided exclusively by the human, executed under her explicit instruction, and recorded (the standing canon, now with its typed record)"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "state", state = "armed" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-OUTPUT-SWITCH" }
+
+[[transition]]
+id = "sentinel.clear->thrown.throw"
+machine = "sentinel"
+from = "clear"
+to = "thrown"
+actor = ["human"]
+door = "reversible"
+because = "throwing the kill switch blocks every merge — the human's ssh act on yr-host, invisible to any wall, detected by its record alone"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "state", state = "thrown" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-OUTPUT-SWITCH" }
+
+[[transition]]
+id = "sentinel.thrown->clear.clear"
+machine = "sentinel"
+from = "thrown"
+to = "clear"
+actor = ["human"]
+door = "reversible"
+because = "clearing the kill switch re-opens the armed gate — the same trail duty in the other direction"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "state", state = "clear" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-OUTPUT-SWITCH" }
 
 [[transition]]
 id = "shared-ref.push.instructed"

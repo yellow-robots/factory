@@ -364,6 +364,17 @@ surfaces = ["vault-doc"]
 notes = ""
 
 [[record]]
+name = "YR-OUTPUT-SWITCH"
+marker = "YR-OUTPUT-SWITCH"
+mode = "prefix"
+fields = ["switch", "to", "who"]
+emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitter = "the session recording the human's switch act (arming on/off; sentinel thrown/cleared) — the act itself stays the human's alone"
+readers = ["tools/process.py (the close report's NOT-OBSERVED lines, reachable via guard-READ stores: any session whose act's transition reads the switch hears the route)", "a census hand-run of tools/check_trail.py over the switch trails (no lane mandates this record — the acts are per-repo/host, not per-issue)"]
+surfaces = ["issue-trail", "pr-trail"]
+notes = "Gap 39's record (it-31 slice 6), minted at the crossing's one-spelling discipline: both directions of both master switches carry the same grammar — switch names which (auto_merge | sentinel), to names the new position."
+
+[[record]]
 name = "YR-EPIC-READY"
 marker = "YR-EPIC-READY"
 mode = "prefix"

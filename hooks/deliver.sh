@@ -63,6 +63,10 @@ fi
 # website session the factory's PRs were its position).
 {
   printf '\n## Position (composed at delivery — %s)\n\n' "$(date -u +%Y-%m-%dT%H:%MZ)"
+  # the stored probe-drift downgrades, named where the session reads (it-31 slice 6) — cheap
+  # (no probing), loud, non-blocking
+  DEG="$(timeout 10 python3 "$ROOT/tools/process.py" decay --stored-note 2>/dev/null || true)"
+  if [ -n "$DEG" ]; then printf '%s\n' "$DEG"; fi
   REPO="$(timeout 10 gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
   if [ -z "$REPO" ]; then
     printf 'Position unavailable: this directory resolves to no GitHub repo (loud, non-blocking) — read the board by hand.\n'

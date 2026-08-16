@@ -539,7 +539,26 @@ def is_headless(model: dict, hook: dict) -> bool:
     return hook.get(field) in (decl.get("values") or [])
 
 
-def decay(binding: dict, today: _dt.date | None = None) -> str:
+def _downgrades_path(model: dict) -> Path:
+    # beside the journal, THROUGH journal_path — which carries the unset-YR_WALL_STATE fallback
+    # the production default needs (the review's major on #438: a bare expandvars litters a
+    # literal `$YR_WALL_STATE/` directory into the cwd)
+    return journal_path(model).parent / "downgrades.json"
+
+
+def stored_downgrades(model: dict) -> dict:
+    """The persisted probe-drift downgrades (it-31 slice 6): `decay` writes them, the liveness
+    derivation consumes them, the delivered slice names them. Fail-soft: unreadable is empty —
+    the drift CLI and the delivery banner stay the loud surfaces (ruling 1B's advisory tier)."""
+    try:
+        return json.loads(_downgrades_path(model).read_text(encoding="utf-8")) or {}
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+
+
+def decay(binding: dict, today: _dt.date | None = None, downgrades: dict | None = None) -> str:
+    if downgrades and binding.get("probe") in downgrades:
+        return "drifted"                # a drifted probe downgrades every binding standing on it
     today = today or _dt.date.today()
     try:
         seen = _dt.date.fromisoformat(str(binding.get("verified_on")))
@@ -571,9 +590,12 @@ def chokepoint(t: dict, model: dict) -> str:
     return " + ".join(points) if points else "none — client-side hook coverage only"
 
 
-def enforcement(t: dict, model: dict, today: _dt.date | None = None) -> tuple[str, list[str]]:
+def enforcement(t: dict, model: dict, today: _dt.date | None = None,
+                downgrades: dict | None = None) -> tuple[str, list[str]]:
     """Derived, never authored. Returns (value, open_paths_rendered). Iteration is SORTED so the
-    compiled surfaces are byte-stable across processes (hash-seed independence)."""
+    compiled surfaces are byte-stable across processes (hash-seed independence). `downgrades` is
+    the stored probe-drift set (it-31 slice 6): compile passes none so committed surfaces stay
+    deterministic; runtime views pass `stored_downgrades(model)`."""
     bindings = (model.get("port") or {}).get("binding") or []
     paths, live, open_paths = [], [], []
     for sid in sorted(_stores_written(t, model)):
@@ -581,7 +603,8 @@ def enforcement(t: dict, model: dict, today: _dt.date | None = None) -> tuple[st
         for wp in store.get("write_path") or []:
             paths.append((store, wp))
             is_live = wp.get("observable") and any(
-                w["store"] == sid and w["write_path"] == wp["id"] and decay(bd, today) == "fresh"
+                w["store"] == sid and w["write_path"] == wp["id"]
+                and decay(bd, today, downgrades) == "fresh"
                 for bd in bindings for w in bd.get("writes") or [])
             if is_live:
                 live.append((store, wp))
@@ -1637,6 +1660,12 @@ def close_report(model: dict, session_id: str,
                       for r in rows if str(r.get("transition_id", "")).startswith("store:")}
     touched_stores |= {sid for r in rows if r.get("transition_id") in tids
                        for sid in _stores_written(tids[r["transition_id"]], model)}
+    # guard-READ stores too (the #438 review's major 2): a session whose act's transition guards
+    # on an unobservable store — the merge row's sentinel — hears that store's detection route
+    # exactly where it mattered; a purely-unwritable store would otherwise never reach any reader
+    touched_stores |= {g["args"]["store"] for r in rows if r.get("transition_id") in tids
+                       for g in tids[r["transition_id"]].get("guard") or []
+                       if g["predicate"] == "store_is"}
     for sid in sorted(touched_stores):
         store = model["_stores"].get(sid)
         if not store:
@@ -1682,6 +1711,7 @@ def check_drift(model: dict) -> list[str]:
 
 def run_decay(model: dict) -> list[str]:
     notes = []
+    downgrades = stored_downgrades(model)
     for pr in (model.get("port") or {}).get("probe") or []:
         try:
             out = subprocess.run(pr["fingerprint_cmd"].split(), capture_output=True, timeout=30)
@@ -1692,6 +1722,22 @@ def run_decay(model: dict) -> list[str]:
         if fp != pr.get("fingerprint"):
             notes.append(f"probe {pr['id']}: DRIFTED — the `{pr['subject']}` surface changed "
                          f"({pr['on_drift']})")
+            downgrades[pr["id"]] = {"drifted_on": str(_dt.date.today()),
+                                    "subject": pr.get("subject", "")}
+        else:
+            downgrades.pop(pr["id"], None)      # the surface matches again: self-heal
+    declared = {pr["id"] for pr in (model.get("port") or {}).get("probe") or []}
+    downgrades = {k: v for k, v in downgrades.items() if k in declared}
+    # ^ a probe removed from the model prunes with it (the review's finding: a ghost entry the
+    #   named remedy could never clear). BROKEN probes neither drift nor heal by design: a
+    #   previously-drifted broken probe stays conservatively downgraded, and a never-drifted one
+    #   is caught by the binding-age backstop (recheck_days) — the advisory tier's tradeoff.
+    try:
+        p = _downgrades_path(model)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(downgrades, indent=1, sort_keys=True), encoding="utf-8")
+    except OSError as e:
+        notes.append(f"downgrade store unwritable ({e}) — findings printed only, fail-soft")
     today = _dt.date.today()
     for bd in (model.get("port") or {}).get("binding") or []:
         d = decay(bd, today)
@@ -1761,7 +1807,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     p_d = sub.add_parser("decide", help="hook JSON on stdin -> decision JSON (dry-run friendly)")
     p_d.add_argument("--no-journal", action="store_true",
                      help="test mode: decide without touching the journal")
-    sub.add_parser("decay", help="probe fingerprints + binding age; advisory, loud")
+    p_dc = sub.add_parser("decay", help="probe fingerprints + binding age; advisory, loud")
+    p_dc.add_argument("--stored-note", action="store_true",
+                      help="print the one-line degradation note from the stored downgrades "
+                           "(no probing — the delivery banner's cheap read)")
     p_cr = sub.add_parser("close-report", help="the compiled close report for a session")
     p_cr.add_argument("--session", required=True)
     args = ap.parse_args(argv)
@@ -1836,6 +1885,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             print(json.dumps(out))
         return 0
     if args.cmd == "decay":
+        if getattr(args, "stored_note", False):
+            down = stored_downgrades(model)
+            if down:
+                print("COVERAGE DEGRADED: probe(s) drifted — "
+                      + "; ".join(f"{k} (since {v.get('drifted_on', '?')})"
+                                  for k, v in sorted(down.items()))
+                      + " — bindings standing on them are not live; run `process.py decay` "
+                        "after re-verifying the surface")
+            return 0
         notes = run_decay(model)
         for n in notes:
             print(f"process: {n}")

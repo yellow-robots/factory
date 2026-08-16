@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.3.0 sha256:812ffbb1f8bfd98c — never hand-edit -->
+<!-- GENERATED from process.toml v1.4.0 sha256:3532a48c0117adfa — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 
@@ -11,6 +11,12 @@
 
 **pr** — one pull request of a factory build
 - state (store `pr.status`, pr-attribute): `open`='open' · `approved`='approved' · `merged`='merged'
+
+**arming** — one repo's auto_merge switch — the output gate's master arm
+- state (store `manifest.auto_merge`, manifest-key): `disarmed`='false' · `armed`='true'
+
+**sentinel** — the host merge kill switch on yr-host
+- state (store `host.merge_sentinel`, host-file): `clear`='clear' · `thrown`='thrown'
 
 **shared-ref** — one shared origin branch that is neither main nor a task branch
 - tip (store `git.ref.shared`, git-ref): `advanced`='advanced'
@@ -39,6 +45,14 @@
   - open: board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
 - **pr.approved->merged.evaluator** [machinery; door one-way; partial; chokepoint: none — client-side hook coverage only] — an unarmed repo keeps the human's click (the named transitional exception); the host kill switch is not thrown; every merge condition holds, in the evaluator's own order with its own fail-closed semantics. the armed output gate; an attended hand-merge is refused because no actor class an attended session belongs to may perform this transition — no special 'categorical' concept is needed
   - open: pr.merged.web-ui: the merge button (detected by YR-MERGE)
+- **arming.armed->disarmed.unarm** [human; door reversible; partial; chokepoint: none — client-side hook coverage only] — no guards. un-arming is the human's own manifest edit, and it owes the same record arming does — the output gate's master switches carry a trail in both directions (gap 39, it-31 slice 6)
+  - open: manifest.auto_merge.shell: sed -i / tee / cat > onto a manifest from a shell (detected by YR-OUTPUT-SWITCH)
+- **arming.disarmed->armed.arm** [human; door one-way; partial; chokepoint: none — client-side hook coverage only] — no guards. arming starts autonomous merging — decided exclusively by the human, executed under her explicit instruction, and recorded (the standing canon, now with its typed record)
+  - open: manifest.auto_merge.shell: sed -i / tee / cat > onto a manifest from a shell (detected by YR-OUTPUT-SWITCH)
+- **sentinel.clear->thrown.throw** [human; door reversible; detected; chokepoint: none — client-side hook coverage only] — no guards. throwing the kill switch blocks every merge — the human's ssh act on yr-host, invisible to any wall, detected by its record alone
+  - open: host.merge_sentinel.ssh: touch/rm of the sentinel file over ssh on yr-host (the human's own act) (detected by YR-OUTPUT-SWITCH)
+- **sentinel.thrown->clear.clear** [human; door reversible; detected; chokepoint: none — client-side hook coverage only] — no guards. clearing the kill switch re-opens the armed gate — the same trail duty in the other direction
+  - open: host.merge_sentinel.ssh: touch/rm of the sentinel file over ssh on yr-host (the human's own act) (detected by YR-OUTPUT-SWITCH)
 - **shared-ref.push.instructed** [human/attended-agent; door reversible; partial; chokepoint: none — client-side hook coverage only] — the human's instruction, recorded on the branch's open PR — a push with no PR to carry the record cannot be evaluated and refuses fail-closed, naming the route. a shared branch that is not the session's own moves only under the human's explicit instruction — the record IS the license, on the branch's open PR trail; one record licenses the branch's pushes while that PR stays open (the PR's lifetime is the window, by design), and deletions are writes too (the it-30 conduct rule, now an evaluated guard; it-31 slice 5)
   - open: git.ref.shared.web-merge: GitHub advancing the branch on a merge into it (detected by YR-HUMAN-INSTRUCTION)
 - **design-doc.draft->active** [human/attended-agent; door one-way; partial; chokepoint: none — client-side hook coverage only] — the cold adversarial review, typed into the doc; the architect's fit verdict at the spec-ready moment; the airlock rule: an open question blocks the activation. the human input gate — what gets built; the standing approval under which the epic gate promotes slices mechanically
