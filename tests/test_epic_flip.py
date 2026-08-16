@@ -205,6 +205,70 @@ def test_transition_check_covers_the_epic_flip_row(model, reg, monkeypatch):
     assert rc2 == 1 and any("design_not_active" in f for f in failures2)
 
 
+def test_transition_check_refuses_the_wrong_from_state(model, reg, monkeypatch):
+    """The review's medium 1: the funnel's preconditions include WHERE THE MACHINE IS — a Feature
+    sitting In Progress must never be rewound to Ready with a legitimizing record."""
+    monkeypatch.setattr(sources, "issue_board_position",
+                        lambda r, i: (True, {"status": "In Progress", "reason": "",
+                                             "itype": "Feature"}))
+    _stub_trail(monkeypatch, [_approval_text(reg)])
+    _stub_evaluator(monkeypatch, returncode=0)
+    rc, failures = process.transition_check(model, "task.backlog->ready.epic-flip",
+                                            {"repo": "r/r", "issue": "9"})
+    assert rc == 1
+    assert any("backlog" in f and "in-progress" in f for f in failures)
+
+
+def test_transition_check_unreadable_from_state_is_unknown_never_ok(model, reg, monkeypatch):
+    monkeypatch.setattr(sources, "issue_board_position",
+                        lambda r, i: (False, "board unreachable"))
+    _stub_trail(monkeypatch, [_approval_text(reg)])
+    _stub_evaluator(monkeypatch, returncode=0)
+    rc, failures = process.transition_check(model, "task.backlog->ready.epic-flip",
+                                            {"repo": "r/r", "issue": "9"})
+    assert rc == 1
+    assert any("UNKNOWN" in f for f in failures)
+
+
+def test_resolver_refuses_targets_outside_the_vault(tmp_path, monkeypatch):
+    """The review's medium 2: the guarded surface must not steer the guard — a traversal or
+    absolute wikilink target refuses instead of reading outside YR_VAULT_ROOT."""
+    monkeypatch.setenv("YR_VAULT_ROOT", str(tmp_path))
+    outside = tmp_path.parent / "outside.md"
+    outside.write_text("---\nstatus: active\n---\n", encoding="utf-8")
+    import design_resolver
+    rc, token = design_resolver.check_body("**Source:** spec [[../outside]] (x)")
+    assert rc == 1 and token == "design_outside_vault"
+    rc2, token2 = design_resolver.check_body(f"**Source:** spec [[{outside}]] (x)")
+    assert rc2 == 1 and token2 == "design_outside_vault"
+
+
+def test_resolver_reads_status_from_frontmatter_only(tmp_path, monkeypatch):
+    """A column-0 `status: active` in the BODY never satisfies the guard — the parse is bounded
+    to the leading frontmatter block."""
+    monkeypatch.setenv("YR_VAULT_ROOT", str(tmp_path))
+    doc = tmp_path / "04 projects" / "x.md"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text("no frontmatter here\nstatus: active\n", encoding="utf-8")
+    import design_resolver
+    rc, token = design_resolver.check_body("**Source:** spec [[04 projects/x]] (x)")
+    assert rc == 1 and token == "design_status_unreadable"
+
+
+def test_intra_row_contradictory_discriminators_refuse_at_load(model, reg):
+    """The review's finding 4: a row carrying facet_is guards to two different states on ONE
+    facet is runtime-unsatisfiable dead weight — the loader refuses it outright."""
+    import copy
+    import tomllib
+    m = copy.deepcopy(tomllib.loads((REPO / "process.toml").read_text(encoding="utf-8")))
+    t = next(t for t in m["transition"] if t["id"] == "task.backlog->ready.standalone")
+    t["guard"].append({"predicate": "facet_is", "args": {"facet": "type", "state": "feature"},
+                       "why": "contradiction"})
+    import pytest as _pytest
+    with _pytest.raises(process.ModelError, match="contradict"):
+        process._validate(m, reg, "inline")
+
+
 def test_model_loads_and_determinism_holds(model):
     """The two backlog->ready attended rows coexist because their type discriminators are
     provably disjoint — the loader accepts the pair and still rejects true overlaps."""

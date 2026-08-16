@@ -162,6 +162,15 @@ if argv[:2] == ["api", "graphql"]:
         print(json.dumps({"data": {"organization": {"projectV2": {"items": {"nodes": nodes}}}}}))
         sys.exit(0)
     if "STUB_ISSUE_RESPONSE" in os.environ:
+        # STUB_ISSUE_RESPONSE_AFTER_EDIT (it-31 slice 4): once a `project item-edit` is in the
+        # call log, serve the post-flip shape instead — the funnel's postcondition verify re-reads
+        # the board after its own write, which a single static response cannot express.
+        after = os.environ.get("STUB_ISSUE_RESPONSE_AFTER_EDIT")
+        if after and log and os.path.exists(log):
+            calls = [json.loads(l) for l in open(log) if l.strip()]
+            if any(c[:2] == ["project", "item-edit"] for c in calls):
+                print(after)
+                sys.exit(0)
         print(os.environ["STUB_ISSUE_RESPONSE"])
         sys.exit(0)
     if "STUB_STATES" in os.environ:
@@ -200,7 +209,7 @@ if argv[:2] == ["pr", "list"]:
 
 if argv[:2] == ["issue", "view"]:
     comments = json.loads(os.environ.get("STUB_COMMENTS", "[]"))
-    print(json.dumps({"comments": comments}))
+    print(json.dumps({"body": os.environ.get("STUB_BODY", ""), "comments": comments}))
     sys.exit(0)
 
 sys.exit(9)

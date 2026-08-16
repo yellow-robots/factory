@@ -40,12 +40,25 @@ def check_body(body: str) -> tuple[int, str]:
     if not m:
         return 1, "source_link_missing"
     rel = m.group(1).strip()
-    vault = os.environ.get("YR_VAULT_ROOT", "/srv/obsidian/vaults/obsidian")
-    path = Path(vault) / (rel if rel.endswith(".md") else rel + ".md")
-    ok, text = sources.vault_doc(path)
+    vault = Path(os.environ.get("YR_VAULT_ROOT", "/srv/obsidian/vaults/obsidian")).resolve()
+    # containment (#436's review, medium 2): the guarded surface must never steer the guard —
+    # an absolute or traversing target refuses instead of reading outside the vault
+    candidate = (vault / (rel if rel.endswith(".md") else rel + ".md"))
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return 1, "design_unresolvable"
+    if Path(rel).is_absolute() or not resolved.is_relative_to(vault):
+        return 1, "design_outside_vault"
+    ok, text = sources.vault_doc(resolved)
     if not ok:
         return 1, "design_unresolvable"
-    sm = re.search(r"^status:\s*(\S+)", text, flags=re.M)
+    # the status is read from the LEADING frontmatter block only — a column-0 `status:` line in
+    # the body never satisfies the guard
+    fm = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n", text, flags=re.S)
+    if not fm:
+        return 1, "design_status_unreadable"
+    sm = re.search(r"^status:\s*(\S+)", fm.group(1), flags=re.M)
     if not sm:
         return 1, "design_status_unreadable"
     return (0, "") if sm.group(1) == "active" else (1, "design_not_active")

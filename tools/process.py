@@ -415,8 +415,16 @@ def _validate(model: dict, reg: dict, p: str | Path) -> None:  # noqa: C901 — 
                 prim = machines[t1["machine"]]["facets"][0]
 
                 def _disc(t):
-                    return {g["args"]["facet"]: g["args"]["state"] for g in t.get("guard") or []
-                            if g["predicate"] == "facet_is" and g["args"]["facet"] != prim}
+                    d: dict[str, set] = {}
+                    for g in t.get("guard") or []:
+                        if g["predicate"] == "facet_is" and g["args"]["facet"] != prim:
+                            d.setdefault(g["args"]["facet"], set()).add(g["args"]["state"])
+                    for f, states_set in d.items():
+                        if len(states_set) > 1:
+                            raise ModelError(f"transition {t['id']}: facet_is guards contradict on "
+                                             f"`{f}` ({sorted(states_set)}) — a row that can never "
+                                             f"be satisfied is dead weight, refused at load")
+                    return {f: next(iter(s)) for f, s in d.items()}
                 d1, d2 = _disc(t1), _disc(t2)
                 if any(f in d2 and d2[f] != v for f, v in d1.items()):
                     continue
@@ -968,7 +976,7 @@ def _eval_guard(ctx: _Ctx, t: dict, g: dict, act: dict) -> predicates.Result:
                  .replace("{scope.pr}", ctx.scope.get("pr", ""))
                  .replace("{scope.issue}", ctx.scope.get("issue", "")) for a in ev["argv"]]
         try:
-            out = subprocess.run(argv, capture_output=True, text=True,
+            out = subprocess.run(argv, capture_output=True, text=True, cwd=REPO_ROOT,
                                  timeout=int(ev.get("timeout_s") or 120))
             token = (out.stdout or "").splitlines()[0] if out.stdout else ""
             return predicates.evaluator_pass(args["evaluator"], outcome=(out.returncode, token))
@@ -1665,6 +1673,18 @@ def transition_check(model: dict, tid: str, scope: dict) -> tuple[int, list[str]
                 sid = model["_value_state"].get((t["machine"], facet, data.get(key, "")))
                 ctx.current[facet] = sid or ("UNKNOWN", f"{facet} reads {data.get(key)!r}")
     failures = []
+    # the from-state IS a precondition (#436's review, medium 1): a funnel that skips it would
+    # rewind the machine with a legitimizing record — weaker than the wall it fronts
+    primary = _primary_facet(model, t["machine"])
+    cur = ctx.current.get(primary)
+    if isinstance(cur, str):
+        if cur != t["from"] and t["from"] != t["to"]:
+            failures.append(f"MISSING: the machine is at `{cur}` and this transition runs from "
+                            f"`{t['from']}`")
+    elif scope.get("repo") and scope.get("issue"):
+        detail = cur[1] if isinstance(cur, tuple) else "unread"
+        failures.append(f"UNKNOWN: the `{primary}` facet could not be read ({detail}) — a "
+                        f"fail-closed check that cannot see the machine refuses")
     for g in t.get("guard") or []:
         res = _eval_guard(ctx, t, g, act={"fields": {}})
         if res.state != "TRUE":

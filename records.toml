@@ -383,7 +383,7 @@ emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's colum
 emitter = "the crossing session, filing the epic body's provenance line (the airlock's one crossing-link)"
 readers = ["tools/design_resolver.py"]
 surfaces = ["issue-trail"]
-notes = "The third unprefixed grammar (VERDICT:/STAGE-BLOCKED: precedent): the resolver parses the [[wikilink]] to the governing design (it-31 slice 4)."
+notes = "The third unprefixed grammar (VERDICT:/STAGE-BLOCKED: precedent): the resolver parses the [[wikilink]] to the governing design (it-31 slice 4). Read from the BODY only (texts[0]); issue-trail is the nearest declared surface — a guard on this row must never accept a comment's Source line (the review's accepted residual)."
 
 [[record]]
 name = "YR-ACCEPT"
