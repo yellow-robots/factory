@@ -186,6 +186,21 @@ def fetch_pr_trail(repo: str, number: int) -> list[str]:
     return [data.get("body") or ""] + _fetch_comments(repo, number)
 
 
+def fetch_releases(repo: str) -> list[str]:
+    """One text per GitHub Release (tag-name line + body), page-safe like the comment fetcher —
+    the release surface (it-31 slice 7): the YR-RELEASE record rides the Release body."""
+    texts: list[str] = []
+    page = 1
+    while True:
+        batch = _gh_json(["api", f"repos/{repo}/releases",
+                          "-X", "GET", "-f", "per_page=100", "-f", f"page={page}"])
+        texts.extend(f"{r.get('tag_name') or ''}\n{r.get('body') or ''}"
+                     for r in batch if isinstance(r, dict))
+        if len(batch) < 100:
+            return texts
+        page += 1
+
+
 def fetch_vault_docs(vault_root: Path, rel_paths: list[str]) -> list[str]:
     """A named path that cannot be read is an ERROR, never a silent narrowing of the scope."""
     out = []
@@ -230,6 +245,9 @@ def _cli(argv: list[str] | None = None) -> int:
                 print("check_trail: ERROR: --vault-doc needs --vault-root", file=sys.stderr)
                 return 2
             texts.setdefault("vault-doc", []).extend(fetch_vault_docs(args.vault_root, args.vault_doc))
+        if args.lane == "release":
+            # the release lane's scope is the repo alone — the surface is its Releases list
+            texts.setdefault("release", []).extend(fetch_releases(args.repo))
     except RuntimeError as e:
         print(f"check_trail: ERROR: {e}", file=sys.stderr)
         return 2

@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -148,6 +149,7 @@ def _judged_at_commit(commit: str) -> tuple[str, str]:
     rc, _, err = _run(["git", "worktree", "add", "--detach", wt, commit],
                       cwd=str(REPO_ROOT), timeout=WORKTREE_TIMEOUT)
     if rc != 0:
+        shutil.rmtree(wt, ignore_errors=True)   # mkdtemp preceded the failed add — no leak
         return "model_loads", f"could not stage a worktree at {commit[:9]}: {err.strip()}"
     try:
         rc, _, err = _run(["python3", "tools/process.py", "validate"], cwd=wt,

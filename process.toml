@@ -764,7 +764,9 @@ crossing invariant delegates to this same seam — one implementation, cited, ne
 id = "release-validation"
 argv = ["python3", "tools/release.py", "validate", "--repo", "{scope.repo}"]
 conditions_display = ["model_loads", "server_ci_green", "no_drift"]
-timeout_s = 600
+timeout_s = 240                         # deliberately well under the hook's own 600s ceiling: a
+                                        # harness kill is fail-OPEN (the invisible-exit contract),
+                                        # so the evaluator must die first — closed, as UNKNOWN
 contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
 note = """The release wall's seam (it-31 slice 7, ruling 6): validation is the tool's own —
 the model loads at the commit and build/ is drift-free (judged in a worktree AT the commit, by
@@ -1287,6 +1289,16 @@ verified_on = "2026-08-08"
 recheck_days = 30
 on_drift = "downgrade"
 
+[[port.probe]]
+id = "gh.release.surface"
+vendor = "github"
+subject = "the `gh release` subcommand surface the release binding matches against (it-31 slice 7 review: a binding's probe watches ITS OWN surface, never a sibling's)"
+fingerprint_cmd = "gh release --help"
+fingerprint = "sha256:7fad49c8b5e115d5d9423c163a0745f8adcb22fce5833876c26bb17433f157d2"
+verified_on = "2026-08-17"
+recheck_days = 30
+on_drift = "downgrade"
+
 # ── bindings: an observed ACT -> a STORE and a VALUE. BY EFFECT. No `transition` key exists. ─
 
 [[port.binding]]
@@ -1636,7 +1648,7 @@ precision = "exact"
 does_not_cover = ["a Release created through the web UI (the human's own surface)",
                   "a REST/GraphQL release creation via curl or gh api (unmatched, observed only)",
                   "a bare tag push: refs/tags/... is skipped by the refspec matcher by design — a tag with no Release and no record is not a release, and the missing YR-RELEASE is the detectable residue"]
-probe = "gh.pr.surface"
+probe = "gh.release.surface"
 verified_on = "2026-08-17"
 recheck_days = 30
 

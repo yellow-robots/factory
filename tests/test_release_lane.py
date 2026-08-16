@@ -55,6 +55,18 @@ class _Eval:
         self.stderr = ""
 
 
+class _EvalCapture:
+    """A subprocess stub that RECORDS argv — a blind fiat stub let the empty-repo substitution
+    through (the cold review's critical 1); the capture makes that class of gap fail loudly."""
+
+    def __init__(self, rc=0, out=""):
+        self.rc, self.out, self.calls = rc, out, []
+
+    def __call__(self, argv, *a, **k):
+        self.calls.append(list(argv))
+        return _Eval(self.rc, self.out)
+
+
 # ── the model amendment ──────────────────────────────────────────────────────────────────────────
 
 def test_release_transition_shape(model):
@@ -143,13 +155,17 @@ def _stub_repo(monkeypatch):
 
 def test_raw_gh_release_create_asks_interactive(model, monkeypatch):
     """A raw `gh release create` resolves to the release transition: propose at a one-way door —
-    the wall asks the human when validation holds."""
+    the wall asks the human when validation holds, and the evaluator receives the RESOLVED repo
+    (an empty --repo substitution can never validate anything — review critical 1)."""
     _stub_repo(monkeypatch)
-    monkeypatch.setattr(process.subprocess, "run", lambda *a, **k: _Eval(0))
+    ev = _EvalCapture(0)
+    monkeypatch.setattr(process.subprocess, "run", ev)
     out, rows = process.decide(model, _bash("gh release create skill/v9.9.9 --notes x"),
                                env=ATTENDED)
     assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
     assert rows and rows[0]["transition_id"] == "plugin.release.validated"
+    assert ev.calls and any("yellow-robots/factory" in c for call in ev.calls for c in call), \
+        "the evaluator must be invoked with the checkout's resolved origin repo, never an empty --repo"
 
 
 def test_raw_gh_release_create_denies_headless(model, monkeypatch):
@@ -351,6 +367,80 @@ def test_releases_fetcher_bounded_and_shaped(monkeypatch):
     assert ok and len(texts) == 2 and all("YR-RELEASE" in t for t in texts)
     assert seen["timeout"] is not None
     assert "releases" in " ".join(seen["argv"])
+
+
+# ── the cold review's folds (the readers become real; the probe watches its own surface) ─────────
+
+def test_engine_fetches_the_release_surface(model, reg, monkeypatch):
+    """Review major 2: record_present over YR-RELEASE must be readable by the engine — the close
+    report's post re-check reads this surface, and an unwired surface is a permanent UNKNOWN."""
+    monkeypatch.setattr(sources, "releases",
+                        lambda repo: (True, ["skill/v1.0.0\nYR-RELEASE\nversion: 1.0.0"]))
+    ctx = process._Ctx(model)
+    ctx.scope["repo"] = "yellow-robots/factory"
+    row = records.get(reg, "YR-RELEASE")
+    texts = process._fetch_surface_texts(ctx, row, {})
+    assert texts and "YR-RELEASE" in texts[0]
+
+
+def test_check_trail_cli_reads_the_release_lane(reg, monkeypatch, capsys):
+    """Review major 3: the registry row names check_trail as a reader — the CLI must actually be
+    able to fetch the surface, or the release lane can never be checked."""
+    body = release.record_body("1.0.0", SHA_100, "evidence", "@jbrey", mode="backfill")
+    monkeypatch.setattr(check_trail, "fetch_releases",
+                        lambda repo: [f"skill/v1.0.0\n{body}"])
+    rc = check_trail._cli(["--lane", "release", "--repo", "yellow-robots/factory"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "clean" in out
+
+
+def test_release_binding_probes_its_own_surface(model):
+    """Review medium 5: `gh release create`'s drift probe must fingerprint `gh release`, not an
+    unrelated subcommand family."""
+    bd = next(b for b in model["port"]["binding"] if b["id"] == "release.gh-cli")
+    assert bd["probe"] == "gh.release.surface"
+    pr = next(p for p in model["port"]["probe"] if p["id"] == "gh.release.surface")
+    assert pr["fingerprint_cmd"] == "gh release --help"
+
+
+def test_releases_fetcher_paginates(monkeypatch):
+    """Review medium 6: --paginate concatenates top-level arrays across pages, breaking a single
+    json.loads — the fetcher pages explicitly, like the comment fetcher."""
+    pages = {1: [{"tag_name": f"skill/v0.0.{i}", "body": "YR-RELEASE"} for i in range(100)],
+             2: [{"tag_name": "skill/v1.0.0", "body": "YR-RELEASE"}]}
+    calls = []
+
+    def fake_run(argv, timeout=None):
+        page = int(next(a.split("=")[1] for a in argv if a.startswith("page=")))
+        calls.append(page)
+        return True, json.dumps(pages[page])
+
+    monkeypatch.setattr(sources, "_run", fake_run)
+    ok, texts = sources.releases("yellow-robots/factory")
+    assert ok and len(texts) == 101 and calls == [1, 2]
+
+
+def test_evaluator_timeout_leaves_hook_headroom(model):
+    """Review medium 7: the hook's own ceiling is 600s and a harness kill is fail-OPEN (the
+    invisible-exit contract) — the evaluator must die first, closed."""
+    ev = model["_evaluators"]["release-validation"]
+    assert int(ev["timeout_s"]) <= 300
+
+
+def test_worktree_dir_reclaimed_when_add_fails(monkeypatch, tmp_path):
+    """Review low 8: mkdtemp precedes `git worktree add`; a failed add must not leak the dir."""
+    wt = tmp_path / "leaky"
+    monkeypatch.setattr(release.tempfile, "mkdtemp", lambda **k: str(wt.mkdir() or wt))
+
+    def failing_run(argv, timeout=0, cwd=None):
+        if "worktree" in argv and "add" in argv:
+            return 1, "", "boom"
+        return 0, "", ""
+
+    monkeypatch.setattr(release, "_run", failing_run)
+    token, _ = release._judged_at_commit(SHA_100)
+    assert token == "model_loads"
+    assert not wt.exists(), "a failed worktree add must reclaim its temp dir"
 
 
 # ── the canon row moves with the model ───────────────────────────────────────────────────────────

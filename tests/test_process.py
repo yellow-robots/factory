@@ -247,11 +247,20 @@ def vectors():
     return json.loads((REPO / "build" / "conformance.json").read_text(encoding="utf-8"))["vectors"]
 
 
+def _no_live_subprocess(*a, **k):
+    """Evaluator guards call subprocess.run directly (not through sources); the release row's
+    evaluator is its FIRST guard, so decide() reaches it — a live call here would spawn real git
+    worktrees and network I/O inside the suite (the slice-7 review's hermeticity finding). An
+    OSError reads as UNKNOWN through the evaluator contract: fail-closed, never a silent pass."""
+    raise OSError("stubbed down — no live subprocess in conformance tests")
+
+
 def _fail_all_sources(monkeypatch):
     for name in ("issue_trail", "pr_trail", "board_item", "issue_board_position", "pr_state",
-                 "origin_repo", "pr_for_branch"):
+                 "origin_repo", "pr_for_branch", "releases"):
         monkeypatch.setattr(sources, name, lambda *a, **k: (False, "stubbed down"))
     monkeypatch.setattr(sources, "vault_doc", lambda p: (False, "stubbed down"))
+    monkeypatch.setattr(process.subprocess, "run", _no_live_subprocess)
 
 
 def _fail_more_sources(monkeypatch):
