@@ -34,10 +34,23 @@ def test_pretooluse_outside_the_boundary_is_silent(model, tmp_path):
     assert out is None and rows == []
 
 
-def test_stop_outside_the_boundary_is_silent(model, tmp_path, monkeypatch):
-    """The Stop negative (new surface): even a session whose journal carries unresolved traces
-    hears nothing when the close fires outside the factory's world — the close report is the
-    lane's own instrument, not a global one."""
+def test_stop_outside_the_boundary_is_silent_for_an_actless_session(model, tmp_path, monkeypatch):
+    """The Stop negative (new surface): a session with NO journaled acts hears nothing when the
+    close fires outside the factory's world — the foreign-repo noise case."""
+    monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
+    process.journal_append(model, [{"ts": int(time.time()),
+                                    "transition_id": "pr.approved->merged.evaluator",
+                                    "binding_id": "merge.gh-cli", "scope": {}, "stance": "refuse",
+                                    "caller": "attended-agent"}], "sOTHER")
+    outside = wall.close({"session_id": "sEMPTY", "cwd": str(tmp_path / "elsewhere")},
+                         no_journal=True)
+    assert outside is None
+
+
+def test_stop_never_eats_a_session_with_journaled_acts(model, tmp_path, monkeypatch):
+    """decide()'s own lesson, applied to Stop (the slice-8 review's major 2): journal rows exist
+    only because decide() judged the underlying acts in-scope — an out-of-scope cwd at close time
+    must NOT silence the unresolved traces the quiesce discipline exists to surface."""
     monkeypatch.setenv("YR_WALL_STATE", str(tmp_path / "state"))
     process.journal_append(model, [{"ts": int(time.time()),
                                     "transition_id": "pr.approved->merged.evaluator",
@@ -45,7 +58,7 @@ def test_stop_outside_the_boundary_is_silent(model, tmp_path, monkeypatch):
                                     "caller": "attended-agent"}], "sBND")
     outside = wall.close({"session_id": "sBND", "cwd": str(tmp_path / "elsewhere")},
                          no_journal=True)
-    assert outside is None
+    assert outside is not None, "an out-of-scope cwd silenced a session with real traces"
     inside = wall.close({"session_id": "sBND", "cwd": str(REPO)}, no_journal=True)
     assert inside is not None, "the same journal inside the boundary still reports"
 

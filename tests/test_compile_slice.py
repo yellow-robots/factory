@@ -58,7 +58,11 @@ def test_position_composes_repo_prs_and_board(monkeypatch):
         if "pr list" in j:
             return 0, "PR#7 CLEAN: a title\n"
         if "board.sh" in j:
-            return 0, "7\tfactory\tTask\tx\tReady\ta title\n8\twebsite\tTask\tx\tReady\tother\n"
+            # the REAL board.sh column shape: number, nameWithOwner, itype, status, reason, title
+            # (the slice-8 review: a stub with the short name matched the bug, not the tool)
+            return 0, ("7\tyellow-robots/factory\tTask\tReady\t\ta title\n"
+                       "9\tyellow-robots/factory\tTask\tReady\tBlocked\theld one\n"
+                       "8\tyellow-robots/website\tTask\tReady\t\tother\n")
         return 1, ""
 
     monkeypatch.setattr(compile_slice, "_run", fake_run)
@@ -67,7 +71,8 @@ def test_position_composes_repo_prs_and_board(monkeypatch):
     assert "Repo: yellow-robots/factory" in out
     assert "PR#7" in out
     assert "#7 [Ready] a title" in out
-    assert "website" not in out, "the board excerpt must filter to THIS repo's rows"
+    assert "#9 [Ready · Blocked] held one" in out, "a non-empty Reason must ride the row"
+    assert "other" not in out, "the board excerpt must filter to THIS repo's rows"
 
 
 def test_position_degradation_note_travels(monkeypatch):

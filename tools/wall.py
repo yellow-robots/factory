@@ -55,12 +55,18 @@ def close(hook: dict, *, no_journal: bool = False) -> dict | None:
     if model is None:
         return None  # the pre-tool half already tells the session, loudly, on every act
     # The boundary governs every lane surface (it-31 slice 8): a Stop outside the factory's
-    # declared world hears nothing — the close report is the lane's instrument, not a global one.
-    # Absent cwd falls back to the process cwd, the same resolution decide() uses.
+    # declared world hears nothing — but ONLY for a session with no journaled acts. decide()'s
+    # own lesson (its cwd-OR-target union) is that cwd alone under-judges scope: a session
+    # sitting outside the workspace can act INTO the factory's world by absolute path, and its
+    # journal rows exist precisely because decide() already judged those acts in-scope. Silence
+    # must never eat a real unresolved trace (the slice-8 review's major 2), so an out-of-scope
+    # cwd suppresses the close only when the session's journal is PROVABLY empty.
+    session = hook.get("session_id") or ""
     here = Path(hook.get("cwd") or Path.cwd())
     if not process.in_scope(model, here):
-        return None
-    session = hook.get("session_id") or ""
+        rows = process.journal_rows(model, session)
+        if rows is not None and not rows:
+            return None
     text, should_block = process.close_report(model, session,
                                               journal_announcements=not no_journal)
     if not text:

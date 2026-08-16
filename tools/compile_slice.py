@@ -66,12 +66,14 @@ def position(root: Path) -> str:
         lines.append("PR read unavailable (gh failed or timed out) — loud, non-blocking.")
     rc, board = _run(["bash", str(root / "tools" / "board.sh")], 20)
     if rc == 0 and board.strip():
-        name = repo.split("/")[-1]
+        # board.sh's TSV: number, nameWithOwner, itype, status, reason, title — the filter matches
+        # the FULL owner/name (the slice-8 review: a short-name compare matched nothing, ever)
         rows = []
         for line in board.splitlines():
             f = line.split("\t")
-            if len(f) >= 6 and f[1] == name:
-                rows.append(f"  #{f[0]} [{f[4]}] {f[5]}")
+            if len(f) >= 6 and f[1] == repo:
+                mark = f[3] + (f" · {f[4]}" if f[4].strip() else "")
+                rows.append(f"  #{f[0]} [{mark}] {f[5]}")
         if rows:
             lines.append("Board (this repo, open items):\n" + "\n".join(rows[:12]))
     return "\n".join(lines) + "\n"
