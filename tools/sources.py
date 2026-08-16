@@ -121,11 +121,15 @@ def board_item(item_id: str) -> tuple[bool, dict] | tuple[bool, str]:
 def issue_board_position(repo: str, issue: str) -> tuple[bool, dict] | tuple[bool, str]:
     """Status/Reason/type for an issue addressed by repo+number (the scope a trail act carries).
     Mirrors board_plumbing's proven per-issue read shape (issueType + projectItems via
-    fieldValueByName); keeps the pre-existing first-item selection."""
+    fieldValueByName) AND its selection rule — the node whose project number matches the board's
+    (cited from the one home, never copied): a first-item-any-project read would let a foreign
+    board's item answer for the Dev board's state (the #436 review's finding)."""
+    import board_plumbing
     owner, _, name = repo.partition("/")
     query = (
         "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){"
         "issue(number:$number){issueType{name} projectItems(first:20){nodes{"
+        "project{number} "
         'status: fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}} '
         'reason: fieldValueByName(name:"Reason"){... on ProjectV2ItemFieldSingleSelectValue{name}}'
         "}}}}}"
@@ -139,9 +143,11 @@ def issue_board_position(repo: str, issue: str) -> tuple[bool, dict] | tuple[boo
     except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
         return False, f"board position unparseable: {e}"
     items = ((node.get("projectItems") or {}).get("nodes")) or []
-    if not items:
-        return False, "no board item fronts this issue"
-    it = items[0]
+    wanted = board_plumbing.project_number()
+    matched = [i for i in items if ((i.get("project") or {}).get("number")) == wanted]
+    if not matched:
+        return False, f"no item on project #{wanted} fronts this issue"
+    it = matched[0]
     return True, {"status": ((it.get("status") or {}).get("name")) or "",
                   "reason": ((it.get("reason") or {}).get("name")) or "",
                   "itype": ((node.get("issueType") or {}).get("name")) or ""}
