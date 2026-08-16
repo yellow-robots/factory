@@ -242,25 +242,45 @@ def _match_redirect(spec: dict, seg: dict) -> bool:
     return suffix in raw
 
 
-def _match_refspec(spec: dict, seg: dict) -> bool:
-    if seg["program"] != "git" or "push" not in seg["subcommands"] + seg["operands"]:
-        return False
-    targets = set(spec.get("targets") or [])
-    ops = [o for o in seg["subcommands"] + seg["operands"]
-           if o not in ("push", "origin", "upstream")]
+TASK_BRANCH = re.compile(r"^task/\d+-[A-Za-z0-9._-]+$")
+
+
+def refspec_targets(seg: dict) -> list[str]:
+    """Every destination ref a push segment names — the shared matcher and the engine's scope
+    resolution read the same extraction (it-31 slice 5). URL-shaped operands are remotes, not
+    refs, and are skipped (named in the binding's does_not_cover)."""
+    if seg.get("program") != "git" or "push" not in (seg.get("subcommands") or []) + (seg.get("operands") or []):
+        return []
+    ops = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or [])
+           if o not in ("push", "origin", "upstream")
+           and "://" not in o and not o.endswith(".git") and "@" not in o]
+    out = []
     for o in ops:
         dst = o.split(":", 1)[1] if ":" in o else o
         dst = dst.lstrip("+").removeprefix("refs/heads/")   # +main is a FORCE push, not a new name
-        if dst in targets:
-            return True
-    if not ops:  # bare `git push`: the target is the current branch — ask the repository
+        if dst:
+            out.append(dst)
+    if not out:  # bare `git push`: the target is the current branch — ask the repository
         try:
-            out = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
-                                 capture_output=True, text=True, timeout=5)
-            return out.returncode == 0 and out.stdout.strip() in targets
+            r = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                out.append(r.stdout.strip())
         except (OSError, subprocess.TimeoutExpired):
-            return False
-    return False
+            pass
+    return out
+
+
+def _match_refspec(spec: dict, seg: dict) -> bool:
+    dsts = refspec_targets(seg)
+    if not dsts:
+        return False
+    if spec.get("targets_mode") == "other-shared":
+        # any dst neither main/master nor the session's own task/<n>-<slug> (it-31 slice 5);
+        # the main/master rows keep their own categorical binding
+        return any(d not in ("main", "master") and not TASK_BRANCH.match(d) for d in dsts)
+    targets = set(spec.get("targets") or [])
+    return any(d in targets for d in dsts)
 
 
 def _match_mcp(spec: dict, act: dict) -> bool:

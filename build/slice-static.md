@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.2.0 sha256:d5d59632baf8eee2 — never hand-edit -->
+<!-- GENERATED from process.toml v1.3.0 sha256:ee40cf72f452edbe — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 
@@ -11,6 +11,9 @@
 
 **pr** — one pull request of a factory build
 - state (store `pr.status`, pr-attribute): `open`='open' · `approved`='approved' · `merged`='merged'
+
+**shared-ref** — one shared origin branch that is neither main nor a task branch
+- tip (store `git.ref.shared`, git-ref): `advanced`='advanced'
 
 **design-doc** — one vault design document (spec / feature-rfc / supporting doc)
 - status (store `doc.frontmatter.status`, frontmatter-key): `draft`='draft' · `active`='active' · `superseded`='superseded' · `rejected`='rejected'
@@ -36,6 +39,8 @@
   - open: board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
 - **pr.approved->merged.evaluator** [machinery; door one-way; partial; chokepoint: none — client-side hook coverage only] — an unarmed repo keeps the human's click (the named transitional exception); the host kill switch is not thrown; every merge condition holds, in the evaluator's own order with its own fail-closed semantics. the armed output gate; an attended hand-merge is refused because no actor class an attended session belongs to may perform this transition — no special 'categorical' concept is needed
   - open: pr.merged.web-ui: the merge button (detected by YR-MERGE)
+- **shared-ref.push.instructed** [human/attended-agent; door reversible; partial; chokepoint: none — client-side hook coverage only] — the human's instruction, recorded on the branch's open PR — a push with no PR to carry the record cannot be evaluated and refuses fail-closed, naming the route. a shared branch that is not the session's own moves only under the human's explicit instruction — the record IS the license, on the branch's open PR trail (the it-30 conduct rule, now an evaluated guard; it-31 slice 5)
+  - open: git.ref.shared.web-merge: GitHub advancing the branch on a merge into it (detected by YR-HUMAN-INSTRUCTION)
 - **design-doc.draft->active** [human/attended-agent; door one-way; partial; chokepoint: none — client-side hook coverage only] — the cold adversarial review, typed into the doc; the architect's fit verdict at the spec-ready moment; the airlock rule: an open question blocks the activation. the human input gate — what gets built; the standing approval under which the epic gate promotes slices mechanically
   - open: doc.frontmatter.status.cli: the `obsidian` CLI or REST API from a shell (detected by YR-ACCEPT)
 
@@ -44,4 +49,5 @@
 - guards check existence and grammar only — genuineness stays with independent review and the bench.
 - an act matching no binding is OBSERVED, never silently permitted as lawful — silence is absence of coverage, not permission.
 - headless: where the hook payload's `permission_mode` is bypassPermissions, a propose-gated one-way transition REFUSES instead of asking — ask fails open unattended (verified, harness-contract); other unattended contexts are unclaimed by the contract and keep today's ask; the blind-write residual stands — an over-matching binding advises, never denies, detection-tier.
+- conduct: a filed crossing's governing design is active (a body typed in the interactive editor (invisible pre-execution), a crossing filed from the web UI, a body assembled at runtime inside a script the hook never sees are not covered).
 - conduct: an attended commit credits the authoring model (an editor-driven commit (the body is not visible pre-execution), git commit --amend of a body written earlier, combined short flags beyond -am (-sam, -anm, ...), any porcelain wrapper are not covered).

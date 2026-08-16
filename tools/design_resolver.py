@@ -96,7 +96,19 @@ def main(argv: list[str] | None = None) -> int:
     p_n = sub.add_parser("name", help="print the governing design's wikilink target (or nothing)")
     p_n.add_argument("--repo", required=True)
     p_n.add_argument("--issue", required=True)
+    p_b = sub.add_parser("check-body-arg",
+                         help="judge a crossing body passed as an argument (the filing wall's "
+                              "seam): no Source line means NOT a crossing — exit 0, nothing to judge")
+    p_b.add_argument("--body", required=True)
     args = ap.parse_args(argv)
+    if args.cmd == "check-body-arg":
+        marker = _source_marker()
+        if not any(ln.startswith(marker) for ln in args.body.splitlines()):
+            return 0                      # not a crossing: the invariant has nothing to judge
+        rc, token = check_body(args.body)
+        if rc != 0:
+            print(token)
+        return rc
     if args.cmd == "name":
         n = name_of(args.repo, args.issue)
         if n:

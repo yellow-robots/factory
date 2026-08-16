@@ -279,7 +279,7 @@ def test_journal_independence_decisions_identical_with_journal_unwritable(model,
 # exact bindings on guarded stores: with every source down, the attended class must be DENIED —
 # UNKNOWN is never a pass (the disposition table's left column, consumed per generated vector)
 _EXACT_DENY = {"board.write.gh-cli", "board.write.funnel", "board.write.graphql",
-               "merge.gh-cli", "merge.graphql", "arming.fs", "push.main",
+               "merge.gh-cli", "merge.graphql", "arming.fs", "push.main", "push.shared",
                "design.stamp.obsidian-mcp"}
 
 
