@@ -39,7 +39,7 @@
 
 [model]
 contract = "yr-process/1"
-version = "1.0.0"
+version = "1.1.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 12000                 # compile_slice.py's shipped bound, carried over
@@ -47,6 +47,15 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.1.0"
+date = "2026-08-16"
+kind = "port"
+touches = ["task.backlog->ready.standalone", "design-doc.draft->active"]
+reason = "the headless stance (it-31 slice 2): the transport declares the verified no-human signal, and a propose-gated one-way transition refuses instead of asking where it is present — ask fails open unattended (harness-contract §3b, probed); non-bypass headless contexts stay unclaimed and unchanged"
+review = "yellow-robots/factory#434"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.0.0"
 date = "2026-08-08"
@@ -777,6 +786,12 @@ escalate = { permissionDecision = "ask" }        # the native human escalation a
 advise = { hookSpecificOutput = "additionalContext" }   # the advisory stance, finally transported
 observe = { permissionDecision = "defer" }
 block_exit_code = 2
+headless = { field = "permission_mode", values = ["bypassPermissions"] }
+    # The verified no-human signal (harness-contract §3b, probed): `ask` fails OPEN under
+    # bypassPermissions unattended, so where this hook-payload field carries one of these values a
+    # propose-gated one-way transition derives refuse, never escalate. Field absent = interactive,
+    # today's behavior; non-bypass headless contexts are UNCLAIMED by the contract and unchanged —
+    # the compiled surfaces print that residual.
 note = "any other non-zero exit is INVISIBLE and lets the call through; decisions go on stdout"
 
 [[port.probe]]

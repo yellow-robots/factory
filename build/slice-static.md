@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.0.0 sha256:7bee83ab0dab72ae — never hand-edit -->
+<!-- GENERATED from process.toml v1.1.0 sha256:fce33568e84fdb8d — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 
@@ -38,4 +38,5 @@
 - caller_trust = `declared` — the caller class is declared, not proven; the journal and the detector find the shape afterwards.
 - guards check existence and grammar only — genuineness stays with independent review and the bench.
 - an act matching no binding is OBSERVED, never silently permitted as lawful — silence is absence of coverage, not permission.
+- headless: where the hook payload's `permission_mode` is bypassPermissions, a propose-gated one-way transition REFUSES instead of asking — ask fails open unattended (verified, harness-contract); other unattended contexts are unclaimed by the contract and keep today's ask; the blind-write residual stands — an over-matching binding advises, never denies, detection-tier.
 - conduct: an attended commit credits the authoring model (an editor-driven commit (the body is not visible pre-execution), git commit --amend of a body written earlier, combined short flags beyond -am (-sam, -anm, ...), any porcelain wrapper are not covered).
