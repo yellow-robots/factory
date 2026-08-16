@@ -247,7 +247,8 @@ def vectors():
 
 
 def _fail_all_sources(monkeypatch):
-    for name in ("issue_trail", "pr_trail", "board_item", "issue_board_position", "pr_state"):
+    for name in ("issue_trail", "pr_trail", "board_item", "issue_board_position", "pr_state",
+                 "origin_repo", "pr_for_branch"):
         monkeypatch.setattr(sources, name, lambda *a, **k: (False, "stubbed down"))
     monkeypatch.setattr(sources, "vault_doc", lambda p: (False, "stubbed down"))
 
@@ -279,7 +280,7 @@ def test_journal_independence_decisions_identical_with_journal_unwritable(model,
 # exact bindings on guarded stores: with every source down, the attended class must be DENIED —
 # UNKNOWN is never a pass (the disposition table's left column, consumed per generated vector)
 _EXACT_DENY = {"board.write.gh-cli", "board.write.funnel", "board.write.graphql",
-               "merge.gh-cli", "merge.graphql", "arming.fs", "push.main",
+               "merge.gh-cli", "merge.graphql", "arming.fs", "push.main", "push.shared",
                "design.stamp.obsidian-mcp"}
 
 

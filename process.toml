@@ -33,7 +33,7 @@
 #     stored downgrade — on_drift = "downgrade" names the intent, the wiring is owed;
 [model]
 contract = "yr-process/1"
-version = "1.2.0"
+version = "1.3.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 12000                 # compile_slice.py's shipped bound, carried over
@@ -41,6 +41,15 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.3.0"
+date = "2026-08-16"
+kind = "widen"
+touches = ["shared-ref.push.instructed", "crossing.governing-design-active"]
+reason = "the walls amendments (it-31 slice 5): shared-branch pushes demand the human-instruction record as an evaluated guard on the branch's open PR trail, and a filed crossing's governing design must be active — the resolver judged over the act's own body, a non-crossing filing passing by construction"
+review = "yellow-robots/factory#437"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.2.0"
 date = "2026-08-16"
@@ -138,6 +147,22 @@ fetches = "the target repo's .yr/factory.toml at origin/main's tip (the merge ev
 impl = "tools/sources.py:manifest_at_base_tip"
 vendor = "git"
 timeout_s = 10
+cache = "per-decision"
+
+[[source]]
+id = "origin-repo"
+fetches = "the owner/name of the current checkout's origin remote (the repo scope a git act carries)"
+impl = "tools/sources.py:origin_repo"
+vendor = "git"
+timeout_s = 5
+cache = "per-decision"
+
+[[source]]
+id = "pr-by-branch"
+fetches = "the number of the open PR whose head is a given branch (the shared-branch record's routable trail)"
+impl = "tools/sources.py:pr_for_branch"
+vendor = "github"
+timeout_s = 20
 cache = "per-decision"
 
 [[source]]
@@ -370,6 +395,29 @@ unknown_value_policy = "unknown"
   observable = false
   detected_by = "YR-MERGE"
 
+[[store]]
+id = "git.ref.shared"
+kind = "git-ref"
+vendor = "git"
+location = "any origin branch that is neither main/master nor the session's own task/<n>-<slug>"
+identifiers = "the refspec's destination, resolved from the act (the push.shared binding)"
+values = ["advanced"]
+read = "source.host-file"               # never read; this store exists for its guarded write
+writable_by = ["human", "attended-agent"]
+guarded = true
+unknown_value_policy = "unknown"
+
+  [[store.write_path]]
+  id = "git-push"
+  how = "git push with a refspec targeting a shared non-main non-task branch (force spellings included)"
+  observable = true
+
+  [[store.write_path]]
+  id = "web-merge"
+  how = "GitHub advancing the branch on a merge into it"
+  observable = false
+  detected_by = "YR-HUMAN-INSTRUCTION"
+
 # ── machines: facets are ORDERED; facets[0] is PRIMARY and is what transitions move ──────────
 [[machine]]
 id = "task"
@@ -383,6 +431,13 @@ id = "pr"
 subject = "one pull request of a factory build"
 scope = "repo+pr"
 facets = ["state"]
+
+[[machine]]
+id = "shared-ref"
+subject = "one shared origin branch that is neither main nor a task branch"
+scope = "repo+pr"
+facets = ["tip"]
+note = "it-31 slice 5: exists so the shared push's instruction guard has a transition to attach to; the branch's open PR is the record's routable trail."
 
 [[machine]]
 id = "design-doc"
@@ -494,6 +549,14 @@ value = "merged"
 terminal = true
 
 [[state]]
+machine = "shared-ref"
+facet = "tip"
+id = "advanced"
+store = "git.ref.shared"
+value = "advanced"
+initial = true
+
+[[state]]
 machine = "design-doc"
 facet = "status"
 id = "draft"
@@ -560,6 +623,16 @@ contract = "exit 0 pass; exit 1 fail with the failed-condition id as stdout's fi
 note = """The merge conditions are ITS conditions, in ITS order, with ITS fail-closed semantics.
 This model holds no copy: `conditions_display` is a DISPLAY list so the slice can say
 "still needs: freshness" without this model knowing what freshness is."""
+
+[[evaluator]]
+id = "governing-design-body"
+argv = ["python3", "tools/design_resolver.py", "check-body-arg", "--body", "{act.body}"]
+conditions_display = ["design_active"]
+timeout_s = 30
+contract = "exit 0 pass (a body with no Source line is NOT a crossing — nothing to judge); exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
+note = """The filing wall's seam (it-31 slice 5): the same resolver as `governing-design`, judged
+over the act's own body — the resolver owns the Source-line grammar (registry row SOURCE-LINE), so
+the model spells nothing and a non-crossing filing passes by construction."""
 
 [[evaluator]]
 id = "governing-design"
@@ -845,6 +918,25 @@ because = "the armed output gate; an attended hand-merge is refused because no a
   args = { record = "YR-MERGE" }
 
 [[transition]]
+id = "shared-ref.push.instructed"
+machine = "shared-ref"
+from = "advanced"
+to = "advanced"
+actor = ["human", "attended-agent"]
+agent_may = "execute"
+door = "reversible"
+because = "a shared branch that is not the session's own moves only under the human's explicit instruction — the record IS the license, on the branch's open PR trail; one record licenses the branch's pushes while that PR stays open (the PR's lifetime is the window, by design), and deletions are writes too (the it-30 conduct rule, now an evaluated guard; it-31 slice 5)"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-HUMAN-INSTRUCTION" }
+  why = "the human's instruction, recorded on the branch's open PR — a push with no PR to carry the record cannot be evaluated and refuses fail-closed, naming the route"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "tip", state = "advanced" }
+
+[[transition]]
 id = "design-doc.draft->active"
 machine = "design-doc"
 from = "draft"
@@ -879,6 +971,29 @@ because = "the human input gate — what gets built; the standing approval under
   args = { record = "YR-ACCEPT" }
 
 # ── invariants: act hygiene with NO state semantics. Named as the weaker tier it is. ─────────
+[[invariant]]
+id = "crossing.governing-design-active"
+title = "a filed crossing's governing design is active"
+tool = "Bash"
+actor = ["attended-agent"]
+door = "reversible"
+authority = "the airlock rule (attended-lane.md); the epic gate's approval check still guards the promotion side downstream"
+does_not_cover = ["a body typed in the interactive editor (invisible pre-execution)",
+                  "a crossing filed from the web UI",
+                  "a body assembled at runtime inside a script the hook never sees",
+                  "a cwd-relative --body-file resolves against the hook process's cwd, not the command's — an unreadable declaration refuses UNKNOWN rather than passing"]
+
+  [invariant.match]
+  kind = "argv"
+  program = "gh"
+  subcommands = ["issue", "create"]
+  flags_any = ["--body", "-b", "--body-file", "-F"]
+
+  [[invariant.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "governing-design-body" }
+  why = "a body carrying a Source line is a crossing, and its governing design must be active; a body without one is not a crossing and passes by construction"
+
 [[invariant]]
 id = "git.commit.trailer"
 title = "an attended commit credits the authoring model"
@@ -1193,6 +1308,32 @@ recheck_days = 90
   store = "manifest.auto_merge"
   write_path = "fs"
   value = { kind = "toml-key" }
+
+[[port.binding]]
+id = "push.shared"
+vendor = "git"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"                     # the destination ref is resolved from the act/repository
+does_not_cover = ["a push from a process spawned before the hook fires",
+                  "a push through a wrapper the unwrap pass does not know",
+                  "a push whose remote is addressed by URL (the URL operand is skipped, not judged)",
+                  "a remote named other than origin/upstream (its branches read against the same rule)",
+                  "tag pushes: refs/tags/... and --tags are skipped (a tag is not a branch — the release route); a tag pushed by its BARE name is ref-ambiguous and stays walled fail-closed, the full-ref spelling being the derivable route",
+                  "an @-carrying refspec with a slashed destination reads remote-shaped and is skipped; an scp remote with a single-component path reads as a refspec and refuses fail-closed",
+                  "a -C directory literally named `push` followed by a second global value-taking flag shifts the reclaim walk one token — a phantom false-deny, fail-closed"]
+probe = "none"
+verified_on = "2026-08-16"
+recheck_days = 90
+
+  [port.binding.match]
+  kind = "git-refspec"
+  targets_mode = "other-shared"         # any dst neither main/master nor task/<n>-<slug>
+
+  [[port.binding.writes]]
+  store = "git.ref.shared"
+  write_path = "git-push"
+  value = { kind = "literal", literal = "advanced" }
 
 [[port.binding]]
 id = "push.main"

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -151,6 +152,39 @@ def issue_board_position(repo: str, issue: str) -> tuple[bool, dict] | tuple[boo
     return True, {"status": ((it.get("status") or {}).get("name")) or "",
                   "reason": ((it.get("reason") or {}).get("name")) or "",
                   "itype": ((node.get("issueType") or {}).get("name")) or ""}
+
+
+def origin_repo(cwd=None) -> tuple[bool, str]:
+    """The owner/name of the current checkout's `origin` — the repo scope a git act carries
+    (it-31 slice 5). Bounded like every fetch; never raises."""
+    try:
+        out = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True,
+                             text=True, timeout=5, cwd=str(cwd) if cwd else None)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    if out.returncode != 0:
+        return False, (out.stderr or "no origin remote").strip()
+    url = out.stdout.strip()
+    m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", url)
+    return (True, m.group(1)) if m else (False, f"origin url unparseable: {url}")
+
+
+def pr_for_branch(repo: str, branch: str) -> tuple[bool, str]:
+    """The number of the open PR whose head is `branch` — the routable trail a shared-branch
+    push's instruction record lives on (it-31 slice 5)."""
+    ok, out = _run(["gh", "pr", "list", "--repo", repo, "--head", branch, "--state", "open",
+                    "--json", "number", "--limit", "2"])
+    if not ok:
+        return False, out
+    try:
+        prs = json.loads(out or "[]")
+    except (json.JSONDecodeError, ValueError) as e:
+        return False, f"pr-for-branch unparseable: {e}"
+    if not prs:
+        return False, "no open PR fronts this branch"
+    if len(prs) > 1:
+        return False, "two open PRs front this branch — ambiguous route, fail-closed"
+    return True, str(prs[0].get("number") or "")
 
 
 def pr_state(repo: str, pr: str) -> tuple[bool, dict] | tuple[bool, str]:

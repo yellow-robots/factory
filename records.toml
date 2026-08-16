@@ -449,6 +449,6 @@ mode = "prefix"
 fields = ["who", "act"]
 emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
 emitter = "the attended session, recording the human's explicit instruction for an act she decides but does not execute (arming; a push to a shared branch that is not the session's own)"
-readers = ["tools/check_trail.py", "no wall reads it yet: arming refuses categorically at the store-permission tier, and the shared-branch instruction wall is a named model amendment owed (process.toml v1 header)"]
+readers = ["tools/check_trail.py", "tools/process.py (the shared-ref push transition's guard, on the branch's open PR trail — it-31 slice 5); arming still refuses categorically at the store-permission tier, no record licensing it"]
 surfaces = ["issue-trail", "pr-trail"]
 notes = "The record a wall condition names must itself be registered — the canon's own rule, applied to the conditions."

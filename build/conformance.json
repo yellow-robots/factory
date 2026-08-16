@@ -1,5 +1,5 @@
 {
- "header": "GENERATED from process.toml v1.2.0 sha256:d5d59632baf8eee2 \u2014 never hand-edit",
+ "header": "GENERATED from process.toml v1.3.0 sha256:812ffbb1f8bfd98c \u2014 never hand-edit",
  "vectors": [
   {
    "kind": "journal-independence",
@@ -105,6 +105,16 @@
      "file_path": "/tmp/x/.yr/factory.toml",
      "old_string": "auto_merge = false",
      "new_string": "auto_merge = true"
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "push.shared",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "git push origin integration"
     }
    }
   },
@@ -225,6 +235,12 @@
    "transition": "pr.approved->merged.evaluator",
    "guard": 2,
    "predicate": "evaluator_pass"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "shared-ref.push.instructed",
+   "guard": 0,
+   "predicate": "record_present"
   },
   {
    "kind": "unknown-refuses",

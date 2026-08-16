@@ -242,25 +242,93 @@ def _match_redirect(spec: dict, seg: dict) -> bool:
     return suffix in raw
 
 
-def _match_refspec(spec: dict, seg: dict) -> bool:
-    if seg["program"] != "git" or "push" not in seg["subcommands"] + seg["operands"]:
-        return False
-    targets = set(spec.get("targets") or [])
-    ops = [o for o in seg["subcommands"] + seg["operands"]
-           if o not in ("push", "origin", "upstream")]
-    for o in ops:
-        dst = o.split(":", 1)[1] if ":" in o else o
-        dst = dst.lstrip("+").removeprefix("refs/heads/")   # +main is a FORCE push, not a new name
-        if dst in targets:
-            return True
-    if not ops:  # bare `git push`: the target is the current branch — ask the repository
-        try:
-            out = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
-                                 capture_output=True, text=True, timeout=5)
-            return out.returncode == 0 and out.stdout.strip() in targets
-        except (OSError, subprocess.TimeoutExpired):
-            return False
+TASK_BRANCH = re.compile(r"^task/\d+-[A-Za-z0-9._-]+$")
+
+
+def _current_branch() -> str:
+    """The checkout's current branch, or "" — bare pushes and the literal HEAD resolve through
+    the repository, never the text."""
+    try:
+        r = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _remote_shaped(op: str) -> bool:
+    """A remote-addressing operand (URL / scp-style), never a ref. Narrow by design (the review's
+    finding 6): a ref spelled with @ (`HEAD@{1}`) is NOT a remote — scp shapes carry @ before the
+    colon AND a path after it."""
+    if "://" in op or op.endswith(".git"):
+        return True
+    if ":" in op:
+        src, _, rest = op.partition(":")
+        return "@" in src and "/" in rest and "{" not in src
     return False
+
+
+def refspec_targets(seg: dict) -> list[str]:
+    """Every BRANCH destination a push segment writes — the shared matcher and the engine's scope
+    resolution read the same extraction (it-31 slice 5, review-hardened). Deletions count (a
+    deletion writes the ref); tag refs pushed by full ref and `--tags` are skipped (a tag is not
+    a branch — the release route); a bare-name tag is indistinguishable from a branch and stays
+    walled fail-closed, the full-ref spelling being the derivable route."""
+    if seg.get("program") != "git" or "push" not in (seg.get("subcommands") or []) + (seg.get("operands") or []):
+        return []
+    flags = dict(seg.get("flags") or {})
+    # The flag parser eats the next token as ANY flag's value; for push, only a short list of
+    # flags actually takes a separate-token value — every other swallowed token is really an
+    # operand, reclaimed from the argv walk (the review's three rounds on #437: the curated list
+    # missed members, and reclaiming from the flags dict cannot tell `--flag=v` — never a
+    # swallow — from `--flag v`). Reclaimed tokens then pass the SAME name/remote filters as
+    # ordinary operands, so a swallowed remote name never resurrects as a phantom branch.
+    value_taking = ("-o", "--push-option", "--repo", "--receive-pack", "--exec",
+                    "--recurse-submodules", "--delete", "-d")
+    argv = seg.get("argv") or []
+    # the walk is scoped to argv AFTER the `push` token: push's option grammar starts there, and
+    # git's global value-taking flags before it (`-C <path>`, `-c <k>=<v>`, --git-dir …) must
+    # never have their values reclaimed as phantom refspecs (the review's round-4 finding)
+    start = argv.index("push") + 1 if "push" in argv else len(argv)
+    reclaimed = [argv[i + 1] for i in range(start, len(argv) - 1)
+                 if (tok := argv[i]).startswith("-") and "=" not in tok
+                 and tok not in value_taking and not argv[i + 1].startswith("-")]
+    out = [v for k in ("--delete", "-d") if isinstance((v := flags.get(k)), str)
+           and not v.startswith("refs/tags/")]
+    candidates = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or []) + reclaimed
+                  if o not in ("push", "origin", "upstream")]
+    saw_refspec_operand = bool(candidates) or any(k in flags for k in ("--delete", "-d", "--tags"))
+    for o in candidates:
+        if _remote_shaped(o):
+            continue
+        dst = (o.split(":", 1)[1] if ":" in o else o).lstrip("+")   # +main is a FORCE push
+        if dst.startswith("refs/tags/"):
+            continue
+        dst = dst.removeprefix("refs/heads/")
+        if dst == "HEAD":
+            dst = _current_branch()
+        if dst:
+            out.append(dst)
+    if not saw_refspec_operand:
+        # bare `git push`: the target is the current branch. The fallback belongs ONLY to a push
+        # naming no refspec at all — an operand skipped as a tag or remote must never be
+        # re-attributed to the checkout's branch (the review's fold-introduced finding)
+        cur = _current_branch()
+        if cur:
+            out.append(cur)
+    return out
+
+
+def _match_refspec(spec: dict, seg: dict) -> bool:
+    dsts = refspec_targets(seg)
+    if not dsts:
+        return False
+    if spec.get("targets_mode") == "other-shared":
+        # any dst neither main/master nor the session's own task/<n>-<slug> (it-31 slice 5);
+        # the main/master rows keep their own categorical binding
+        return any(d not in ("main", "master") and not TASK_BRANCH.match(d) for d in dsts)
+    targets = set(spec.get("targets") or [])
+    return any(d in targets for d in dsts)
 
 
 def _match_mcp(spec: dict, act: dict) -> bool:

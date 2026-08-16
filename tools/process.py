@@ -855,7 +855,12 @@ def _example_act(bd: dict) -> dict | None:
             "file_path": "/tmp/x/.yr/factory.toml", "old_string": "auto_merge = false",
             "new_string": "auto_merge = true"}}
     if mk == "git-refspec":
-        return {"tool_name": "Bash", "tool_input": {"command": "git push origin HEAD:main"}}
+        # a targets_mode binding needs an act that actually reaches IT — a main push would ride
+        # the categorical row and certify nothing (the review's finding on #437)
+        cmd = ("git push origin integration"
+               if bd["match"].get("targets_mode") == "other-shared"
+               else "git push origin HEAD:main")
+        return {"tool_name": "Bash", "tool_input": {"command": cmd}}
     if mk == "mcp-tool":
         tools = bd["match"].get("tools") or [bd["match"].get("tool")]
         ti = dict(bd["match"].get("arg_equals") or {})
@@ -910,6 +915,7 @@ class _Ctx:
         self.scope: dict[str, str] = {}
         self.current: dict[str, object] = {}
         self.reads: dict[str, object] = {}
+        self.route_note = ""            # a scope-routing failure worth naming in the refusal
 
 
 def _fetch_surface_texts(ctx: _Ctx, row: dict, act: dict) -> list[str] | None:
@@ -972,9 +978,16 @@ def _eval_guard(ctx: _Ctx, t: dict, g: dict, act: dict) -> predicates.Result:
         return fn(args["record"], registry=ctx.registry, texts=texts)
     if pred == "evaluator_pass":
         ev = ctx.model["_evaluators"][args["evaluator"]]
+        if any("{act.body}" in a for a in ev["argv"]):
+            f = act.get("fields") or {}
+            if "body" in f and f["body"] is None:
+                return predicates.unknown("the declared body could not be read — an unreadable "
+                                          "declaration never passes (fail-closed)")
         argv = [a.replace("{scope.repo}", ctx.scope.get("repo", ""))
                  .replace("{scope.pr}", ctx.scope.get("pr", ""))
-                 .replace("{scope.issue}", ctx.scope.get("issue", "")) for a in ev["argv"]]
+                 .replace("{scope.issue}", ctx.scope.get("issue", ""))
+                 .replace("{act.body}", str((act.get("fields") or {}).get("body") or ""))
+                for a in ev["argv"]]
         try:
             out = subprocess.run(argv, capture_output=True, text=True, cwd=REPO_ROOT,
                                  timeout=int(ev.get("timeout_s") or 120))
@@ -1064,6 +1077,24 @@ def _resolve_scope_and_state(ctx: _Ctx, store_id: str, act: dict, seg: dict) -> 
             ctx.current["state"] = sid or ("UNKNOWN", f"pr.status reads {got!r}")
         else:
             ctx.current["state"] = ("UNKNOWN", (got or ("UNKNOWN", "pr state unread"))[1])
+    elif store_id == "git.ref.shared":
+        # the shared push's routable trail (it-31 slice 5): repo from the checkout's origin, the
+        # PR fronting the pushed branch as the record's surface — no PR means the guard cannot be
+        # read and the wall refuses fail-closed, naming the route
+        dsts = [d for d in acts_mod.refspec_targets(seg)
+                if d not in ("main", "master") and not acts_mod.TASK_BRANCH.match(d)]
+        ok_r, repo = sources.origin_repo(None)
+        if ok_r:
+            ctx.scope["repo"] = repo
+        if dsts and ok_r:
+            ok_p, pr = sources.pr_for_branch(repo, dsts[0])
+            if ok_p:
+                ctx.scope["pr"] = pr
+            else:
+                ctx.route_note = pr     # "no open PR fronts..." / "two open PRs..." — named in the deny
+        # the tip state is deliberately left UNREAD: pretending it is known would trip the
+        # same-value exemption (slice 1) and observe the push as a no-op; the single candidate's
+        # guards evaluate on the fail-closed unreadable-current path instead
     elif store_id == "doc.frontmatter.status":
         path = act.get("fields", {}).get("path") or act.get("path") or ""
         if path and not os.path.isabs(path):
@@ -1314,6 +1345,7 @@ def _dispose_hit(model: dict, bd: dict, w: dict, seg: dict, act: dict,
             meta["failed_record"] = g["args"].get("record")
         return st, (f"wall: {'NOTE' if over else 'REFUSED'} [{t['id']}] — {col}: "
                     f"{render(g, model)}" + (f" ({res.reason})" if res.reason else "") +
+                    (f" [route: {ctx.route_note}]" if ctx.route_note else "") +
                     f". {t['because']}"), t["id"], meta
     final = stance(caller, t, True, bd, headless=headless)
     if final == "escalate":
@@ -1359,6 +1391,17 @@ def _dispose_invariant(model: dict, inv: dict, seg: dict, act: dict, caller: str
             msg = None
     if msg is not None:
         enriched["fields"]["message"] = msg
+    body = flags.get("--body") or flags.get("-b")
+    if body is None and (flags.get("--body-file") or flags.get("-F")):
+        try:
+            body = Path(flags.get("--body-file") or flags.get("-F")).read_text(encoding="utf-8")
+        except OSError:
+            # a DECLARED body that cannot be read is fail-closed evidence, never a silent pass
+            # (the review's finding on #437): the explicit None marks declared-unreadable
+            enriched["fields"]["body"] = None
+            body = None
+    if body is not None:
+        enriched["fields"]["body"] = body
     for g in inv.get("guard") or []:
         res = _eval_guard(_Ctx(model), inv, g, enriched)
         if res.state == "TRUE":
