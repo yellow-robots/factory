@@ -245,29 +245,56 @@ def _match_redirect(spec: dict, seg: dict) -> bool:
 TASK_BRANCH = re.compile(r"^task/\d+-[A-Za-z0-9._-]+$")
 
 
+def _current_branch() -> str:
+    """The checkout's current branch, or "" — bare pushes and the literal HEAD resolve through
+    the repository, never the text."""
+    try:
+        r = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _remote_shaped(op: str) -> bool:
+    """A remote-addressing operand (URL / scp-style), never a ref. Narrow by design (the review's
+    finding 6): a ref spelled with @ (`HEAD@{1}`) is NOT a remote — scp shapes carry @ before the
+    colon AND a path after it."""
+    if "://" in op or op.endswith(".git"):
+        return True
+    if ":" in op:
+        src, _, rest = op.partition(":")
+        return "@" in src and "/" in rest and "{" not in src
+    return False
+
+
 def refspec_targets(seg: dict) -> list[str]:
-    """Every destination ref a push segment names — the shared matcher and the engine's scope
-    resolution read the same extraction (it-31 slice 5). URL-shaped operands are remotes, not
-    refs, and are skipped (named in the binding's does_not_cover)."""
+    """Every BRANCH destination a push segment writes — the shared matcher and the engine's scope
+    resolution read the same extraction (it-31 slice 5, review-hardened). Deletions count (a
+    deletion writes the ref); tag refs pushed by full ref and `--tags` are skipped (a tag is not
+    a branch — the release route); a bare-name tag is indistinguishable from a branch and stays
+    walled fail-closed, the full-ref spelling being the derivable route."""
     if seg.get("program") != "git" or "push" not in (seg.get("subcommands") or []) + (seg.get("operands") or []):
         return []
+    flags = seg.get("flags") or {}
+    out = [v for k in ("--delete", "-d") if isinstance((v := flags.get(k)), str)
+           and not v.startswith("refs/tags/")]
     ops = [o for o in (seg.get("subcommands") or []) + (seg.get("operands") or [])
-           if o not in ("push", "origin", "upstream")
-           and "://" not in o and not o.endswith(".git") and "@" not in o]
-    out = []
+           if o not in ("push", "origin", "upstream") and not _remote_shaped(o)]
     for o in ops:
-        dst = o.split(":", 1)[1] if ":" in o else o
-        dst = dst.lstrip("+").removeprefix("refs/heads/")   # +main is a FORCE push, not a new name
+        dst = (o.split(":", 1)[1] if ":" in o else o).lstrip("+")   # +main is a FORCE push
+        if dst.startswith("refs/tags/"):
+            continue
+        dst = dst.removeprefix("refs/heads/")
+        if dst == "HEAD":
+            dst = _current_branch()
         if dst:
             out.append(dst)
-    if not out:  # bare `git push`: the target is the current branch — ask the repository
-        try:
-            r = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
-                               capture_output=True, text=True, timeout=5)
-            if r.returncode == 0 and r.stdout.strip():
-                out.append(r.stdout.strip())
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+    delete_or_tags = out or any(k in flags for k in ("--delete", "-d", "--tags"))
+    if not delete_or_tags:  # bare `git push`: the target is the current branch
+        cur = _current_branch()
+        if cur:
+            out.append(cur)
     return out
 
 

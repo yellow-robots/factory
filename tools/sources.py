@@ -182,6 +182,8 @@ def pr_for_branch(repo: str, branch: str) -> tuple[bool, str]:
         return False, f"pr-for-branch unparseable: {e}"
     if not prs:
         return False, "no open PR fronts this branch"
+    if len(prs) > 1:
+        return False, "two open PRs front this branch — ambiguous route, fail-closed"
     return True, str(prs[0].get("number") or "")
 
 

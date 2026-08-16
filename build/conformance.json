@@ -1,5 +1,5 @@
 {
- "header": "GENERATED from process.toml v1.3.0 sha256:ee40cf72f452edbe \u2014 never hand-edit",
+ "header": "GENERATED from process.toml v1.3.0 sha256:02c44dbc058601ef \u2014 never hand-edit",
  "vectors": [
   {
    "kind": "journal-independence",
@@ -114,7 +114,7 @@
    "act": {
     "tool_name": "Bash",
     "tool_input": {
-     "command": "git push origin HEAD:main"
+     "command": "git push origin integration"
     }
    }
   },

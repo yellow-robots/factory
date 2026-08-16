@@ -145,6 +145,66 @@ def test_crossing_body_file_is_read(model, tmp_path, monkeypatch):
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+def test_delete_spellings_are_walled(model, reg, monkeypatch):
+    """Review finding 3: a shared-branch DELETION is a write to the guarded store — both the
+    flag spelling and the empty-src refspec demand the record; neither falls through to the
+    current-branch fallback."""
+    _stub_branch_route(monkeypatch, texts=["chatter"])
+    for cmd in ("git push origin --delete integration",
+                "git push origin -d integration",
+                "git push origin :integration"):
+        out, _ = process.decide(model, _bash(cmd), env=ATTENDED)
+        assert out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny", cmd
+
+
+def test_tag_pushes_by_full_ref_flow_and_bare_names_stay_walled(model, monkeypatch):
+    """Review finding 4: a tag pushed by its full ref is skipped (slice 7's release path pushes
+    refs/tags/...); a bare name is ref-ambiguous and stays walled fail-closed — the documented
+    direction, loud, with the full-ref spelling as the derivable route."""
+    _stub_branch_route(monkeypatch, texts=["chatter"])
+    ok, rows = process.decide(model, _bash("git push origin refs/tags/skill/v1.4.0"), env=ATTENDED)
+    assert ok is None
+    tags_only, _ = process.decide(model, _bash("git push origin --tags"), env=ATTENDED)
+    assert tags_only is None
+    bare, _ = process.decide(model, _bash("git push origin v1.0.0"), env=ATTENDED)
+    assert bare is not None and bare["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_push_head_resolves_to_the_current_branch(model, monkeypatch):
+    """Review finding 5: `git push origin HEAD` resolves through the repository — on a task
+    branch it flows exactly like naming the branch."""
+    out, rows = process.decide(model, _bash("git push origin HEAD"), env=ATTENDED)
+    assert out is None and rows == []
+
+
+def test_ref_containing_at_still_walled(model, monkeypatch):
+    """Review finding 6: the remote-skip heuristic skips remote-shaped operands only — a ref
+    spelled with @ still reaches the wall."""
+    _stub_branch_route(monkeypatch, texts=["chatter"])
+    out, _ = process.decide(model, _bash("git push origin HEAD@{1}:integration"), env=ATTENDED)
+    assert out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_unreadable_body_file_refuses_fail_closed(model, monkeypatch):
+    """Review finding 2: a DECLARED body file that cannot be read is UNKNOWN, never a silent
+    pass — the parallel of the trailer invariant's own fail-closed shape."""
+    out, _ = process.decide(model, _bash("gh issue create --title t -F /nonexistent/body.md"),
+                            env=ATTENDED)
+    assert out is not None
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "could not be read" in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_two_open_prs_front_the_branch_refuses_ambiguity(model, reg, monkeypatch):
+    """Review finding 7's sharp edge: two PRs fronting the branch is an ambiguous route — the
+    wall refuses naming it rather than silently reading one of the two."""
+    monkeypatch.setattr(sources, "origin_repo", lambda cwd: (True, "yellow-robots/factory"))
+    monkeypatch.setattr(sources, "pr_for_branch",
+                        lambda r, b: (False, "two open PRs front this branch — ambiguous route"))
+    out, _ = process.decide(model, _bash("git push origin integration"), env=ATTENDED)
+    assert out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_registry_readers_note_names_the_wall(reg):
     row = records.get(reg, "YR-HUMAN-INSTRUCTION")
     joined = " ".join(row["readers"])

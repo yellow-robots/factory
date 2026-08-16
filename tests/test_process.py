@@ -247,7 +247,8 @@ def vectors():
 
 
 def _fail_all_sources(monkeypatch):
-    for name in ("issue_trail", "pr_trail", "board_item", "issue_board_position", "pr_state"):
+    for name in ("issue_trail", "pr_trail", "board_item", "issue_board_position", "pr_state",
+                 "origin_repo", "pr_for_branch"):
         monkeypatch.setattr(sources, name, lambda *a, **k: (False, "stubbed down"))
     monkeypatch.setattr(sources, "vault_doc", lambda p: (False, "stubbed down"))
 

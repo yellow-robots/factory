@@ -855,7 +855,12 @@ def _example_act(bd: dict) -> dict | None:
             "file_path": "/tmp/x/.yr/factory.toml", "old_string": "auto_merge = false",
             "new_string": "auto_merge = true"}}
     if mk == "git-refspec":
-        return {"tool_name": "Bash", "tool_input": {"command": "git push origin HEAD:main"}}
+        # a targets_mode binding needs an act that actually reaches IT — a main push would ride
+        # the categorical row and certify nothing (the review's finding on #437)
+        cmd = ("git push origin integration"
+               if bd["match"].get("targets_mode") == "other-shared"
+               else "git push origin HEAD:main")
+        return {"tool_name": "Bash", "tool_input": {"command": cmd}}
     if mk == "mcp-tool":
         tools = bd["match"].get("tools") or [bd["match"].get("tool")]
         ti = dict(bd["match"].get("arg_equals") or {})
@@ -972,6 +977,11 @@ def _eval_guard(ctx: _Ctx, t: dict, g: dict, act: dict) -> predicates.Result:
         return fn(args["record"], registry=ctx.registry, texts=texts)
     if pred == "evaluator_pass":
         ev = ctx.model["_evaluators"][args["evaluator"]]
+        if any("{act.body}" in a for a in ev["argv"]):
+            f = act.get("fields") or {}
+            if "body" in f and f["body"] is None:
+                return predicates.unknown("the declared body could not be read — an unreadable "
+                                          "declaration never passes (fail-closed)")
         argv = [a.replace("{scope.repo}", ctx.scope.get("repo", ""))
                  .replace("{scope.pr}", ctx.scope.get("pr", ""))
                  .replace("{scope.issue}", ctx.scope.get("issue", ""))
@@ -1382,6 +1392,9 @@ def _dispose_invariant(model: dict, inv: dict, seg: dict, act: dict, caller: str
         try:
             body = Path(flags.get("--body-file") or flags.get("-F")).read_text(encoding="utf-8")
         except OSError:
+            # a DECLARED body that cannot be read is fail-closed evidence, never a silent pass
+            # (the review's finding on #437): the explicit None marks declared-unreadable
+            enriched["fields"]["body"] = None
             body = None
     if body is not None:
         enriched["fields"]["body"] = body

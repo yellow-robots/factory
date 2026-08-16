@@ -925,7 +925,7 @@ to = "advanced"
 actor = ["human", "attended-agent"]
 agent_may = "execute"
 door = "reversible"
-because = "a shared branch that is not the session's own moves only under the human's explicit instruction — the record IS the license, on the branch's open PR trail (the it-30 conduct rule, now an evaluated guard; it-31 slice 5)"
+because = "a shared branch that is not the session's own moves only under the human's explicit instruction — the record IS the license, on the branch's open PR trail; one record licenses the branch's pushes while that PR stays open (the PR's lifetime is the window, by design), and deletions are writes too (the it-30 conduct rule, now an evaluated guard; it-31 slice 5)"
 
   [[transition.guard]]
   predicate = "record_present"
@@ -980,7 +980,8 @@ door = "reversible"
 authority = "the airlock rule (attended-lane.md); the epic gate's approval check still guards the promotion side downstream"
 does_not_cover = ["a body typed in the interactive editor (invisible pre-execution)",
                   "a crossing filed from the web UI",
-                  "a body assembled at runtime inside a script the hook never sees"]
+                  "a body assembled at runtime inside a script the hook never sees",
+                  "a cwd-relative --body-file resolves against the hook process's cwd, not the command's — an unreadable declaration refuses UNKNOWN rather than passing"]
 
   [invariant.match]
   kind = "argv"
@@ -1317,7 +1318,8 @@ precision = "exact"                     # the destination ref is resolved from t
 does_not_cover = ["a push from a process spawned before the hook fires",
                   "a push through a wrapper the unwrap pass does not know",
                   "a push whose remote is addressed by URL (the URL operand is skipped, not judged)",
-                  "a remote named other than origin/upstream (its branches read against the same rule)"]
+                  "a remote named other than origin/upstream (its branches read against the same rule)",
+                  "tag pushes: refs/tags/... and --tags are skipped (a tag is not a branch — the release route); a tag pushed by its BARE name is ref-ambiguous and stays walled fail-closed, the full-ref spelling being the derivable route"]
 probe = "none"
 verified_on = "2026-08-16"
 recheck_days = 90
