@@ -105,6 +105,19 @@ harness's four routed stub literals (`tests/harness/contract.md`: `TESTER`, `REV
 ban is enforced at parse time, fail-closed to `Needs-info` naming the offending line, never left
 advisory. Absent key: stage prompts are byte-identical to today, pinned.
 
+**The stage-launch settings seam is closed** (it-31 slice 10, #442 — the second repo-shape seam):
+every `claude -p` stage launches with **zero settings sources** — `--setting-sources ""` — because
+the harness loads user + project + local when the flag is *absent* (the flag restricts; verified
+empirically 2026-08-17 against claude CLI 2.1.233 with a project-scope hook probe). This closes both
+halves at once: the operator's user/local surface (issue #49) and the target repo's own
+harness-specific project settings, which would otherwise inject arbitrary hooks and MCP servers into
+a build stage. The rule the closure leaves standing: **a repo's build-stage injections ride declared,
+vendor-neutral seams only** — the manifest (`stage_conduct`, `check_cmd`, …) is the seam; a
+harness-specific settings file is not, and no env knob reopens it (the retired
+`STAGE_SETTING_SOURCES` override does not return — a future declared need rides the manifest). The
+wanted capability itself — repo-declared plugins/skills/grounding delivered into stages — is it-33's
+mechanism, cited here, not built here.
+
 ## The legal test tree
 
 The tester's boundary guard is structural, not a prompt: the runner diffs the tester's stage against

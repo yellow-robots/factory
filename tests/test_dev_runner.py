@@ -2405,13 +2405,21 @@ def test_usage_summary_never_collides_with_the_yr_merge_shadow_record(tmp_path):
     assert usage_comment.splitlines()[0] == "### dev-runner usage"
 
 
-# ============ Issue #49: stage context isolation — a stage loads only its job ============
-# A cold stage must not inherit the operator's consumer-session surface (user/local-scope settings,
-# MCP server configs). Every `run_stage` invocation carries `--setting-sources <sources>
-# --strict-mcp-config`, sources defaulting to "project" and overridable via STAGE_SETTING_SOURCES —
-# with every other argv element (model, effort, permission mode, allowed tools, system prompt, output
-# format) left exactly as it was. STUB_CLAUDE_ARGV_LOG (see CLAUDE_STUB) records one argv per claude
-# call, in call order, so every stage's own invocation can be checked — not just the last one.
+# ============ Issue #49 + it-31 slice 10 (#442): stage context isolation — zero settings sources ==
+# A cold stage must not inherit the operator's consumer-session surface (#49: user/local-scope
+# settings, MCP server configs) NOR the target repo's own harness-specific project settings (#442:
+# the second repo-shape seam). The harness loads user + project + local when `--setting-sources` is
+# absent — the flag RESTRICTS — so isolation is the argument form that yields ZERO sources: an empty
+# value. Verified empirically against the harness contract (probe 2026-08-17, claude CLI 2.1.233,
+# a project-scope SessionStart hook touching a marker):
+#   --setting-sources project  -> project hook FIRES   (the flag loads what it names)
+#   --setting-sources ""       -> project hook silent  (empty = zero sources — the pinned form)
+#   flag absent                -> project hook FIRES   (absence loads user+project+local)
+# Every `run_stage` invocation carries `--setting-sources "" --strict-mcp-config`, with every other
+# argv element (model, effort, permission mode, allowed tools, system prompt, output format) left
+# exactly as it was. The STAGE_SETTING_SOURCES env override is RETIRED with the mechanism — a future
+# declared need rides the manifest, never an env knob. STUB_CLAUDE_ARGV_LOG (see CLAUDE_STUB)
+# records one argv per claude call, in call order, so every stage's own invocation can be checked.
 
 def _all_stages_env(tmp, binp, title):
     """Drive a run through all five claude -p stage kinds: implement, tester, check-repair
@@ -2437,14 +2445,16 @@ def test_isolation_flags_on_every_stage_call(tmp_path):
     assert len(calls) >= 5, "expected at least 5 recorded claude invocations (one per stage kind)"
     for i, argv in enumerate(calls):
         assert "--setting-sources" in argv, f"call {i} missing --setting-sources: {argv}"
-        assert argv[argv.index("--setting-sources") + 1] == "project", \
-            f"call {i} default setting-sources should be 'project': {argv}"
+        assert argv[argv.index("--setting-sources") + 1] == "", \
+            f"call {i} setting-sources must be the zero-sources empty form: {argv}"
         assert "--strict-mcp-config" in argv, f"call {i} missing --strict-mcp-config: {argv}"
 
 
-def test_stage_setting_sources_env_overrides_default_on_every_call(tmp_path):
+def test_stage_setting_sources_env_knob_is_retired(tmp_path):
+    """it-31 slice 10: the env override retires with the mechanism — a future declared need rides
+    the manifest, never an env knob. A set STAGE_SETTING_SOURCES changes nothing."""
     binp = tmp_path / "bin"; _stubs(binp)
-    env = _all_stages_env(tmp_path, binp, "Isolation override on every stage")
+    env = _all_stages_env(tmp_path, binp, "Isolation override retired")
     env["STAGE_SETTING_SOURCES"] = "user,project"
     r = _run(["5", "--repo", "test/repo"], env)
     assert r.returncode == 0, r.stderr
@@ -2453,8 +2463,8 @@ def test_stage_setting_sources_env_overrides_default_on_every_call(tmp_path):
     assert len(calls) >= 5
     for i, argv in enumerate(calls):
         assert "--setting-sources" in argv
-        assert argv[argv.index("--setting-sources") + 1] == "user,project", \
-            f"call {i} did not pick up STAGE_SETTING_SOURCES: {argv}"
+        assert argv[argv.index("--setting-sources") + 1] == "", \
+            f"call {i} honored the retired STAGE_SETTING_SOURCES knob: {argv}"
         assert "--strict-mcp-config" in argv
 
 
@@ -2496,7 +2506,7 @@ def test_isolation_flags_present_on_plain_happy_path_single_stage_chain(tmp_path
     calls = _argv_calls(tmp_path)
     assert len(calls) == 3   # implement, tester, review — no repairs fired
     for argv in calls:
-        assert "--setting-sources" in argv and argv[argv.index("--setting-sources") + 1] == "project"
+        assert "--setting-sources" in argv and argv[argv.index("--setting-sources") + 1] == ""
         assert "--strict-mcp-config" in argv
 
 

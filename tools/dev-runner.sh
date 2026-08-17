@@ -1500,10 +1500,18 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
   # runnable string (e.g. `pkill -f "bash qa/qa-gate.sh"`) must not be able to pattern-match the stage's
   # OWN command line and self-kill the harness — exactly what happened in gilda#9 run 9-4131516. `-p`
   # with no positional value reads the prompt from stdin instead.
+  # ZERO settings sources (it-31 slice 10, #442 — the second repo-shape seam closes): the harness
+  # loads user + project + local when --setting-sources is ABSENT (the flag restricts), so
+  # isolation is the empty-value form — verified empirically 2026-08-17 against claude CLI 2.1.233
+  # (a project-scope SessionStart hook: fires with `project`, fires with the flag absent, silent
+  # with ""). This closes #49's operator user/local hole AND the target repo's own project-settings
+  # injection in one declared form. The old STAGE_SETTING_SOURCES env knob is retired with the
+  # mechanism: a future declared need rides the manifest, never an env knob (the seam is a
+  # contract, not a calibration).
   local args=( -p --model "$model" --effort "$EFFORT"
                --permission-mode bypassPermissions --append-system-prompt "$sys_prompt"
                --allowedTools ${4:-Read Edit Write Bash}
-               --setting-sources "${STAGE_SETTING_SOURCES:-project}" --strict-mcp-config )
+               --setting-sources "" --strict-mcp-config )
   if [ -n "${CLAUDE_OUTPUT_FORMAT:-}" ]; then
     # explicit operator override wins over the new default, verbatim (old pairing) — no usage capture
     # is attempted on this path, so its output stays exactly as it always has.
