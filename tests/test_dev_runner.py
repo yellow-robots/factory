@@ -300,6 +300,15 @@ def test_gate_ledger_failure_never_changes_the_exit(tmp_path):
     assert r.returncode == 3 and "not ready" in r.stderr.lower()
 
 
+def test_dry_run_gate_refusal_writes_no_ledger_row(tmp_path):
+    """Dry-run writes nothing anywhere — an operator probe is not factory work, and its refusal
+    must not inflate the crossover's refused-invocation count."""
+    binp = tmp_path / "bin"; _stubs(binp)
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], _env(tmp_path, binp, status="Backlog"))
+    assert r.returncode == 3
+    assert not (tmp_path / "drhome" / "ledger" / "rows.jsonl").exists()
+
+
 def test_project_query_failure_is_clear(tmp_path):
     binp = tmp_path / "bin"; _stubs(binp)
     env = _env(tmp_path, binp); env["STUB_ITEMLIST_FAIL"] = "1"
