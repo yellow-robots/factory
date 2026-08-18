@@ -35,7 +35,10 @@ MODES = ("prefix", "sentinel", "strict-line", "verdict-line", "stage-escape", "j
 
 # The closed surface set. `vault-doc` joins with the design-side records (it-30 slice 3, per the
 # crossing ruling of 2026-08-07) — present in the vocabulary so the canon slice adds rows, not code.
-SURFACES = ("issue-trail", "issue-body", "pr-trail", "run-dir", "stage-log", "ledger", "bench", "vault-doc")
+# `release` joins with the release lane (it-31 slice 7, ruling 6): the GitHub Release object whose
+# body carries the YR-RELEASE record, fetched via tools/sources.py:releases.
+SURFACES = ("issue-trail", "issue-body", "pr-trail", "run-dir", "stage-log", "ledger", "bench",
+            "vault-doc", "release")
 
 # The closed actor-class vocabulary — ONE authority; tools/process.py imports it from here. Every
 # record row carries a typed `emitted_by` list (the process model's rule S column) beside the prose

@@ -34,6 +34,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tests/` | pytest suite (stubbed: no live LLM, no network) |
 | `qa/` | consumer quality content — the advisory lens (`qa/lens.py`) and the blocking cardinality guards (`qa/cardinality.py` + its rule set `qa/cardinality.toml`); distinct from the platform machinery in `tools/` |
 | `tools/epic_gate.py`, `tools/design_resolver.py`, `tools/review_bundle.py`, `tools/check_task.py`, `tools/check_links.py`, `tools/check_model_refs.py`, `tools/check_supersession.py` | the standing-approval sweep; the governing-design resolver; the hashed review bundle; the DoR, crossing-link, stale-reference, and supersession gates |
+| `tools/release.py` | the validation-gated, git-native skill release act: annotated `skill/vX.Y.Z` tag + GitHub Release carrying the typed record, refusing on failing validation |
 | `tools/nit_harvest.py` | the census's nit-harvest arm: recurrence-ranked duplication clusters from the PR comment trail |
 | `tools/promote.sh`, `tools/watch_build.sh`, `tools/board.sh` | operator commands: promote to Ready, watch a build to terminal state, dump the board |
 | `skills/`, `skills/factory/templates/` | the factory skill (router + references); the upper-pipeline stage templates |

@@ -60,6 +60,7 @@ def test_compiled_lanes_reproduce_the_design_trace(model):
         "design": ["YR-ACCEPT", "YR-DESIGN-FIT", "YR-DESIGN-REVIEW"],
         "close": ["YR-ROUND-RECORD", "YR-SHIP-WALK"],
         "merge": ["YR-MERGE"],
+        "release": ["YR-RELEASE"],
     }
     assert forbid == {"epic": ["YR-OPEN-QUESTION"], "design": ["YR-OPEN-QUESTION"]}
 
@@ -246,11 +247,20 @@ def vectors():
     return json.loads((REPO / "build" / "conformance.json").read_text(encoding="utf-8"))["vectors"]
 
 
+def _no_live_subprocess(*a, **k):
+    """Evaluator guards call subprocess.run directly (not through sources); the release row's
+    evaluator is its FIRST guard, so decide() reaches it — a live call here would spawn real git
+    worktrees and network I/O inside the suite (the slice-7 review's hermeticity finding). An
+    OSError reads as UNKNOWN through the evaluator contract: fail-closed, never a silent pass."""
+    raise OSError("stubbed down — no live subprocess in conformance tests")
+
+
 def _fail_all_sources(monkeypatch):
     for name in ("issue_trail", "pr_trail", "board_item", "issue_board_position", "pr_state",
-                 "origin_repo", "pr_for_branch"):
+                 "origin_repo", "pr_for_branch", "releases"):
         monkeypatch.setattr(sources, name, lambda *a, **k: (False, "stubbed down"))
     monkeypatch.setattr(sources, "vault_doc", lambda p: (False, "stubbed down"))
+    monkeypatch.setattr(process.subprocess, "run", _no_live_subprocess)
 
 
 def _fail_more_sources(monkeypatch):
@@ -281,7 +291,8 @@ def test_journal_independence_decisions_identical_with_journal_unwritable(model,
 # UNKNOWN is never a pass (the disposition table's left column, consumed per generated vector)
 _EXACT_DENY = {"board.write.gh-cli", "board.write.funnel", "board.write.graphql",
                "merge.gh-cli", "merge.graphql", "arming.fs", "push.main", "push.shared",
-               "design.stamp.obsidian-mcp"}
+               "design.stamp.obsidian-mcp",
+               "release.funnel-ship", "release.funnel-backfill", "release.gh-cli"}
 
 
 def test_unknown_always_disposes_closed_never_open(model, vectors, monkeypatch):

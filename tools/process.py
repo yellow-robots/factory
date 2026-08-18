@@ -860,9 +860,15 @@ def _example_act(bd: dict) -> dict | None:
         sub = " ".join(bd["match"].get("subcommands") or [])
         tail = {"project item-edit": _board_cmd().removeprefix("gh "),
                 "pr merge": "pr merge 1 --repo yellow-robots/factory --squash",
+                "release create": "release create skill/v1.0.3 --repo yellow-robots/factory --notes x",
                 "api": "api repos/yellow-robots/factory/pulls/1/merge -X PUT"}.get(sub)
         return {"tool_name": "Bash", "tool_input": {"command": f"gh {tail}"}} if tail else None
     if mk == "argv" and bd["match"].get("subcommand_contains"):
+        frag = bd["match"]["subcommand_contains"]
+        if "release.py" in frag:
+            sub = (bd["match"].get("subcommands_include") or ["ship"])[0]
+            return {"tool_name": "Bash", "tool_input": {
+                "command": f"python3 tools/release.py {sub} --version 1.0.3"}}
         return {"tool_name": "Bash", "tool_input": {
             "command": "python3 tools/board_plumbing.py set-field --id ITEM --status Ready"}}
     if mk == "graphql-mutation":
@@ -959,6 +965,9 @@ def _fetch_surface_texts(ctx: _Ctx, row: dict, act: dict) -> list[str] | None:
         elif surface == "vault-doc" and ctx.scope.get("path"):
             ok, payload = sources.vault_doc(Path(ctx.scope["path"]))
             got = [payload] if ok else None
+        elif surface == "release" and ctx.scope.get("repo"):
+            ok, payload = sources.releases(ctx.scope["repo"])
+            got = payload if ok else None
         ctx.texts[key] = got
         if got is not None:
             return got
@@ -1118,6 +1127,14 @@ def _resolve_scope_and_state(ctx: _Ctx, store_id: str, act: dict, seg: dict) -> 
         # the tip state is deliberately left UNREAD: pretending it is known would trip the
         # same-value exemption (slice 1) and observe the push as a no-op; the single candidate's
         # guards evaluate on the fail-closed unreadable-current path instead
+    elif store_id == "plugin.version":
+        # the release act's scope is the checkout's origin repo (review critical 1, it-31 slice 7):
+        # an unresolved repo leaves the evaluator's --repo empty and nothing can ever validate.
+        # The version facet stays deliberately UNREAD (the shared-ref discipline): the machine is
+        # single-state and the guards evaluate on their own evidence.
+        ok_r, repo = sources.origin_repo(None)
+        if ok_r:
+            ctx.scope["repo"] = repo
     elif store_id == "doc.frontmatter.status":
         path = act.get("fields", {}).get("path") or act.get("path") or ""
         if path and not os.path.isabs(path):
