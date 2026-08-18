@@ -79,6 +79,15 @@ VALID_RECORD = (
     "who: a human reviewer"
 )
 
+# The close-lane mandates, grammar-complete in one comment (it-31 slice 9: a finished non-debt epic
+# holds until these exist on its trail — fixtures that expect the self-close carry them).
+CLOSE_RECORDS = (
+    "YR-ROUND-RECORD: the round's observable counts\n"
+    "refusals: 0\nrecords-demanded: 0\ndetector-findings: 0\nescalations: 0\n"
+    "\n"
+    "YR-SHIP-WALK: walked at close\nwho: @human\nscope: this epic's slices\n"
+)
+
 
 # ---- canned-shape builders (the GraphQL node shapes the sweep reads) ----
 
@@ -1237,7 +1246,7 @@ def test_epic_typed_finished_epic_self_closes_same_as_feature():
     self-close leg of the per-epic algorithm is reached identically for either arm of the vocabulary."""
     board = [_item(100, item_id="EI-100", itype="Epic", status="Ready")]
     epics = {100: _epic_detail(
-        comments=[VALID_RECORD],
+        comments=[VALID_RECORD, CLOSE_RECORDS],
         children=[_child(101, state="CLOSED", pi_id="PI-101"),
                   _child(102, state="CLOSED", pi_id="PI-102")])}
     epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
@@ -1395,7 +1404,7 @@ def test_finished_epic_with_completed_child_closes_completed():
     never edits Status directly (native close->Done automation is trusted to set it)."""
     board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
     epics = {100: _epic_detail(
-        comments=[VALID_RECORD],
+        comments=[VALID_RECORD, CLOSE_RECORDS],
         children=[_child(101, state="CLOSED", pi_id="PI-101"),
                   _child(102, state="CLOSED", pi_id="PI-102")])}
     epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
@@ -1416,7 +1425,7 @@ def test_finished_epic_all_not_planned_closes_not_planned():
     """Every child closed as NOT_PLANNED (none COMPLETED) -> the epic closes with reason 'not planned'."""
     board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
     epics = {100: _epic_detail(
-        comments=[VALID_RECORD],
+        comments=[VALID_RECORD, CLOSE_RECORDS],
         children=[_child(101, state="CLOSED", pi_id="PI-101"),
                   _child(102, state="CLOSED", pi_id="PI-102")])}
     epics[100]["subIssues"]["nodes"][0]["stateReason"] = "NOT_PLANNED"
@@ -1470,7 +1479,7 @@ def test_finished_epic_with_open_question_marker_still_self_closes():
     self-close decision is unchanged regardless of any marker in its body."""
     board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
     epics = {100: _epic_detail(
-        comments=[VALID_RECORD],
+        comments=[VALID_RECORD, CLOSE_RECORDS],
         body="YR-OPEN-QUESTION: does this even matter now?\n",
         children=[_child(101, state="CLOSED", pi_id="PI-101"),
                   _child(102, state="CLOSED", pi_id="PI-102")])}
@@ -1490,7 +1499,7 @@ def test_self_close_is_idempotent_across_ticks():
     read no longer sees it OPEN, so it is not a candidate -> no second close call."""
     board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
     epics = {100: _epic_detail(
-        comments=[VALID_RECORD],
+        comments=[VALID_RECORD, CLOSE_RECORDS],
         children=[_child(101, state="CLOSED", pi_id="PI-101")])}
     epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
     fake = FakeGh(board, epics)
@@ -1536,7 +1545,7 @@ def test_finished_non_debt_epic_closes_byte_for_byte_as_today():
     """No debt-kind line in the body -> today's close, unchanged."""
     board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
     epics = {100: _epic_detail(
-        comments=[VALID_RECORD], body="",
+        comments=[VALID_RECORD, CLOSE_RECORDS], body="",
         children=[_child(101, state="CLOSED", pi_id="PI-101"),
                   _child(102, state="CLOSED", pi_id="PI-102")])}
     epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
@@ -1557,7 +1566,7 @@ def test_body_mentioning_kind_sentinel_inline_is_not_a_debt_epic():
     body = "See the `YR-ITERATION-KIND: tech-debt` sentinel grammar for details on debt epics."
     board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
     epics = {100: _epic_detail(
-        comments=[VALID_RECORD], body=body,
+        comments=[VALID_RECORD, CLOSE_RECORDS], body=body,
         children=[_child(101, state="CLOSED", pi_id="PI-101")])}
     epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
     fake = FakeGh(board, epics)
@@ -3423,3 +3432,110 @@ def test_a_different_refusal_on_a_later_tick_still_posts_its_own_comment():
     assert epic_comments_after_2[0] == epic_comments_after_1[0]
     assert epic_comments_after_2[1][2].splitlines()[0] == NOT_A_TASK_MARKER
     assert {"epic": 100, "action": "raise", "reason": "Blocked"} in second_actions
+
+
+# ============================================================================
+# it-31 slice 9 (#441) — the close arm: a finished non-debt epic holds until its close records exist
+# (the model's compiled close-lane mandates, judged by the detector's own core; the debt hold at the
+# branch above is the exemplar and stays byte-identical)
+
+def _finished_feature_epic(comments):
+    board = [_item(100, item_id="EI-100", itype="Feature", status="Ready")]
+    epics = {100: _epic_detail(
+        comments=comments,
+        children=[_child(101, state="CLOSED", pi_id="PI-101")])}
+    epics[100]["subIssues"]["nodes"][0]["stateReason"] = "COMPLETED"
+    return board, epics
+
+
+def test_finished_epic_without_close_records_holds_naming_each():
+    board, epics = _finished_feature_epic([VALID_RECORD])
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+    assert fake.closes == []                                 # never closed without the records
+    body = _epic_comment_text(fake)
+    assert body.splitlines()[0] == "YR-CLOSE-HOLD"
+    assert "YR-ROUND-RECORD" in body and "YR-SHIP-WALK" in body
+    assert ("EI-100", REASON_FIELD, "NeedsInfo") in fake.edits
+    assert {"epic": 100, "action": "hold-close", "missing": 2} in actions
+
+
+def test_close_hold_comment_and_reason_set_exactly_once_across_ticks():
+    board, epics = _finished_feature_epic([VALID_RECORD])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    after_1 = [c for c in fake.comments if c[1] == "100"]
+    assert len(after_1) == 1
+    _sweep(fake)
+    assert [c for c in fake.comments if c[1] == "100"] == after_1     # no duplicate
+    assert fake.closes == []
+
+
+def test_finished_epic_with_close_records_closes_as_before():
+    board, epics = _finished_feature_epic([VALID_RECORD, CLOSE_RECORDS])
+    fake = FakeGh(board, epics)
+    actions = _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+    assert fake.comments == []
+    assert {"epic": 100, "action": "close", "reason": "completed"} in actions
+
+
+def test_close_records_split_across_two_comments_also_satisfy():
+    """Each record complete within ONE text (the field-pooling rule) — but the two records may ride
+    separate comments."""
+    round_rec = ("YR-ROUND-RECORD: counts\nrefusals: 1\nrecords-demanded: 2\n"
+                 "detector-findings: 0\nescalations: 0\n")
+    walk_rec = "YR-SHIP-WALK: walked\nwho: @human\nscope: epic\n"
+    board, epics = _finished_feature_epic([VALID_RECORD, round_rec, walk_rec])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+
+
+def test_incomplete_round_record_still_holds():
+    """Grammar, not just presence: a marker with missing fields is a finding, and the hold names it."""
+    partial = "YR-ROUND-RECORD: counts\nrefusals: 1\n" + CLOSE_RECORDS.split("\n\n")[1]
+    board, epics = _finished_feature_epic([VALID_RECORD, partial])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == []
+    assert "records-demanded" in _epic_comment_text(fake)
+
+
+def test_close_hold_body_never_satisfies_the_mandates_it_names():
+    """The debt lesson, re-applied: the hold comment naming the missing records must not itself
+    read as those records on the next tick."""
+    import check_trail
+    import records as records_mod
+    board, epics = _finished_feature_epic([VALID_RECORD])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    hold_body = _epic_comment_text(fake)
+    reg = records_mod.load()
+    findings = check_trail.check_texts(reg, "close", {"issue-trail": [hold_body]},
+                                       lanes_map=records_mod.lanes(reg),
+                                       forbids_map=records_mod.lane_forbids(reg))
+    assert findings, "the hold comment satisfied the very mandates it names"
+
+
+def test_debt_epic_close_duties_are_unchanged():
+    """The debt sibling's behavior is unchanged (the acceptance's own words): a debt epic with a
+    valid verdict closes WITHOUT close records — its hold is the ledger verdict's, exactly as
+    today."""
+    board, epics = _debt_epic_detail(comments=[VALID_LEDGER])
+    fake = FakeGh(board, epics)
+    _sweep(fake)
+    assert fake.closes == [(REPO, "100", "completed")]
+
+
+def test_unloadable_mandates_hold_fail_closed(monkeypatch):
+    """A sweep that cannot read its mandates must not self-close — Needs-info over guessing."""
+    board, epics = _finished_feature_epic([VALID_RECORD, CLOSE_RECORDS])
+    fake = FakeGh(board, epics)
+    import epic_gate as eg
+    monkeypatch.setattr(eg.records, "load",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("registry down")))
+    actions = _sweep(fake)
+    assert fake.closes == []
+    assert any(a.get("action") == "hold-close" for a in actions)
+    assert "registry down" in _epic_comment_text(fake)

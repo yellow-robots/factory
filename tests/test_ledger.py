@@ -1357,3 +1357,116 @@ def test_pipeline_md_ledger_section_documents_the_gate_durations_artifact():
     section = text.split("## The ledger", 1)[1].split("\n## ", 1)[0]
     assert "gate-durations.json" in section
     assert "gates" in section.lower()
+
+
+# ============================================================================
+# it-31 slice 9 (#441) — refusals reach the ledger (fail-soft), and the crossover verdict lands typed
+
+def _cost_row(repo="yellow-robots/factory", ts_end="2026-08-17T01:00:00Z", merged=True, cost=2.0):
+    return {"schema": ledger.ROW_SCHEMA, "repo": repo, "ts_end": ts_end,
+            "outcome": {"type": "merged" if merged else "blocked"},
+            "totals": {"shadow_cost_usd": cost, "weighted_total": 10, "cost_unit": "usd"}}
+
+
+def test_refusal_row_shape_and_roundtrip(tmp_path):
+    row = ledger.build_refusal_row(repo="o/r", issue="7", site="gate", reason="not ready",
+                                   ts="2026-08-17T01:02:03Z")
+    assert row["schema"] == ledger.REFUSAL_SCHEMA
+    assert row["repo"] == "o/r" and row["task"] == "o/r#7"
+    assert row["site"] == "gate" and row["ts_end"] == "2026-08-17T01:02:03Z"
+    ledger.append_row(tmp_path, row)
+    assert ledger.load_rows(tmp_path) == [row]
+
+
+def test_cost_aggregators_ignore_refusal_rows(tmp_path):
+    rows = [_cost_row(), ledger.build_refusal_row(repo="yellow-robots/factory", issue="7",
+                                                   site="gate", reason="x",
+                                                   ts="2026-08-17T01:00:00Z")]
+    ctc = ledger.close_time_cost(rows)
+    assert ctc["merged_count"] == 1 and ctc["total_shadow_cost_usd"] == 2.0
+    assert ledger.per_model_view(rows) == ledger.per_model_view(rows[:1])
+    assert ledger.daily_weighted_tokens(rows) == {"2026-08-17": 10}
+
+
+def test_crossover_axis_counts_refused_invocations():
+    rows = [_cost_row(), _cost_row(repo="yellow-robots/gilda", cost=1.0),
+            ledger.build_refusal_row(repo="yellow-robots/factory", issue="7", site="gate",
+                                     reason="x", ts="2026-08-17T01:00:00Z"),
+            ledger.build_refusal_row(repo="yellow-robots/gilda", issue="9", site="gate",
+                                     reason="y", ts="2026-08-17T01:00:00Z"),
+            ledger.build_refusal_row(repo="yellow-robots/gilda", issue="9", site="gate",
+                                     reason="z", ts="2026-08-17T01:00:00Z")]
+    axis = ledger.crossover_cost_axis(rows)
+    assert axis["factory"]["refused_invocations"] == 1
+    assert axis["product"]["refused_invocations"] == 2
+    assert axis["factory"]["total_shadow_cost_usd"] == 2.0    # refusals cost nothing here
+
+
+def test_refusal_cli_is_fail_soft(tmp_path):
+    unwritable = tmp_path / "nope"
+    unwritable.write_text("a file where a dir is needed")
+    r = subprocess.run([sys.executable, str(LEDGER_PY), "refusal",
+                        "--ledger-dir", str(unwritable / "ledger"),
+                        "--repo", "o/r", "--issue", "7", "--site", "gate",
+                        "--reason", "not ready"], capture_output=True, text=True)
+    assert r.returncode == 0, "a refusal append must never fail the refusing caller"
+    ok = subprocess.run([sys.executable, str(LEDGER_PY), "refusal",
+                        "--ledger-dir", str(tmp_path / "ledger"),
+                        "--repo", "o/r", "--issue", "7", "--site", "gate",
+                        "--reason", "not ready"], capture_output=True, text=True)
+    assert ok.returncode == 0
+    rows = ledger.load_rows(tmp_path / "ledger")
+    assert len(rows) == 1 and rows[0]["schema"] == ledger.REFUSAL_SCHEMA
+
+
+def test_crossover_record_grammar_complete(tmp_path, monkeypatch):
+    import check_trail
+    import records as records_mod
+    ledger.append_row(tmp_path, _cost_row())
+    body = ledger.crossover_comment_body(str(tmp_path), verdict="factory-continues",
+                                         who="@jbrey", since="", until="")
+    reg = records_mod.load()
+    row = records_mod.get(reg, "YR-CROSSOVER")
+    assert body.splitlines()[0].startswith(row["marker"])
+    assert check_trail._missing_fields(row, [body]) == []
+    assert "factory" in body and "product" in body        # the cost axis evidence, both splits
+
+
+def test_crossover_cli_test_mode_writes_nothing(tmp_path):
+    ledger.append_row(tmp_path, _cost_row())
+    r = subprocess.run([sys.executable, str(LEDGER_PY), "crossover",
+                        "--ledger-dir", str(tmp_path),
+                        "--repo", "yellow-robots/factory", "--issue", "432",
+                        "--verdict", "factory-continues", "--who", "@jbrey", "--test-mode"],
+                       capture_output=True, text=True,
+                       env={**os.environ, "GH_BIN": "/definitely/not/a/binary"})
+    assert r.returncode == 0
+    assert "TEST-MODE" in r.stdout and "YR-CROSSOVER" in r.stdout
+
+
+def test_crossover_cli_live_posts_via_gh(tmp_path):
+    gh = tmp_path / "gh"
+    gh.write_text("#!/bin/sh\n" + f'echo "$@" > "{tmp_path}/gh-args"\n' + "exit 0\n")
+    gh.chmod(0o755)
+    ledger.append_row(tmp_path, _cost_row())
+    r = subprocess.run([sys.executable, str(LEDGER_PY), "crossover",
+                        "--ledger-dir", str(tmp_path),
+                        "--repo", "yellow-robots/factory", "--issue", "432",
+                        "--verdict", "factory-continues", "--who", "@jbrey"],
+                       capture_output=True, text=True,
+                       env={**os.environ, "GH_BIN": str(gh)})
+    assert r.returncode == 0, r.stderr
+    args = (tmp_path / "gh-args").read_text()
+    assert "issue comment 432" in args and "--repo yellow-robots/factory" in args
+
+
+def test_registry_rows_for_slice_9():
+    import records as records_mod
+    reg = records_mod.load()
+    xr = records_mod.get(reg, "YR-CROSSOVER")
+    assert xr["fields"] == ["cost", "verdict", "who"]
+    assert "issue-trail" in xr["surfaces"]
+    hold = records_mod.get(reg, "YR-CLOSE-HOLD")
+    assert hold["mode"] == "sentinel"
+    ref = records_mod.get(reg, "yr-ledger-refusal/1")
+    assert ref["mode"] == "json-schema"

@@ -82,7 +82,21 @@ _board(){ GH_BIN="$GH_BIN" python3 "$BOARD_PY" "$@"; }
 eval "$(_board sh-exports)"
 
 die()  { echo "dev-runner: ERROR: $*" >&2; exit 1; }
-gate() { echo "dev-runner: NOT READY: $*" >&2; exit 3; }   # DoR refusal — distinct exit code
+gate() {   # DoR refusal — distinct exit code
+  echo "dev-runner: NOT READY: $*" >&2
+  # it-31 slice 9: a BARE refusal reaches the ledger as its own fail-soft row (informs, never
+  # gates) — the crossover's cost evidence stops under-counting refused invocations. Bare means:
+  # this invocation has not already recorded itself (the Needs-info bounce writes a full outcome
+  # row via ledger_append first — a second row would double-count the same event, the review's
+  # critical), and dry-run writes nothing anywhere (an operator probe is not factory work). The
+  # `|| true` and the discarded output are the contract: this line may never block, fail, or
+  # reorder the refusal, and the exit code below stays 3, read from no pipe.
+  if [ -z "${LEDGER_ROW_WRITTEN:-}" ] && [ "${DRY_RUN:-0}" != 1 ]; then
+    python3 "$SELF_DIR/ledger.py" refusal --ledger-dir "$DEV_RUNNER_HOME/ledger" \
+      --repo "${REPO:-unknown}" --issue "${ISSUE:-0}" --site gate --reason "$*" >/dev/null 2>&1 || true
+  fi
+  exit 3
+}
 reeval_refuse() { echo "dev-runner: RE-EVALUATE REFUSED: $*" >&2; exit 3; }  # --re-evaluate refusal, same family as gate
 log()  { echo "dev-runner: $*" >&2; }
 usage(){ echo "usage: dev-runner.sh <issue#> [--repo <owner/name>] [--dry-run] [--re-evaluate <pr#>]" >&2; exit 2; }
@@ -1103,6 +1117,9 @@ print(json.dumps({"name":a[1] or None,"id":a[2],"provider":a[3] or None,
 # before that it's read fresh from the worktree ($WT), and empty when neither exists yet (e.g. the
 # Needs-info bounce, which runs before claim/worktree).
 ledger_append(){
+  # This invocation records itself here — gate()'s bare-refusal row must not double-count it
+  # (set before the append: the recording PATH is what matters, fail-soft either way).
+  LEDGER_ROW_WRITTEN=1
   local now_iso wall base_sha out rc=0
   now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 0
   wall=$(( $(date +%s 2>/dev/null || printf '%s' "$RUN_START_EPOCH") - RUN_START_EPOCH ))

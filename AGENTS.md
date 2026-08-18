@@ -92,7 +92,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/board_plumbing.py` | the one home for the board's plumbing: its project/field/option identifiers, its single field write, and its single per-issue project-item read + selection rule (consumed by the runner, the epic gate and the three operator scripts) |
 | `tools/merge_shadow.py` | merge-decision evaluator + shadow-completion |
 | `tools/dispatch.py` | n8n's build-trigger endpoint (RFC 0004) |
-| `tools/epic_gate.py` | the standing-approval sweep: promotes/self-closes epics, flags stranded claims |
+| `tools/epic_gate.py` | the standing-approval sweep: promotes/self-closes epics, flags stranded claims; the close arm holds a finished non-debt epic until its mandated close records exist (`YR-CLOSE-HOLD`, it-31 slice 9) |
 | `tools/design_resolver.py` | the governing-design resolver (it-31 slice 4): parses an epic body's Source line, reads the design's status through the vault — the epic-flip guard's evaluator, one seam |
 | `tools/release.py` | the validation-gated, git-native skill release act (it-31 slice 7, ruling 6): refuses unless the model loads at the commit, server CI is green there (the squash-source PR's tree-equal head), and build/ carries no drift — then annotated tag `skill/vX.Y.Z` + GitHub Release carrying `YR-RELEASE`; backfill mode types the pre-tool pair; `--test-mode` writes nothing |
 | `tools/review_bundle.py` | the canonical, hashed per-run review bundle |
@@ -113,7 +113,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/check_trail.py` | the trail-shape detector: presence + grammar of a lane's mandated records, model-compiled mandates + must-not-carry, surface-dispatched, content-blind, version-scoped via `--scope-created` — walk/census tooling, advisory-tier (it-30) |
 | `tools/compile_slice.py` + `hooks/` | the attended lane's delivery: the bounded slice compiled from the canon tables (never hand-edited) + the plugin's SessionStart hook composing the runtime position at delivery, loud-non-blocking (it-30) |
 | `tools/wall.py` | the attended lane's walls, rebuilt as a loop over the process model's compiled rows: the PreToolUse/Stop hook shim over `process.decide`, a non-loading model answered LOUD and non-blocking, the promote wall delegating to the engine's transition-check, and the journal view the round record reads (it-30) |
-| `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads |
+| `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads; fail-soft refusal rows from `gate()` and the `crossover` emitter for `YR-CROSSOVER` (it-31 slice 9) |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/bench_corpus.py` | derives the replayable bench corpus from a repo's merged task PRs |
 | `tools/bench_replay.py` | sealed-checkout replay harness + deterministic grading, plus the live candidate replay driver |

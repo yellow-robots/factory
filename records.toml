@@ -301,6 +301,16 @@ surfaces = ["ledger"]
 notes = "Absent cost_unit reads as the pre-#313 era; re-derived at read time."
 
 [[record]]
+name = "yr-ledger-refusal/1"
+marker = "yr-ledger-refusal/1"
+mode = "json-schema"
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "tools/ledger.py refusal (dev-runner.sh gate(): one fail-soft row per DoR refusal — the append never blocks, never changes gate()'s exit 3)"
+readers = ["tools/ledger.py crossover_cost_axis (refused_invocations per split — the crossover's cost evidence stops under-counting; the cost aggregates themselves skip refusal rows)"]
+surfaces = ["ledger"]
+notes = "it-31 slice 9: refusals are work the factory performed; the ledger informs, never gates."
+
+[[record]]
 name = "yr-merge-record/1"
 marker = "yr-merge-record/1"
 mode = "json-schema"
@@ -462,6 +472,27 @@ emitter = "tools/release.py (the validation-gated, git-native release act — sh
 readers = ["tools/sources.py:releases (the release-surface fetcher the walk tooling and the bench read)", "tools/check_trail.py (release lane)", "humans on the repo's Releases page"]
 surfaces = ["release"]
 notes = "Ruling 6's record (it-31 slice 7), minted at the crossing of #432: a version is typed exactly once — the tag anchors the commit, validation names the evidence (model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift)."
+
+[[record]]
+name = "YR-CROSSOVER"
+marker = "YR-CROSSOVER"
+mode = "prefix"
+fields = ["cost", "verdict", "who"]
+emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitter = "tools/ledger.py crossover (the closing session's typed crossover verdict — the cost evidence is the ledger's own crossover-cost axis, read at close; --test-mode writes nothing)"
+readers = ["a census hand-run of tools/check_trail.py over the epic trail (not a compiled lane mandate: the verdict is the close's judgment, priced by the human)", "humans at close"]
+surfaces = ["issue-trail"]
+notes = "The crossover test's record (it-31 slice 9), minted at the crossing of #432: cost names the evidence read (factory vs product, refused invocations counted), verdict names the judgment reached; the pricing stays the human's."
+
+[[record]]
+name = "YR-CLOSE-HOLD"
+marker = "YR-CLOSE-HOLD"
+mode = "sentinel"
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "tools/epic_gate.py (the close arm: a finished non-debt epic held until its mandated close records exist — the debt hold's exemplar shape, it-31 slice 9)"
+readers = ["tools/epic_gate.py (idempotence key, mode=sentinel)"]
+surfaces = ["issue-trail"]
+notes = "Close-arm hold record: the comment names each missing close mandate on '- '-indented lines so it can never satisfy the grammars it names (the debt hold's own lesson)."
 
 # ── lanes: the mandated-record data the detector reads (authored here, with the canon) ───────────
 
