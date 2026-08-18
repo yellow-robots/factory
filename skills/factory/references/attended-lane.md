@@ -48,26 +48,22 @@ the vault docs themselves** — no new surface (the crossing ruling of 2026-08-0
 
 ## The walled-act map (total — every act carries condition AND stance)
 
-The enforcement layer checks the stated condition and disposes per the stated stance, naming the
-missing record or the categorical rule. Stances are judged per act by consequences (owner, 2026-08-06)
-— and door classification judges **consequences, never diffs**: a reversible change with irreversible
-consequences is one-way. **This table mirrors `process.toml` — the enforcing model — as of v1.0.0**:
-stances here restate the model's *derived* stances for teaching; on any disagreement the model rules,
-and the fully generated splice (`build/walled-acts.md`) replaces this hand table when the delivery
-rewiring lands (a named v1 deferral in the model's own header).
+The map is **compiled**: `build/walled-acts.md` (GENERATED from `process.toml`, committed with the
+model) is the total per-act, per-caller table — condition, derived stance, on-fail, door,
+enforcement, chokepoint, open paths — and the delivered slice's transitions view is its compact
+form. The hand table this reference carried through v1 retired when delivery was rewired to the
+generated surfaces (it-31 slice 8): a hand map beside a generated one is a drift twin, and the
+model rules on any disagreement. What the generated rows cannot say alone, stated once:
 
-| Act | Condition | Stance |
-|---|---|---|
-| PR merge (attended hand-merge) | **categorical** — `pr.merged` is writable by no attended class, and the merge transition's one actor word is `machinery`; no record licenses it | fail-closed |
-| Shared-branch push | `main`/`master` (force-push spellings included): categorical — only GitHub's own squash-on-merge advances them (the store's permission tier) · the session's own `task/<n>-<slug>` branch: lawful · any other shared branch: the `YR-HUMAN-INSTRUCTION` record on the branch's **open PR trail** is the evaluated guard (it-31 slice 5) — no PR to carry the record means the guard cannot be read and the wall refuses, naming the route | fail-closed |
-| Board Status/Reason write | judged by the transition the write resolves to, from where the machine actually is: a standalone promote demands `YR-TASK-GATES` and **asks the human** (propose at a one-way door); an unblock demands a `YR-BOARD-FLIP` **fresh since the board item last changed** and must clear the stale Reason; the runner's claim is machinery's own lawful row | fail-closed |
-| Vault lifecycle stamp (`active`) | the activation's guards — `YR-DESIGN-REVIEW` and `YR-DESIGN-FIT` present in the doc, no `YR-OPEN-QUESTION` riding it — with `YR-ACCEPT` mandated as the post; the exact MCP stamp **asks the human** | fail-closed |
-| Arming edit (`auto_merge`) | **categorical** — `manifest.auto_merge` is writable by the human alone; no record licenses an agent's or machinery's arming edit. BOTH directions of her own act owe `YR-OUTPUT-SWITCH` on the trail (it-31 slice 6, gap 39): the record documents, it never licenses | fail-closed |
-| Output-gate switches (un-arm; sentinel throw/clear) | the human's own acts — ssh on yr-host for the sentinel, her manifest edit for un-arming — each owing a `YR-OUTPUT-SWITCH` record (`switch`/`to`/`who`); detection where prevention cannot reach: the close report names the missing route in any session whose acts read the switch | advisory (detection-tier) |
-| Filing a crossing | the governing design's `status` is `active` — evaluated by the engine over the act's own body (it-31 slice 5: the resolver judges the Source line; a body without one is not a crossing and passes by construction); the epic gate's own approval check still guards the promotion side downstream | fail-closed |
-| Skill release | a validation-gated, git-native act through `tools/release.py` (ruling 6 — it-31 slice 7): the funnel refuses on failing validation (model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift), then the annotated `skill/vX.Y.Z` tag + GitHub Release carry `YR-RELEASE`; the raw `gh release create` spelling resolves to the same propose-gated one-way door — interactive **asks the human**, headless refuses | fail-closed |
-| Off-table vault write | a blind file write cannot confirm the effect it might have, so the wall **advises, never denies** (an over-matching binding may never refuse); the sanctioned rows stay the decision table's | advisory |
-| Commit minted on the human's git identity | the standing trailer discipline — the visible commit message carries `Co-Authored-By:`; an editor-driven body is invisible pre-execution and is named uncovered, never guessed at | fail-closed |
+- Stances are judged per act by consequences (owner, 2026-08-06) — and door classification judges
+  **consequences, never diffs**: a reversible change with irreversible consequences is one-way.
+- The categorical rows are permission-tier: `pr.merged` and shared `main`/`master` are writable by
+  no attended class, and `manifest.auto_merge` by the human alone — no record licenses them; the
+  output-gate switches owe `YR-OUTPUT-SWITCH` in both directions (detection where prevention
+  cannot reach).
+- An over-matching binding may never refuse: the blind-write residual advises, detection-tier.
+- The funnels are coverage, never special cases: `tools/promote.sh`, `tools/release.py`, and the
+  raw spellings they wrap resolve to the same transitions and the same guards.
 
 ## The human's checkpoints (what the coordination arm surfaces)
 
@@ -96,11 +92,12 @@ escalation lands as a `YR-ESCALATION` record, counted in the round record, so th
 ## Delivery, the slice, and the close
 
 An attended session opening a factory workspace receives the lane's operating canon at session start
-— on `startup`, `clear`, `compact`, and `resume` — independent of recognition. The delivered unit is
-the **bounded slice**, three parts, compiled from this reference's two tables plus the router's
-pointer list, composed at delivery with the round's current position and next step (the state-machine
-view): (1) the step set with position, (2) the walled-act map, (3) canon pointers with the **human's
-checkpoints marked** — the harness coordinates the human the same way it coordinates the agent; when
+— on `startup`, `clear`, `compact`, and `resume` — independent of recognition, and **only inside the
+factory's declared world** (the engine's own boundary rule; outside it, walls and delivery stay
+silent). The delivered unit is the **bounded slice**: the model's compiled static half
+(`build/slice-static.md` — machines, transitions with derived stances, the honesty block) served
+verbatim, plus the runtime position composed at delivery (it-31 slice 8: no hand-authored map
+remains in the delivery path) — the harness coordinates the human the same way it coordinates the agent; when
 a round reaches a step needing her input, the surface she already watches — the board item or the session's close report — names it, never her memory.
 Session close is checked: a session that executed a walled act or emitted a mandated record is
 refused a silent close while mandatory traces are missing (the refusal names each); a second
