@@ -103,8 +103,7 @@ def test_plugin_version_store_guarded_both_paths_bound(model):
 def test_release_evaluator_declared(model):
     ev = model["_evaluators"]["release-validation"]
     assert "tools/release.py" in " ".join(ev["argv"])
-    assert ev["conditions_display"] == ["version_spans_content", "model_loads",
-                                        "server_ci_green", "no_drift"]
+    assert ev["conditions_display"] == list(release.CONDITIONS)
 
 
 def test_release_lane_mandate_compiles(model):
@@ -145,7 +144,8 @@ def test_release_surface_in_the_closed_vocabulary():
 def test_record_body_satisfies_its_own_grammar(reg):
     body = release.record_body("1.0.0", SHA_100,
                                "model-loads server-ci-green no-drift", "@jbrey",
-                               mode="backfill")
+                               mode="backfill",
+                               manual="unaffected — the release predates the manual")
     row = records.get(reg, "YR-RELEASE")
     assert body.splitlines()[0].startswith(row["marker"])
     assert check_trail._missing_fields(row, [body]) == []
@@ -221,7 +221,7 @@ class _Fake:
         self.beh = {"validate_rc": 0, "drift_rc": 0, "pulls": [{"number": 427,
                     "head": {"sha": "HEAD" * 10}}], "trees_equal": True,
                     "runs": [{"name": "test", "status": "completed", "conclusion": "success"}],
-                    "tag_exists": False, "plugin_version": None}
+                    "tag_exists": False, "plugin_version": None, "tree_paths": []}
         self.beh.update(beh)
         self.calls = []
 
@@ -244,6 +244,8 @@ class _Fake:
             return 0, json.dumps({"check_runs": self.beh["runs"]}), ""
         if "ls-remote" in j:
             return 0, ("X\trefs/tags/skill/v1.0.0\n" if self.beh["tag_exists"] else ""), ""
+        if argv[:2] == ["git", "ls-tree"]:
+            return 0, "".join(f"{p}\n" for p in self.beh["tree_paths"]), ""
         if "show" in j and "plugin.json" in j:
             v = self.beh["plugin_version"]
             return 0, json.dumps({"name": "factory", "version": v}), ""
@@ -391,7 +393,8 @@ def test_engine_fetches_the_release_surface(model, reg, monkeypatch):
 def test_check_trail_cli_reads_the_release_lane(reg, monkeypatch, capsys):
     """Review major 3: the registry row names check_trail as a reader — the CLI must actually be
     able to fetch the surface, or the release lane can never be checked."""
-    body = release.record_body("1.0.0", SHA_100, "evidence", "@jbrey", mode="backfill")
+    body = release.record_body("1.0.0", SHA_100, "evidence", "@jbrey", mode="backfill",
+                               manual="unaffected — the release predates the manual")
     monkeypatch.setattr(check_trail, "fetch_releases",
                         lambda repo: [f"skill/v1.0.0\n{body}"])
     rc = check_trail._cli(["--lane", "release", "--repo", "yellow-robots/factory"])
@@ -699,18 +702,20 @@ def test_emitted_record_validation_field_names_version_spans_content(monkeypatch
 
 # ── manual_current (it-32 slice 5): the manual's ruled update trigger ────────────────────
 
-def _seed_manual_sources(work):
-    """The three paths the condition reads, present at the seed so a later change is a diff."""
+def _seed_manual_sources(work, with_manual=True):
+    """The paths the condition reads, present at the seed so a later change is a diff; the
+    manual itself optional, for the first release after the manual is created."""
     (work / "skills" / "factory").mkdir(parents=True, exist_ok=True)
     (work / "skills" / "factory" / "SKILL.md").write_text("router v1\n")
     (work / "AGENTS.md").write_text("canon v1\n")
-    (work / "docs").mkdir(exist_ok=True)
-    (work / "docs" / "manual.md").write_text("manual v1\n")
+    if with_manual:
+        (work / "docs").mkdir(exist_ok=True)
+        (work / "docs" / "manual.md").write_text("manual v1\n")
 
 
-def _make_manual_repo(tmp_path):
+def _make_manual_repo(tmp_path, with_manual=True):
     work = _make_release_repo(tmp_path)
-    _seed_manual_sources(work)
+    _seed_manual_sources(work, with_manual=with_manual)
     _commit_all(work, "seed the manual and its sources")
     _git(["push", "-q", "origin", "release-trunk"], work)
     # re-anchor the 1.0.0 tag at the seeded tree so the range for 1.0.1 starts here
@@ -825,4 +830,130 @@ def test_amendment_row_widens_the_release_transition(model):
     assert len(rows) == 1 and rows[0]["version"].startswith("1.7.")
     assert rows[0]["touches"] == ["plugin.release.validated"]
     assert "manual_current" in rows[0]["reason"] and rows[0]["kind"] == "widen"
+
+
+# ── cold-review folds (PR #500's review): the display list, the override's truthfulness, the ───
+# blank reason, the whole-tree path, the manual created in range, the emitter's required value ──
+
+def test_amendment_row_is_effective_on_its_ship_date(model):
+    """Review I4, option 2: ship+0, unlike v1.6.0/v1.6.1 — `check_trail.py`'s scoping is
+    trail-level against the CURRENT version's date, so a ship+1 row would scope every trail
+    created on the ship date out of v1.6.0's own `commit` mandate (the sibling test
+    `test_scope_created_post_ship_trail_fails_the_new_commit_field` pins that consequence);
+    the widened lane has no Release dated on the ship date, so nothing is misjudged."""
+    row = next(a for a in model["amendment"] if a.get("review") == "yellow-robots/factory#486")
+    assert row["date"] == "2026-09-06"
+    assert "ship date" in row["reason"] and "trail-level" in row["reason"]
+
+
+def test_release_guard_why_names_the_conditions_in_the_tool_order(model):
+    """Review B1: the guard's `why` — the text every attended session reads — lists the tool's
+    conditions in the tool's own order, `manual_current` included."""
+    guards = [g for g in model["transition"] if g["id"] == "plugin.release.validated"]
+    assert len(guards) == 1
+    whys = " ".join(str(g.get("why", "")) for g in guards[0].get("guard", []))
+    assert ", ".join(release.CONDITIONS) in whys
+
+
+def test_record_body_requires_the_manual_value():
+    """Review I1: no fail-open default on the record emitter — a caller that omits the value
+    is a TypeError, never a record stating a fact no judgment produced."""
+    with pytest.raises(TypeError):
+        release.record_body("1.0.3", SHA_100, "evidence", "@jbrey", mode="ship")
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_manual_current_refuses_a_blank_override(monkeypatch, capsys, tmp_path,
+                                                 stub_other_conditions, blank):
+    """Review I2: a present-but-blank reason is a malformed declaration — refused loudly,
+    naming the value, in the repo's convention — never silently ignored."""
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "1.0.1", **{"AGENTS.md": "canon v2\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1",
+                       "--manual-unaffected", blank])
+    out = capsys.readouterr().out
+    assert rc == 1 and out.splitlines()[0] == "manual_current"
+    assert "blank reason" in out and repr(blank) in out
+
+
+def test_manual_current_override_is_not_recorded_when_the_judgment_passes(monkeypatch, tmp_path,
+                                                                         stub_other_conditions):
+    """Review I3: the judgment runs first; an override the act did not need is named in the
+    evidence and the record states the observed fact (`updated`), not the declaration."""
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "1.0.1", **{"skills/factory/SKILL.md": "router v2\n",
+                                      "docs/manual.md": "manual v2\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc, evidence, evaluated, manual = release.validate("yellow-robots/factory", tip, "1.0.1",
+                                                       "a reason the range did not need")
+    assert rc == 0 and "manual_current" in evaluated
+    assert manual == "updated"
+    assert "was not needed and is not recorded" in evidence
+
+
+def test_manual_current_refuses_an_unreadable_range_even_under_the_override(monkeypatch,
+                                                                           capsys, tmp_path,
+                                                                           stub_other_conditions):
+    """Review I3 / I6(e): the override never masks an unreadable range — git failing on the
+    diff is a refusal naming the range, with or without the declaration (fail-closed)."""
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "1.0.1", **{"AGENTS.md": "canon v2\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    real_run = release._run
+
+    def failing_diff(argv, **kw):
+        if argv[:3] == ["git", "diff", "--name-only"]:
+            return 128, "", "fatal: bad object"
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(release, "_run", failing_diff)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1",
+                       "--manual-unaffected", "a reason"])
+    out = capsys.readouterr().out
+    assert rc == 1 and out.splitlines()[0] == "manual_current"
+    assert "could not read the paths changed" in out and "bad object" in out
+
+
+def test_manual_current_passes_when_the_manual_is_created_in_the_range(monkeypatch, capsys,
+                                                                     tmp_path,
+                                                                     stub_other_conditions):
+    """Review I6(b): the first release after slice 4 — the manual did not exist at the previous
+    tag and lands in the range alongside a source change — is `updated`, no override owed."""
+    work = _make_manual_repo(tmp_path, with_manual=False)
+    tip = _bump_with(work, "1.0.1", **{"AGENTS.md": "canon v2\n",
+                                      "docs/manual.md": "manual v1\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "manual updated" in out
+
+
+def test_manual_current_reads_the_whole_tree_when_no_earlier_tag_exists(monkeypatch, capsys,
+                                                                      tmp_path,
+                                                                      stub_other_conditions):
+    """Review I6(a): a version below every existing tag has no previous tag — the range is the
+    whole tree at the commit (`git ls-tree`), where the seeded manual and sources all count."""
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "0.9.0", **{"AGENTS.md": "canon v2\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "0.9.0"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "no earlier tag" in out and "manual updated" in out
+
+
+def test_backfill_test_mode_carries_the_manual_field_and_writes_nothing(monkeypatch, capsys):
+    """Review I6(d): the ship/backfill parsers wire `--manual-unaffected` through to the
+    rendered record (TEST-MODE prints the body and writes nothing else) — and test-mode's
+    zero-write property holds with the new argument."""
+    fake = _Fake(plugin_version="1.0.0", tree_paths=["AGENTS.md", "skills/factory/SKILL.md"])
+    rc = _v(monkeypatch, fake, ["backfill", "--version", "1.0.0", "--who", "@jbrey",
+                                "--test-mode", "--manual-unaffected",
+                                "the release predates the manual"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    manual_line = next(l for l in out.splitlines() if l.startswith("manual:"))
+    assert manual_line == "manual: unaffected — the release predates the manual"
+    assert fake.wrote() == []
 

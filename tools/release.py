@@ -125,6 +125,23 @@ def _existing_version_tags() -> tuple[bool, list[tuple[str, tuple[int, int, int]
     return True, sorted(seen.items(), key=lambda kv: kv[1]), ""
 
 
+def _previous_tag(version: str) -> tuple[bool, str | None, str]:
+    """The latest existing `skill/vX.Y.Z` tag below `version` — (ok, tag-or-None, detail).
+    ok is False only when the remote was unreadable (fail-closed to the caller, detail
+    says why); a non-semver `version` has no comparable predecessor and yields None, the
+    callers' full-history / whole-tree fallback. The one home for the resolution both
+    range-based conditions (`version_spans_content`, `manual_current`) start from."""
+    ok, tags, detail = _existing_version_tags()
+    if not ok:
+        return False, None, (f"could not read origin's tags: {detail} — an unreadable remote "
+                             f"never passes (fail-closed)")
+    if not _VERSION_RE.match(version):
+        return True, None, ""
+    want = tuple(int(g) for g in version.split("."))
+    below = [name for name, v in tags if v < want]
+    return True, (below[-1] if below else None), ""
+
+
 def _bump_commit(version: str, commit: str) -> tuple[str | None, str]:
     """The anchor for `version_spans_content`: the first first-parent commit in
     `<previous tag>..<commit>` (full history when no earlier tag exists) at which plugin.json
@@ -135,15 +152,9 @@ def _bump_commit(version: str, commit: str) -> tuple[str | None, str]:
     anchor — an unchanged (empty) tree, by construction. A non-semver `version` never raises: it
     can't be compared against existing tags, so it falls back to the full-history walk (no
     previous-tag bound) — a too-early start costs time, never correctness."""
-    ok, tags, detail = _existing_version_tags()
+    ok, prev_tag, detail = _previous_tag(version)
     if not ok:
-        return None, (f"could not read origin's tags: {detail} — an unreadable remote never "
-                      f"passes (fail-closed)")
-    prev_tag = None
-    if _VERSION_RE.match(version):
-        want = tuple(int(g) for g in version.split("."))
-        below = [name for name, v in tags if v < want]
-        prev_tag = below[-1] if below else None
+        return None, detail
     rng = f"{prev_tag}..{commit}" if prev_tag else commit
     rc, out, err = _run(["git", "log", "--first-parent", "--reverse", "--format=%H", rng,
                         "--", ".claude-plugin/plugin.json"], cwd=str(REPO_ROOT))
@@ -180,15 +191,9 @@ def _changed_since_previous_tag(version: str, commit: str) -> tuple[list[str] | 
     """The tracked paths changed in `<previous tag>..<commit>` — every tracked path at `commit`
     when no earlier tag exists (the whole tree is new). Returns (paths, range, error); paths is
     None only when the remote or git was unreadable (fail-closed to the caller)."""
-    ok, tags, detail = _existing_version_tags()
+    ok, prev_tag, detail = _previous_tag(version)
     if not ok:
-        return None, "", (f"could not read origin's tags: {detail} — an unreadable remote never "
-                          f"passes (fail-closed)")
-    prev_tag = None
-    if _VERSION_RE.match(version):
-        want = tuple(int(g) for g in version.split("."))
-        below = [name for name, v in tags if v < want]
-        prev_tag = below[-1] if below else None
+        return None, "", detail
     if prev_tag:
         rng = f"{prev_tag}..{commit[:9]}"
         rc, out, err = _run(["git", "diff", "--name-only", f"{prev_tag}..{commit}"],
@@ -208,18 +213,30 @@ def _manual_current(version: str, commit: str,
     changed a source without touching the manual would ship a stale manual — refused, unless the
     act records the manual unaffected with a reason (`--manual-unaffected`), which the record
     then carries verbatim. The judgment is diff-based like `version_spans_content` and, like it,
-    runs only when a version is declared."""
-    if unaffected and unaffected.strip():
-        value = f"unaffected — {unaffected.strip()}"
-        return "", f"manual {value} (recorded by the act)", value
+    runs only when a version is declared. The judgment always runs: the override is honoured
+    only where the act would otherwise refuse, so the record states what was observed
+    (`updated` / `sources unchanged`) whenever that is the fact, an unreadable range refuses
+    even under the override, and a blank reason is a refusal naming the value — never read as
+    a declaration."""
+    override = unaffected.strip() if unaffected is not None else ""
+    if unaffected is not None and not override:
+        return "manual_current", (
+            f"--manual-unaffected was given a blank reason ({unaffected!r}) — the record carries "
+            f"the reason verbatim, so a blank declaration is refused, never read as unaffected"), ""
     changed, rng, err = _changed_since_previous_tag(version, commit)
     if changed is None:
         return "manual_current", err, ""
     sources = sorted(p for p in changed if p in MANUAL_SOURCES)
+    unused = (f" (--manual-unaffected {override!r} was not needed and is not recorded)"
+              if override else "")
     if not sources:
-        return "", f"manual sources unchanged over {rng}", "sources unchanged"
+        return "", f"manual sources unchanged over {rng}{unused}", "sources unchanged"
     if MANUAL_PATH in changed:
-        return "", f"manual updated over {rng} alongside {', '.join(sources)}", "updated"
+        return "", (f"manual updated over {rng} alongside {', '.join(sources)}{unused}"), "updated"
+    if override:
+        value = f"unaffected — {override}"
+        return "", (f"{', '.join(sources)} changed over {rng} without {MANUAL_PATH}; manual "
+                    f"{value} (recorded by the act)"), value
     return "manual_current", (
         f"{', '.join(sources)} changed over {rng} but {MANUAL_PATH} did not — the manual renders "
         f"those surfaces by citation and would ship stale; update it in the same range, or "
@@ -345,8 +362,10 @@ def validate(repo: str, commit: str, version: str | None,
     return 0, evidence, evaluated, manual
 
 
-def record_body(version: str, commit: str, validation: str, who: str, mode: str,
-                manual: str = "unaffected — the release predates the manual") -> str:
+def record_body(version: str, commit: str, validation: str, who: str, mode: str, *,
+                manual: str) -> str:
+    """The YR-RELEASE record. `manual` is required, never defaulted: a record emitter with a
+    fail-open default would state a fact no judgment produced once the manual exists."""
     tail = {
         "ship": ("Released via `tools/release.py` (the validation-gated, git-native release act — "
                  "it-31 slice 7, ruling 6): the annotated tag anchors the commit; the validation "
