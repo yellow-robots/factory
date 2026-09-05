@@ -137,6 +137,8 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/bench_replay.py` | sealed-checkout replay harness + deterministic grading, plus the live candidate replay driver |
 | `tools/bench_report.py` | bench evidence report + verdict-diff aggregate, with merge-outcome backfill |
 | `tools/verdict_diff.py` | the per-round gating-vs-shadow verdict diff record |
+| `tools/rank.py` | the Bases rank reader over the ideas folder: `rank list` / `rank top --n N`, reproducing `ideas-backlog.base`'s `formulas.rank` verbatim in meaning over `status == "open"` seeds read through `textutil.split_frontmatter`, descending; a seed missing `value` or `effort` has no rank and is listed as such; an `out_of_subset` finding is listed, never dropped (it-36 slice B) |
+| `tools/strategy.py` | the strategy doc's fenced block reader: parses a `note`'s fenced `yr-strategy` TOML block into themes, constraints, kpi_targets, loop_budget_usd_per_week and factory_cap, via `tomllib`; a missing or malformed block is a loud finding (it-36 slice B) |
 | `tests/` | the pytest suite |
 | `qa/` | consumer quality content — the advisory lens (`qa/lens.py`) and the blocking cardinality guards (`qa/cardinality.py` + its rule set `qa/cardinality.toml`); distinct from the platform machinery in `tools/` |
 | `deploy/` | dispatch service unit, env example, n8n workflow, `DISPATCH.md` |
