@@ -111,6 +111,45 @@ def test_operations_home_holds_executed_records():
         "documentation-model.md does not mention companion scripts for operations/"
 
 
+def test_architecture_admits_exactly_three_file_classes():
+    """architecture/ admits the living reference, decision records, and excavation
+    research — and names no fourth class."""
+    text = _text()
+    lower = text.lower()
+    assert re.search(r"`?architecture/`?\s+admits\s+exactly\s+\*{0,2}three\s+file\s+classes",
+                      lower), \
+        "documentation-model.md does not state architecture/ admits exactly three file classes"
+    assert "living reference" in lower, \
+        "documentation-model.md architecture/ contract does not name the living reference class"
+    assert "decision records" in lower, \
+        "documentation-model.md architecture/ contract does not name the decision records class"
+    assert "excavation research" in lower, \
+        "documentation-model.md architecture/ contract does not name the excavation research class"
+    assert re.search(r"decision\s+records.{0,80}`?type:\s*research`?", lower), \
+        "documentation-model.md does not type decision records as `type: research`"
+    assert text.count("`type: research`") >= 2, \
+        "documentation-model.md does not type both decision records and excavation " \
+        "research as `type: research`"
+    assert re.search(r"written\s+once\s+under\s+the\s+\*{0,2}decision\s+ruled\*{0,2}\s+trigger", lower), \
+        "documentation-model.md does not tie decision records to the Decision ruled trigger"
+    assert re.search(r"never\s+edited", lower), \
+        "documentation-model.md does not state decision records are never edited"
+    assert "not a fourth class" in lower or re.search(r"not\s+a\s+fourth\s+class", lower), \
+        "documentation-model.md does not exclude links as a fourth architecture/ class"
+
+
+def test_architecture_excludes_the_operational_walk_log():
+    """The operational walk log is explicitly not admitted into architecture/ — it lives
+    in operations/ under Executed records."""
+    lower = _lower()
+    assert re.search(r"walk\s+log.{0,40}not\s+admitted|not\s+admitted.{0,40}walk\s+log", lower), \
+        "documentation-model.md does not state the operational walk log is not admitted into architecture/"
+    assert re.search(r"walk\s+log.{0,120}`?operations/`?", lower), \
+        "documentation-model.md does not route the excluded walk log to operations/"
+    assert re.search(r"walk\s+log.{0,160}executed\s+records", lower), \
+        "documentation-model.md does not tie the excluded walk log to operations/'s Executed records"
+
+
 # ---------------------------------------------------------------------------
 # The living reference
 # ---------------------------------------------------------------------------
@@ -255,7 +294,7 @@ def test_maintenance_contract_enforcement_is_procedural_not_automated():
         "documentation-model.md does not explicitly state enforcement is not automated"
 
 
-def test_maintenance_contract_has_all_five_triggers():
+def test_maintenance_contract_has_all_six_triggers():
     text = _text()
     lower = text.lower()
     triggers_and_bindings = {
@@ -264,12 +303,25 @@ def test_maintenance_contract_has_all_five_triggers():
         "write at ship": r"iteration\s+close",
         "executed records": r"operations/.{0,60}(appends|execution)|operation.{0,40}execution",
         "framing events": r"framing\s+conversation",
+        "decision ruled": r"ruling\s+itself|written\s+once,?\s+when\s+the\s+human\s+rules",
     }
     for trigger, binding_pattern in triggers_and_bindings.items():
         assert trigger in lower, \
             f"documentation-model.md maintenance contract is missing the '{trigger}' trigger"
         assert re.search(binding_pattern, lower), \
             f"documentation-model.md does not bind '{trigger}' to its named factory moment"
+
+
+def test_maintenance_contract_decision_ruled_row_is_exact():
+    """The sixth trigger row must be exactly the pinned text — a decision record is
+    written once under the human's ruling, superseded (never edited) by a later one."""
+    text = _text()
+    exact_row = (
+        "| **Decision ruled** | the ruling itself — a decision record is written once, "
+        "when the human rules; a later decision supersedes it, and it is never edited |"
+    )
+    assert exact_row in text, \
+        "documentation-model.md maintenance contract is missing the exact 'Decision ruled' row"
 
 
 def test_advisory_defaults_for_free_form_root():
@@ -405,3 +457,103 @@ def test_skill_md_does_not_restate_cross_cutting_maintenance_contract():
     text = SKILL.read_text(encoding="utf-8")
     assert "maintenance contract" not in text.lower(), \
         "SKILL.md restates the maintenance contract — it should defer to documentation-model.md instead"
+
+
+def test_skill_md_does_not_restate_editing_contract():
+    """SKILL.md defers to documentation-model.md's Editing safely section on demand; it
+    must not restate the sanctioned-write-paths decision table or the section-edit
+    contract's fields."""
+    text = SKILL.read_text(encoding="utf-8")
+    lower = text.lower()
+    assert "editing safely" not in lower, \
+        "SKILL.md restates the 'Editing safely' section heading/name instead of citing it"
+    for marker in ("sanctioned path", "vault_patch", "ifmatch", "targettype", "vault_get_document_map"):
+        assert marker not in lower, \
+            f"SKILL.md restates editing-contract content ('{marker}') instead of deferring " \
+            f"to documentation-model.md"
+
+
+# ---------------------------------------------------------------------------
+# Editing safely — ifMatch concurrency token + the 5.1.0 section-edit re-pin
+# ---------------------------------------------------------------------------
+
+def _editing_safely_section():
+    text = _text()
+    start = text.find("## Editing safely")
+    assert start != -1, "documentation-model.md is missing an '## Editing safely' heading"
+    return text[start:]
+
+
+def test_editing_safely_requires_ifmatch_on_living_reference_edits():
+    """An edit to a living reference must carry ifMatch, the document map's version, so
+    a stale write fails rather than silently overwrites."""
+    section = _editing_safely_section()
+    lower = section.lower()
+    assert re.search(r"living\s+reference\s+carries\s+`?ifmatch`?", lower), \
+        "documentation-model.md Editing safely does not require ifMatch on living-reference edits"
+    assert "document map" in lower and "version" in lower, \
+        "documentation-model.md Editing safely does not tie ifMatch to the document map's version"
+    assert re.search(r"stale.{0,40}fails?\s+the\s+write|fails?\s+the\s+write.{0,60}rather\s+than\s+overwrit",
+                      lower), \
+        "documentation-model.md Editing safely does not state a stale ifMatch fails the write " \
+        "rather than overwriting"
+
+
+def test_editing_safely_frontmatter_row_uses_value_payload():
+    """The decision table's frontmatter-set row must name the `value` payload, not the
+    retired `contentType: application/json` shape."""
+    section = _editing_safely_section()
+    assert "`value`" in section or "value payload" in section.lower(), \
+        "documentation-model.md Editing safely frontmatter row does not name the `value` payload"
+    assert "contenttype: application/json" not in section.lower(), \
+        "documentation-model.md Editing safely still names the retired `contentType: " \
+        "application/json` shape"
+
+
+def test_editing_safely_section_edit_row_uses_scope_not_targetscope():
+    """The decision table's section-edit row must name `scope`, replacing `targetScope`."""
+    section = _editing_safely_section()
+    lower = section.lower()
+    assert "`targetscope`" not in lower, \
+        "documentation-model.md Editing safely still names the retired `targetScope` field"
+    assert re.search(r"section edit.{0,200}`?scope`?\s+decides\s+whether\s+the\s+heading", lower), \
+        "documentation-model.md Editing safely section-edit row does not name `scope`"
+
+
+def test_section_edit_contract_repinned_to_5_1_0():
+    """The pinned section-edit contract must be re-pinned against obsidian-local-rest-api
+    5.1.0, verified 2026-09-05 by the crossing session."""
+    section = _editing_safely_section()
+    lower = section.lower()
+    assert "5.1.0" in section, \
+        "documentation-model.md does not re-pin the section-edit contract to 5.1.0"
+    assert "2026-09-05" in section, \
+        "documentation-model.md does not date the section-edit contract re-pin to 2026-09-05"
+    assert "verified by the crossing session" in lower, \
+        "documentation-model.md does not attribute the re-pin to the crossing session's verification"
+    assert re.search(r"runner build.{0,60}(cannot reach|does not re-verify)", lower), \
+        "documentation-model.md does not disclaim that a runner build cannot re-verify these facts"
+
+
+def test_section_edit_contract_states_5_1_0_facts():
+    """The re-pinned contract must state: heading targets are arrays of heading texts;
+    within selects a top-level body block by index (negative from the end); ifMatch is
+    the concurrency token; scope is content/marker/markerAndContent/parent."""
+    section = _editing_safely_section()
+    lower = section.lower()
+
+    assert re.search(r"heading\s+target\s+is\s+an\s+array\s+of\s+heading\s+texts", lower), \
+        "documentation-model.md does not state heading targets are arrays of heading texts"
+
+    assert re.search(r"`?within`?.{0,60}top-level\s+body\s+block\s+by\s+index", lower), \
+        "documentation-model.md does not state `within` selects a top-level body block by index"
+    assert re.search(r"negative.{0,40}(counting\s+)?from\s+the\s+end", lower), \
+        "documentation-model.md does not state `within`'s index counts negative from the end"
+
+    assert re.search(r"`?ifmatch`?.{0,60}concurrency\s+token", lower), \
+        "documentation-model.md does not name ifMatch as the concurrency token in the " \
+        "re-pinned contract"
+
+    for scope_value in ("content", "marker", "markerandcontent", "parent"):
+        assert scope_value in lower, \
+            f"documentation-model.md re-pinned contract is missing the scope value '{scope_value}'"
