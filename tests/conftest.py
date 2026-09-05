@@ -10,6 +10,8 @@ bounce paths (needs-info, blocked, env-hold), not just a full happy-path run. Th
 `os.environ` inherits a test-owned home by default; a test that sets its own `DEV_RUNNER_HOME` in its
 env dict still wins, since that dict is spread after `os.environ`.
 """
+from pathlib import Path
+
 import pytest
 
 
@@ -31,3 +33,21 @@ def _suite_is_machinery(monkeypatch):
     `setenv("CLAUDECODE", "1")` — see `tests/test_wall.py`), the same opt-in shape the fixture above
     uses for `DEV_RUNNER_HOME`."""
     monkeypatch.setenv("YR_MACHINERY", "1")
+
+
+@pytest.fixture
+def outside_cwd():
+    """A working directory provably OUTSIDE the factory's declared world — for the boundary
+    negatives (found by issue #457's build, the first runner build since the negatives were written).
+
+    `process.in_scope` judges a cwd by walking it and its parents for a marker file, a plugin root,
+    or one of the boundary roots — and the factory's own grandparent is a root by construction
+    (`tools/process.py`, `in_scope`). `tmp_path` is NOT a safe stand-in for "outside": the runner
+    exports a run-scoped `TMPDIR` under its own home (`tools/dev-runner.sh`, issue #142), and on the
+    build host that home is the worktree's grandparent — so pytest's temp root sits INSIDE the
+    boundary there, and four negatives that had only ever run attended or on CI failed in the
+    runner's check gate. A path with no boundary above it, which need not exist (the resolve is
+    non-strict, and `is_file()` on a missing path is simply False), is the honest "outside". Not
+    autouse: a test opts in.
+    """
+    return Path("/nonexistent/outside-the-factory-boundary")
