@@ -86,7 +86,7 @@ if ! cat "$ROOT/build/slice-static.md" > "$TMP" 2> "$ERR"; then
 fi
 
 # The position half — composed at delivery, never cached into the artifact; loud, non-blocking.
-if ! python3 "$ROOT/tools/compile_slice.py" --position >> "$TMP" 2> "$ERR"; then
+if ! python3 "$ROOT/tools/compile_slice.py" --position "$CWD" >> "$TMP" 2> "$ERR"; then
   {
     printf '\n## Position (composed at delivery)\n\n'
     printf 'Position unavailable (the composer failed) — loud, non-blocking; read the board by hand.\n'

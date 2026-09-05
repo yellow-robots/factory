@@ -59,8 +59,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # sibling-module import (never `tools.board_plumbing`): dispatch runs as a bare script with `tools/` at
 # `sys.path[0]`, and every sibling that imports dispatch adds `tools/` too — the same seam epic_gate uses.
 import board_plumbing
+import provenance
 
 SELF = pathlib.Path(__file__).resolve()
+# Captured at IMPORT, never inside the request handler: serve_forever() (see main(), below) holds this
+# import closure for the whole life of the resident process, so a `git pull` under a running dispatch
+# never changes what it reports — the statement is fixed the moment the process came up.
+STATEMENT = provenance.statement(SELF.parent.parent)
 DEV_RUNNER = os.environ.get("DEV_RUNNER", str(SELF.parent / "dev-runner.sh"))
 DEV_RUNNER_HOME = os.environ.get("DEV_RUNNER_HOME", str(pathlib.Path.home() / ".cache" / "dev-runner"))
 LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
@@ -286,7 +291,10 @@ def main():
         return 2
     bind = os.environ.get("DISPATCH_BIND", "127.0.0.1")
     port = int(os.environ.get("DISPATCH_PORT", "8770"))
-    print(f"dispatch: listening on {bind}:{port}", file=sys.stderr)
+    print(f"dispatch: listening on {bind}:{port} — {STATEMENT}", file=sys.stderr)
+    stmt_path = provenance.dispatch_statement_path(DEV_RUNNER_HOME)
+    stmt_path.parent.mkdir(parents=True, exist_ok=True)
+    stmt_path.write_text(STATEMENT + "\n", encoding="utf-8")
     # Safe because dispatch keeps no Popen and has no in-process waiter anywhere:
     # every child is fire-and-forget (_spawn_detached), so kernel auto-reap under
     # SIG_IGN just cleans up exited children without dispatch ever calling wait().

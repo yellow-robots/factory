@@ -2794,6 +2794,28 @@ def test_main_prints_nothing_to_do_when_intake_finds_nothing_missing(capsys, mon
 
 
 # ============================================================================
+# it-33 slice 2 (issue #457) — every runtime surface states the commit it runs from: the sweep's
+# CLI entrypoint prints one statement line naming the whole tree's commit before it acts.
+# ============================================================================
+
+def test_main_prints_the_commit_statement_before_any_sweep_action_line(capsys, monkeypatch):
+    board = [_item(10, item_id="PI-10", itype="Task", status="Backlog", repo=INTAKE_REPO_A)]
+    fake = FakeIntakeGh(board, {}, open_issues={INTAKE_REPO_A: [_open_issue(10)]})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [INTAKE_REPO_A])
+
+    rc = epic_gate.main()
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines, "main() printed nothing at all"
+    real = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    assert lines[0].startswith("epic-gate: "), "the statement is not the FIRST line main() prints"
+    assert f"commit: {real}" in lines[0]
+    assert "nothing to do" in lines[1]
+
+
+# ============================================================================
 # Issue #125 — the admission wall: a Ready item headed for a repo with no `.yr/factory.toml` at the
 # base ref is refused fail-closed (Needs-info naming onboarding) instead of promoted/left dispatchable.
 # ============================================================================

@@ -814,3 +814,78 @@ def test_sigchld_ignore_reaps_detached_flock_children_without_defunct(tmp_path):
     finally:
         dispatch.subprocess.Popen = real_popen
         signal.signal(signal.SIGCHLD, old_handler)
+
+
+# ---- it-33 slice 2 (issue #457) — dispatch states the commit it runs from ----
+# The resident process names the commit of the whole tree it is executing from: on its startup line,
+# and in a statement file a pull under a running process cannot change (captured once, at import).
+
+def test_statement_names_the_real_commit_of_the_whole_tree_dispatch_runs_from():
+    real = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    assert dispatch.STATEMENT == f"commit: {real}"
+
+
+def test_statement_is_never_a_bare_version_string():
+    assert dispatch.STATEMENT.startswith("commit: ")
+
+
+def test_statement_was_captured_once_at_import_a_later_git_read_cannot_change_it(monkeypatch):
+    # A `git pull` under a running dispatch must not change what it reports: prove the value isn't
+    # recomputed by making a fresh call to the underlying read return something else, and showing
+    # the already-bound STATEMENT is untouched.
+    monkeypatch.setattr(dispatch.provenance, "factory_commit", lambda root: "deadbeef" * 5)
+    assert dispatch.STATEMENT != "commit: " + "deadbeef" * 5
+    assert dispatch.STATEMENT.startswith("commit: ")
+
+
+def test_main_prints_the_statement_on_its_startup_line(monkeypatch, capsys):
+    monkeypatch.setenv("DISPATCH_TOKEN", "secret")
+    monkeypatch.setattr(dispatch.signal, "signal", lambda *a, **kw: None)
+
+    class FakeServer:
+        def __init__(self, *a, **kw):
+            pass
+
+        def serve_forever(self):
+            pass
+
+    monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
+
+    rc = dispatch.main()
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert dispatch.STATEMENT in err
+    assert "listening on" in err
+
+
+def test_main_writes_the_statement_file_at_startup(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISPATCH_TOKEN", "secret")
+    monkeypatch.setattr(dispatch, "DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+    monkeypatch.setattr(dispatch.signal, "signal", lambda *a, **kw: None)
+
+    class FakeServer:
+        def __init__(self, *a, **kw):
+            pass
+
+        def serve_forever(self):
+            pass
+
+    monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
+
+    rc = dispatch.main()
+
+    assert rc == 0
+    stmt_path = tmp_path / "drhome" / "dispatch.statement"
+    assert stmt_path.read_text(encoding="utf-8") == dispatch.STATEMENT + "\n"
+
+
+def test_main_without_token_never_writes_the_statement_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("DISPATCH_TOKEN", raising=False)
+    monkeypatch.setattr(dispatch, "DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+
+    rc = dispatch.main()
+
+    assert rc == 2
+    assert not (tmp_path / "drhome" / "dispatch.statement").exists()

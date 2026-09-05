@@ -65,6 +65,7 @@ import tomllib
 import board_plumbing
 import check_trail
 import dispatch
+import provenance
 import records
 import textutil
 
@@ -1227,6 +1228,7 @@ def sweep_epics(*, gh=None, org=ORG, project_number=PROJECT_NUMBER,
 def main(argv=None):
     """CLI entrypoint: run one real sweep with the default `gh` runner over the workspace-discovered
     registered repos, and print what it did."""
+    print(f"epic-gate: {provenance.statement(pathlib.Path(__file__).resolve().parent.parent)}")
     actions = sweep_epics(repos=_registered_repos())
     if not actions:
         print("epic-gate: nothing to do")

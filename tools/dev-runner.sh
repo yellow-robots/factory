@@ -131,7 +131,11 @@ OWNER="${REPO%/*}"
 # This is also the line that self-identifies the run when dispatch (tools/dispatch.py) has redirected this
 # process's stdout+stderr into a per-run log file: an attended invocation just prints it to the terminal.
 RUN_DIR="$DEV_RUNNER_HOME/runs/${ISSUE}-$$"
-log "run #$ISSUE ($REPO) starting — run dir: $RUN_DIR"
+# Loud, best-effort, non-blocking (the FACTORY_DIR staleness check's own pattern, below): names the
+# commit of the whole tree this runner is executing from, via the one self-locate helper
+# (tools/provenance.py) — never a second `git rev-parse` shelled out here.
+RUN_COMMIT_STATEMENT="$(python3 "$SELF_DIR/provenance.py" "$SELF_DIR/.." 2>/dev/null || true)"
+log "run #$ISSUE ($REPO) starting — run dir: $RUN_DIR${RUN_COMMIT_STATEMENT:+ — $RUN_COMMIT_STATEMENT}"
 # ledger row (issue #206): wall-clock start, stamped BEFORE the DoR gate — the Needs-info bounce (which
 # precedes claim) is itself a terminal branch and must carry a real wall_seconds figure too.
 RUN_START_EPOCH="$(date +%s)"

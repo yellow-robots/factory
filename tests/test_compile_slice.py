@@ -99,6 +99,81 @@ def test_position_failures_are_loud_lines_never_raises(monkeypatch):
     assert "Repo: o/r" in out2 and "PR read unavailable" in out2
 
 
+# ── it-33 slice 2 (issue #457) — position states BOTH declared halves: the workspace checkout
+# (root taken from the caller, never __file__-relative) and the plugin cache, cross-checked ────────
+
+def _git(args, cwd):
+    subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)
+
+
+def _init_repo(path):
+    path.mkdir(parents=True, exist_ok=True)
+    _git(["init", "-q"], path)
+    _git(["config", "user.email", "test@example.com"], path)
+    _git(["config", "user.name", "Test"], path)
+    (path / "a.txt").write_text("hello\n")
+    _git(["add", "a.txt"], path)
+    _git(["commit", "-q", "-m", "initial"], path)
+    out = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True)
+    return out.stdout.strip()
+
+
+def test_position_states_the_checkout_commit_of_the_given_root_not_repoself(monkeypatch, tmp_path):
+    # a root that is provably NOT where compile_slice.py itself lives, with its own distinct commit —
+    # proves the checkout half comes from the given root, never an __file__-relative read.
+    other_root = tmp_path / "workspace-checkout"
+    sha = _init_repo(other_root)
+    monkeypatch.setattr(compile_slice, "_run", lambda argv, timeout: (1, ""))
+    monkeypatch.setattr(compile_slice.provenance, "plugin_cache_statement", lambda: "cache commit: stub")
+    out = compile_slice.position(other_root)
+    assert f"Checkout commit: {sha}" in out
+    assert sha not in subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
+                                     capture_output=True, text=True, check=True).stdout
+
+
+def test_position_states_the_plugin_cache_half_verbatim(monkeypatch):
+    monkeypatch.setattr(compile_slice, "_run", lambda argv, timeout: (1, ""))
+    monkeypatch.setattr(compile_slice.provenance, "plugin_cache_statement",
+                        lambda: "cache commit: abc123 (installer recorded def456 — MISMATCH)")
+    out = compile_slice.position(REPO)
+    assert "Plugin cache commit: abc123 (installer recorded def456 — MISMATCH)" in out
+
+
+def test_position_never_shells_out_to_git_directly_for_either_commit_half():
+    src = (REPO / "tools" / "compile_slice.py").read_text(encoding="utf-8")
+    assert "provenance.statement(root)" in src
+    assert "provenance.plugin_cache_statement()" in src
+    assert "rev-parse" not in src
+
+
+def test_deliver_sh_passes_the_sessions_cwd_as_the_checkout_root_not_the_plugin_root(tmp_path):
+    """The workspace checkout half must name the SESSION's own working directory's commit — never
+    the plugin cache's (CLAUDE_PLUGIN_ROOT, where compile_slice.py itself runs from). A fake session
+    workspace, marked in-scope and carrying its own distinct commit, proves the two never collude."""
+    workspace = tmp_path / "workspace"
+    (workspace / ".yr").mkdir(parents=True)
+    (workspace / ".yr" / "factory.toml").write_text('check_cmd = "true"\n')
+    ws_sha = _init_repo(workspace)
+
+    repo_sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    assert ws_sha != repo_sha, "the fixture is meaningless if the two repos share a commit"
+
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    gh = binp / "gh"
+    gh.write_text("#!/bin/sh\necho 'stub'\n")
+    gh.chmod(0o755)
+    env = _attended_env(CLAUDE_PLUGIN_ROOT=str(REPO), HOME=str(tmp_path / "fakehome"),
+                        PATH=str(binp) + os.pathsep + os.environ["PATH"])
+    out = _deliver(env, stdin=_hook_json(workspace))
+    assert out.returncode == 0
+    ctx = json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert f"Checkout commit: {ws_sha}" in ctx
+    assert f"Checkout commit: {repo_sha}" not in ctx
+
+
 def test_in_scope_gate_exit_codes(outside_cwd):
     inside = subprocess.run([sys.executable, str(REPO / "tools" / "compile_slice.py"),
                              "--in-scope", str(REPO)], capture_output=True, text=True)
