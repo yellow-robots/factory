@@ -52,10 +52,23 @@ import textutil
 
 # The tree this evaluator itself runs from (it-33 slice 3, epic #455): the same
 # `Path(__file__).resolve().parent.parent` self-locate `tools/dispatch.py` and `tools/epic_gate.py`
-# use on origin/main. Computed once at import — every record this module emits states the SAME
-# statement, never a per-call re-read of a possibly-moving tree.
+# use on origin/main.
 FACTORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
-FACTORY_COMMIT = provenance.factory_commit(FACTORY_ROOT)
+_factory_commit_cache = None
+
+
+def _factory_commit():
+    """The evaluator's own `commit` statement — computed LAZILY, on first call, and memoized: only
+    `build_record` (the record-emitting path) ever calls this, so the non-emitting subcommands
+    (`classify-checks`, inside dev-runner.sh's bounded CI-wait poll loop; `shadow-complete`;
+    `last-record`) never pay `provenance.factory_commit`'s `git rev-parse` subprocess — a wedged git
+    would otherwise stall every poll tick behind that call's 10s timeout. Still computed once PER
+    PROCESS, never a per-call re-read of a possibly-moving tree — the memoization keeps that property,
+    just deferred from import time to first use."""
+    global _factory_commit_cache
+    if _factory_commit_cache is None:
+        _factory_commit_cache = provenance.factory_commit(FACTORY_ROOT)
+    return _factory_commit_cache
 
 MARKER_SHADOW = "YR-MERGE-SHADOW"
 MARKER_ARMED = "YR-MERGE"
@@ -178,7 +191,7 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
         "decision": decision,
         "mode": mode,
         "machinery_ok": True,
-        "commit": FACTORY_COMMIT,
+        "commit": _factory_commit(),
         "failed_condition": failed_condition,
         "conditions": results,
         "sentinel": sentinel,

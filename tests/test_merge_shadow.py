@@ -216,11 +216,31 @@ def test_record_schema_and_fixed_fields():
 
 def test_record_carries_the_evaluator_own_commit_statement():
     """it-33 slice 3 (epic #455): every record this evaluator emits states the commit of the tree IT
-    runs from (tools/provenance.py), computed once at import — never a per-call re-read."""
+    runs from (tools/provenance.py), memoized on first use — never a per-call re-read."""
     import provenance
     rec = _record(_all_pass())
-    assert rec["commit"] == merge_shadow.FACTORY_COMMIT
+    assert rec["commit"] == merge_shadow._factory_commit()
     assert rec["commit"] == provenance.factory_commit(merge_shadow.FACTORY_ROOT)
+
+
+def test_classify_checks_never_calls_factory_commit(monkeypatch, tmp_path):
+    """cold-review fold-in: `classify-checks` runs inside dev-runner.sh's bounded CI-wait poll loop
+    and emits no record — it must never reach `provenance.factory_commit`'s `git rev-parse`
+    subprocess, so a wedged git can't stall a poll tick behind that call's 10s timeout. Only the
+    record-emitting path (`build_record` -> `_factory_commit`, memoized) may call it at all."""
+    merge_shadow._factory_commit_cache = None    # undo any memoization an earlier test left behind
+    calls = []
+
+    def _boom(root):
+        calls.append(root)
+        raise AssertionError("provenance.factory_commit must not be called from classify-checks")
+
+    monkeypatch.setattr(merge_shadow.provenance, "factory_commit", _boom)
+    rollup = tmp_path / "rollup.json"
+    rollup.write_text(json.dumps({"statusCheckRollup": [CR_OK, CR_INFLIGHT, CR_FAIL]}))
+    rc = merge_shadow.main(["classify-checks", "--rollup-file", str(rollup)])
+    assert rc == 0
+    assert calls == []
 
 
 def test_record_pulls_the_fixed_fields_from_the_bundle():

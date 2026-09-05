@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.6.0 sha256:6490c10fe944a814 — never hand-edit -->
+<!-- GENERATED from process.toml v1.6.0 sha256:0c6f60e9397293dd — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 
@@ -44,7 +44,7 @@
   - open: board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
 - **task.in-review->done.native** [external-service; door one-way; partial; chokepoint: none — client-side hook coverage only] — native close->Done follows the merge, never precedes it. we do not gate GitHub; the native close->Done board move is detected, never prevented
   - open: board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
-- **task.ready->done.epic-close** [external-service; door one-way; partial; chokepoint: none — client-side hook coverage only] — the round's ship-walk trace on the epic's trail before the epic reaches Done; the round record (refusals · records-demanded · detector-findings · escalations) lands at close. the epic's self-close: the board move is GitHub's, and the close duties ride as guards so a close without its records is a detector finding — gap 15's fix, detection-tier
+- **task.ready->done.epic-close** [external-service; door one-way; partial; chokepoint: none — client-side hook coverage only] — the round's ship-walk trace on the epic's trail before the epic reaches Done; the round record (refusals · records-demanded · detector-findings · escalations · deployed) lands at close. the epic's self-close: the board move is GitHub's, and the close duties ride as guards so a close without its records is a detector finding — gap 15's fix, detection-tier
   - open: board.status.web-ui: a human moving the card, or GitHub's native close->Done automation (detected by YR-BOARD-FLIP)
 - **pr.approved->merged.evaluator** [machinery; door one-way; partial; chokepoint: none — client-side hook coverage only] — an unarmed repo keeps the human's click (the named transitional exception); the host kill switch is not thrown; every merge condition holds, in the evaluator's own order with its own fail-closed semantics. the armed output gate; an attended hand-merge is refused because no actor class an attended session belongs to may perform this transition — no special 'categorical' concept is needed
   - open: pr.merged.web-ui: the merge button (detected by YR-MERGE)

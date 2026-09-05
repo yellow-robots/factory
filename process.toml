@@ -1023,7 +1023,7 @@ because = "the epic's self-close: the board move is GitHub's, and the close duti
   [[transition.guard]]
   predicate = "record_present"
   args = { record = "YR-ROUND-RECORD" }
-  why = "the round record (refusals · records-demanded · detector-findings · escalations) lands at close"
+  why = "the round record (refusals · records-demanded · detector-findings · escalations · deployed) lands at close"
 
   [[transition.post]]
   predicate = "facet_is"
