@@ -935,9 +935,9 @@ def test_manual_current_reads_the_whole_tree_when_no_earlier_tag_exists(monkeypa
     """Review I6(a): a version below every existing tag has no previous tag — the range is the
     whole tree at the commit (`git ls-tree`), where the seeded manual and sources all count."""
     work = _make_manual_repo(tmp_path)
-    tip = _bump_with(work, "0.9.0", **{"AGENTS.md": "canon v2\n"})
+    tip = _bump_with(work, "0.5.0", **{"AGENTS.md": "canon v2\n"})
     monkeypatch.setattr(release, "REPO_ROOT", work)
-    rc = release.main(["validate", "--commit", tip, "--version", "0.9.0"])
+    rc = release.main(["validate", "--commit", tip, "--version", "0.5.0"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "no earlier tag" in out and "manual updated" in out
