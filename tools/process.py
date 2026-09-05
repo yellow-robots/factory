@@ -290,6 +290,14 @@ def _validate(model: dict, reg: dict, p: str | Path) -> None:  # noqa: C901 — 
         if t["door"] == "one-way" and t.get("agent_may") == "execute":
             raise ModelError(f"transition {tid}: door=one-way forbids agent_may=execute (rule D) — "
                              f"an agent never walks through a one-way door silently")
+        # rule M (it-36 slice D, #469): machinery walks a one-way door only through a deterministic
+        # evaluator — bare actor membership is never enough. A refused load here means a transition
+        # named machinery on a one-way door with no evaluator_pass guard licensing the walk.
+        if t["door"] == "one-way" and "machinery" in (t.get("actor") or []):
+            if not any(g.get("predicate") == "evaluator_pass" for g in t.get("guard") or []):
+                raise ModelError(f"transition {tid}: door=one-way lists machinery in actor but "
+                                 f"carries no evaluator_pass guard (rule M) — machinery never "
+                                 f"walks a one-way door without a deterministic gate")
         if not t.get("because"):
             raise ModelError(f"transition {tid}: because (the teaching sentence) missing")
         guarded_facets, posted_facets = set(), set()
@@ -894,7 +902,13 @@ def _example_act(bd: dict) -> dict | None:
         tools = bd["match"].get("tools") or [bd["match"].get("tool")]
         ti = dict(bd["match"].get("arg_equals") or {})
         ti.setdefault("path", "04 projects/x.md")
-        ti.setdefault("content", "active")
+        if ti.get("targetType") == "frontmatter":
+            # vault_patch's own schema (it-36 slice D, #469): a frontmatter write rides the
+            # structured `value` field, never `content` (that field is markdown/text only).
+            ti.setdefault("operation", "replace")
+            ti.setdefault("value", "active")
+        else:
+            ti.setdefault("content", "active")
         return {"tool_name": tools[0], "tool_input": ti}
     return None
 
@@ -1018,6 +1032,7 @@ def _eval_guard(ctx: _Ctx, t: dict, g: dict, act: dict) -> predicates.Result:
         argv = [a.replace("{scope.repo}", ctx.scope.get("repo", ""))
                  .replace("{scope.pr}", ctx.scope.get("pr", ""))
                  .replace("{scope.issue}", ctx.scope.get("issue", ""))
+                 .replace("{scope.path}", ctx.scope.get("path", ""))
                  .replace("{act.body}", str((act.get("fields") or {}).get("body") or ""))
                 for a in ev["argv"]]
         try:

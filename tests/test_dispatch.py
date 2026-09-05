@@ -694,14 +694,45 @@ def test_build_task_spawn_env_is_not_empty_and_not_the_full_parent_environ(tmp_p
     assert "SOME_OTHER_RANDOM_VAR_237" not in got             # not a wholesale copy of the parent either
 
 
-def test_spawn_env_excludes_vault_api_key(monkeypatch):
-    # issue #393: the brain credential (YR_VAULT_API_KEY) must never reach a cold build stage — it is
-    # neither a listed key in _ENV_ALLOW_KEYS nor matched by any of _ENV_ALLOW_PREFIXES (LC_/STUB_/
-    # YR_POOL_), so the default-deny already excludes it; this pins that fact directly against
-    # dispatch._spawn_env() so a future allowlist edit can't silently let it back in.
+def test_spawn_env_excludes_vault_api_key_on_the_build_instance(monkeypatch):
+    # issue #393, rewritten for it-36 slice D (#469): YR_VAULT_API_KEY is now a general
+    # _ENV_ALLOW_KEYS member (the PM instance's App keys ride the same allowlist bucket), so the
+    # invariant is no longer "never listed" — it is "never handed to a child by the BUILD instance".
+    # DISPATCH_INSTANCE defaults to "build" when unset, so the default-deny still holds by construction.
+    monkeypatch.delenv("DISPATCH_INSTANCE", raising=False)
     monkeypatch.setenv("YR_VAULT_API_KEY", "top-secret-vault-key-should-never-reach-a-stage")
     env = dispatch._spawn_env()
     assert "YR_VAULT_API_KEY" not in env
+    monkeypatch.setenv("DISPATCH_INSTANCE", "build")
+    env = dispatch._spawn_env()
+    assert "YR_VAULT_API_KEY" not in env
+
+
+def test_spawn_env_includes_vault_api_key_on_the_pm_instance(monkeypatch):
+    # the PM instance (deploy/pm-dispatch.service, DISPATCH_INSTANCE=pm) is the one dispatch
+    # process that DOES hand the vault key to its spawned design-sweep child — the flip side of the
+    # build instance's exclusion above, both pinned so a future edit can't silently collapse either way.
+    monkeypatch.setenv("DISPATCH_INSTANCE", "pm")
+    monkeypatch.setenv("YR_VAULT_API_KEY", "top-secret-vault-key-reaches-the-pm-child")
+    env = dispatch._spawn_env()
+    assert env.get("YR_VAULT_API_KEY") == "top-secret-vault-key-reaches-the-pm-child"
+
+
+def test_spawn_env_app_keys_flow_on_either_instance(monkeypatch):
+    # the GitHub App identity is NOT vault-gated: both instances may need to authenticate as the
+    # App (the build instance for its own PR/issue writes, the PM instance for design-sweep issue
+    # creation), so these five ride the general allowlist unconditionally.
+    app_keys = {
+        "YR_GH_APP_ID": "12345", "YR_GH_APP_KEY_PATH": "/etc/yr/app.pem",
+        "YR_GH_APP_INSTALLATION": "67890", "YR_GH_APP_SLUG": "yr-bot",
+        "YR_OWNER_LOGIN": "yellow-robots",
+    }
+    for k, v in app_keys.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("DISPATCH_INSTANCE", raising=False)
+    env = dispatch._spawn_env()
+    for k, v in app_keys.items():
+        assert env.get(k) == v
 
 
 def test_run_sweep_spawn_env_excludes_dispatch_token(tmp_path, monkeypatch):

@@ -92,6 +92,98 @@ def test_get_unregistered_is_loud(reg):
         records.get(reg, "YR-NEVER-MINTED")
 
 
+# ── it-36 slice D (#469): the triage lane's own records, and the toml-schema mode ────────────────
+
+def test_toml_schema_is_a_registered_mode():
+    assert "toml-schema" in records.MODES
+    assert "json-schema" in records.MODES   # the sibling this mode was minted beside
+
+
+def test_yr_triage_is_human_only(reg):
+    r = records.get(reg, "YR-TRIAGE")
+    assert r["marker"] == "YR-TRIAGE:"
+    assert r["mode"] == "prefix"
+    assert set(r["fields"]) == {"seed", "disposition", "who"}
+    assert r["emitted_by"] == ["human"]
+    assert r["surfaces"] == ["issue-trail"]
+
+
+def test_yr_triage_pack_registered(reg):
+    r = records.get(reg, "YR-TRIAGE-PACK")
+    assert r["marker"] == "YR-TRIAGE-PACK"
+    assert r["mode"] == "sentinel"
+    assert r["emitted_by"] == ["machinery"]
+    assert r["surfaces"] == ["issue-trail"]
+
+
+def test_yr_strategy_registered(reg):
+    r = records.get(reg, "YR-STRATEGY")
+    assert r["marker"] == "YR-STRATEGY:"
+    assert r["mode"] == "prefix"
+    assert set(r["fields"]) == {"who", "doc"}
+    assert r["emitted_by"] == ["machinery"]
+    assert r["surfaces"] == ["issue-trail"]
+
+
+def test_yr_kpi_registered(reg):
+    r = records.get(reg, "YR-KPI")
+    assert r["marker"] == "YR-KPI:"
+    assert r["mode"] == "prefix"
+    assert set(r["fields"]) == {"who", "period"}
+    assert r["emitted_by"] == ["machinery"]
+    assert set(r["surfaces"]) == {"vault-doc", "issue-trail"}
+
+
+def test_yr_arch_review_registered(reg):
+    r = records.get(reg, "YR-ARCH-REVIEW")
+    assert r["marker"] == "YR-ARCH-REVIEW:"
+    assert r["mode"] == "prefix"
+    assert set(r["fields"]) == {"who", "verdict", "adr"}
+    assert r["emitted_by"] == ["machinery"]
+    assert set(r["surfaces"]) == {"vault-doc", "pr-trail"}
+
+
+def test_yr_changelog_registered(reg):
+    r = records.get(reg, "YR-CHANGELOG")
+    assert r["marker"] == "YR-CHANGELOG:"
+    assert r["mode"] == "prefix"
+    assert set(r["fields"]) == {"iteration", "release", "delivered"}
+    assert r["emitted_by"] == ["machinery"]
+    assert r["surfaces"] == ["issue-trail"]
+
+
+def test_yr_strategy_schema_is_toml_schema(reg):
+    r = records.get(reg, "yr-strategy/1")
+    assert r["marker"] == "yr-strategy"
+    assert r["mode"] == "toml-schema"
+    assert r["emitted_by"] == ["machinery"]
+
+
+def test_yr_changelog_schema_is_toml_schema(reg):
+    r = records.get(reg, "yr-changelog/1")
+    assert r["marker"] == "yr-changelog"
+    assert r["mode"] == "toml-schema"
+    assert r["emitted_by"] == ["machinery"]
+
+
+def test_no_new_row_carries_a_tier_field(reg):
+    """The acceptance criterion's own callout: none of this slice's rows spell `tier`."""
+    for name in ("YR-TRIAGE", "YR-TRIAGE-PACK", "YR-STRATEGY", "YR-KPI", "YR-ARCH-REVIEW",
+                "YR-CHANGELOG", "yr-strategy/1", "yr-changelog/1"):
+        assert "tier" not in records.get(reg, name)
+
+
+_MACHINERY_GAINED = ["YR-EPIC-APPROVAL", "YR-DESIGN-REVIEW", "YR-DESIGN-FIT", "YR-EPIC-READY",
+                     "YR-ACCEPT", "YR-SHIP-WALK", "YR-ROUND-RECORD", "YR-ESCALATION", "YR-CROSSOVER"]
+
+
+def test_nine_named_rows_gain_machinery(reg):
+    for name in _MACHINERY_GAINED:
+        r = records.get(reg, name)
+        assert "machinery" in r["emitted_by"], name
+        assert "tier" not in r, name
+
+
 # ── loader shape rules fail loud ─────────────────────────────────────────────────────────────────
 
 def _write(tmp_path, body):

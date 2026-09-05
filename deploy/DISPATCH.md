@@ -153,6 +153,40 @@ needed if the service is already running `/build`; `/sweep` is live on the same 
 `KillMode=process`). To stop *only* promotions while builds keep running, deactivate just the epic-sweep
 n8n workflow — the build workflow (and `/build`) is unaffected.
 
+## Deploying the PM instance (design sweep, it-36 slice D, #469)
+
+The design-sweep machinery runs as a **second, separate** dispatch instance —
+`deploy/pm-dispatch.service` — never a route bolted onto the build instance above. Same code
+(`tools/dispatch.py`), a different identity: its own bind (`127.0.0.1` — never the docker-bridge
+gateway the build instance exposes), its own port, its own bearer token, and `DISPATCH_INSTANCE=pm`
+pinned in the unit file itself. That instance flag is the one thing that matters for credentials:
+`tools/dispatch.py`'s `_spawn_env` hands the vault key (`YR_VAULT_API_KEY`) to a spawned child
+**only** when `DISPATCH_INSTANCE=pm` — the build instance never carries it to a runner or a sweep,
+and `DISPATCH_INSTANCE` unset reads as `build` by default. The GitHub App identity (`YR_GH_APP_ID`,
+`YR_GH_APP_KEY_PATH`, `YR_GH_APP_INSTALLATION`, `YR_GH_APP_SLUG`, `YR_OWNER_LOGIN`) is not
+vault-gated — either instance may declare it.
+
+```bash
+mkdir -p ~/.config/dev-runner
+cp deploy/pm-dispatch.env.example ~/.config/dev-runner/pm-dispatch.env
+# edit: its OWN DISPATCH_TOKEN (never reuse the build instance's), DISPATCH_PORT, the vault key,
+# the App identity
+chmod 600 ~/.config/dev-runner/pm-dispatch.env
+
+cp deploy/pm-dispatch.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now pm-dispatch
+systemctl --user status pm-dispatch
+```
+
+`deploy/n8n-design-sweep.json` is the same schedule -> POST shape as `deploy/n8n-epic-sweep.json`,
+wired to the PM instance's own URL and token — **import it, but keep it inactive.**
+`POST /design-sweep` is not yet a route `tools/dispatch.py` answers: this slice licenses the
+machinery in the registry and the process model (the records, the `machinery` actor on the
+activation/epic-flip transitions, the allowlist, the two GitHub App mutation bindings) and stands
+up the PM instance's shape for review; the route itself and `tools/design_gate.py` (the
+triage-license/independence evaluators the model already names) are a later slice's build.
+
 ## Deploying a change — the scripted attended act (`tools/deploy.sh`, it-33 slice 6)
 
 There is no automatic trigger: a deploy is run BY A HUMAN (or an attended agent under explicit human

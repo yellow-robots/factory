@@ -59,6 +59,9 @@ def _marker_present(row: dict, texts: list[str]) -> bool:
         elif mode == "json-schema":
             if _json_schema_present(text, marker):
                 return True
+        elif mode == "toml-schema":
+            if _toml_schema_present(text, marker):
+                return True
     return False
 
 
@@ -80,6 +83,15 @@ def _json_schema_present(text: str, marker: str) -> bool:
         if isinstance(obj, dict) and obj.get("schema") == marker:
             return True
     return False
+
+
+def _toml_schema_present(text: str, marker: str) -> bool:
+    """A toml-schema record (it-36 slice D, #469 — records.py MODES' json-schema sibling) is
+    present only when a fenced code block's OWN fence word equals the marker — the fence word is
+    itself part of the parse grammar, same discipline as json-schema's `"schema" == marker`
+    object key, just carried on the fence instead (TOML has no self-naming field to check):
+    ```<marker>\\n...\\n```. A prose mention of the fence word alone is never presence."""
+    return bool(re.search(rf"```{re.escape(marker)}\s*\n.*?```", text, flags=re.S))
 
 
 def _missing_fields(row: dict, texts: list[str]) -> list[str]:

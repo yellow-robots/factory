@@ -135,7 +135,7 @@ def test_same_value_stamp_is_not_a_transition(model, tmp_path, monkeypatch):
     doc = _vault_doc(tmp_path, monkeypatch, "---\nstatus: draft\n---\nbody\n")
     hook = {"tool_name": "mcp__obsidian__vault_patch", "session_id": "sV",
             "tool_input": {"path": str(doc), "targetType": "frontmatter", "target": "status",
-                           "operation": "replace", "content": "draft"}}
+                           "operation": "replace", "value": "draft"}}
     out, rows = process.decide(model, hook, env=ATTENDED)
     assert out is None
     assert rows and rows[0]["stance"] == "observe"
@@ -265,7 +265,7 @@ def test_same_value_patch_with_mutating_operation_still_refused(model, tmp_path,
     doc = _vault_doc(tmp_path, monkeypatch, "---\nstatus: draft\n---\nbody\n")
     hook = {"tool_name": "mcp__obsidian__vault_patch", "session_id": "sP2",
             "tool_input": {"path": str(doc), "targetType": "frontmatter", "target": "status",
-                           "operation": "append", "content": "draft"}}
+                           "operation": "append", "value": "draft"}}
     out, _ = process.decide(model, hook, env=ATTENDED)
     assert out is not None
     assert out["hookSpecificOutput"].get("permissionDecision") == "deny"

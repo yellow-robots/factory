@@ -1,5 +1,5 @@
 {
- "header": "GENERATED from process.toml v1.7.0 sha256:581da6e0ae63584d \u2014 never hand-edit",
+ "header": "GENERATED from process.toml v1.7.0 sha256:1eed365b12f7ef75 \u2014 never hand-edit",
  "vectors": [
   {
    "kind": "journal-independence",
@@ -70,7 +70,8 @@
      "targetType": "frontmatter",
      "target": "status",
      "path": "04 projects/x.md",
-     "content": "active"
+     "operation": "replace",
+     "value": "active"
     }
    }
   },
@@ -159,6 +160,26 @@
    }
   },
   {
+   "kind": "journal-independence",
+   "binding": "design-sweep.update-issue",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh api graphql -f query=\"mutation { updateIssue(input: {}) }\""
+    }
+   }
+  },
+  {
+   "kind": "journal-independence",
+   "binding": "design-sweep.add-sub-issue",
+   "act": {
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "gh api graphql -f query=\"mutation { addSubIssue(input: {}) }\""
+    }
+   }
+  },
+  {
    "kind": "unknown-refuses",
    "transition": "task.backlog->ready.standalone",
    "guard": 0,
@@ -196,6 +217,36 @@
   },
   {
    "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-flip.machinery",
+   "guard": 0,
+   "predicate": "facet_is"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-flip.machinery",
+   "guard": 1,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-flip.machinery",
+   "guard": 2,
+   "predicate": "record_absent"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-flip.machinery",
+   "guard": 3,
+   "predicate": "evaluator_pass"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-flip.machinery",
+   "guard": 4,
+   "predicate": "evaluator_pass"
+  },
+  {
+   "kind": "unknown-refuses",
    "transition": "task.ready-blocked->ready.unraise",
    "guard": 0,
    "predicate": "facet_is"
@@ -222,12 +273,18 @@
    "kind": "unknown-refuses",
    "transition": "task.backlog->ready.epic-child",
    "guard": 0,
-   "predicate": "record_present"
+   "predicate": "facet_is"
   },
   {
    "kind": "unknown-refuses",
    "transition": "task.backlog->ready.epic-child",
    "guard": 1,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "task.backlog->ready.epic-child",
+   "guard": 2,
    "predicate": "record_absent"
   },
   {
@@ -289,6 +346,36 @@
    "transition": "design-doc.draft->active",
    "guard": 2,
    "predicate": "record_absent"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active.machinery",
+   "guard": 0,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active.machinery",
+   "guard": 1,
+   "predicate": "record_present"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active.machinery",
+   "guard": 2,
+   "predicate": "record_absent"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active.machinery",
+   "guard": 3,
+   "predicate": "evaluator_pass"
+  },
+  {
+   "kind": "unknown-refuses",
+   "transition": "design-doc.draft->active.machinery",
+   "guard": 4,
+   "predicate": "evaluator_pass"
   },
   {
    "kind": "unknown-refuses",

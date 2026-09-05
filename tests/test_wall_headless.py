@@ -113,7 +113,7 @@ def test_headless_design_activation_refuses(model, reg, tmp_path, monkeypatch):
     hook = {"tool_name": "mcp__obsidian__vault_patch", "session_id": "sH",
             "permission_mode": "bypassPermissions",
             "tool_input": {"path": str(doc), "targetType": "frontmatter", "target": "status",
-                           "operation": "replace", "content": "active"}}
+                           "operation": "replace", "value": "active"}}
     out, _ = process.decide(model, hook, env=ATTENDED)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     interactive = dict(hook)

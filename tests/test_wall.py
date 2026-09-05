@@ -268,7 +268,7 @@ def test_lifecycle_stamp_with_records_asks_without_refuses(model, reg, tmp_path,
     doc = _vault_doc(tmp_path, monkeypatch, f"---\nstatus: draft\n---\n{rows_txt}")
     hook = {"tool_name": "mcp__obsidian__vault_patch", "session_id": "s1",
             "tool_input": {"path": str(doc), "targetType": "frontmatter", "target": "status",
-                           "operation": "replace", "content": "active"}}
+                           "operation": "replace", "value": "active"}}
     out, _ = process.decide(model, hook, env=ATTENDED)
     assert out["hookSpecificOutput"]["permissionDecision"] == "ask"      # propose at a one-way door
     bare = _vault_doc(tmp_path, monkeypatch, "---\nstatus: draft\n---\nno records here\n")

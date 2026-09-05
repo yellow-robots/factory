@@ -30,8 +30,10 @@ from pathlib import Path
 REGISTRY_PATH = Path(__file__).resolve().parent.parent / "records.toml"
 
 # The closed mode vocabulary. The two shared anchoring modes live in tools/textutil.py
-# (MARKER_SENTINEL / MARKER_PREFIX); the other four name reader disciplines the registry documents.
-MODES = ("prefix", "sentinel", "strict-line", "verdict-line", "stage-escape", "json-schema")
+# (MARKER_SENTINEL / MARKER_PREFIX); the other five name reader disciplines the registry documents.
+# `toml-schema` (it-36 slice D, #469) is `json-schema`'s TOML sibling: a fenced ```<name> block whose
+# fence word is itself part of the parse grammar, same as json-schema's own precedent (yr-merge-record).
+MODES = ("prefix", "sentinel", "strict-line", "verdict-line", "stage-escape", "json-schema", "toml-schema")
 
 # The closed surface set. `vault-doc` joins with the design-side records (it-30 slice 3, per the
 # crossing ruling of 2026-08-07) — present in the vocabulary so the canon slice adds rows, not code.

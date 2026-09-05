@@ -177,15 +177,34 @@ _ENV_ALLOW_KEYS = {
     # unioned in below — adding an identifier is one edit there, never a second list to keep in step.
     "LEDGER_TRANSCRIPT_MAX_AGE_DAYS", "LEDGER_TRANSCRIPT_MAX_GB",
     "YR_ORG", "STRANDED_AFTER_MIN", "DEBT_ROUND_EVERY",
+    # the PM instance's own credential seam (it-36 slice D, #469): the vault brain key and the
+    # GitHub App identity the design-sweep machinery authenticates with. Listed here so both
+    # instances may declare them; _PM_ONLY_KEYS below still gates the vault key to the PM instance
+    # alone — see _spawn_env.
+    "YR_VAULT_API_KEY", "YR_GH_APP_ID", "YR_GH_APP_KEY_PATH", "YR_GH_APP_INSTALLATION",
+    "YR_GH_APP_SLUG", "YR_OWNER_LOGIN",
 } | set(board_plumbing.IDENTIFIER_ENV_NAMES)
 _ENV_ALLOW_PREFIXES = ("LC_", "STUB_", "YR_POOL_")
+
+# The instance discriminator (it-36 slice D, #469): DISPATCH_INSTANCE names which dispatch service is
+# running this process — "build" (default, today's dev-runner/epic-sweep service) or "pm" (the new
+# design-sweep service, deploy/pm-dispatch.service). _ENV_ALLOW_KEYS admits the vault key's NAME on
+# either instance (both dispatch.env files may declare it), but only the PM instance ever hands its
+# VALUE to a spawned child — the build instance's spawned runner never sees it, regardless of what its
+# own environment carries (issue #393's invariant, held even as the App keys it now needs alongside it
+# become general allowlist members).
+_PM_ONLY_KEYS = {"YR_VAULT_API_KEY"}
 
 
 def _spawn_env():
     """The allowlisted environment handed to a spawned runner/sweeper — see `_ENV_ALLOW_KEYS`/
-    `_ENV_ALLOW_PREFIXES` above for the membership and why each bucket is there."""
+    `_ENV_ALLOW_PREFIXES` above for the membership and why each bucket is there. `_PM_ONLY_KEYS` is
+    a further, instance-gated narrowing on top of the allowlist: the build instance never passes the
+    vault key to a child, the PM instance does (DISPATCH_INSTANCE=pm|build, default build)."""
+    instance = os.environ.get("DISPATCH_INSTANCE", "build")
     return {k: v for k, v in os.environ.items()
-            if k in _ENV_ALLOW_KEYS or k.startswith(_ENV_ALLOW_PREFIXES)}
+            if (k in _ENV_ALLOW_KEYS or k.startswith(_ENV_ALLOW_PREFIXES))
+            and (k not in _PM_ONLY_KEYS or instance == "pm")}
 
 
 def _spawn_detached(cmd, log_path=None, lock_home=None):

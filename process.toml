@@ -23,16 +23,29 @@
 #     class stays fail-closed per `caller_default`;
 [model]
 contract = "yr-process/1"
-version = "1.7.0"
+version = "1.8.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
-slice_max_bytes = 13000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
-                                        # for the release lane's rows (it-31 slice 7) — a
-                                        # deliberate widening, never a silent truncation
+slice_max_bytes = 16000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
+                                        # for the release lane's rows (it-31 slice 7), then
+                                        # 13000 -> 16000 for the two new machinery-only
+                                        # transitions on the activation/flip cells (it-36 slice
+                                        # D, #469) — each a deliberate widening, never a silent
+                                        # truncation
 compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.8.0"
+date = "2026-09-06"
+kind = "widen"
+touches = ["design-doc.draft->active.machinery", "task.backlog->ready.epic-flip.machinery",
+           "task.backlog->ready.epic-child"]
+reason = "it-36 slice D (#469): the registry and the process model license the strategy machinery's activation and epic flip under a human's own triage record. `records.toml` mints the triage lane's records (YR-TRIAGE, human-only; YR-TRIAGE-PACK; YR-STRATEGY; YR-KPI; YR-ARCH-REVIEW; YR-CHANGELOG; and the new `toml-schema` mode's yr-strategy/1, yr-changelog/1, tools/records.py's json-schema sibling) and adds `machinery` to YR-EPIC-APPROVAL, YR-DESIGN-REVIEW, YR-DESIGN-FIT, YR-EPIC-READY, YR-ACCEPT, YR-SHIP-WALK, YR-ROUND-RECORD, YR-ESCALATION, YR-CROSSOVER's `emitted_by`. Machinery's own door onto each cell lands as a SEPARATE row — `design-doc.draft->active.machinery` and `task.backlog->ready.epic-flip.machinery` — rather than widening `actor` on the existing human/attended-agent rows in place: the new evaluators this slice NAMES (`tools/design_gate.py`, not yet built — E/F's own duty) fail UNKNOWN today, and unioning `machinery` into the shared row would have made every existing human/attended-agent propose ALSO depend on that not-yet-built evaluator, turning today's `ask` into `deny` — a real regression the review caught. A dedicated, actor-disjoint row means the human/attended-agent path is byte-identical to before this amendment, and determinism needs no facet split against it. Each new row carries the base row's own guards plus a new `evaluator_pass`: `design-triage-license`/`epic-triage-license` (the same `evaluate` seam, addressed by `--path`/`--issue` — the governing-design/governing-design-body precedent) and, on activation only, `design-independence` (builder != verifier over the doc's own review/fit authorship). **Rule M** (`tools/process.py _validate`, beside rule D) refuses at load any one-way transition listing `machinery` with no `evaluator_pass` guard — both new rows already carry one. `task.backlog->ready.epic-flip.machinery` DOES collide on determinism with `task.backlog->ready.epic-child` (both machinery-only, same machine/from/to): both already carry a `facet_is(type=...)` guard on the SAME facet with DIFFERENT values (feature vs. the newly-added task — see below), which is what disjointness requires. `task.backlog->ready.epic-child` gains that `facet_is(type=task)` guard (+ its read-only repost): this only catches the model up to `tools/epic_gate.py`'s own existing runtime scan, which was ALREADY Type=Task-only — no behavior change, just the collision's forcing function surfacing a pre-existing model/reality gap. The engine's argv substitution gains `{scope.path}` (previously only `{scope.repo}`/`{scope.pr}`/`{scope.issue}`/`{act.body}` were spelled) so `design-triage-license`'s and `design-independence`'s `--path` arguments resolve; `doc.frontmatter.status`'s `writable_by` gains `machinery` so the engine's own store-write check does not itself categorically wall the new row's licensed write. Separately, `design.stamp.obsidian-mcp`'s `value.arg` is corrected from `content` to `value`: `mcp__obsidian__vault_patch`'s own schema carries a frontmatter write in its structured `value` field (arbitrary JSON), never `content` (a markdown/text string) — the prior spelling read a field a correctly-shaped frontmatter call never populates, so the typed activation path refused on both sides regardless of the real call's shape. This claims seed `2026-09-04-typed-activation-path-refuses-on-both-sides`. The two new machinery-only transitions (each printed in full on the delivered slice, alongside their now-disjoint human/attended-agent siblings) push the compiled slice past its prior bound, so `slice_max_bytes` widens 13000 -> 16000 (the it-31 slice 7 precedent: a deliberate, stated widening, never a silent truncation). This lands ABOVE the it-32 slice 5 amendment (#486, 1.7.0, the release lane's `manual_current` condition): it-32 PR #500 merged first, claiming 1.7.0 for its own widen; this slice re-versions to 1.8.0 on its final rebase onto main rather than contest the number — the rebase-time reconciliation the header's own precedent (v1.6.0/v1.6.1 same-day sequencing) anticipates. Effective 2026-09-06, the same strict-date reasoning the v1.6.0/v1.6.1 entries state: `check_trail.py`'s `--scope-created` comparison is a strict, date-only, EXCLUSIVE less-than, so today's own trails must not be version-scoped as if they predated a same-day change."
+review = "yellow-robots/factory#469"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.7.0"
 date = "2026-09-06"
@@ -356,7 +369,7 @@ location = "the `status` frontmatter key of a vault design doc"
 identifiers = "the documentation model's declared lifecycle vocabulary"
 values = ["draft", "active", "superseded", "rejected"]
 read = "source.vault-doc"
-writable_by = ["human", "attended-agent"]
+writable_by = ["human", "attended-agent", "machinery"]
 guarded = true
 unknown_value_policy = "unknown"
 
@@ -812,6 +825,37 @@ green there (the squash-source PR's tree-equal head rollup — CI runs on PR hea
 squash commits). This model holds no copy: `conditions_display` is a DISPLAY list, the tool owns
 the semantics."""
 
+[[evaluator]]
+id = "design-triage-license"
+argv = ["python3", "tools/design_gate.py", "evaluate", "--path", "{scope.path}"]
+conditions_display = ["triage_licensed"]
+timeout_s = 30
+contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
+note = """it-36 slice D (#469): the machinery activation door's own seam — a vault design doc may
+only be walked to `active` by machinery once a human's YR-TRIAGE `go` disposition licenses it. The
+tool owns the trail-walk (which issue's triage record governs this path); the model spells nothing."""
+
+[[evaluator]]
+id = "epic-triage-license"
+argv = ["python3", "tools/design_gate.py", "evaluate", "--issue", "{scope.issue}"]
+conditions_display = ["triage_licensed"]
+timeout_s = 30
+contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
+note = """it-36 slice D (#469): the same `design_gate.py evaluate` seam as `design-triage-license`,
+addressed by issue rather than path — the epic-flip door's machinery guard. One tool, two addressing
+modes (the governing-design/governing-design-body precedent: one script, argv shaped to the caller's
+own scope)."""
+
+[[evaluator]]
+id = "design-independence"
+argv = ["python3", "tools/design_gate.py", "independence", "--path", "{scope.path}"]
+conditions_display = ["independent"]
+timeout_s = 30
+contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
+note = """it-36 slice D (#469): activation's second machinery guard — builder != verifier, held over
+the doc's own YR-DESIGN-REVIEW/YR-DESIGN-FIT authorship (the tool owns the identity comparison; the
+model spells nothing)."""
+
 # ── transitions: the ONLY table a guard can attach to ────────────────────────────────────────
 
 [[transition]]
@@ -877,6 +921,53 @@ because = "ruling 5: the act that converts a standing approval into autonomous b
   predicate = "evaluator_pass"
   args = { evaluator = "governing-design" }
   why = "the governing design resolves from the epic body's Source line and is active — the input gate's standing approval actually stands"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "ready" }
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "feature" }   # the discriminator is read-only: unchanged, re-read
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-EPIC-READY" }
+
+[[transition]]
+id = "task.backlog->ready.epic-flip.machinery"
+machine = "task"
+from = "backlog"
+to = "ready"
+lane = "epic"
+actor = ["machinery"]
+door = "one-way"
+because = "it-36 slice D (#469): machinery's own door onto the epic-flip cell — a SEPARATE row (disjoint actor from the human/attended-agent row above, so determinism needs no facet split there) so the existing propose flow never depends on an evaluator this slice only NAMES. Licensed by a human's own YR-TRIAGE disposition, never by inference — the triage-license evaluator is the deterministic gate, rule M's own shape. Discriminated from task.backlog->ready.epic-child (also machinery-only, same cell) by the SAME type=feature guard the human/attended-agent row carries — epic-child is type=task only."
+
+  [[transition.guard]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "feature" }
+  why = "the discriminator: this is the epic lane's flip; epic-child (Type=Task children) is the disjoint sibling row"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-EPIC-APPROVAL" }
+  why = "the standing approval on the epic's trail — the technical-rfc review's attestation"
+
+  [[transition.guard]]
+  predicate = "record_absent"
+  args = { record = "YR-OPEN-QUESTION" }
+  why = "the airlock rule: an open question on the epic blocks the flip"
+
+  [[transition.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "governing-design" }
+  why = "the governing design resolves from the epic body's Source line and is active — the input gate's standing approval actually stands"
+
+  [[transition.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "epic-triage-license" }
+  why = "machinery's own door (rule M): a one-way transition naming machinery must carry an evaluator_pass guard — the epic's own YR-TRIAGE go disposition, deterministically checked, never inferred"
 
   [[transition.post]]
   predicate = "facet_is"
@@ -960,6 +1051,11 @@ door = "reversible"
 because = "the epic gate's mechanical promotion under a standing approval; the cord-pull (un-Readying) is the human's veto, so the door is reversible"
 
   [[transition.guard]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "task" }
+  why = "the discriminator (it-36 slice D, #469 — added for determinism against the epic-flip row now that both carry `machinery`): the epic gate's own mechanical child promotion is Type=Task only (tools/epic_gate.py's OPEN/no-parent scan); a Feature/Epic-typed row is the epic-flip row's own subject"
+
+  [[transition.guard]]
   predicate = "record_present"
   args = { record = "YR-EPIC-APPROVAL" }
   why = "the standing approval on the epic's trail licenses every child promotion beneath it"
@@ -972,6 +1068,10 @@ because = "the epic gate's mechanical promotion under a standing approval; the c
   [[transition.post]]
   predicate = "facet_is"
   args = { facet = "status", state = "ready" }
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "type", state = "task" }      # the discriminator is read-only: unchanged, re-read
 
   [[transition.post]]
   predicate = "record_present"
@@ -1197,6 +1297,49 @@ because = "the human input gate — what gets built; the standing approval under
   predicate = "record_absent"
   args = { record = "YR-OPEN-QUESTION" }
   why = "the airlock rule: an open question blocks the activation"
+
+  [[transition.post]]
+  predicate = "facet_is"
+  args = { facet = "status", state = "active" }
+
+  [[transition.post]]
+  predicate = "record_present"
+  args = { record = "YR-ACCEPT" }
+
+[[transition]]
+id = "design-doc.draft->active.machinery"
+machine = "design-doc"
+from = "draft"
+to = "active"
+lane = "design"
+actor = ["machinery"]
+door = "one-way"
+because = "it-36 slice D (#469): machinery's own door onto the same activation cell — a SEPARATE row (disjoint actor from the human/attended-agent row above, so determinism needs no facet split) so the human input gate's existing ask flow never depends on an evaluator this slice only NAMES. Machinery may walk it only under a human's own YR-TRIAGE `go` disposition and an independence check — never by inference (rule M's own shape)"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-DESIGN-REVIEW" }
+  why = "the cold adversarial review, typed into the doc"
+
+  [[transition.guard]]
+  predicate = "record_present"
+  args = { record = "YR-DESIGN-FIT" }
+  why = "the architect's fit verdict at the spec-ready moment"
+
+  [[transition.guard]]
+  predicate = "record_absent"
+  args = { record = "YR-OPEN-QUESTION" }
+  why = "the airlock rule: an open question blocks the activation"
+
+  [[transition.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "design-triage-license" }
+  why = "machinery's own door (rule M): a one-way transition naming machinery must carry an evaluator_pass guard — the doc's own YR-TRIAGE go disposition, deterministically checked, never inferred"
+
+  [[transition.guard]]
+  predicate = "evaluator_pass"
+  args = { evaluator = "design-independence" }
+  why = "builder != verifier held over the doc's own YR-DESIGN-REVIEW/YR-DESIGN-FIT authorship before machinery may activate it"
 
   [[transition.post]]
   predicate = "facet_is"
@@ -1512,7 +1655,12 @@ recheck_days = 60
   [[port.binding.writes]]
   store = "doc.frontmatter.status"
   write_path = "mcp-patch"
-  value = { kind = "frontmatter-value", arg = "content" }
+  value = { kind = "frontmatter-value", arg = "value" }
+  # `value` corrected from `content` (it-36 slice D, #469): the tool's own schema carries a
+  # frontmatter write in its structured `value` field (arbitrary JSON), never `content` (a
+  # markdown/text string) — the prior spelling read a field a correct frontmatter call never
+  # populates, so the typed activation path refused on both sides regardless of the real call's
+  # shape. Claims seed 2026-09-04-typed-activation-path-refuses-on-both-sides.
 
 [[port.binding]]
 id = "design.stamp.app-write"
@@ -1699,3 +1847,41 @@ recheck_days = 30
   store = "plugin.version"
   write_path = "gh-release"
   value = { kind = "literal", literal = "released" }
+
+# ── the PM instance's structural mutations (it-36 slice D, #469): detection-only ahead of a later
+# slice's guarded store — no store models issue-type-setting or sub-issue linkage yet (deliberately
+# out of THIS slice's scope: no stage code, no new canon), so these carry no `writes` row. They
+# exist so the journal already recognizes the PM instance's own effect paths once E/F's design-sweep
+# code starts calling them, rather than being invisible until a later binding retrofits detection.
+
+[[port.binding]]
+id = "design-sweep.update-issue"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"
+does_not_cover = ["a query supplied on stdin or via a heredoc, never present in argv",
+                  "a non-gh HTTP client such as curl with a PAT"]
+probe = "gh.api.surface"
+verified_on = "2026-09-06"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "graphql-mutation"
+  mutations = ["updateIssue"]
+
+[[port.binding]]
+id = "design-sweep.add-sub-issue"
+vendor = "github"
+observed_via = "anthropic-claude-code:PreToolUse"
+tool = "Bash"
+precision = "exact"
+does_not_cover = ["a query supplied on stdin or via a heredoc, never present in argv",
+                  "a non-gh HTTP client such as curl with a PAT"]
+probe = "gh.api.surface"
+verified_on = "2026-09-06"
+recheck_days = 30
+
+  [port.binding.match]
+  kind = "graphql-mutation"
+  mutations = ["addSubIssue"]
