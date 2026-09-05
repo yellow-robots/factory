@@ -99,12 +99,12 @@ def test_position_failures_are_loud_lines_never_raises(monkeypatch):
     assert "Repo: o/r" in out2 and "PR read unavailable" in out2
 
 
-def test_in_scope_gate_exit_codes(tmp_path):
+def test_in_scope_gate_exit_codes(outside_cwd):
     inside = subprocess.run([sys.executable, str(REPO / "tools" / "compile_slice.py"),
                              "--in-scope", str(REPO)], capture_output=True, text=True)
     assert inside.returncode == 0
     outside = subprocess.run([sys.executable, str(REPO / "tools" / "compile_slice.py"),
-                              "--in-scope", str(tmp_path)], capture_output=True, text=True)
+                              "--in-scope", str(outside_cwd)], capture_output=True, text=True)
     assert outside.returncode == 3, "out-of-scope is exit 3 — distinct from a crash, which banners"
 
 
@@ -127,11 +127,11 @@ def test_deliver_sh_serves_the_generated_static_plus_position(tmp_path):
     assert ctx.startswith(static), "delivery serves build/slice-static.md verbatim, position after"
 
 
-def test_delivery_is_silent_outside_the_boundary(tmp_path):
+def test_delivery_is_silent_outside_the_boundary(outside_cwd):
     """The delivery negative: a SessionStart in a non-factory directory gets NOTHING — no slice,
     no banner, no bytes (today's hook injects everywhere)."""
     env = _attended_env(CLAUDE_PLUGIN_ROOT=str(REPO))
-    out = _deliver(env, stdin=_hook_json(tmp_path))
+    out = _deliver(env, stdin=_hook_json(outside_cwd))
     assert out.returncode == 0 and out.stdout.strip() == ""
 
 

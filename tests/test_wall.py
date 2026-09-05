@@ -241,13 +241,13 @@ def test_machinery_merge_evaluates_the_guards_never_skips_them(model, monkeypatc
     assert "manifest.auto_merge" in out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
-def test_boundary_judges_the_target_not_only_the_cwd(model, tmp_path):
+def test_boundary_judges_the_target_not_only_the_cwd(model, outside_cwd):
     """A session sitting in /tmp writing INTO a factory-governed tree is factory work: the arming
     edit refuses even though the cwd is out of scope."""
     hook = {"tool_name": "Edit", "session_id": "s1",
             "tool_input": {"file_path": str(REPO / ".yr" / "factory.toml"),
                            "old_string": "auto_merge = false", "new_string": "auto_merge = true"}}
-    out, _ = process.decide(model, hook, env=ATTENDED, cwd=tmp_path)
+    out, _ = process.decide(model, hook, env=ATTENDED, cwd=outside_cwd)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "manifest.auto_merge" in out["hookSpecificOutput"]["permissionDecisionReason"]
 
@@ -305,8 +305,8 @@ def test_untrailed_commit_refused_trailed_passes_editor_invisible(model):
 
 # ── boundary, journal, close ─────────────────────────────────────────────────────────────────────
 
-def test_out_of_scope_is_silence_with_no_journal(model, tmp_path):
-    out, rows = process.decide(model, _bash("gh pr merge 1"), env=ATTENDED, cwd=tmp_path)
+def test_out_of_scope_is_silence_with_no_journal(model, outside_cwd):
+    out, rows = process.decide(model, _bash("gh pr merge 1"), env=ATTENDED, cwd=outside_cwd)
     assert out is None and rows == []
 
 
