@@ -49,7 +49,8 @@ squash-merged by the factory with a durable `YR-MERGE: MERGED` record. Every oth
 **shadow**: a loud `YR-MERGE-SHADOW` would-merge/would-block record, then a human reviews and merges.
 Native close → `Status=Done` either way.
 
-- Merge ≠ ship. `main` is not production; deploy stays separate and attended.
+- Merge ≠ ship. `main` is not production; deploy stays separate and attended — the build-host checkout
+  it refreshes is one of the factory's eight runtime surfaces (`AGENTS.md`'s git-refs invariant carve-out).
 - Shadow completion is mechanical (a rolling window of clean, unreverted merge records — see
   [`pipeline.md`](pipeline.md)); completion *permits* arming, and arming stays the human's manifest
   edit. Un-arm or throw the sentinel to return a repo to the human gate at any time.

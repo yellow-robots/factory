@@ -77,7 +77,22 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   never an unstated inheritance from the factory's own repo shape.
 - **Builds from git refs, not a mutable working tree.** Code and `.yr/factory.toml` read from
   `origin/main`, so a stale/dirty/live-dev checkout can't affect a build (falls back to the working tree
-  only when unpushed).
+  only when unpushed). The runtime carve-out — eight runtime surfaces, refreshed by, may lawfully execute
+  from a mutable working tree, declared (`tools/provenance.py`'s `SURFACES`) vs named:
+
+  | # | Surface | Refreshed by | Mutable working tree | Declared / named |
+  |---|---|---|---|---|
+  | 1 | Build-host checkout (runs `dev-runner`, `epic-gate`) | Deploy act | Lawful | Declared |
+  | 2 | Resident `dispatch` process | Unit restart | Holds its import closure — a pull is not a deploy for it | Declared |
+  | 3 | Attended workspace checkout (`attended-session`) | Attended fast-forward | Lawful | Declared |
+  | 4 | Plugin/skill cache (`attended-session`, cache half) | Plugin install act | Immutable between installs | Declared |
+  | 5 | Org-docs clone | Attended pull | N/A — docs, not code | Named |
+  | 6 | Scheduler's imported workflow definitions | Attended re-import | N/A — config, not code | Named |
+  | 7 | Installed unit file and its environment | Attended edit | N/A — config, not code | Named |
+  | 8 | Build environment | Attended provision | N/A — config, not code | Named |
+
+  Long-lived-process semantics: a resident process (row 2) holds its import closure for its whole
+  process life, so a pull under it changes nothing it states — only a restart is a deploy for it.
 - **One task = one PR.** Too big? Split into sub-issues.
 - **Docs are consolidated, not accreted.** Update/merge/trim the canonical doc, don't pile on a new one —
   this file is that discipline applied to itself.
