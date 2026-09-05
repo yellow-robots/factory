@@ -133,7 +133,7 @@ def test_conformance_vectors_cover_the_release_bindings(model):
 
 def test_registry_row(reg):
     row = records.get(reg, "YR-RELEASE")
-    assert row["fields"] == ["version", "commit", "validation", "who"]
+    assert row["fields"] == ["version", "commit", "validation", "who", "manual"]
     assert row["surfaces"] == ["release"]
     assert sorted(row["emitted_by"]) == ["attended-agent", "human"]
 
@@ -525,8 +525,8 @@ def stub_other_conditions(monkeypatch):
 
 
 def test_conditions_tuple_gains_version_spans_content_in_order():
-    assert release.CONDITIONS == ("version_spans_content", "model_loads", "server_ci_green",
-                                  "no_drift")
+    assert release.CONDITIONS == ("version_spans_content", "manual_current", "model_loads",
+                                  "server_ci_green", "no_drift")
 
 
 def test_registry_row_validation_note_names_the_new_condition(reg):
@@ -695,3 +695,134 @@ def test_emitted_record_validation_field_names_version_spans_content(monkeypatch
     assert rc == 0
     validation_line = next(l for l in out.splitlines() if l.startswith("validation:"))
     assert "version_spans_content" in validation_line
+
+
+# ── manual_current (it-32 slice 5): the manual's ruled update trigger ────────────────────
+
+def _seed_manual_sources(work):
+    """The three paths the condition reads, present at the seed so a later change is a diff."""
+    (work / "skills" / "factory").mkdir(parents=True, exist_ok=True)
+    (work / "skills" / "factory" / "SKILL.md").write_text("router v1\n")
+    (work / "AGENTS.md").write_text("canon v1\n")
+    (work / "docs").mkdir(exist_ok=True)
+    (work / "docs" / "manual.md").write_text("manual v1\n")
+
+
+def _make_manual_repo(tmp_path):
+    work = _make_release_repo(tmp_path)
+    _seed_manual_sources(work)
+    _commit_all(work, "seed the manual and its sources")
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    # re-anchor the 1.0.0 tag at the seeded tree so the range for 1.0.1 starts here
+    _git(["tag", "-f", "-a", "skill/v1.0.0", "-m", "v1.0.0"], work)
+    _git(["push", "-q", "-f", "origin", "skill/v1.0.0"], work)
+    return work
+
+
+def _bump_with(work, version, **files):
+    for rel, text in files.items():
+        path = work / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    _write_plugin_version(work, version)
+    _commit_all(work, f"bump to {version} with {', '.join(files) or 'no other change'}")
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    return _rev_parse(work)
+
+
+def test_conditions_tuple_places_manual_current_after_the_span_check():
+    i = release.CONDITIONS.index
+    assert i("version_spans_content") < i("manual_current") < i("model_loads")
+
+
+def test_manual_current_refuses_a_source_change_without_the_manual(monkeypatch, capsys,
+                                                                    tmp_path,
+                                                                    stub_other_conditions):
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "1.0.1", **{"AGENTS.md": "canon v2\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.splitlines()[0] == "manual_current"
+    assert "AGENTS.md" in out and "docs/manual.md" in out and "--manual-unaffected" in out
+
+
+def test_manual_current_passes_when_the_manual_moved_with_its_source(monkeypatch, capsys,
+                                                                     tmp_path,
+                                                                     stub_other_conditions):
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "1.0.1", **{"skills/factory/SKILL.md": "router v2\n",
+                                      "docs/manual.md": "manual v2\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "manual_current" in out and "manual updated" in out
+
+
+def test_manual_current_passes_when_no_source_changed(monkeypatch, capsys, tmp_path,
+                                                      stub_other_conditions):
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "1.0.1", **{"tools/other.py": "x = 1\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "manual sources unchanged" in out
+
+
+def test_manual_current_override_records_the_reason(monkeypatch, capsys, tmp_path,
+                                                    stub_other_conditions):
+    work = _make_manual_repo(tmp_path)
+    tip = _bump_with(work, "1.0.1", **{"AGENTS.md": "canon v2\n"})
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1",
+                       "--manual-unaffected", "a comment-only canon edit"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "unaffected — a comment-only canon edit" in out
+    rc, evidence, evaluated, manual = release.validate("yellow-robots/factory", tip, "1.0.1",
+                                                       "a comment-only canon edit")
+    assert rc == 0 and "manual_current" in evaluated
+    assert manual == "unaffected — a comment-only canon edit"
+
+
+def test_manual_current_is_not_judged_without_a_version(monkeypatch, capsys):
+    fake = _Fake()
+    rc = _v(monkeypatch, fake, ["validate", "--commit", "HEAD"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "manual_current" not in out
+
+
+def test_version_span_still_refuses_first_when_both_fail(monkeypatch, capsys, tmp_path,
+                                                         stub_other_conditions):
+    """Ordering pinned: a tree that spans its bump AND a stale manual reports the span."""
+    work = _make_manual_repo(tmp_path)
+    _bump_with(work, "1.0.1")
+    (work / "AGENTS.md").write_text("canon v2 after the bump\n")
+    _commit_all(work, "a source change after the bump, no manual")
+    tip = _rev_parse(work)
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1"])
+    out = capsys.readouterr().out
+    assert rc == 1 and out.splitlines()[0] == "version_spans_content"
+
+
+def test_record_body_carries_the_manual_field_the_registry_declares(reg):
+    body = release.record_body("1.0.3", SHA_100, "evidence", "@jbrey", mode="ship",
+                               manual="updated")
+    assert "manual: updated\n" in body
+    row = records.get(reg, "YR-RELEASE")
+    assert "manual" in row["fields"]
+    assert check_trail._missing_fields(row, [body]) == []
+
+
+def test_amendment_row_widens_the_release_transition(model):
+    rows = [a for a in model["amendment"] if a.get("review") == "yellow-robots/factory#486"]
+    assert len(rows) == 1 and rows[0]["version"].startswith("1.7.")
+    assert rows[0]["touches"] == ["plugin.release.validated"]
+    assert "manual_current" in rows[0]["reason"] and rows[0]["kind"] == "widen"
+

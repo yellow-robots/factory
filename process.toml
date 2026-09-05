@@ -23,7 +23,7 @@
 #     class stays fail-closed per `caller_default`;
 [model]
 contract = "yr-process/1"
-version = "1.6.1"
+version = "1.7.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 13000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
@@ -33,6 +33,15 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.7.0"
+date = "2026-09-06"
+kind = "widen"
+touches = ["plugin.release.validated"]
+reason = "the human's manual gets its ruled update trigger (it-32 callout (m); slice 5, epic #481): tools/release.py's validate() gains a refusing condition, `manual_current` — a range since the previous tag that changed skills/factory/SKILL.md or AGENTS.md without touching docs/manual.md refuses unless the act records the manual unaffected with a reason — and YR-RELEASE gains the `manual` field carrying that judgment (updated · sources unchanged · unaffected — <reason>). The schema widens, so releases dated before this row are judged by 1.6.1 (ruling 3)."
+review = "yellow-robots/factory#486"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.6.1"
 date = "2026-09-06"
