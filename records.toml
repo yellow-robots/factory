@@ -480,7 +480,7 @@ emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's colum
 emitter = "tools/release.py (the validation-gated, git-native release act — ship mode at a round's close, backfill mode for the retroactive pair; the same body rides the annotated tag's message)"
 readers = ["tools/sources.py:releases (the release-surface fetcher the walk tooling and the bench read)", "tools/check_trail.py (release lane)", "humans on the repo's Releases page"]
 surfaces = ["release"]
-notes = "Ruling 6's record (it-31 slice 7), minted at the crossing of #432: a version is typed exactly once — the tag anchors the commit, validation names the evidence (model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift)."
+notes = "Ruling 6's record (it-31 slice 7), minted at the crossing of #432: a version is typed exactly once — the tag anchors the commit, validation names the evidence (the declared version's tree unchanged since its bump commit — it-33 slice 5; model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift)."
 
 [[record]]
 name = "YR-DEPLOY"
