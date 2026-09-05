@@ -9,6 +9,11 @@ GitHub Release object whose body carries the YR-RELEASE record (registry row; fi
 their shipped commits (spec callout (d) as ruled: both).
 
 Validation evidence, stated plainly:
+  * version_spans_content — the declared version's payload is the whole delivered tree (it-33
+    slice 1's canon): the anchor is the BUMP COMMIT, the first first-parent commit since the
+    previous tag (full history when none exists) at which plugin.json first declares the version
+    — never the previous tag itself. Any tracked path changed between the bump commit and the
+    commit under validation refuses; a version whose tree is unchanged since its bump passes.
   * model_loads / no_drift — judged in a detached worktree AT THE COMMIT, by that commit's own
     `tools/process.py` (builds from git refs, never a mutable tree).
   * server_ci_green — CI runs on PR heads, never on main's squash commits, so the evidence chain
@@ -46,9 +51,10 @@ GH_TIMEOUT = 20
 GIT_TIMEOUT = 60
 WORKTREE_TIMEOUT = 120
 
-CONDITIONS = ("model_loads", "server_ci_green", "no_drift")
+CONDITIONS = ("version_spans_content", "model_loads", "server_ci_green", "no_drift")
 _OK_CONCLUSIONS = {"success", "neutral", "skipped"}
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_TAG_VERSION_RE = re.compile(rf"^{re.escape(TAG_PREFIX)}(\d+)\.(\d+)\.(\d+)$")
 
 # The retroactive pair (spec callout (d) as ruled 2026-08-16: both) — pinned commits, so the
 # backfill types exactly the trees that shipped, never a nearby tip.
@@ -87,6 +93,74 @@ def _version_at_commit(commit: str) -> str | None:
         return json.loads(out).get("version")
     except (json.JSONDecodeError, AttributeError):
         return None
+
+
+def _existing_version_tags() -> tuple[bool, list[tuple[tuple[int, int, int], str]], str]:
+    """Every `skill/vX.Y.Z` tag on origin, as (version-tuple, tag-name) pairs, oldest first.
+    (ok, tags, detail) — ok is False only when the remote was unreadable."""
+    rc, out, err = _run(["git", "ls-remote", "origin", f"{TAG_PREFIX}*"], cwd=str(REPO_ROOT))
+    if rc != 0:
+        return False, [], err.strip() or str(rc)
+    seen: dict[str, tuple[int, int, int]] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        ref = parts[1][:-3] if parts[1].endswith("^{}") else parts[1]
+        if not ref.startswith("refs/tags/"):
+            continue
+        name = ref[len("refs/tags/"):]
+        m = _TAG_VERSION_RE.match(name)
+        if m:
+            seen[name] = tuple(int(g) for g in m.groups())
+    return True, sorted(seen.items(), key=lambda kv: kv[1]), ""
+
+
+def _bump_commit(version: str, commit: str) -> tuple[str | None, str]:
+    """The anchor for `version_spans_content`: the first first-parent commit in
+    `<previous tag>..<commit>` (full history when no earlier tag exists) at which plugin.json
+    first declares `version` — never the previous tag itself (the tag's own commit may sit long
+    after the bump, which is exactly the failure this guards). Returns (sha, detail); sha is None
+    only when the remote or the history walk was unreadable (fail-closed to the caller). When the
+    declared version never appears anywhere in range, the commit under validation is its own
+    anchor — an unchanged (empty) tree, by construction."""
+    ok, tags, detail = _existing_version_tags()
+    if not ok:
+        return None, (f"could not read origin's tags: {detail} — an unreadable remote never "
+                      f"passes (fail-closed)")
+    want = tuple(int(g) for g in version.split("."))
+    below = [name for name, v in tags if v < want]
+    prev_tag = below[-1] if below else None
+    rng = f"{prev_tag}..{commit}" if prev_tag else commit
+    rc, out, err = _run(["git", "log", "--first-parent", "--reverse", "--format=%H", rng],
+                        cwd=str(REPO_ROOT))
+    if rc != 0:
+        return None, f"could not walk first-parent history over {rng!r}: {err.strip()}"
+    for sha in (s for s in out.splitlines() if s.strip()):
+        if _version_at_commit(sha) == version:
+            return sha, (f"bump commit {sha[:9]} (first-parent history since "
+                         f"{prev_tag or 'the repo root'})")
+    return commit, "the declared version never appears in range — the commit is its own anchor"
+
+
+def _version_spans_content(version: str, commit: str) -> tuple[str, str]:
+    """'' + evidence on pass; 'version_spans_content' + detail on fail. The payload is the whole
+    delivered tree (it-33 slice 1's canon): any tracked path changed since the bump commit fails."""
+    bump, detail = _bump_commit(version, commit)
+    if bump is None:
+        return "version_spans_content", detail
+    if bump == commit:
+        return "", detail
+    rc, out, err = _run(["git", "diff", "--name-only", f"{bump}..{commit}"], cwd=str(REPO_ROOT))
+    if rc != 0:
+        return "version_spans_content", f"could not diff {bump[:9]}..{commit[:9]}: {err.strip()}"
+    changed = [p for p in out.splitlines() if p.strip()]
+    if changed:
+        return "version_spans_content", (
+            f"{len(changed)} file(s) changed in the delivered tree between the bump commit "
+            f"{bump[:9]} (where plugin.json first declared {version}) and {commit[:9]} — a "
+            f"released version's tree must be unchanged since it was declared")
+    return "", f"tree unchanged since the bump commit {bump[:9]}"
 
 
 def _ci_green_at(repo: str, commit: str) -> tuple[bool, str]:
@@ -167,13 +241,18 @@ def _judged_at_commit(commit: str) -> tuple[str, str]:
 
 
 def validate(repo: str, commit: str, version: str | None) -> tuple[int, str]:
-    """The three conditions, in conditions_display order, fail-closed. Returns (rc, evidence)."""
+    """CONDITIONS, in conditions_display order, fail-closed. Returns (rc, evidence)."""
+    span_evidence = ""
     if version is not None:
         at = _version_at_commit(commit)
         if at != version:
             return _fail("version_mismatch",
                          f"plugin.json at {commit[:9]} says {at!r}, not {version!r} — the tag "
                          f"must anchor the commit that shipped the version"), ""
+        token, detail = _version_spans_content(version, commit)
+        if token:
+            return _fail(token, detail), ""
+        span_evidence = detail
     token, detail = _judged_at_commit(commit)
     if token == "model_loads":
         return _fail(token, detail), ""
@@ -182,7 +261,8 @@ def validate(repo: str, commit: str, version: str | None) -> tuple[int, str]:
         return _fail("server_ci_green", ci_evidence), ""
     if token == "no_drift":
         return _fail(token, detail), ""
-    return 0, f"{detail}; {ci_evidence}"
+    evidence = "; ".join(e for e in (span_evidence, detail, ci_evidence) if e)
+    return 0, evidence
 
 
 def record_body(version: str, commit: str, validation: str, who: str, mode: str) -> str:

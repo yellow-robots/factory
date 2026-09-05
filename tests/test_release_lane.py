@@ -7,10 +7,14 @@ surfaces carry no drift — refuses on any failure, then creates the annotated `
 plus the GitHub Release whose body carries YR-RELEASE. Backfill types 1.0.0/1.0.1 against their
 shipped commits (callout (d) as ruled: both). The owed model amendment lands: the plugin.version
 store and the release transition demanding the record; the header's release-lane bullet retires.
-Test mode writes no live record. Fixtures only — every subprocess rides release._run, stubbed.
+Test mode writes no live record. Fixtures only — most tests stub release._run entirely; the
+version_spans_content tests (it-33 slice 5, #461) instead run real git against a tmp_path repo
+that reproduces the SHAPE of the live exhibit (never the network — ls-remote/log/diff/show all
+resolve against a tmp bare 'origin' on the filesystem).
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -456,3 +460,161 @@ def test_canon_release_act_is_walled_now():
     assert release_rows, "the generated map lost the release rows"
     lanes_txt = (REPO / "build" / "lanes.toml").read_text(encoding="utf-8")
     assert "YR-RELEASE" in lanes_txt, "the release lane's mandate left the compiled lanes"
+
+
+# ── version_spans_content: the payload-drift refusal (it-33 slice 5, #461) ─────────────────────────
+#
+# The live exhibit: skill/v1.0.2's plugin.json bump lands at c14e73d, but the tag itself was cut
+# much later at e96e5d4 — forty-two files of unrelated shipped content sit in between under the
+# SAME declared version, and the previous-tag anchor (skill/v1.0.1) can't see the problem because
+# plugin.json changes again across v1.0.1..v1.0.2 too. These tests reproduce that SHAPE against a
+# throwaway tmp_path repo — never the live repo's network remotes.
+
+def _git(args, cwd):
+    subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)
+
+
+def _rev_parse(cwd, ref="HEAD"):
+    out = subprocess.run(["git", "rev-parse", ref], cwd=str(cwd), check=True,
+                         capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def _write_plugin_version(work, version):
+    d = work / ".claude-plugin"
+    d.mkdir(exist_ok=True)
+    (d / "plugin.json").write_text(json.dumps({"name": "factory", "version": version}))
+
+
+def _commit_all(work, msg):
+    _git(["add", "-A"], work)
+    _git(["commit", "-q", "-m", msg], work)
+
+
+def _make_release_repo(tmp_path):
+    """A real bare 'origin' plus a working clone, seeded at declared version 1.0.0 with its tag
+    already pushed — the branch is 'release-trunk', never 'main': this repo is throwaway, not a
+    shared ref, and every git call the new condition makes (ls-remote/log/diff/show) resolves
+    against this tmp filesystem repo, no network."""
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(["init", "-q", "--bare", "-b", "release-trunk", "."], origin)
+    work = tmp_path / "work"
+    work.mkdir()
+    _git(["init", "-q", "-b", "release-trunk", "."], work)
+    _git(["config", "user.email", "t@t"], work)
+    _git(["config", "user.name", "tester"], work)
+    _write_plugin_version(work, "1.0.0")
+    _commit_all(work, "seed 1.0.0")
+    _git(["remote", "add", "origin", str(origin)], work)
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    _git(["tag", "-a", "skill/v1.0.0", "-m", "v1.0.0"], work)
+    _git(["push", "-q", "origin", "skill/v1.0.0"], work)
+    return work
+
+
+@pytest.fixture()
+def stub_other_conditions(monkeypatch):
+    """Cans model_loads/no_drift/server_ci_green so the full `validate()` pipeline runs against a
+    tmp repo that carries no real `tools/process.py` and makes no `gh` call — isolating the NEW
+    condition inside the real pipeline ordering without needing the live tooling or network."""
+    monkeypatch.setattr(release, "_judged_at_commit",
+                        lambda commit: ("", "stubbed: loads, no drift"))
+    monkeypatch.setattr(release, "_ci_green_at", lambda repo, commit: (True, "stubbed: ci green"))
+
+
+def test_conditions_tuple_gains_version_spans_content_in_order():
+    assert release.CONDITIONS == ("version_spans_content", "model_loads", "server_ci_green",
+                                  "no_drift")
+
+
+def test_registry_row_validation_note_names_the_new_condition(reg):
+    row = records.get(reg, "YR-RELEASE")
+    assert "bump commit" in row["notes"]
+
+
+def test_version_spans_content_refuses_the_spanning_case(monkeypatch, capsys, tmp_path,
+                                                          stub_other_conditions):
+    """The exhibit's SHAPE: bump to 1.0.2, then forty-two files of shipped content with no
+    further version bump — the anchor is the bump commit, never the previous tag."""
+    work = _make_release_repo(tmp_path)
+    _write_plugin_version(work, "1.0.1")
+    _commit_all(work, "bump to 1.0.1")
+    _git(["tag", "-a", "skill/v1.0.1", "-m", "v1.0.1"], work)
+    _git(["push", "-q", "origin", "release-trunk", "skill/v1.0.1"], work)
+    _write_plugin_version(work, "1.0.2")
+    _commit_all(work, "bump to 1.0.2")
+    bump = _rev_parse(work)
+    for i in range(42):
+        (work / f"f{i}.txt").write_text(f"content {i}\n")
+    _commit_all(work, "forty-two files of shipped content, no further version bump")
+    tip = _rev_parse(work)
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.2"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.splitlines()[0] == "version_spans_content"
+    assert bump[:9] in out and "42" in out
+
+
+def test_version_spans_content_passes_when_tree_unchanged_since_bump(monkeypatch, capsys,
+                                                                      tmp_path,
+                                                                      stub_other_conditions):
+    """Validated exactly at its own bump commit — no content added since — passes the new
+    condition and reaches the (stubbed) later conditions, so overall validation is ok."""
+    work = _make_release_repo(tmp_path)
+    _write_plugin_version(work, "1.0.1")
+    _commit_all(work, "bump to 1.0.1")
+    bump = _rev_parse(work)
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", bump, "--version", "1.0.1"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.splitlines()[0].startswith("ok:")
+
+
+def test_version_spans_content_passes_with_no_prior_tag(monkeypatch, capsys, tmp_path,
+                                                         stub_other_conditions):
+    """No skill/v* tag exists on origin at all — the range is FULL history (never bounded by a
+    previous tag), and the walk still finds the right bump commit among earlier, untagged
+    commits."""
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(["init", "-q", "--bare", "-b", "release-trunk", "."], origin)
+    work = tmp_path / "work"
+    work.mkdir()
+    _git(["init", "-q", "-b", "release-trunk", "."], work)
+    _git(["config", "user.email", "t@t"], work)
+    _git(["config", "user.name", "tester"], work)
+    _write_plugin_version(work, "0.9.0")
+    _commit_all(work, "pre-release scaffolding")
+    _write_plugin_version(work, "1.0.0")
+    _commit_all(work, "bump to 1.0.0")
+    bump = _rev_parse(work)
+    _git(["remote", "add", "origin", str(origin)], work)
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", bump, "--version", "1.0.0"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.splitlines()[0].startswith("ok:")
+
+
+def test_version_mismatch_still_wins_first_when_content_also_spans(monkeypatch, capsys,
+                                                                    tmp_path,
+                                                                    stub_other_conditions):
+    """Ordering: version_mismatch is judged before version_spans_content — a wrong declared
+    version refuses with its own token even when the tree also spans content since the real
+    bump."""
+    work = _make_release_repo(tmp_path)
+    _write_plugin_version(work, "1.0.1")
+    _commit_all(work, "bump to 1.0.1")
+    for i in range(3):
+        (work / f"g{i}.txt").write_text("x\n")
+    _commit_all(work, "content after the bump")
+    tip = _rev_parse(work)
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "9.9.9"])
+    out = capsys.readouterr().out
+    assert rc == 1 and out.splitlines()[0] == "version_mismatch"
