@@ -103,7 +103,8 @@ def test_plugin_version_store_guarded_both_paths_bound(model):
 def test_release_evaluator_declared(model):
     ev = model["_evaluators"]["release-validation"]
     assert "tools/release.py" in " ".join(ev["argv"])
-    assert ev["conditions_display"] == ["model_loads", "server_ci_green", "no_drift"]
+    assert ev["conditions_display"] == ["version_spans_content", "model_loads",
+                                        "server_ci_green", "no_drift"]
 
 
 def test_release_lane_mandate_compiles(model):

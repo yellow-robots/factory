@@ -1,8 +1,8 @@
-# GENERATED from process.toml v1.6.0 sha256:0c6f60e9397293dd — never hand-edit
+# GENERATED from process.toml v1.6.1 sha256:025f59996d9b0cd7 — never hand-edit
 # The detector's lane mandates, compiled from the transitions (surface 2).
 
 [meta]
-model_version = "1.6.0"
+model_version = "1.6.1"
 effective = "2026-09-06"
 
 [mandate]

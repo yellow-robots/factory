@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.6.0 sha256:0c6f60e9397293dd — never hand-edit -->
+<!-- GENERATED from process.toml v1.6.1 sha256:025f59996d9b0cd7 — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 
@@ -60,7 +60,7 @@
   - open: git.ref.shared.web-merge: GitHub advancing the branch on a merge into it (detected by YR-HUMAN-INSTRUCTION)
 - **design-doc.draft->active** [human/attended-agent; door one-way; partial; chokepoint: none — client-side hook coverage only] — the cold adversarial review, typed into the doc; the architect's fit verdict at the spec-ready moment; the airlock rule: an open question blocks the activation. the human input gate — what gets built; the standing approval under which the epic gate promotes slices mechanically
   - open: doc.frontmatter.status.cli: the `obsidian` CLI or REST API from a shell (detected by YR-ACCEPT)
-- **plugin.release.validated** [human/attended-agent; door one-way; prevented; chokepoint: none — client-side hook coverage only] — the release conditions are the tool's own, in its order, with its fail-closed semantics: model_loads, server_ci_green, no_drift. a published version reaches every attended session the moment the plugin reloads — consequences are one-way even where the diff is revertible; validation is delegated to the funnel (tools/release.py), whose refusal is the deterministic gate, and the record types the version exactly once
+- **plugin.release.validated** [human/attended-agent; door one-way; prevented; chokepoint: none — client-side hook coverage only] — the release conditions are the tool's own, in its order, with its fail-closed semantics: version_spans_content, model_loads, server_ci_green, no_drift. a published version reaches every attended session the moment the plugin reloads — consequences are one-way even where the diff is revertible; validation is delegated to the funnel (tools/release.py), whose refusal is the deterministic gate, and the record types the version exactly once
 
 ## Honesty block
 - caller_trust = `declared` — the caller class is declared, not proven; the journal and the detector find the shape afterwards.
