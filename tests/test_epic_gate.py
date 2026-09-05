@@ -2803,6 +2803,9 @@ def test_main_prints_the_commit_statement_before_any_sweep_action_line(capsys, m
     fake = FakeIntakeGh(board, {}, open_issues={INTAKE_REPO_A: [_open_issue(10)]})
     monkeypatch.setattr(epic_gate, "_gh", fake)
     monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [INTAKE_REPO_A])
+    # this test pins the STATEMENT line's position, not the drift alarm's (see the it-33 slice 4
+    # tests below) — a clean drift moment keeps the pre-existing adjacency intact.
+    monkeypatch.setattr(epic_gate.drift, "build_findings", lambda repo_root, home: [])
 
     rc = epic_gate.main()
     assert rc == 0
@@ -2813,6 +2816,70 @@ def test_main_prints_the_commit_statement_before_any_sweep_action_line(capsys, m
     assert lines[0].startswith("epic-gate: "), "the statement is not the FIRST line main() prints"
     assert f"commit: {real}" in lines[0]
     assert "nothing to do" in lines[1]
+
+
+# ============================================================================
+# it-33 slice 4 (issue #458) — the sweep folds in the build-host drift alarm's findings: printed,
+# advisory only — never altering the sweep's actions or its exit code (never a merge gate).
+# ============================================================================
+
+def test_main_prints_build_drift_findings_between_statement_and_action_lines(capsys, monkeypatch):
+    board = [_item(10, item_id="PI-10", itype="Task", status="Backlog", repo=INTAKE_REPO_A)]
+    fake = FakeIntakeGh(board, {}, open_issues={INTAKE_REPO_A: [_open_issue(10)]})
+    monkeypatch.setattr(epic_gate, "_gh", fake)
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [INTAKE_REPO_A])
+    monkeypatch.setattr(epic_gate.drift, "build_findings",
+                        lambda repo_root, home: ["epic-gate: TRAILS origin/main (at aaa, origin/main at bbb)",
+                                                  "attended-session: not readable from this host — "
+                                                  "no cross-host read"])
+
+    rc = epic_gate.main()
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("epic-gate: "), "the statement is still the first line"
+    assert lines[1] == ("epic-gate: drift — epic-gate: TRAILS origin/main "
+                        "(at aaa, origin/main at bbb)")
+    assert lines[2] == ("epic-gate: drift — attended-session: not readable from this host — "
+                        "no cross-host read")
+    assert "nothing to do" in lines[3]
+
+
+def test_main_prints_nothing_extra_when_the_build_drift_moment_is_clean(capsys, monkeypatch):
+    # every reach for `gh` is injected — the suite never touches the live board (CI has no token; the
+    # build host's credentials must not be what makes a test pass)
+    monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+    monkeypatch.setattr(epic_gate.drift, "build_findings", lambda repo_root, home: [])
+    rc = epic_gate.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "drift" not in out.lower()
+
+
+def test_main_exit_code_is_unaffected_by_drift_findings_never_a_gate(capsys, monkeypatch):
+    """Advisory: drift findings are printed, but the sweep's own exit code and actions never change
+    because of them — the alarm is never part of check_cmd, CI, or any merge condition."""
+    monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+    monkeypatch.setattr(epic_gate.drift, "build_findings",
+                        lambda repo_root, home: ["surface: TRAILS origin/main (at a, origin/main at b)"])
+    rc = epic_gate.main()
+    assert rc == 0
+
+
+def test_main_passes_dispatch_dev_runner_home_and_the_factorys_own_root_to_build_findings(monkeypatch):
+    seen = {}
+
+    def fake(repo_root, home):
+        seen["repo_root"], seen["home"] = repo_root, home
+        return []
+
+    monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+    monkeypatch.setattr(epic_gate.drift, "build_findings", fake)
+    epic_gate.main()
+    assert seen["repo_root"] == ROOT
+    assert seen["home"] == epic_gate.dispatch.DEV_RUNNER_HOME
 
 
 # ============================================================================

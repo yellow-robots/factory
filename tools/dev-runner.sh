@@ -1288,7 +1288,10 @@ else
   "$GIT_BIN" -C "$BASE_REPO" worktree add -q -b "$BRANCH" "$WT" "$WT_CUT_REF" || fail_blocked "worktree add failed"
 fi
 
-# ---- factory self-freshness (issue #58): a stale deployment must never run invisibly. Best-effort only —
+# ---- factory self-freshness (issue #58): a stale deployment must never run invisibly. This IS the one
+# drift alarm's (tools/drift.py, it-33 slice 4, issue #458) RUNNER-SIDE instance, under the same
+# per-host population rule (the build host reads its own checkout) — left as its own shell-native check
+# rather than duplicated as a third drift.py call site; there is one alarm, not two. Best-effort only —
 # this is visibility, never a gate: any failure (offline, no origin, whatever) skips silently, and a
 # current checkout adds no output at all. SELF_DIR/.. is the factory's own checkout (override for tests:
 # FACTORY_DIR). When the build target IS the factory itself (BASE_REPO == FACTORY_DIR), the target-repo
@@ -2347,9 +2350,10 @@ if [ "${#SHADOW_ROUNDS[@]}" -gt 0 ]; then
   done < <(python3 "$SELF_DIR/verdict_diff.py" run --run-dir "$RUN_DIR" --bundle "$BUNDLE" 2>/dev/null || true)
 fi
 
-# staleness warning (issue #58): additive alongside the reviewer verdict + usage summary, and deliberately
-# clear of every parsed comment grammar (no `YR-` marker line, no `YR-MERGE` anywhere) — visibility only,
-# never a gate.
+# staleness warning (issue #58) — the one drift alarm's runner-side instance (tools/drift.py, it-33
+# slice 4, issue #458), PR-comment-shaped: additive alongside the reviewer verdict + usage summary, and
+# deliberately clear of every parsed comment grammar (no `YR-` marker line, no `YR-MERGE` anywhere) —
+# visibility only, never a gate.
 if [ -n "$STALE_COUNT" ] && [ "$STALE_COUNT" -gt 0 ]; then
   "$GH_BIN" pr comment "$PR_URL" --repo "$REPO" --body "dev-runner: **staleness warning** — the factory deployment that built this PR was $STALE_COUNT commit(s) behind its own origin/main at build time. Redeploy it to pick up already-shipped capability." >/dev/null 2>&1 \
     || log "warn: could not post the staleness-warning comment (non-fatal, PR already open)"
