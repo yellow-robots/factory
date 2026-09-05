@@ -18,9 +18,12 @@ WorkingDirectory=%h/yellow-robots/factory
 # DISPATCH_TOKEN, DISPATCH_PORT, and (unlike the build instance) DISPATCH_BIND=127.0.0.1 — this
 # instance is never exposed past localhost, since it is the one instance the vault key reaches.
 EnvironmentFile=%h/.config/dev-runner/pm-dispatch.env
-# The instance discriminator (tools/dispatch.py _spawn_env / _PM_ONLY_KEYS): pinned directly in the
-# unit, never the env file, so a misconfigured pm-dispatch.env can never accidentally flip a build
-# instance into believing it is the PM instance.
+# The instance discriminator (tools/dispatch.py _spawn_env / _PM_ONLY_KEYS), pinned here AFTER the
+# EnvironmentFile line so it wins (systemd composes Environment=/EnvironmentFile= in file order,
+# later wins): a mangled or stray value in THIS UNIT's own pm-dispatch.env (e.g. a copy-pasted
+# DISPATCH_INSTANCE=build) can never flip this instance out of pm mode and silently stop passing
+# the vault key to its own spawned children. pm-dispatch.env is read only by this unit — it has no
+# reach into deploy/dispatch.service, which carries the mirrored build-side pin (I1).
 Environment=DISPATCH_INSTANCE=pm
 ExecStart=%h/yellow-robots/factory/.venv/bin/python %h/yellow-robots/factory/tools/dispatch.py
 Restart=on-failure

@@ -308,6 +308,16 @@ def main():
     if not os.environ.get("DISPATCH_TOKEN"):
         print("dispatch: refusing to start without DISPATCH_TOKEN", file=sys.stderr)
         return 2
+    # N2 (it-36 slice D, #469 review): an unrecognised DISPATCH_INSTANCE already fails closed —
+    # `_spawn_env` only ever passes `_PM_ONLY_KEYS` when the value is the exact string "pm" — but
+    # that fallback was previously silent. Name the DECLARED VALUE (never a secret) once at
+    # startup so an operator debugging "why doesn't the vault key reach my PM instance" sees the
+    # typo instead of mysterious silence.
+    _instance = os.environ.get("DISPATCH_INSTANCE", "build")
+    if _instance not in ("build", "pm"):
+        print(f"dispatch: unrecognised DISPATCH_INSTANCE={_instance!r} — treated as 'build' "
+             f"(the vault key never reaches a spawned child unless the value is exactly 'pm')",
+             file=sys.stderr)
     bind = os.environ.get("DISPATCH_BIND", "127.0.0.1")
     port = int(os.environ.get("DISPATCH_PORT", "8770"))
     print(f"dispatch: listening on {bind}:{port} — {STATEMENT}", file=sys.stderr)

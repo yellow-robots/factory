@@ -735,6 +735,30 @@ def test_spawn_env_app_keys_flow_on_either_instance(monkeypatch):
         assert env.get(k) == v
 
 
+# ---- I1 (it-36 slice D, #469 review): both units pin their own DISPATCH_INSTANCE, AFTER their ----
+# ---- own EnvironmentFile= line, so systemd's last-wins composition can never be overridden by ----
+# ---- a stray value in that unit's own env file. ----
+
+def _unit_lines(name):
+    return (ROOT / "deploy" / name).read_text(encoding="utf-8").splitlines()
+
+
+def test_build_unit_pins_instance_after_its_env_file():
+    lines = _unit_lines("dispatch.service")
+    env_file_idx = next(i for i, l in enumerate(lines) if l.startswith("EnvironmentFile="))
+    pin_idx = next(i for i, l in enumerate(lines) if l.startswith("Environment=DISPATCH_INSTANCE="))
+    assert pin_idx > env_file_idx
+    assert lines[pin_idx] == "Environment=DISPATCH_INSTANCE=build"
+
+
+def test_pm_unit_pins_instance_after_its_env_file():
+    lines = _unit_lines("pm-dispatch.service")
+    env_file_idx = next(i for i, l in enumerate(lines) if l.startswith("EnvironmentFile="))
+    pin_idx = next(i for i, l in enumerate(lines) if l.startswith("Environment=DISPATCH_INSTANCE="))
+    assert pin_idx > env_file_idx
+    assert lines[pin_idx] == "Environment=DISPATCH_INSTANCE=pm"
+
+
 def test_run_sweep_spawn_env_excludes_dispatch_token(tmp_path, monkeypatch):
     # the sweep spawn is the same seam as the build spawn (both go through _spawn_detached) — the
     # acceptance criteria call out "the runner or any stage", which includes the sweeper.
@@ -945,3 +969,53 @@ def test_main_without_token_never_writes_the_statement_file(tmp_path, monkeypatc
 
     assert rc == 2
     assert not (tmp_path / "drhome" / "dispatch.statement").exists()
+
+
+# ---- N2 (it-36 slice D, #469 review): an unrecognised DISPATCH_INSTANCE warns, never silently ----
+
+def _main_with_fake_server(monkeypatch):
+    monkeypatch.setenv("DISPATCH_TOKEN", "secret")
+    monkeypatch.setattr(dispatch.signal, "signal", lambda *a, **kw: None)
+
+    class FakeServer:
+        def __init__(self, *a, **kw):
+            pass
+
+        def serve_forever(self):
+            pass
+
+    monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
+
+
+def test_main_warns_on_an_unrecognised_dispatch_instance(monkeypatch, capsys):
+    _main_with_fake_server(monkeypatch)
+    monkeypatch.setenv("DISPATCH_INSTANCE", "PM")   # a plausible typo — wrong case
+
+    rc = dispatch.main()
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "DISPATCH_INSTANCE" in err and "'PM'" in err and "'build'" in err
+    assert "secret" not in err   # the token never rides the diagnostic
+
+
+def test_main_silent_on_a_recognised_dispatch_instance(monkeypatch, capsys):
+    for value in ("build", "pm"):
+        _main_with_fake_server(monkeypatch)
+        monkeypatch.setenv("DISPATCH_INSTANCE", value)
+
+        rc = dispatch.main()
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "unrecognised" not in err, value
+
+
+def test_main_silent_when_dispatch_instance_is_unset(monkeypatch, capsys):
+    _main_with_fake_server(monkeypatch)
+    monkeypatch.delenv("DISPATCH_INSTANCE", raising=False)
+
+    rc = dispatch.main()
+
+    assert rc == 0
+    assert "unrecognised" not in capsys.readouterr().err

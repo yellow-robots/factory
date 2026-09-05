@@ -294,16 +294,28 @@ _EXACT_DENY = {"board.write.gh-cli", "board.write.funnel", "board.write.graphql"
                "design.stamp.obsidian-mcp",
                "release.funnel-ship", "release.funnel-backfill", "release.gh-cli"}
 
+# it-36 slice D (#469): these two bindings carry no `writes` row (no store models
+# issue-type-setting or sub-issue linkage yet) — `compile_acts` (process.py:741) and the decision
+# loop (process.py:~1216) both iterate `writes`, so an empty list means neither ever produces a
+# row, EXACT precision or not. They cannot deny (there is nothing for `_EXACT_DENY` to assert), so
+# this is an explicit pin of the observed None outcome, never silence: matching the vector and
+# then doing nothing is the honest, verified behavior of a binding with no `writes` yet.
+_NO_WRITES_OBSERVES_NOTHING = {"design-sweep.update-issue", "design-sweep.add-sub-issue"}
+
 
 def test_unknown_always_disposes_closed_never_open(model, vectors, monkeypatch):
     """Every source down: each exact-binding vector DENIES for the attended class; each
     over-matching vector advises without ever denying. A fail-open regression flips these."""
     _fail_more_sources(monkeypatch)
     for v in [v for v in vectors if v["kind"] == "journal-independence"]:
-        out, _ = process.decide(model, {**v["act"], "session_id": "conf"}, env=ATTENDED)
+        out, rows = process.decide(model, {**v["act"], "session_id": "conf"}, env=ATTENDED)
         if v["binding"] in _EXACT_DENY:
             assert out is not None, f"{v['binding']}: silence under UNKNOWN is fail-open"
             assert out["hookSpecificOutput"].get("permissionDecision") == "deny", v["binding"]
+        elif v["binding"] in _NO_WRITES_OBSERVES_NOTHING:
+            assert out is None and rows == [], (
+                f"{v['binding']}: a writes-less binding must produce no decision and no journal "
+                f"row at all — not even UNKNOWN")
         elif out is not None:
             hso = out["hookSpecificOutput"]
             assert hso.get("permissionDecision") in (None, "ask"), (

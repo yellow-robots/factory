@@ -187,6 +187,14 @@ activation/epic-flip transitions, the allowlist, the two GitHub App mutation bin
 up the PM instance's shape for review; the route itself and `tools/design_gate.py` (the
 triage-license/independence evaluators the model already names) are a later slice's build.
 
+**Open reachability question, named here for the slice that adds the route:** the PM instance's
+`DISPATCH_BIND=127.0.0.1` is deliberate (it is the one instance the vault key reaches) but n8n
+reaches the host over the docker bridge, not loopback (see "2. Networking" above) — n8n on the
+same host reaches `127.0.0.1` only if it runs outside Docker or with host networking. The loopback
+bind stays mandated; how the design-sweep schedule actually reaches it (a host-networked n8n, an
+SSH tunnel, a reverse proxy terminating on loopback) is undecided and belongs to that later
+slice.
+
 ## Deploying a change — the scripted attended act (`tools/deploy.sh`, it-33 slice 6)
 
 There is no automatic trigger: a deploy is run BY A HUMAN (or an attended agent under explicit human
