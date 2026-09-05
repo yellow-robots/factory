@@ -16,6 +16,7 @@ Two entry points, both for the delivery hook:
   --position DIR   the runtime position element, composed at delivery and never cached: the workspace
                    checkout's own commit (DIR — the session's `$CWD`, never `__file__`-relative) and
                    the plugin cache's commit (cross-checked against the installer's record), the
+                   drift-alarm findings for this host (`drift.py`'s workspace-host moment), the
                    stored probe-drift note, the repo, its open PRs, and this repo's board rows —
                    every read bounded, every failure a loud line, exit always 0.
 """
@@ -30,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import drift        # noqa: E402 — sibling import, tools/ is on sys.path (line above)
 import provenance  # noqa: E402 — sibling import, tools/ is on sys.path (line above)
 
 
@@ -54,6 +56,8 @@ def position(root: Path) -> str:
     lines = [f"\n## Position (composed at delivery — {ts})\n"]
     lines.append(f"Checkout {provenance.statement(root)}")
     lines.append(f"Plugin {provenance.plugin_cache_statement()}")
+    for finding in drift.workspace_findings(root):
+        lines.append(f"Drift: {finding}")
     rc, deg = _run(["python3", str(root / "tools" / "process.py"), "decay", "--stored-note"], 10)
     if rc == 0 and deg.strip():
         lines.append(deg.strip())

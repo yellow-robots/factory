@@ -2537,6 +2537,22 @@ def test_isolation_flags_present_on_plain_happy_path_single_stage_chain(tmp_path
 # count, when behind; total silence when current; a silent skip when the freshness check itself can't
 # run (offline/no origin) — never a gate, never a Blocked/failure outcome.
 
+
+def test_staleness_warning_comment_names_itself_the_drift_alarms_runner_side_instance():
+    """it-33 slice 4 (issue #458): this pre-existing check (issue #58) stays in place as the ONE drift
+    alarm's runner-side instance under the same per-host population rule — its comment reworded to
+    say so, rather than being duplicated as a third `drift.py` call site. There is one alarm, not two."""
+    src = (ROOT / "tools" / "dev-runner.sh").read_text(encoding="utf-8")
+    m = re.search(r"# ---- factory self-freshness.*?\n(?:#.*\n)*", src)
+    assert m, "the factory self-freshness comment block is gone"
+    block = m.group(0)
+    assert "drift.py" in block and "it-33 slice 4" in block and "458" in block
+    assert "one alarm, not two" in block
+
+    m2 = re.search(r"# staleness warning \(issue #58\).*?\n(?:#.*\n)*", src)
+    assert m2, "the staleness-warning comment block is gone"
+    assert "drift.py" in m2.group(0) and "458" in m2.group(0)
+
 def test_staleness_warning_names_commits_behind_in_log_and_pr_comment(tmp_path):
     """Acceptance: a factory behind its own origin/main by N commits gets one loud warning in the run
     log AND on the PR, naming N — without blocking or otherwise altering the build."""

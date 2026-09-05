@@ -147,6 +147,54 @@ def test_position_never_shells_out_to_git_directly_for_either_commit_half():
     assert "rev-parse" not in src
 
 
+# ── it-33 slice 4 (issue #458) — position folds in the drift alarm's workspace-host moment ─────────
+
+def test_position_folds_in_the_workspace_drift_findings_as_drift_lines(monkeypatch):
+    monkeypatch.setattr(compile_slice, "_run", lambda argv, timeout: (1, ""))
+    monkeypatch.setattr(compile_slice.provenance, "plugin_cache_statement", lambda: "cache commit: stub")
+    monkeypatch.setattr(compile_slice.drift, "workspace_findings",
+                        lambda root: ["attended-session (checkout): TRAILS origin/main "
+                                      "(at aaaaaaaaaaaa, origin/main at bbbbbbbbbbbb)",
+                                      "dispatch: not readable from this host — no cross-host read"])
+    out = compile_slice.position(REPO)
+    assert ("Drift: attended-session (checkout): TRAILS origin/main "
+            "(at aaaaaaaaaaaa, origin/main at bbbbbbbbbbbb)") in out
+    assert "Drift: dispatch: not readable from this host — no cross-host read" in out
+
+
+def test_position_has_no_drift_lines_when_the_workspace_moment_is_clean(monkeypatch):
+    monkeypatch.setattr(compile_slice, "_run", lambda argv, timeout: (1, ""))
+    monkeypatch.setattr(compile_slice.provenance, "plugin_cache_statement", lambda: "cache commit: stub")
+    monkeypatch.setattr(compile_slice.drift, "workspace_findings", lambda root: [])
+    out = compile_slice.position(REPO)
+    assert "Drift:" not in out
+
+
+def test_position_passes_its_own_root_to_workspace_findings_not_repo_self(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_workspace_findings(root):
+        seen["root"] = root
+        return []
+
+    monkeypatch.setattr(compile_slice, "_run", lambda argv, timeout: (1, ""))
+    monkeypatch.setattr(compile_slice.provenance, "plugin_cache_statement", lambda: "cache commit: stub")
+    monkeypatch.setattr(compile_slice.drift, "workspace_findings", fake_workspace_findings)
+    compile_slice.position(tmp_path)
+    assert seen["root"] == tmp_path
+
+
+def test_position_drift_lines_sit_right_after_the_declared_provenance_lines(monkeypatch):
+    """The drift findings ride the SAME position element as the checkout/cache statements — not a
+    separate, possibly-dropped section."""
+    monkeypatch.setattr(compile_slice, "_run", lambda argv, timeout: (1, ""))
+    monkeypatch.setattr(compile_slice.provenance, "plugin_cache_statement", lambda: "cache commit: stub")
+    monkeypatch.setattr(compile_slice.drift, "workspace_findings", lambda root: ["surface: a finding"])
+    lines = compile_slice.position(REPO).splitlines()
+    plugin_idx = next(i for i, l in enumerate(lines) if l.startswith("Plugin "))
+    assert lines[plugin_idx + 1] == "Drift: surface: a finding"
+
+
 def test_deliver_sh_passes_the_sessions_cwd_as_the_checkout_root_not_the_plugin_root(tmp_path):
     """The workspace checkout half must name the SESSION's own working directory's commit — never
     the plugin cache's (CLAUDE_PLUGIN_ROOT, where compile_slice.py itself runs from). A fake session
