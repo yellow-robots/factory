@@ -3628,3 +3628,85 @@ def test_unloadable_mandates_hold_fail_closed(monkeypatch):
     assert fake.closes == []
     assert any(a.get("action") == "hold-close" for a in actions)
     assert "registry down" in _epic_comment_text(fake)
+
+
+# ============================================================================
+# it-33 slice 7 (#459) — the close arm's pin: a call-site census. Every epic-closing call site in
+# tools/ (the argv form of an issue close, `gh issue close`, a `closeIssue` GraphQL mutation, or a
+# `_close_issue(` invocation) must sit inside a function on the close-lane allow-list —
+# `_close_issue` itself, and `_process_epic`, the close arm's caller. The allow-list is keyed by
+# enclosing FUNCTION NAME, never by line number, so it survives reflow. This is a plain text
+# census (the shape of test_architect_reconciliation_and_gate_locations.py:32): it reads file
+# text via pathlib/re only and imports no module — it does not exercise epic_gate.py's behavior,
+# only where its close calls are allowed to live. No change to tools/epic_gate.py itself; no
+# cardinality rule — only that every match sits inside the allow-list.
+
+_CLOSE_CALL_PATTERNS = [
+    re.compile(r'\[\s*[\'"]issue[\'"]\s*,\s*[\'"]close[\'"]'),   # argv form: ["issue", "close", ...]
+    re.compile(r'gh issue close\b'),
+    re.compile(r'\bcloseIssue\b'),
+    re.compile(r'_close_issue\('),
+]
+
+_CLOSE_ARM_ALLOW_LIST = {"_close_issue", "_process_epic"}
+
+_DEF_LINE_RE = re.compile(r'^([ \t]*)def ([A-Za-z_][A-Za-z0-9_]*)\(', re.MULTILINE)
+
+
+def _enclosing_function_name(text, line_no):
+    """The name of the function enclosing 1-indexed `line_no` in `text` — the nearest `def` line,
+    scanning backward from (and including) the target line, whose indentation is no deeper than
+    the target line's own. No AST, no imports: a plain indentation scan, matched to this repo's
+    flat, unindented top-level function style."""
+    lines = text.splitlines()
+    target_indent = len(lines[line_no - 1]) - len(lines[line_no - 1].lstrip(" \t"))
+    for i in range(line_no - 1, -1, -1):
+        m = _DEF_LINE_RE.match(lines[i])
+        if m and len(m.group(1)) <= target_indent:
+            return m.group(2)
+    return None
+
+
+def _close_call_sites(root_dir):
+    """Every match of the close-call forms under `root_dir`, each tagged with its enclosing
+    function name: a list of (path, line_no, matched_text, enclosing_function_name)."""
+    sites = []
+    for path in sorted(p for p in root_dir.rglob("*") if p.is_file()):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for pattern in _CLOSE_CALL_PATTERNS:
+            for m in pattern.finditer(text):
+                line_no = text.count("\n", 0, m.start()) + 1
+                sites.append((path, line_no, m.group(0), _enclosing_function_name(text, line_no)))
+    return sites
+
+
+def test_census_finds_every_epic_closing_call_site_in_tools_inside_the_close_lane_allow_list():
+    sites = _close_call_sites(ROOT / "tools")
+    assert sites, "the census matched no close-call sites — the patterns have drifted from the real ones"
+    violations = [s for s in sites if s[3] not in _CLOSE_ARM_ALLOW_LIST]
+    assert violations == [], "\n".join(
+        f"{p.relative_to(ROOT)}:{ln}: {matched!r} is not inside an allow-listed function "
+        f"(found enclosing function {fn!r})"
+        for p, ln, matched, fn in violations
+    )
+
+
+def test_census_names_the_path_and_line_of_a_new_unguarded_close_call_site(tmp_path):
+    """A new call site OUTSIDE the allow-listed functions must fail the census, naming exactly
+    where — proving the allow-list is genuinely keyed by function name, not merely by file."""
+    rogue = tmp_path / "rogue.py"
+    rogue.write_text(
+        'def _some_other_function(gh, repo, number):\n'
+        '    gh(["issue", "close", str(number), "--repo", repo])\n',
+        encoding="utf-8",
+    )
+    sites = _close_call_sites(tmp_path)
+    violations = [s for s in sites if s[3] not in _CLOSE_ARM_ALLOW_LIST]
+    assert len(violations) == 1
+    path, line_no, matched, fn = violations[0]
+    assert path == rogue
+    assert line_no == 2
+    assert fn == "_some_other_function"
