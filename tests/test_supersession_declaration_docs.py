@@ -265,7 +265,7 @@ def test_authoring_step1_gate_documents_the_accept_act():
 
 
 def test_authoring_step2_feature_rfc_declares_supersedes():
-    body = _authoring_step("2. feature-rfc *(only if earned)*")
+    body = _authoring_step("2. feature-rfc *(legacy — not authored for new work)*")
     assert re.search(r"carry\s+`?supersedes`?", body, re.IGNORECASE), \
         "authoring.md step 2 does not instruct carrying supersedes from the template"
     assert re.search(r"one-line\s+body\s+justification|justification", body), \
@@ -277,7 +277,7 @@ def test_authoring_step2_feature_rfc_declares_supersedes():
 
 
 def test_authoring_step2_gate_documents_the_accept_act():
-    body = _authoring_step("2. feature-rfc *(only if earned)*")
+    body = _authoring_step("2. feature-rfc *(legacy — not authored for new work)*")
     assert re.search(r"accept\s+act", body, re.IGNORECASE), \
         "authoring.md step 2 gate paragraph does not name 'the accept act'"
     assert re.search(r"same\s+session", body), \

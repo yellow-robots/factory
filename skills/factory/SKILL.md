@@ -26,8 +26,8 @@ authoritatively at [`references/documentation-model.md`](references/documentatio
 
 ```
 UPPER (the design side — author + cross)            LOWER (the build side — automated)
-  product-spec → [feature-rfc →                     Status=Ready → n8n poll → dispatch
-    technical-rfc] → task            ──airlock──►      → dev-runner: implement → test → check
+  product-spec →                                     Status=Ready → n8n poll → dispatch
+    technical-rfc → task              ──airlock──►      → dev-runner: implement → test → check
   (Obsidian brain)            (GitHub Issues)           → review → PR   (cold claude -p per stage)
 ```
 
@@ -47,7 +47,7 @@ chained work (author → review → close) phase-by-phase — routing the chain 
 
 | Operation | When | Reference |
 |---|---|---|
-| **Authoring** | Writing a product-spec, feature-rfc, technical-rfc, or task | [`references/authoring.md`](references/authoring.md) |
+| **Authoring** | Writing a product-spec, technical-rfc, or task (feature-rfc: legacy, existing docs only) | [`references/authoring.md`](references/authoring.md) |
 | **Reviewing** | Reviewing a spec or RFC (adversarial steelman → ranked findings → human gate) | [`references/reviewing.md`](references/reviewing.md) |
 | **Gates** | Running check_links / check_task / check_cmd / review verdict | [`references/gates.md`](references/gates.md) |
 | **Pipeline** | Running or debugging the lower pipeline / dev-runner | [`references/pipeline.md`](references/pipeline.md) |
