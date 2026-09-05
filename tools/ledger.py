@@ -228,11 +228,10 @@ def _envelope_fallback_records(run_dir, models, taken_stage_names):
     second review round that failed after the first round already succeeded still lands as its own row,
     never overwriting or double-counting the first."""
     run_dir = pathlib.Path(run_dir)
-    candidates = list(_FIXED_LOG_STAGES)
 
     taken = set(taken_stage_names)
     records = []
-    for log_name, base_stage, model_key in candidates:
+    for log_name, base_stage, model_key in _FIXED_LOG_STAGES:
         log_path = run_dir / log_name
         if not log_path.is_file():
             continue

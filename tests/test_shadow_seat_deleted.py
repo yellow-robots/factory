@@ -4,9 +4,11 @@ only it fed.
 A repository-wide grep, scoped to the surfaces the acceptance criteria names (`tools/`, `records.toml`,
 `deploy/`, `tests/`, `skills/` — "the references" — and `AGENTS.md`), for the retired seat's own names:
 `YR_SHADOW_MODEL`, `YR_SHADOW_BASE_URL`, `shadow_review_round`, `verdict_diff`, `sweep-diffs`,
-`YR-SHADOW-REVIEW`, `YR-VERDICT-DIFF`, `shadow_model`, `SHADOW_ROUNDS`. None of these strings is a
-substring of any surviving identifier (`shadow_cost_usd` is the price total; `SHADOW_ORDER`,
-`shadow_complete`, `shadow_freshness`, `shadow_terminal_approval`, `shadow_rank_gate`, `shadow_ci`,
+`YR-SHADOW-REVIEW`, `YR-VERDICT-DIFF`, `shadow_model`, `SHADOW_ROUNDS`, plus `verdict-diff` (hyphenated
+— the deleted `yr-verdict-diff/1` records.toml row's own name, which neither `verdict_diff` nor
+`YR-VERDICT-DIFF` catches as a substring). None of these strings is a substring of any surviving
+identifier (`shadow_cost_usd` is the price total; `SHADOW_ORDER`, `shadow_complete`,
+`shadow_freshness`, `shadow_terminal_approval`, `shadow_rank_gate`, `shadow_ci`,
 `merge-shadow`/`merge_shadow`, and `YR-MERGE-SHADOW` are the merge gate's own shadow PHASE vocabulary —
 untouched by this slice) — so a literal-substring scan needs no special-case exclusion logic to avoid
 flagging them; they simply never contain a banned pattern.
@@ -19,12 +21,15 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 THIS_FILE = pathlib.Path(__file__).resolve()
 
-# The retired seat's own names — verbatim from the issue #468 acceptance criteria.
+# The retired seat's own names — verbatim from the issue #468 acceptance criteria, plus
+# "verdict-diff" (hyphenated): the deleted `yr-verdict-diff/1` records.toml row's own name, a
+# literal neither `verdict_diff` (underscore) nor `YR-VERDICT-DIFF` (all-caps marker) subsumes.
 RETIRED_NAMES = [
     "YR_SHADOW_MODEL",
     "YR_SHADOW_BASE_URL",
     "shadow_review_round",
     "verdict_diff",
+    "verdict-diff",
     "sweep-diffs",
     "YR-SHADOW-REVIEW",
     "YR-VERDICT-DIFF",

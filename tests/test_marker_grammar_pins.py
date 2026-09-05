@@ -8,7 +8,7 @@ Derived from the acceptance CRITERIA (the spec), never from the readers' interna
 named reader through its own entry point with crafted comment/body text and asserts only the observable
 grammar (matches / does not match). No test re-implements a `startswith`/`.strip()` matcher.
 
-The four readers and their documented anchoring rules (at origin/main 914b4a4):
+The three readers and their documented anchoring rules (at origin/main 914b4a4):
 
   * tools/epic_gate.py — COLUMN-0 raw-prefix rule (`line.startswith(PREFIX)`, never stripped): the
     approval reader `_approval_candidates` (YR-EPIC-APPROVAL), `_open_question_lines`

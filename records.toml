@@ -263,7 +263,7 @@ marker = "VERDICT:"
 mode = "verdict-line"
 emitted_by = ["machinery"]   # typed actor classes (rule S's column)
 emitter = "the review stage (the review's line-anchored verdict; run-dir review.md and the PR comment)"
-readers = ["tools/dev-runner.sh review gate (:321-326, :2129-2132 — the LAST verdict line must be exactly 'VERDICT: APPROVE')", "tools/review_bundle.py (:58, column-0 startswith)"]
+readers = ["tools/dev-runner.sh review gate (:340-344, :2136-2137 — the LAST verdict line must be exactly 'VERDICT: APPROVE')", "tools/review_bundle.py (:58, column-0 startswith)"]
 surfaces = ["run-dir", "pr-trail"]
 notes = "Only the gating review's own comment ever carries it line-anchored; a quoted transcript (e.g. bench replay's own candidate transcript) blockquotes it instead."
 
