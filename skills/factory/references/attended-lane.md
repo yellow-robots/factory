@@ -102,8 +102,9 @@ a round reaches a step needing her input, the surface she already watches — th
 Session close is checked: a session that executed a walled act or emitted a mandated record is
 refused a silent close while mandatory traces are missing (the refusal names each); a second
 consecutive close with traces unchanged proceeds loud and records the override. The close report and
-the round record's counts — refusals issued, records demanded, detector findings, escalations — are
-emitted where the round reads them; the human prices them against attended attention at close.
+the round record's counts — refusals issued, records demanded, detector findings, escalations,
+deployed — are emitted where the round reads them; the human prices them against attended attention
+at close.
 
 ## The lane protects itself, and its limits are named
 
