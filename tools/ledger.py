@@ -30,8 +30,7 @@ repairs, wall-clock, identity. Usage comes from two sources: every `usage-*.json
 run dir (`tools/stage_usage.py`'s own loader — dedup-suffixed rounds included, `usage-summary.json`
 excluded), plus, for a stage whose log still holds an UNEXTRACTED result envelope (an rc != 0 stage never
 reaches `capture_stage_usage`), a read-only `find_result_envelope` pass over that log — never a rewrite.
-Weights are `stage_usage.WEIGHTED_TOTAL_WEIGHTS`/`build_summary`, unchanged. A shadow-review-seat stage
-is recorded in the per-stage array but excluded from the run's weighted total. The append itself holds a
+Weights are `stage_usage.WEIGHTED_TOTAL_WEIGHTS`/`build_summary`, unchanged. The append itself holds a
 BLOCKING flock on the ledger file (a row can exceed PIPE_BUF, so the OS's own small-write atomicity isn't
 enough) so concurrent builds each land exactly one, uninterleaved row. Fail-soft throughout: every
 function here degrades to an empty/best-effort result rather than raising on a missing run dir or log —
@@ -42,11 +41,10 @@ the run.
 never a write path, never a gate. Each stage's `price` is `tools/registry.py`'s `price_for_id()` snapshot
 of that stage's `model` at append time (null when the id is unregistered or carries no price), stored
 beside the raw counts so a row re-weights as a read (re-run `per-model`/`report`) rather than a re-run of
-the build. `totals.shadow_cost_usd` sums `weighted_total × price` over the row's non-shadow, priced
-stages only, divided by 1_000_000 (the AGENTS.md rule verbatim: the census weights are exactly the Claude
-API price ratios, and price is $/Mtok — so the raw product is µ$, true dollars need the /1e6) — an
-unpriced or shadow-review-seat stage contributes nothing to the sum but never causes the row itself, or
-any other stage in it, to be skipped.
+the build. `totals.shadow_cost_usd` sums `weighted_total × price` over the row's priced stages only,
+divided by 1_000_000 (the AGENTS.md rule verbatim: the census weights are exactly the Claude API price
+ratios, and price is $/Mtok — so the raw product is µ$, true dollars need the /1e6) — an unpriced stage
+contributes nothing to the sum but never causes the row itself, or any other stage in it, to be skipped.
 
 True units, self-describing eras (issue #313): a row built by this module carries `totals.cost_unit:
 "usd"` — `shadow_cost_usd` is already true dollars. Disposition is READ-TIME, never a host rewrite of
@@ -228,15 +226,9 @@ def _envelope_fallback_records(run_dir, models, taken_stage_names):
     stage names already covered by a real usage-*.json file; a fresh record is assigned the next free
     dedup suffix (-2, -3, ...) the same way capture_stage_usage dedups its OWN output filename, so e.g. a
     second review round that failed after the first round already succeeded still lands as its own row,
-    never overwriting or double-counting the first. The shadow review seat's own logs (`shadow-review*.md`,
-    present only when the seat's env keys are set) are included the same way, tagged with the shadow
-    model — never omitted, and never allowed to skip the whole row even when that model carries no
-    registry entry (this function never consults the registry at all)."""
+    never overwriting or double-counting the first."""
     run_dir = pathlib.Path(run_dir)
     candidates = list(_FIXED_LOG_STAGES)
-    if models.get("shadow_model"):
-        for p in sorted(run_dir.glob("shadow-review*.md")):
-            candidates.append((p.name, p.stem, "shadow_model"))
 
     taken = set(taken_stage_names)
     records = []
@@ -277,7 +269,7 @@ def load_gate_durations(run_dir):
 
 
 def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
-                      build_model, review_model, check_repair_model, review_repair_model, shadow_model,
+                      build_model, review_model, check_repair_model, review_repair_model,
                       outcome_type, outcome_decision, ts_start, ts_end, wall_seconds):
     """The `yr-ledger-row/1` object for ONE runner invocation. Never raises on a missing/empty run_dir (a
     Needs-info bounce runs before the run dir is created; a hard-killed run may never have written a
@@ -290,8 +282,7 @@ def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
     taken = {r.get("stage") for r in usage_records}
 
     models = {"build_model": build_model, "review_model": review_model,
-              "check_repair_model": check_repair_model, "review_repair_model": review_repair_model,
-              "shadow_model": shadow_model}
+              "check_repair_model": check_repair_model, "review_repair_model": review_repair_model}
     stage_records = usage_records + _envelope_fallback_records(run_dir, models, taken)
     for r in stage_records:
         r["weighted_total"] = _stage_weighted_total(r)
@@ -303,17 +294,13 @@ def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
     for r in stage_records:
         r["price"] = registry.price_for_id(registry_data, r.get("model"))
 
-    # Shadow-review-seat stages are recorded above but excluded from the run's weighted total (issue #206
-    # acceptance criteria) — stage_usage.build_summary's own census weights, unchanged, over the rest.
-    non_shadow = [r for r in stage_records if not str(r.get("stage") or "").startswith("shadow-review")]
-    summary = stage_usage.build_summary(non_shadow)
+    summary = stage_usage.build_summary(stage_records)
 
     # Shadow cost (issue #207; true dollars per issue #313): weighted-total × the model's registry input
-    # price, summed over the non-shadow stages that carry a price, divided by 1_000_000 — price is
-    # $/Mtok (the AGENTS.md rule verbatim), so the raw product is µ$ and this is the /1e6 to true dollars.
-    # A stage with price: null (no registry match) simply contributes nothing to the sum, never excludes
-    # the row.
-    shadow_cost_usd = sum(r["weighted_total"] * r["price"] for r in non_shadow
+    # price, summed over the stages that carry a price, divided by 1_000_000 — price is $/Mtok (the
+    # AGENTS.md rule verbatim), so the raw product is µ$ and this is the /1e6 to true dollars. A stage
+    # with price: null (no registry match) simply contributes nothing to the sum, never excludes the row.
+    shadow_cost_usd = sum(r["weighted_total"] * r["price"] for r in stage_records
                            if r.get("price") is not None) / 1_000_000
 
     repairs = {
@@ -402,10 +389,11 @@ def filter_rows(rows, *, repo=None, since=None, until=None):
 
 
 def _stages_shadow_cost_usd(stages):
-    """True-dollar shadow cost over a `stages` list — weighted_total × price, non-shadow-review-seat and
-    priced stages only, /1_000_000 (price is $/Mtok). The same formula `build_ledger_row` uses to fill
-    `totals.shadow_cost_usd` on a new row — used here to RE-DERIVE it, read-time, for a µ$-era row (issue
-    #313) that carries no `cost_unit` and whose own stored `shadow_cost_usd` predates the /1e6 fix."""
+    """True-dollar shadow cost over a `stages` list — weighted_total × price over priced stages,
+    /1_000_000 (price is $/Mtok), excluding any retired shadow-review-seat stage entry an OLD row may
+    still carry (a new row built by `build_ledger_row` never has one). Used here to RE-DERIVE the
+    figure, read-time, for a µ$-era row (issue #313) that carries no `cost_unit` and whose own stored
+    `shadow_cost_usd` predates the /1e6 fix."""
     return sum((s.get("weighted_total") or 0) * s["price"] for s in stages
                if s.get("price") is not None
                and not str(s.get("stage") or "").startswith("shadow-review")) / 1_000_000
@@ -540,7 +528,7 @@ def _cli_append(args):
         run_id=args.run_id, task=args.task, repo=args.repo, branch=args.branch, base_sha=args.base_sha,
         run_dir=args.run_dir, build_model=args.build_model, review_model=args.review_model,
         check_repair_model=args.check_repair_model, review_repair_model=args.review_repair_model,
-        shadow_model=args.shadow_model, outcome_type=args.outcome_type,
+        outcome_type=args.outcome_type,
         outcome_decision=args.outcome_decision, ts_start=args.ts_start, ts_end=args.ts_end,
         wall_seconds=args.wall_seconds,
     )
@@ -637,7 +625,6 @@ def main(argv=None):
     p_app.add_argument("--review-model", default="")
     p_app.add_argument("--check-repair-model", default="")
     p_app.add_argument("--review-repair-model", default="")
-    p_app.add_argument("--shadow-model", default="", help="the shadow-review-seat model id, or empty when the seat is dark")
     p_app.add_argument("--outcome-type", required=True,
                         help="needs-info | blocked | env-hold | merged | shadow-would-merge | shadow-would-block | in-review")
     p_app.add_argument("--outcome-decision", default="")

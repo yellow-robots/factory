@@ -1,4 +1,4 @@
-"""Characterization pins for the four kept `YR-*` record-marker readers (issue #381).
+"""Characterization pins for the three kept `YR-*` record-marker readers (issue #381).
 
 This is the *pin* half of a pin-then-prune pair (tech-debt round 2). Its whole job is to lock, at the
 reader level, exactly the anchoring behaviour that MUST survive the next slice's consolidation of these
@@ -20,8 +20,6 @@ The four readers and their documented anchoring rules (at origin/main 914b4a4):
   * tools/nit_harvest.py — COLUMN-0 raw-prefix rule: `parse_nit` (YR-NIT:).
   * tools/merge_shadow.py — genuine merge-record recognition: `_last_merge_record` (armed / shadow
     marker line + fenced `yr-merge-record` block).
-  * tools/bench_report.py — genuine verdict-diff recognition: `parse_verdict_diff_comment` (the shape
-    tools/verdict_diff.py's `render_comment` emits).
 
 The observable difference the two epic_gate rules encode, and which these pins lock: a column-0 rule
 rejects an INDENTED marker line, whereas a whole-stripped-line rule ACCEPTS an indented marker line.
@@ -35,14 +33,12 @@ failure and block the round):
   * tools/merge_shadow.py's bare two-substring tolerance (`"YR-MERGE" in body or "yr-merge-record" in
     body`): NO test below asserts that a comment merely CONTAINING the text `YR-MERGE`, or merely
     containing `yr-merge-record` outside a fence, or carrying either BLOCKQUOTED, is treated as the PR's
-    merge record. The blockquoted shape is exactly what the shadow-review seat produces; the next slice
-    tightens this reader to the marker-line-plus-fence grammar, so today's tolerant behaviour is left
-    uncharacterized in either direction.
-  * tools/bench_report.py's whole-BODY prefix (`body.startswith("YR-VERDICT-DIFF:")`): NO test below
-    asserts that the marker must be the body's very first bytes rather than a column-0 line. That is the
-    tree's one undocumented anchoring rule, being replaced by the documented column-0 one.
+    merge record. A quoted review transcript (e.g. a bench replay's own candidate transcript) is exactly
+    the shape that could produce such a blockquote; the next slice tightens this reader to the
+    marker-line-plus-fence grammar, so today's tolerant behaviour is left uncharacterized in either
+    direction.
 
-Pins added by this file: 37 (distinct grammar cases, across 14 test functions — the parametrized cases
+Pins added by this file: 35 (distinct grammar cases, across 12 test functions — the parametrized cases
 plus the standalone reader tests below). Accretive only — no existing test is modified or removed, and
 no production file is touched.
 """
@@ -56,8 +52,6 @@ sys.path.insert(0, str(ROOT / "tools"))
 import epic_gate       # noqa: E402
 import nit_harvest     # noqa: E402
 import merge_shadow    # noqa: E402
-import bench_report    # noqa: E402
-import verdict_diff    # noqa: E402
 
 
 # ============================================================================
@@ -200,7 +194,7 @@ def test_debt_hold_prose_mention_does_not_count_as_already_held():
 # tools/nit_harvest.py — the COLUMN-0 raw-prefix rule for YR-NIT:.
 #
 # A YR-NIT: line at column 0 is a record; the same line indented or `> `-quoted is not (the
-# shadow-transcript guard).
+# bench-transcript guard).
 # ============================================================================
 
 _NIT_PAYLOAD = " tag=nit path=tools/x.py line=42 — a duplicated helper"
@@ -249,37 +243,3 @@ def test_trail_with_no_merge_record_comment_is_not_seen():
     assert seen is False and rec is None
     # an empty trail is likewise not part of the window
     assert merge_shadow._last_merge_record([]) == (None, False, False)
-
-
-# ============================================================================
-# tools/bench_report.py — a genuine verdict-diff comment is still recognized.
-#
-# A comment in the shape tools/verdict_diff.py's `render_comment` emits — the marker on line 1 at column
-# 0, then the field lines — parses into a yr-verdict-diff/1 record via `parse_verdict_diff_comment`.
-# ============================================================================
-
-def test_verdict_diff_render_comment_shape_parses_into_a_record():
-    body = verdict_diff.render_comment(
-        {"schema": "yr-verdict-diff/1", "round": 4, "gating": "APPROVE", "shadow": "APPROVE",
-         "agree": True})
-    assert body.splitlines()[0].startswith("YR-VERDICT-DIFF:")  # marker on line 1 at column 0
-    record = bench_report.parse_verdict_diff_comment(42, body)
-    assert record is not None
-    assert record["pr"] == 42
-    assert record["round"] == 4
-    assert record["gating"] == "APPROVE"
-    assert record["shadow"] == "APPROVE"
-    assert record["agree"] is True
-
-
-def test_verdict_diff_disagreement_shape_with_blockquoted_transcripts_parses():
-    """A disagreement comment appends `> `-blockquoted transcript excerpts after the field lines; the
-    marker still leads line 1 and the fields still parse into a record."""
-    body = verdict_diff.render_comment(
-        {"schema": "yr-verdict-diff/1", "round": 2, "gating": "APPROVE", "shadow": "REJECT",
-         "agree": False, "gating_transcript": "VERDICT: APPROVE\n",
-         "shadow_transcript": "VERDICT: REJECT\n"})
-    record = bench_report.parse_verdict_diff_comment(7, body)
-    assert record is not None
-    assert record["pr"] == 7 and record["gating"] == "APPROVE" and record["shadow"] == "REJECT"
-    assert record["agree"] is False

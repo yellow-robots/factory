@@ -136,8 +136,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/bench_corpus.py` | derives the replayable bench corpus from a repo's merged task PRs |
 | `tools/bench_replay.py` | sealed-checkout replay harness + deterministic grading, plus the live candidate replay driver |
-| `tools/bench_report.py` | bench evidence report + verdict-diff aggregate, with merge-outcome backfill |
-| `tools/verdict_diff.py` | the per-round gating-vs-shadow verdict diff record |
+| `tools/bench_report.py` | bench evidence report |
 | `tools/rank.py` | the Bases rank reader over the ideas folder: `rank list` / `rank top --n N`, reproducing `ideas-backlog.base`'s `formulas.rank` verbatim in meaning over `status == "open"` seeds read through `textutil.split_frontmatter`, descending; a seed missing `value` or `effort` has no rank and is listed as such; an `out_of_subset` finding is listed, never dropped (it-36 slice B) |
 | `tools/strategy.py` | the strategy doc's fenced block reader: parses a `note`'s fenced `yr-strategy` TOML block into themes, constraints, kpi_targets, loop_budget_usd_per_week and factory_cap, via `tomllib`; a missing or malformed block is a loud finding (it-36 slice B) |
 | `tests/` | the pytest suite |
@@ -235,15 +234,10 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   arm a repo, or hand-merge a PR (an armed repo merges via the evaluator; everything else is the
   human's click). Grants are per-agent and the human's to extend.
 - **Auth is human work** — orgs/repos/tokens/scopes, never an agent.
-- **Bench evidence and the shadow review seat** (epic yellow-robots/factory#161; depth:
-  [`skills/factory/references/pipeline.md`](skills/factory/references/pipeline.md) → "The shadow review
-  seat" / "The bench"). Three record schemas: `yr-bench-corpus/1` (`tools/bench_corpus.py`),
-  `yr-bench-result/1` (`tools/bench_replay.py`), and `yr-verdict-diff/1` (`tools/verdict_diff.py`,
-  pairing a gating review round with its own shadow round). The shadow review seat is dark by default
-  behind two env keys, `YR_SHADOW_MODEL` / `YR_SHADOW_BASE_URL` (`tools/dev-runner.sh:46-51`) — both or
-  neither, never gating. No shadow- or bench-derived PR trail comment ever carries a line-anchored
-  `VERDICT:` itself (only the gating review's own comment does): a shadow or verdict-diff comment always
-  blockquotes its transcript, so it can never be mistaken for the gating grammar.
+- **Bench evidence** (epic yellow-robots/factory#161; depth:
+  [`skills/factory/references/pipeline.md`](skills/factory/references/pipeline.md) → "The bench"). Two
+  record schemas: `yr-bench-corpus/1` (`tools/bench_corpus.py`) and `yr-bench-result/1`
+  (`tools/bench_replay.py`).
 
 ---
 

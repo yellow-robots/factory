@@ -336,7 +336,7 @@ def test_behavioral_stdin_assert_unflagged(tmp_path):
 
 def test_recorder_deriving_shared_fake_via_replace_unflagged(tmp_path):
     """A recorder that imports the shared claude fake and derives a variant via `.replace()` — the
-    house convention tests/test_shadow_review.py itself uses — is never flagged as a clone: it
+    house convention tests/test_bg_scan_dev_runner.py itself uses — is never flagged as a clone: it
     obtains the fake from its shared home rather than retyping a private copy of it."""
     repo, base = _init_repo(tmp_path)
     _write(repo, "tests/test_shadow_variant.py", GOOD_RECORDER_DERIVES_SHARED_FAKE)

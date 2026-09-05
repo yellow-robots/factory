@@ -1,5 +1,5 @@
-"""Acceptance tests for tools/bench_report.py — the bench report generator + verdict-diff
-aggregation with merge-outcome backfill (issue #167, slice F of epic yellow-robots/factory#161).
+"""Acceptance tests for tools/bench_report.py — the bench report generator (issue #167, slice F of
+epic yellow-robots/factory#161).
 
 Derived from the acceptance CRITERIA (the spec), never from bench_report.py's own internals:
 
@@ -7,15 +7,7 @@ Derived from the acceptance CRITERIA (the spec), never from bench_report.py's ow
     pass rates and weighted costs (raw counts preserved, never collapsed away), N stated, per-repo
     composition, the grading caveat, and the run's own total weighted-token cost. The weighted-cost
     arithmetic must reproduce tools/stage_usage.py's own imported WEIGHTED_TOTAL_WEIGHTS.
-  * `sweep-diffs` sweeps verdict-diff records into bench/diffs/<owner>--<name>.jsonl, backfilling
-    each PR's merge outcome at aggregation time (`pending` for a still-open PR); re-aggregation is
-    idempotent, keyed on repo+PR+round, updated in place rather than duplicated.
-  * Both writes are attended host-tool writes — no runner coupling.
-
-Stubbed-`gh` style (mirrors test_bench_corpus.py): a fake `gh(argv)` callable is injected into
-`sweep_diffs`, serving canned `api .../issues/comments` / `pr view` responses. No live `gh`, no
-network. Verdict-diff comment fixtures are produced via tools/verdict_diff.py's own `render_comment`
-(the real upstream producer's contract), never hand-authored to match bench_report.py's parser.
+  * This write is an attended host-tool write — no runner coupling.
 """
 import json
 import pathlib
@@ -28,7 +20,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import bench_report  # noqa: E402
 import stage_usage  # noqa: E402
-import verdict_diff  # noqa: E402
 
 REPO = "yellow-robots/widget"
 OWNER, NAME = "yellow-robots", "widget"
@@ -282,209 +273,7 @@ def test_cli_report_writes_and_prints_the_path(tmp_path, capsys):
 
 
 # ============================================================================
-# sweep-diffs: YR-VERDICT-DIFF PR comments -> bench/diffs/<owner>--<name>.jsonl, merge backfilled
-# ============================================================================
-
-def _diff_record(*, round=1, gating="APPROVE", shadow="APPROVE", agree=True,
-                  gating_transcript="VERDICT: APPROVE\n", shadow_transcript="VERDICT: APPROVE\n"):
-    record = {
-        "schema": "yr-verdict-diff/1", "round": round, "gating": gating, "shadow": shadow, "agree": agree,
-    }
-    if not agree:
-        record["gating_transcript"] = gating_transcript
-        record["shadow_transcript"] = shadow_transcript
-    return record
-
-
-def _comment(pr_number, body):
-    return {"issue_url": f"https://api.github.com/repos/{OWNER}/{NAME}/issues/{pr_number}", "body": body}
-
-
-def _make_gh(comments, pr_view):
-    """Routes `gh(argv)` the way bench_report.py's sweep_diffs actually calls it: the paginated
-    issue-comments listing, and a per-PR `pr view --json state,mergedAt` read."""
-    def gh(argv):
-        if argv[0] == "api":
-            assert argv[1] == f"repos/{OWNER}/{NAME}/issues/comments"
-            assert "--paginate" in argv
-            return comments
-        if argv[0] == "pr" and argv[1] == "view":
-            pr_number = int(argv[2])
-            assert f"{OWNER}/{NAME}" in argv
-            if pr_number not in pr_view:
-                raise AssertionError(f"no fixture pr view for #{pr_number}")
-            return pr_view[pr_number]
-        raise AssertionError(f"unhandled gh argv: {argv}")
-    return gh
-
-
-def _rows(path):
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-
-
-def test_sweep_diffs_backfills_pending_for_a_still_open_pr(tmp_path):
-    body = verdict_diff.render_comment(_diff_record(round=1))
-    gh = _make_gh([_comment(42, body)], {42: {"state": "OPEN", "mergedAt": None}})
-
-    out_path = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    assert len(rows) == 1
-    assert rows[0]["pr"] == 42
-    assert rows[0]["round"] == 1
-    assert rows[0]["outcome"] == "pending"
-    assert rows[0]["repo"] == REPO
-    assert rows[0]["gating"] == "APPROVE"
-    assert rows[0]["shadow"] == "APPROVE"
-    assert rows[0]["agree"] is True
-
-
-def test_sweep_diffs_backfills_merged_for_a_merged_pr(tmp_path):
-    body = verdict_diff.render_comment(_diff_record(round=1))
-    gh = _make_gh([_comment(7, body)],
-                  {7: {"state": "MERGED", "mergedAt": "2026-07-14T00:00:00Z"}})
-
-    out_path = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    assert len(rows) == 1
-    assert rows[0]["outcome"] == "merged"
-
-
-def test_sweep_diffs_backfills_closed_for_a_closed_unmerged_pr(tmp_path):
-    body = verdict_diff.render_comment(_diff_record(round=1))
-    gh = _make_gh([_comment(9, body)], {9: {"state": "CLOSED", "mergedAt": None}})
-
-    out_path = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    assert len(rows) == 1
-    assert rows[0]["outcome"] == "closed"
-
-
-def test_sweep_diffs_ignores_comments_that_are_not_verdict_diff_shaped(tmp_path):
-    verdict_body = verdict_diff.render_comment(_diff_record(round=1))
-    gh = _make_gh(
-        [_comment(42, "just some unrelated chatter on this PR"), _comment(42, verdict_body)],
-        {42: {"state": "OPEN", "mergedAt": None}},
-    )
-
-    out_path = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    assert len(rows) == 1
-    assert rows[0]["round"] == 1
-
-
-def test_sweep_diffs_writes_to_owner_dash_dash_name_path(tmp_path):
-    body = verdict_diff.render_comment(_diff_record(round=1))
-    gh = _make_gh([_comment(1, body)], {1: {"state": "OPEN", "mergedAt": None}})
-
-    out_path = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-
-    assert out_path == tmp_path / f"{OWNER}--{NAME}.jsonl"
-
-
-def test_sweep_diffs_rerun_with_unchanged_inputs_is_byte_identical(tmp_path):
-    body = verdict_diff.render_comment(_diff_record(round=1))
-    gh = _make_gh([_comment(42, body)], {42: {"state": "OPEN", "mergedAt": None}})
-
-    path1 = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-    text1 = path1.read_text()
-    path2 = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-    text2 = path2.read_text()
-
-    assert text1 == text2
-
-
-def test_sweep_diffs_updates_existing_record_in_place_when_a_pr_merges(tmp_path):
-    """Idempotent, keyed on repo+PR+round: a re-aggregation after the PR transitions from open to
-    merged updates the SAME record rather than appending a duplicate."""
-    body = verdict_diff.render_comment(_diff_record(round=1))
-    gh_open = _make_gh([_comment(42, body)], {42: {"state": "OPEN", "mergedAt": None}})
-    bench_report.sweep_diffs(REPO, gh=gh_open, out_dir=tmp_path)
-
-    gh_merged = _make_gh([_comment(42, body)],
-                          {42: {"state": "MERGED", "mergedAt": "2026-07-14T00:00:00Z"}})
-    out_path = bench_report.sweep_diffs(REPO, gh=gh_merged, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    assert len(rows) == 1  # updated in place, not duplicated
-    assert rows[0]["pr"] == 42
-    assert rows[0]["round"] == 1
-    assert rows[0]["outcome"] == "merged"
-
-
-def test_sweep_diffs_keys_distinct_rounds_of_the_same_pr_separately(tmp_path):
-    body_r1 = verdict_diff.render_comment(_diff_record(round=1))
-    body_r2 = verdict_diff.render_comment(_diff_record(round=2, gating="REJECT", shadow="REJECT"))
-    gh = _make_gh([_comment(42, body_r1), _comment(42, body_r2)],
-                  {42: {"state": "OPEN", "mergedAt": None}})
-
-    out_path = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    assert len(rows) == 2
-    by_round = {r["round"]: r for r in rows}
-    assert by_round[1]["pr"] == 42 and by_round[2]["pr"] == 42
-    assert by_round[1]["outcome"] == "pending" and by_round[2]["outcome"] == "pending"
-
-
-def test_sweep_diffs_preserves_prior_records_not_touched_by_the_current_sweep(tmp_path):
-    """A record already on disk for a PR/round the current gh listing doesn't happen to return again
-    is kept, not dropped — the aggregate only ever updates matching keys in place."""
-    body_pr42 = verdict_diff.render_comment(_diff_record(round=1))
-    gh1 = _make_gh([_comment(42, body_pr42)], {42: {"state": "OPEN", "mergedAt": None}})
-    bench_report.sweep_diffs(REPO, gh=gh1, out_dir=tmp_path)
-
-    body_pr43 = verdict_diff.render_comment(_diff_record(round=1))
-    gh2 = _make_gh([_comment(43, body_pr43)], {43: {"state": "CLOSED", "mergedAt": None}})
-    out_path = bench_report.sweep_diffs(REPO, gh=gh2, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    prs = {r["pr"] for r in rows}
-    assert prs == {42, 43}
-    by_pr = {r["pr"]: r for r in rows}
-    assert by_pr[42]["outcome"] == "pending"
-    assert by_pr[43]["outcome"] == "closed"
-
-
-def test_sweep_diffs_carries_a_disagreement_records_transcripts_through(tmp_path):
-    body = verdict_diff.render_comment(_diff_record(
-        round=1, gating="APPROVE", shadow="REJECT", agree=False,
-        gating_transcript="VERDICT: APPROVE\n", shadow_transcript="VERDICT: REJECT\n",
-    ))
-    gh = _make_gh([_comment(42, body)], {42: {"state": "OPEN", "mergedAt": None}})
-
-    out_path = bench_report.sweep_diffs(REPO, gh=gh, out_dir=tmp_path)
-
-    rows = _rows(out_path)
-    assert len(rows) == 1
-    assert rows[0]["agree"] is False
-    assert rows[0]["gating"] == "APPROVE"
-    assert rows[0]["shadow"] == "REJECT"
-
-
-def test_cli_sweep_diffs_requires_repo_argument():
-    with pytest.raises(SystemExit):
-        bench_report.main(["sweep-diffs"])
-
-
-def test_cli_sweep_diffs_prints_the_written_path(tmp_path, monkeypatch, capsys):
-    body = verdict_diff.render_comment(_diff_record(round=1))
-    gh = _make_gh([_comment(42, body)], {42: {"state": "OPEN", "mergedAt": None}})
-    monkeypatch.setattr(bench_report, "_default_gh", gh)
-
-    rc = bench_report.main(["sweep-diffs", "--repo", REPO, "--out-dir", str(tmp_path)])
-
-    assert rc == 0
-    printed = pathlib.Path(capsys.readouterr().out.strip())
-    assert printed == tmp_path / f"{OWNER}--{NAME}.jsonl"
-    assert printed.exists()
-
-
-# ============================================================================
-# Both writes are attended host-tool writes -- no runner coupling
+# This write is an attended host-tool write -- no runner coupling
 # ============================================================================
 
 def test_dev_runner_never_shells_out_to_bench_report():

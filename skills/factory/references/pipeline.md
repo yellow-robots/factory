@@ -331,37 +331,13 @@ opinion rather than evidence, and the round's detection-locus meter is what woul
 **The record.** Each finding is emitted as a line beginning `YR-NIT:` at column 0 in addition to its
 prose, for findings of **either** tag — a blocking duplication finding must be as visible to the harvest
 as a non-blocking one. The grammar has a single home, `tools/nit_harvest.py`; the charter cites it
-rather than restating the anchoring rule. Column-0 anchoring is load-bearing rather than stylistic: the
-shadow seat runs the same prompt and blockquotes its transcript, so anchoring at column 0 is exactly
-what keeps shadow nits out of the harvest.
+rather than restating the anchoring rule. Column-0 anchoring is load-bearing rather than stylistic: a
+quoted review transcript (e.g. a bench replay's own candidate transcript, reproduced verbatim wherever
+it is read back) blockquotes its whole body, so anchoring at column 0 is exactly what keeps a quoted
+transcript's nits out of the harvest.
 
 **Calibration is empirical, not specified.** The mandate ships in one wording, a round runs under it,
 and the answer is read off the corpus rather than argued in advance.
-
-## The shadow review seat
-
-A second, non-gating verdict on the same review bundle every gating round produces (issue #165) — not
-to be confused with *shadow merge choreography* above, which is about the merge evaluator's WOULD-MERGE
-record for a non-armed repo. Dark by default: both `YR_SHADOW_MODEL` and `YR_SHADOW_BASE_URL`
-(`tools/dev-runner.sh:46-51`) must be set, or the feature is a pure no-op — no shadow subprocess, no
-shadow artifact, no shadow comment, byte-identical to a build without it. When lit, a shadow round runs
-the same review prompt against the same review bundle as the gating round, on its own model/base-URL
-pair (`shadow_review_round()`, `tools/dev-runner.sh:927`), and is never wired into the review gate,
-`terminal_approval`, or the merge evaluator — a shadow stage failure is logged and the build proceeds
-unchanged.
-
-Every shadow artifact is inert by construction — a record that can never be mistaken for the gating
-grammar:
-
-- `YR-SHADOW-REVIEW: <token>` (`shadow_verdict_token()` / the posting loop, `tools/dev-runner.sh:1079`)
-  states the shadow round's own verdict, but blockquotes the transcript beneath it so no line can match
-  the line-anchored gating grammar `^VERDICT:` (`verdict_line()`, same file).
-- `YR-VERDICT-DIFF: agree|disagree` (`tools/verdict_diff.py`'s `render_comment` / `build_records`) pairs
-  a gating round with its own same-index shadow round into one `yr-verdict-diff/1` record
-  (`{schema, round, gating, shadow, agree}`) — a round with no shadow record gets no diff, never a
-  synthesized disagreement.
-
-Both grammars are defined in the modules cited above — read them there, not restated here.
 
 ## The ledger
 
@@ -372,7 +348,7 @@ branch the run reaches (Needs-info bounce, `Blocked`, env-hold, or the success t
 census-weighted usage per stage (`tools/stage_usage.py`'s weights, unchanged), a per-stage `price`
 snapshot (`tools/registry.py`'s `input_price_per_mtok` for that stage's model, null when unregistered —
 never skips the row), `totals.shadow_cost_usd` — (weighted-total × price) / 1,000,000, summed over the
-row's non-shadow, priced stages — true dollars (issue #313; the un-divided product is µ$), outcome,
+row's priced stages — true dollars (issue #313; the un-divided product is µ$), outcome,
 repairs, a top-level `gates` list (`gate-durations.json`, below), wall-clock, and identity. The ledger
 **informs, never gates**: nothing here touches the review gate, the rank gate, or the merge evaluator.
 
@@ -380,9 +356,10 @@ repairs, a top-level `gates` list (`gate-durations.json`, below), wall-clock, an
 "usd"`. Disposition is READ-TIME, never a host rewrite of `rows.jsonl` (pure JSONL, no header — an
 in-file note would be invisible to `read_rows`'s own non-JSON-line skip): every reader treats an ABSENT
 `cost_unit` as the pre-#313 µ$ era and re-derives the true-dollar figure from that row's own `stages`
-(`weighted_total` × `price`, same non-shadow/priced filter, /1,000,000) rather than trusting the row's
-stored (wrong-unit) `shadow_cost_usd` — so a mixed-era `rows.jsonl` aggregates correctly forever, no
-migration, no file rewrite anywhere.
+(`weighted_total` × `price`, over its priced stages, excluding any retired shadow-review-seat stage
+entry an old row may still carry, /1,000,000) rather than trusting the row's stored (wrong-unit)
+`shadow_cost_usd` — so a mixed-era `rows.jsonl` aggregates correctly forever, no migration, no file
+rewrite anywhere.
 
 **Gate durations** (issue #313): `tools/dev-runner.sh` writes a run-dir artifact `gate-durations.json` —
 one entry per `run_checks`/`run_lint`/`run_lens` invocation (`site`, `elapsed_seconds`, `disposition`),
@@ -423,9 +400,7 @@ Pipeline: **corpus → sealed replay → deterministic grading → report.**
   `fail`; a check harness that couldn't even execute is `ungraded-environmental`, never a graded fail.
   `run_candidate()` appends one `yr-bench-result/1` row per run to `bench/results/`.
 - **Report** (`tools/bench_report.py`): `report` aggregates `yr-bench-result/1` rows into a dated
-  `bench/reports/*.md` (pass rate, weighted cost, N, per-repo composition, the grading caveat below);
-  `sweep-diffs` aggregates posted `YR-VERDICT-DIFF` comments into `bench/diffs/`, backfilling each PR's
-  merge outcome.
+  `bench/reports/*.md` (pass rate, weighted cost, N, per-repo composition, the grading caveat below).
 
 **The grading caveat** — quoted verbatim by `tools/bench_report.py`'s `load_grading_caveat()` from
 `bench/corpus/README.md`'s own `## Grading caveat` section, never re-worded in the report or here: a

@@ -46,8 +46,8 @@ is not part of that guard's pin set.
 This classifier is the single legal stage-recognition path. A suite that needs stage-aware behavior
 consumes `CLAUDE_STUB` as-is, or derives a variant from its exact text (locating the arm to change by
 its pattern, never by re-typing the classification patterns themselves) — see
-`tests/test_shadow_review.py` for the derivation pattern used to add shadow-review awareness on top of
-the same classifier.
+`tests/test_bg_scan_dev_runner.py` for the derivation pattern used to splice a variant onto the same
+classifier.
 
 ## Flag families
 
@@ -212,7 +212,8 @@ Every call is logged as a JSON argv array to `$STUB_CALLS_LOG` (if set) before d
 ## Scope note
 
 Slice 1 of the 19-harness-seam epic (issue #243) relocated the classifier and this contract doc, and
-retired the two hand-typed classifier re-implementations in `tests/test_shadow_review.py`. Slice 2
+retired the two hand-typed classifier re-implementations that then lived in the shadow-review-seat
+test module (since removed). Slice 2
 (issue #244) finished the job: `CLAUDE_STUB_JSON` moved here alongside `CLAUDE_STUB`, and every other
 private stub that used to live beside it in `tests/test_dev_runner.py` (`REAP_CLAUDE_STUB`,
 `SIGNAL_CLAUDE_STUB`, `LINT_CLAUDE_STUB`) is gone — their behavior is now either a mode of `CLAUDE_STUB`

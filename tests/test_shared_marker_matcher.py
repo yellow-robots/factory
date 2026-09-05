@@ -23,8 +23,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import textutil        # noqa: E402
 import merge_shadow    # noqa: E402
-import bench_report    # noqa: E402
-import verdict_diff    # noqa: E402
 
 MERGE_TOOL = ROOT / "tools" / "merge_shadow.py"
 
@@ -85,48 +83,6 @@ def test_mode_is_mandatory_and_named_the_helper_never_guesses():
 def test_unknown_mode_is_a_raised_error_not_a_guess():
     with pytest.raises(ValueError):
         textutil.marker_line_matches("YR-NIT:", "YR-NIT:", mode="whole-body")
-
-
-# ============================================================================
-# Criterion — tools/bench_report.py's verdict-diff reader migrates from a whole-BODY prefix onto the
-# helper's column-0 prefix mode. Every comment the composer emits still parses.
-# ============================================================================
-
-def _verdict_diff_comment(*, agree=True, round=4, gating="APPROVE", shadow="APPROVE", **kw):
-    rec = {"schema": "yr-verdict-diff/1", "round": round, "gating": gating, "shadow": shadow,
-           "agree": agree}
-    if not agree:
-        rec.setdefault("gating_transcript", "VERDICT: APPROVE\n")
-        rec.setdefault("shadow_transcript", "VERDICT: REJECT\n")
-    rec.update(kw)
-    return verdict_diff.render_comment(rec)
-
-
-def test_verdict_diff_composer_output_still_parses():
-    """The composer is the fixed point: the agreement AND disagreement shapes both still parse."""
-    agree = bench_report.parse_verdict_diff_comment(11, _verdict_diff_comment(agree=True))
-    assert agree is not None and agree["pr"] == 11 and agree["agree"] is True
-    disagree = bench_report.parse_verdict_diff_comment(
-        12, _verdict_diff_comment(agree=False, gating="APPROVE", shadow="REJECT"))
-    assert disagree is not None and disagree["agree"] is False and disagree["shadow"] == "REJECT"
-
-
-def test_verdict_diff_marker_on_a_column0_line_not_the_body_start_now_parses():
-    """The migration's observable gain over the old whole-BODY `body.startswith` rule: a comment whose
-    marker leads a column-0 LINE (here after a preamble line) is now recognized, where the old
-    whole-body-prefix rule required the marker to be the body's very first bytes."""
-    body = "Automated verdict-diff for this round:\n\n" + _verdict_diff_comment(round=5)
-    assert not body.startswith(bench_report.DIFF_MARKER)   # not the body's first bytes
-    record = bench_report.parse_verdict_diff_comment(13, body)
-    assert record is not None and record["round"] == 5
-
-
-@pytest.mark.parametrize("prefixed", ["    ", "\t", "> "], ids=["indent-spaces", "indent-tab", "blockquote"])
-def test_verdict_diff_indented_or_blockquoted_marker_does_not_parse(prefixed):
-    """Column-0 prefix mode has no whitespace tolerance: an indented or `> `-blockquoted marker line is
-    not a verdict-diff record."""
-    body = "\n".join(prefixed + l for l in _verdict_diff_comment().splitlines()) + "\n"
-    assert bench_report.parse_verdict_diff_comment(14, body) is None
 
 
 # ============================================================================
@@ -217,8 +173,9 @@ def test_arm_shadow_marker_prefix_does_not_make_it_an_armed_record():
 
 # -- Arm 4: a blockquoted merge record ----------------------------------------------------------------
 def test_arm_blockquoted_record_is_neither_this_prs_record_nor_malformed():
-    """A `> `-blockquoted record (the shape the shadow/bench seat produces) is NOT read as this PR's own
-    record — and, crucially, is NOT reported as malformed. It simply leaves the PR out of the window."""
+    """A `> `-blockquoted record (the shape a quoted/reproduced comment produces) is NOT read as this
+    PR's own record — and, crucially, is NOT reported as malformed. It simply leaves the PR out of the
+    window."""
     genuine = merge_shadow.render_comment(_record_dict(mode="armed", decision="MERGED", run_id="quoted"))
     quoted = {"body": "\n".join("> " + l for l in genuine.splitlines())}
     rec, malformed, seen = _seen([quoted])
@@ -375,7 +332,7 @@ def test_wall11_guard_actually_bites_on_synthetic_offenders():
     """The guard is not vacuous: it flags each drift shape the slice removed, whether written with a
     literal or with a module-local marker constant."""
     offending = [
-        'if body.startswith("YR-VERDICT-DIFF:"):',       # bench_report's old whole-body prefix
+        'if body.startswith("YR-EXAMPLE:"):',            # a column-0 whole-body-prefix hand-roll
         'if "YR-MERGE" in body or "yr-merge-record" in body:',   # merge_shadow's old bare substring
         'if line.strip() == "YR-DEBT-LEDGER":',          # a stripped-equality sentinel via literal
         'NIT_PREFIX = "YR-NIT:"\nif line.startswith(NIT_PREFIX):',   # via a marker constant
@@ -402,7 +359,7 @@ def test_wall11_guard_does_not_flag_helper_routed_calls_or_unrelated_code():
 def test_wall11_guard_confirms_the_migrated_readers_route_through_the_helper():
     """A positive read of the same fact: every migrated reader module references the shared helper, so
     the ban above is protecting a real routing, not an empty set."""
-    for name in ("epic_gate.py", "nit_harvest.py", "merge_shadow.py", "bench_report.py"):
+    for name in ("epic_gate.py", "nit_harvest.py", "merge_shadow.py"):
         src = (ROOT / "tools" / name).read_text(encoding="utf-8")
         assert "marker_line_matches" in src, (
             f"tools/{name} no longer routes marker matching through textutil.marker_line_matches"

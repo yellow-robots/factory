@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
-"""bench_report — the bench evidence report + verdict-diff aggregate with merge-outcome backfill
-(issue #167, slice F of epic yellow-robots/factory#161).
+"""bench_report — the bench evidence report (issue #167, slice F of epic yellow-robots/factory#161).
 
-Two independent, attended host-tool writes — no runner coupling, no build-time write to the factory
+An independent, attended host-tool write — no runner coupling, no build-time write to the factory
 checkout; committed through ordinary attended git, same discipline as tools/bench_corpus.py's own corpus
-data:
+data.
 
-  1. `report`: aggregates every `yr-bench-result/1` candidate row (tools/bench_replay.py's
-     `run_candidate` driver) under bench/results/*.jsonl into bench/reports/<date>-report.md —
-     per-configuration pass rate and weighted cost (raw outcome counts preserved alongside the rate,
-     never collapsed away), N stated plainly, per-repo composition, the grading caveat (quoted verbatim
-     from bench/corpus/README.md's own `## Grading caveat` section, never re-worded here), and this
-     aggregation's own total weighted-token cost across every configuration. The weighted-cost
-     arithmetic imports tools/stage_usage.py's WEIGHTED_TOTAL_WEIGHTS directly — never re-typed.
-
-  2. `sweep-diffs`: sweeps every posted `YR-VERDICT-DIFF` PR-trail comment (tools/verdict_diff.py's
-     `render_comment` shape — comments only ever land on a PR, via `gh pr comment`) across one repo into
-     bench/diffs/<owner>--<name>.jsonl, backfilling each PR's merge outcome (`gh pr view --json
-     state,mergedAt`) at aggregation time: `merged` / `closed` / `pending` (a still-open PR). Idempotent
-     by construction — keyed on repo+PR+round, an existing record for the same key is updated in place
-     rather than duplicated, so re-running the sweep over an unchanged comment trail is a byte-identical
-     no-op.
+`report`: aggregates every `yr-bench-result/1` candidate row (tools/bench_replay.py's `run_candidate`
+driver) under bench/results/*.jsonl into bench/reports/<date>-report.md — per-configuration pass rate
+and weighted cost (raw outcome counts preserved alongside the rate, never collapsed away), N stated
+plainly, per-repo composition, the grading caveat (quoted verbatim from bench/corpus/README.md's own
+`## Grading caveat` section, never re-worded here), and this aggregation's own total weighted-token cost
+across every configuration. The weighted-cost arithmetic imports tools/stage_usage.py's
+WEIGHTED_TOTAL_WEIGHTS directly — never re-typed.
 
 Stdlib-only JSON-CLI, mirroring tools/bench_corpus.py's injectable `gh(argv)` seam and
 tools/stage_usage.py's summarize shape.
@@ -29,26 +20,18 @@ import argparse
 import datetime
 import json
 import pathlib
-import re
-import subprocess
 import sys
 
 # sibling-module import (never `tools.`-prefixed): run as a bare script, sys.path[0] is already
 # `tools/` — the same discipline tools/bench_replay.py documents for `import registry` / `stage_usage`.
 import stage_usage
-import textutil
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_RESULTS_DIR = ROOT / "bench" / "results"
 DEFAULT_REPORTS_DIR = ROOT / "bench" / "reports"
-DEFAULT_DIFFS_DIR = ROOT / "bench" / "diffs"
 DEFAULT_CORPUS_README = ROOT / "bench" / "corpus" / "README.md"
 
 RESULT_SCHEMA = "yr-bench-result/1"
-DIFF_SCHEMA = "yr-verdict-diff/1"
-# The verdict-diff comment's record marker. tools/verdict_diff.py's render_comment always emits it on
-# line 1 at column 0, so identification is textutil's column-0 prefix mode over the comment's lines.
-DIFF_MARKER = "YR-VERDICT-DIFF:"
 
 CAVEAT_HEADING = "## Grading caveat"
 
@@ -191,120 +174,6 @@ def aggregate_report(*, results_dir=None, out_dir=None, readme_path=None, now=No
     return path
 
 
-# --- sweep-diffs: YR-VERDICT-DIFF PR comments -> bench/diffs/<owner>--<name>.jsonl, merge backfilled ----
-def _default_gh(argv):
-    """Run `gh <argv...>`; return stdout text. Raises on a non-zero exit so a broken read is loud —
-    mirrors tools/bench_corpus.py's own `_gh`."""
-    proc = subprocess.run(["gh", *argv], capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(argv)} failed ({proc.returncode}): {proc.stderr.strip()}")
-    return proc.stdout
-
-
-def _gh_json(gh, argv):
-    out = gh(argv)
-    return out if isinstance(out, (dict, list)) else json.loads(out)
-
-
-_ISSUE_URL_RE = re.compile(r"/issues/(\d+)$")
-
-_COMMENT_FIELD_RES = {
-    "round": re.compile(r"^round:\s*(\d+)\s*$", re.MULTILINE),
-    "gating": re.compile(r"^gating:\s*(.+?)\s*$", re.MULTILINE),
-    "shadow": re.compile(r"^shadow:\s*(.+?)\s*$", re.MULTILINE),
-    "agree": re.compile(r"^agree:\s*(true|false)\s*$", re.MULTILINE),
-}
-
-
-def parse_verdict_diff_comment(pr_number, body):
-    """One yr-verdict-diff/1-shaped record ({schema, pr, round, gating, shadow, agree}) from a posted
-    YR-VERDICT-DIFF comment body (tools/verdict_diff.py's `render_comment` shape), or None if `body`
-    isn't such a comment or is missing a field — never a partial/guessed record."""
-    if not any(textutil.marker_line_matches(line, DIFF_MARKER, mode="prefix")
-               for line in body.splitlines()):
-        return None
-    matches = {key: rx.search(body) for key, rx in _COMMENT_FIELD_RES.items()}
-    if not all(matches.values()):
-        return None
-    return {
-        "schema": DIFF_SCHEMA,
-        "pr": pr_number,
-        "round": int(matches["round"].group(1)),
-        "gating": matches["gating"].group(1),
-        "shadow": matches["shadow"].group(1),
-        "agree": matches["agree"].group(1) == "true",
-    }
-
-
-def _list_comments(gh, owner, name):
-    """Every issue/PR comment on `owner/name`, paginated — `gh api .../issues/comments` covers both
-    issue and PR comments; a YR-VERDICT-DIFF comment only ever lands on a PR (tools/dev-runner.sh's `gh
-    pr comment`), so a comment on a plain issue simply never matches parse_verdict_diff_comment's
-    grammar."""
-    return _gh_json(gh, ["api", f"repos/{owner}/{name}/issues/comments", "--paginate"])
-
-
-def backfill_merge_outcome(gh, owner, name, pr_number):
-    """`merged` / `closed` / `pending` (a still-open PR), read fresh from `gh pr view --json
-    state,mergedAt` at aggregation time — never cached from a prior sweep."""
-    out = _gh_json(gh, ["pr", "view", str(pr_number), "--repo", f"{owner}/{name}",
-                         "--json", "state,mergedAt"])
-    if out.get("mergedAt") or (out.get("state") or "").upper() == "MERGED":
-        return "merged"
-    if (out.get("state") or "").upper() == "CLOSED":
-        return "closed"
-    return "pending"
-
-
-def _load_existing_diffs(out_path):
-    existing = {}
-    if out_path.exists():
-        for line in out_path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
-            existing[(row["pr"], row["round"])] = row
-    return existing
-
-
-def sweep_diffs(repo, *, gh=None, out_dir=None):
-    """Sweep every posted YR-VERDICT-DIFF PR comment on `repo` (`owner/name`) into
-    bench/diffs/<owner>--<name>.jsonl, backfilling each PR's merge outcome. Idempotent: keyed on
-    repo+PR+round, an existing record for the same key is updated in place rather than duplicated, so
-    re-running the sweep over an unchanged comment trail produces a byte-identical file. Returns the
-    written path."""
-    gh = gh or _default_gh
-    owner, _, name = repo.partition("/")
-    out_dir = pathlib.Path(out_dir) if out_dir else DEFAULT_DIFFS_DIR
-    out_path = out_dir / f"{owner}--{name}.jsonl"
-
-    existing = _load_existing_diffs(out_path)
-
-    records = []
-    for comment in _list_comments(gh, owner, name):
-        match = _ISSUE_URL_RE.search(comment.get("issue_url") or "")
-        if not match:
-            continue
-        record = parse_verdict_diff_comment(int(match.group(1)), comment.get("body") or "")
-        if record:
-            records.append(record)
-
-    outcome_by_pr = {pr: backfill_merge_outcome(gh, owner, name, pr)
-                      for pr in sorted({r["pr"] for r in records})}
-
-    for record in records:
-        record["repo"] = repo
-        record["outcome"] = outcome_by_pr[record["pr"]]
-        existing[(record["pr"], record["round"])] = record
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w") as f:
-        for key in sorted(existing):
-            f.write(json.dumps(existing[key], sort_keys=True) + "\n")
-    return out_path
-
-
 # --- CLI ------------------------------------------------------------------------------------------------
 def _cli_report(args):
     path = aggregate_report(results_dir=args.results_dir, out_dir=args.out_dir, readme_path=args.readme)
@@ -312,15 +181,8 @@ def _cli_report(args):
     return 0
 
 
-def _cli_sweep_diffs(args):
-    path = sweep_diffs(args.repo, out_dir=args.out_dir)
-    print(path)
-    return 0
-
-
 def main(argv=None):
-    ap = argparse.ArgumentParser(
-        description="Bench report generator + verdict-diff aggregation with merge-outcome backfill (issue #167).")
+    ap = argparse.ArgumentParser(description="Bench report generator (issue #167).")
     sub = ap.add_subparsers(dest="command", required=True)
 
     p_report = sub.add_parser("report", help="aggregate bench/results/*.jsonl into bench/reports/<date>-report.md")
@@ -329,12 +191,6 @@ def main(argv=None):
     p_report.add_argument("--readme", default=None,
                            help="corpus README carrying the grading caveat (default: bench/corpus/README.md)")
     p_report.set_defaults(func=_cli_report)
-
-    p_sweep = sub.add_parser("sweep-diffs",
-                              help="sweep YR-VERDICT-DIFF PR comments into bench/diffs/<owner>--<name>.jsonl, backfilling merge outcome")
-    p_sweep.add_argument("--repo", required=True, help="owner/name")
-    p_sweep.add_argument("--out-dir", default=None, help="bench/diffs dir (default: bench/diffs)")
-    p_sweep.set_defaults(func=_cli_sweep_diffs)
 
     args = ap.parse_args(argv)
     return args.func(args)

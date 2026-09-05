@@ -3,16 +3,16 @@
 See tests/harness/contract.md for the harness contract (flag families, prompt transport, how a stage
 is recognized). CLAUDE_STUB below is the single legal stage-recognition path: every suite needing a
 stage-aware `claude` stub consumes this constant directly, or derives a variant from its exact text
-(never by re-typing the classification patterns) — see tests/test_shadow_review.py for the derivation
-pattern (a shadow-aware REVIEW arm spliced into this same case block by locating, not retyping, its
-patterns).
+(never by re-typing the classification patterns) — see tests/test_bg_scan_dev_runner.py for the
+derivation pattern (per-round hook lines spliced into this same case block's arms by locating, not
+retyping, its patterns).
 
 CLAUDE_STUB_JSON is the same classifier's `--output-format json` twin: each arm emits a single-line
 result envelope (fixed, distinguishable token counts) instead of plain text, so usage-capture tests can
 prove extraction/rewrite/summary end-to-end. It is a second, independent literal (not derived from
 CLAUDE_STUB via .replace(), since every arm's body differs) but is still the one legal home for that
-JSON-envelope shape — see tests/test_shadow_review.py's CLAUDE_STUB_SHADOW_JSON for the derivation
-pattern used to layer shadow-awareness on top of it.
+JSON-envelope shape — see tests/test_bg_scan_dev_runner.py's CLAUDE_STUB_JSON_BG for the derivation
+pattern used to layer stage-aware fixture injection on top of it.
 """
 
 # stage-aware: REVIEWER role -> reviewer (emits VERDICT); "REQUESTED CHANGES" -> review-repair;
@@ -49,7 +49,8 @@ args="$*"$'\\n'"$stdin_content"
 # appended per invocation, so a multi-stage build's whole sequence of TMPDIR values can be checked.
 [ -n "${STUB_CLAUDE_TMPDIR_FILE:-}" ] && { printf 'TMPDIR=%s\\n' "${TMPDIR:-unset}"; { [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; } && echo DIR_EXISTS=1 || echo DIR_EXISTS=0; } >> "$STUB_CLAUDE_TMPDIR_FILE"
 # issue #247: backgrounded ahead of the classifying case block (never inside the *REVIEWER* arm's own
-# literal text) so tests/test_shadow_review.py's exact-text splice of that arm keeps matching byte-for-byte.
+# literal text) so a derived suite's exact-text splice of that arm (e.g. tests/test_bg_scan_dev_runner.py)
+# keeps matching byte-for-byte.
 if [ -n "${STUB_REVIEW_GROUP_CHILD_SLEEP:-}" ] && [[ "$args" == *REVIEWER* ]]; then
   ( sleep "${STUB_REVIEW_GROUP_CHILD_SLEEP}"; echo GROUP-CHILD-DONE ) &
 fi

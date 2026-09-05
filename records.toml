@@ -255,26 +255,6 @@ readers = ["humans (advisory; no machine reader at tip)"]
 surfaces = ["pr-trail"]
 notes = "Advisory only; never gates."
 
-[[record]]
-name = "YR-SHADOW-REVIEW"
-marker = "YR-SHADOW-REVIEW:"
-mode = "prefix"
-emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "tools/dev-runner.sh (:2295 — the shadow seat's verdict token + blockquoted transcript)"
-readers = ["humans (no machine reader at tip — verdict_diff reads run-dir transcripts, never this comment)"]
-surfaces = ["pr-trail"]
-notes = "Never a line-anchored gating verdict; transcript always blockquoted."
-
-[[record]]
-name = "YR-VERDICT-DIFF"
-marker = "YR-VERDICT-DIFF:"
-mode = "prefix"
-emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "tools/verdict_diff.py (:90 — the gating-vs-shadow diff comment)"
-readers = ["tools/bench_report.py"]
-surfaces = ["pr-trail"]
-notes = "Pairs one gating round with its shadow round."
-
 # ── the two unprefixed grammars (brought under the umbrella, ruling (g)) ─────────────────────────
 
 [[record]]
@@ -285,7 +265,7 @@ emitted_by = ["machinery"]   # typed actor classes (rule S's column)
 emitter = "the review stage (the review's line-anchored verdict; run-dir review.md and the PR comment)"
 readers = ["tools/dev-runner.sh review gate (:321-326, :2129-2132 — the LAST verdict line must be exactly 'VERDICT: APPROVE')", "tools/review_bundle.py (:58, column-0 startswith)"]
 surfaces = ["run-dir", "pr-trail"]
-notes = "Only the gating review's own comment ever carries it line-anchored; shadow/bench comments blockquote."
+notes = "Only the gating review's own comment ever carries it line-anchored; a quoted transcript (e.g. bench replay's own candidate transcript) blockquotes it instead."
 
 [[record]]
 name = "STAGE-BLOCKED"
@@ -347,16 +327,6 @@ emitted_by = ["machinery", "attended-agent"]   # typed actor classes (rule S's c
 emitter = "tools/bench_replay.py (:48)"
 readers = ["tools/bench_report.py"]
 surfaces = ["bench"]
-notes = ""
-
-[[record]]
-name = "yr-verdict-diff/1"
-marker = "yr-verdict-diff/1"
-mode = "json-schema"
-emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "tools/verdict_diff.py"
-readers = ["tools/bench_report.py"]
-surfaces = ["bench", "run-dir"]
 notes = ""
 
 # ── the attended lane's own records (minted at it-30 slice 3; grammars this file owns) ───────────
