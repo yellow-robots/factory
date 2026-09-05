@@ -7,10 +7,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/yellow-robots/factory
+# The build host's factory checkout is the unprivileged yr-factory user's own home clone, never the
+# workspace host's /opt path (that path belongs to the operator/workspace host — see AGENTS.md ->
+# "the workspace host" vs "yr-host"). %h resolves to yr-factory's home at unit start.
+WorkingDirectory=%h/yellow-robots/factory
 # secret + config live here, NOT in the repo (see dispatch.env.example); chmod 600.
 EnvironmentFile=%h/.config/dev-runner/dispatch.env
-ExecStart=/opt/yellow-robots/factory/.venv/bin/python /opt/yellow-robots/factory/tools/dispatch.py
+ExecStart=%h/yellow-robots/factory/.venv/bin/python %h/yellow-robots/factory/tools/dispatch.py
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

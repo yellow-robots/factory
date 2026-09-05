@@ -24,8 +24,14 @@ decision, so a plain local variable is the per-decision cache. Silent when a sur
 finding names either the lag or why the surface could not be read.
 
 Tier contract (mirrors `process.py`'s check_drift, header lines 10-13): ADVISORY, loud, never
-`check_cmd`, CI, or a merge condition. No trail is read here — the deploy-record comparison is
-slice 6's.
+`check_cmd`, CI, or a merge condition.
+
+Slice 6 (issue #462, epic #455) adds the deploy-record comparison, `deploy_record_findings`: the
+latest `YR-DEPLOY` record on the deploy trail issue (read through `tools/sources.py issue_trail` —
+the ONLY trail read in this module) against each build-host surface it names, on THIS host's own
+live version statement. Readable only at the sweep (`epic_gate.py:main()`) — a deploy record only
+ever describes a build-host surface (`dispatch`/`dev-runner`/`epic-gate`), which the workspace-host
+moment cannot read anyway (see `workspace_findings`'s own per-host population rule above).
 """
 from __future__ import annotations
 
@@ -37,6 +43,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import provenance  # noqa: E402 — sibling import, tools/ is on sys.path (line above)
+import records     # noqa: E402
+import sources     # noqa: E402
+import textutil    # noqa: E402
 
 LS_REMOTE_TIMEOUT = 10
 
@@ -120,6 +129,96 @@ def build_findings(repo_dir: Path | str, home: Path | str) -> list[str]:
         if f:
             findings.append(f)
     findings.append(f"attended-session: {_UNREADABLE_ELSEWHERE}")
+    return findings
+
+
+# ── the deploy-record comparison (slice 6, issue #462): readable only at the sweep ─────────────────
+
+DEPLOY_TRAIL_REPO = "yellow-robots/factory"
+DEPLOY_TRAIL_ISSUE = "464"
+
+# The build-host surfaces a `YR-DEPLOY` record's `surface` field may name — exactly the three
+# build-host entries of `provenance.SURFACES` (never `attended-session`: that runs on a workspace
+# host, which a deploy act never touches).
+_DEPLOY_SURFACES = ("dispatch", "dev-runner", "epic-gate")
+
+
+def _deploy_field(lines: list[str], field: str) -> str | None:
+    """One field's value off a marker-carrying record's own lines — `<field>: <value>`, matching
+    `check_trail.py`'s `_missing_fields` grammar (a line, lstripped, starting with `<field>:`)."""
+    prefix = f"{field}:"
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip()
+    return None
+
+
+def _latest_deploy_record(texts: list[str]) -> tuple[str, str] | None:
+    """The LATEST (last, in trail order) `YR-DEPLOY` record among `texts` that carries both
+    `surface` and `commit` — `(surface, commit)`. A record missing either field is skipped, never
+    mistaken for the latest complete one (mirrors the grammar `check_trail.py`'s `_missing_fields`
+    enforces — a record must be complete within ONE text). Reads `records.toml`'s own row for the
+    marker, never a hardcoded string, so a canon-side marker change is never silently missed here."""
+    reg = records.load()
+    row = records.get(reg, "YR-DEPLOY")
+    marker = row["marker"]
+    found: tuple[str, str] | None = None
+    for text in texts:
+        lines = text.splitlines()
+        if not any(textutil.marker_line_matches(l, marker, mode=textutil.MARKER_PREFIX) for l in lines):
+            continue
+        surface = _deploy_field(lines, "surface")
+        commit = _deploy_field(lines, "commit")
+        if surface and commit:
+            found = (surface, commit)
+    return found
+
+
+def _surface_statement(name: str, checkout_root: Path | str, home: Path | str) -> str | None:
+    """One build-host surface's own live version statement, mirroring `build_findings` above:
+    `dispatch` reads its captured statement file (a resident process, statement fixed at import);
+    `dev-runner`/`epic-gate` read the checkout's own HEAD (they recompute fresh on every
+    invocation — no cache, so a successful `git pull` alone already carries them). `None` for a
+    surface name outside `_DEPLOY_SURFACES` — nothing declared to compare against."""
+    if name not in _DEPLOY_SURFACES:
+        return None
+    if name == "dispatch":
+        stmt_path = provenance.dispatch_statement_path(home)
+        try:
+            raw = stmt_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            return f"unreadable: {exc}"
+        return raw.removeprefix("commit: ")
+    return provenance.factory_commit(checkout_root)
+
+
+def deploy_record_findings(checkout_root: Path | str, home: Path | str, *,
+                           repo: str = DEPLOY_TRAIL_REPO, issue: str = DEPLOY_TRAIL_ISSUE) -> list[str]:
+    """The sweep-only moment: the latest `YR-DEPLOY` record on `repo`#`issue` (read LIVE through
+    `tools/sources.py issue_trail` — the one trail read in this module) against each build-host
+    surface it names, on THIS host's own live statement. Silent when they agree, when the trail
+    cannot be read (a bounded, never-raising fetch — the caller still gets a named finding, not a
+    crash), or when no `YR-DEPLOY` record exists yet. A finding per disagreeing or unreadable named
+    surface; an unrecognized surface name is itself a finding (the record names something this
+    alarm has no live statement for)."""
+    ok, texts = sources.issue_trail(repo, str(issue))
+    if not ok:
+        return [f"deploy-record ({repo}#{issue}): UNREADABLE — {texts}"]
+    record = _latest_deploy_record(texts)
+    if record is None:
+        return []
+    surface_field, commit = record
+    findings: list[str] = []
+    for name in [s.strip() for s in surface_field.split(",") if s.strip()]:
+        live = _surface_statement(name, checkout_root, home)
+        if live is None:
+            findings.append(f"deploy-record: {name}: not a recognized build-host surface")
+        elif live.startswith("unreadable"):
+            findings.append(f"deploy-record: {name}: UNREADABLE — {live.removeprefix('unreadable: ')}")
+        elif commit != live:
+            findings.append(f"deploy-record: {name}: DISAGREES (record says {commit[:12]}, "
+                            f"live states {live[:12]})")
     return findings
 
 
