@@ -51,10 +51,12 @@ the review discipline that feeds this gate, see [`reviewing.md`](reviewing.md).
 
 ---
 
-### 2. feature-rfc *(only if earned)*
+### 2. feature-rfc *(legacy — not authored for new work)*
 
-See [`documentation-model.md`](documentation-model.md) — *The document types* for the earned-test. If
-the change is small or the approach obvious, go directly to step 3 (floor: product-spec → task(s)).
+**Legacy layer.** No new iteration earns a feature-rfc — see
+[`documentation-model.md`](documentation-model.md) — *The document types* and *The airlock*: the live
+chain crosses `product-spec → technical-rfc` directly (step 3). This step, and the content below it,
+apply only to existing feature-rfc docs, which stand and keep resolving.
 
 **Content:** the approach, decision, scope, non-goals. `source_spec:` the product-spec as a
 `[[wikilink]]`. Author in Obsidian, from `skills/factory/templates/feature-rfc.md`.

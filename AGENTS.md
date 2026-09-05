@@ -20,7 +20,7 @@ product/RFC discussion (vault)  →  file a Task (Issue Form = Definition of Rea
 ```
 
 The human **input** gate sits at the design artifacts: a human decides *what gets built* by setting a
-product-spec or feature-rfc `active`. Below that standing approval, flipping a governed epic to Ready,
+product-spec (or a legacy feature-rfc) `active`. Below that standing approval, flipping a governed epic to Ready,
 promoting its next slice, and closing a finished epic are **mechanical**, fail-closed to the human on any
 doubt (an invalid or missing record raises `Needs-info` rather than guessing). The cord-pull —
 un-Readying an epic — remains the human's veto; a standalone task with no governing design keeps the

@@ -7,6 +7,7 @@ supersedes: []             # active designs this doc replaces; targets are quote
 created: "<YYYY-MM-DD>"
 updated: "<YYYY-MM-DD>"
 ---
+<!-- LEGACY — not authored for new work since 2026-07-30 -->
 
 # Feature RFC — <feature name>
 
