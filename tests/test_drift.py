@@ -225,6 +225,156 @@ def test_build_findings_has_no_plugins_parameter_it_cannot_read_the_plugin_cache
     assert "plugins_path" not in params and "plugins" not in params
 
 
+# ── deploy_record_findings — the sweep-only moment (slice 6, issue #462) ───────────────────────────
+# The latest `YR-DEPLOY` record on the deploy trail issue, read via a STUBBED `sources.issue_trail`
+# (never real `gh`/network here), against each build-host surface it names — dispatch's captured
+# statement file, and dev-runner/epic-gate's live checkout HEAD (mirrors `build_findings` above).
+
+def _deploy_body(commit, *, restart="yes", who="human",
+                 surface="dispatch,dev-runner,epic-gate"):
+    return (f"YR-DEPLOY:\nsurface: {surface}\ncommit: {commit}\nwho: {who}\n"
+            f"restart: {restart}\n")
+
+
+def test_deploy_record_findings_silent_when_the_record_agrees_with_every_surface(tmp_path, monkeypatch):
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)   # dispatch's own captured statement matches
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [_deploy_body(sha)]))
+    findings = drift.deploy_record_findings(checkout, home)
+    assert findings == []
+
+
+def test_deploy_record_findings_a_restart_no_deploy_leaving_dispatch_stale_is_not_drift(tmp_path, monkeypatch):
+    """A `restart: no` deploy LEGITIMATELY leaves dispatch (a resident process) on its prior
+    commit — that is never drift. dev-runner/epic-gate still agree (they recompute fresh from the
+    checkout, which IS at the recorded commit); dispatch has no `restart: yes` record yet to be
+    judged against at all, so this is silent, not a disagreement."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, "0" * 40)   # dispatch never restarted -- still an older statement
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [_deploy_body(sha, restart="no")]))
+    assert drift.deploy_record_findings(checkout, home) == []
+
+
+def test_deploy_record_findings_flags_dispatch_against_its_own_latest_restart_yes_record(tmp_path, monkeypatch):
+    """The counterpart to the restart:no case above: a record that DOES claim `restart: yes` but
+    disagrees with dispatch's live statement is a genuine disagreement."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, "2" * 40)   # restart claimed, but dispatch's live statement disagrees
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [_deploy_body(sha, restart="yes")]))
+    findings = drift.deploy_record_findings(checkout, home)
+    dispatch_findings = [f for f in findings if f.startswith("deploy-record: dispatch:")]
+    assert len(dispatch_findings) == 1, findings
+    assert "DISAGREES" in dispatch_findings[0]
+    assert sha[:12] in dispatch_findings[0]
+
+
+def test_deploy_record_findings_a_later_restart_no_record_does_not_silence_an_earlier_stale_dispatch(tmp_path, monkeypatch):
+    """A later `restart: no` record must not silence dispatch's real disagreement against its OWN
+    latest `restart: yes` record — dispatch is judged against the latest record that actually
+    claims the restart, not merely the trail's overall latest record."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, "3" * 40)   # never matches the restart:yes record below
+    restarted = _deploy_body(sha, restart="yes")
+    later_no_op = _deploy_body(sha, restart="no")
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [restarted, later_no_op]))
+    findings = drift.deploy_record_findings(checkout, home)
+    dispatch_findings = [f for f in findings if f.startswith("deploy-record: dispatch:")]
+    assert len(dispatch_findings) == 1, findings
+    assert "DISAGREES" in dispatch_findings[0]
+
+
+def test_deploy_record_findings_reports_a_stale_record_after_a_hand_pull_on_every_surface(tmp_path, monkeypatch):
+    """A human hand-pulled and hand-restarted (never posting a new record): the checkout and
+    dispatch have BOTH moved past the trail's only (restart:yes) record — every named surface
+    disagrees, still caught as drift."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)   # dispatch WAS hand-restarted onto the new commit
+    stale = "9" * 40
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [_deploy_body(stale, restart="yes")]))
+    findings = drift.deploy_record_findings(checkout, home)
+    named = {f.split(":")[1].strip() for f in findings}
+    assert named == {"dispatch", "dev-runner", "epic-gate"}, findings
+    assert all("DISAGREES" in f for f in findings)
+
+
+def test_deploy_record_findings_silent_when_no_record_exists_yet(tmp_path, monkeypatch):
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, ["just some unrelated issue prose"]))
+    assert drift.deploy_record_findings(checkout, home) == []
+
+
+def test_deploy_record_findings_names_the_trail_unreadable_rather_than_crashing(tmp_path, monkeypatch):
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (False, "gh: not authenticated"))
+    findings = drift.deploy_record_findings(checkout, home)
+    assert len(findings) == 1
+    assert "UNREADABLE" in findings[0] and "not authenticated" in findings[0]
+
+
+def test_deploy_record_findings_uses_the_latest_record_not_an_earlier_one(tmp_path, monkeypatch):
+    """Two records on the trail: an OLDER one that disagrees, a NEWER one (last in trail order)
+    that agrees — only the latest is judged."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)
+    older = _deploy_body("1" * 40)
+    newer = _deploy_body(sha)
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [older, newer]))
+    assert drift.deploy_record_findings(checkout, home) == []
+
+
+def test_deploy_record_findings_reads_the_marker_and_fields_from_records_toml_not_a_hardcode(tmp_path, monkeypatch):
+    """The row's own marker (`YR-DEPLOY:`) must gate presence — a lookalike line that merely
+    mentions the field names, without the marker, is never mistaken for a record."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)
+    lookalike = f"a comment that mentions surface: dispatch and commit: {sha} in prose, no marker"
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [lookalike]))
+    assert drift.deploy_record_findings(checkout, home) == []
+
+
+def test_deploy_record_findings_flags_an_unrecognized_surface_name(tmp_path, monkeypatch):
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [_deploy_body(sha, surface="attended-session")]))
+    findings = drift.deploy_record_findings(checkout, home)
+    assert len(findings) == 1
+    assert "not a recognized build-host surface" in findings[0]
+
+
+def test_deploy_record_findings_default_repo_and_issue_name_the_deploy_trail(monkeypatch):
+    seen = {}
+
+    def fake(repo, issue):
+        seen["repo"], seen["issue"] = repo, issue
+        return True, []
+
+    monkeypatch.setattr(drift.sources, "issue_trail", fake)
+    drift.deploy_record_findings("/some/root", "/some/home")
+    assert seen == {"repo": "yellow-robots/factory", "issue": "464"}
+
+
 # ── the CLI — a standalone diagnostic path, advisory: loud, exit 1 on findings ──────────────────────
 
 def test_cli_workspace_mode_prints_drift_prefixed_lines_and_exits_1_on_findings(monkeypatch, capsys):

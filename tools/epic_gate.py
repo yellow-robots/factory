@@ -1254,6 +1254,9 @@ def main(argv=None):
     print(f"epic-gate: {COMMIT_STATEMENT}")
     for finding in drift.build_findings(repo_root, dispatch.DEV_RUNNER_HOME):
         print(f"epic-gate: drift — {finding}")
+    # slice 6 (issue #462): the deploy-record comparison — readable only here, at the sweep.
+    for finding in drift.deploy_record_findings(repo_root, dispatch.DEV_RUNNER_HOME):
+        print(f"epic-gate: drift — {finding}")
     actions = sweep_epics(repos=_registered_repos())
     if not actions:
         print("epic-gate: nothing to do")

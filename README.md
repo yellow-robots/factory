@@ -17,6 +17,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/dispatch.py` | the host endpoint n8n calls to fire a build (RFC 0004) |
 | `tools/provenance.py` | the one self-locate helper: every declared runtime surface's `commit: <sha>` version statement runs through here |
 | `tools/drift.py` | the one drift alarm, two moments (attended session start, each sweep): names every readable surface trailing `origin/main` and every surface it cannot read from that host — advisory, never a gate |
+| `tools/deploy.sh` | the scripted attended deploy act: quiescence probe, `git pull --ff-only`, conditional `dispatch` restart, post-deploy checks, one `YR-DEPLOY` record — no automatic trigger |
 | `tools/dev-runner.sh` | the staged pipeline: gate → implement → independent test → check → independent review → PR (RFC 0002) — builder ≠ verifier, by construction |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/merge_shadow.py` | the merge-decision evaluator + shadow-completion |

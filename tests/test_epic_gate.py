@@ -31,6 +31,19 @@ import board_plumbing  # noqa: E402  (issue #388: the one home the epic gate now
 REPO = "yellow-robots/yellow-robots"
 
 
+@pytest.fixture(autouse=True)
+def _no_deploy_record_gh_reach(monkeypatch):
+    """Structural hermeticity (it-33 slice 6 review, issue #462): `epic_gate.main()` folds
+    `drift.deploy_record_findings` into every sweep, which — UNSTUBBED — reaches real
+    `gh issue view 464` via `tools/sources.py` (network + auth, and a hang there can absorb
+    GH_TIMEOUT per unstubbed `main()` call across this whole file). Autouse so EVERY test here is
+    safe by default with zero per-test boilerplate; a test that wants to exercise the real
+    integration re-patches `epic_gate.drift.deploy_record_findings` (or
+    `epic_gate.drift.sources.issue_trail`) itself, inside its own body, AFTER this fixture has
+    already run — the later `monkeypatch.setattr` on the same target simply wins."""
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", lambda repo_root, home: [])
+
+
 # ============================================================================
 # execution-context import (epic #126): production runs epic_gate.py as a bare script
 # (tools/dispatch.py spawns `tools/epic_gate.py` directly, stderr routed to DEVNULL) — Python puts the
@@ -2820,8 +2833,11 @@ def test_main_prints_the_commit_statement_before_any_sweep_action_line(capsys, m
     monkeypatch.setattr(epic_gate, "_gh", fake)
     monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [INTAKE_REPO_A])
     # this test pins the STATEMENT line's position, not the drift alarm's (see the it-33 slice 4
-    # tests below) — a clean drift moment keeps the pre-existing adjacency intact.
+    # tests below) — a clean drift moment keeps the pre-existing adjacency intact. Both drift
+    # findings sources are stubbed clean (slice 6 adds deploy_record_findings alongside
+    # build_findings — an unstubbed one would otherwise reach a real `gh` for #464).
     monkeypatch.setattr(epic_gate.drift, "build_findings", lambda repo_root, home: [])
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", lambda repo_root, home: [])
 
     rc = epic_gate.main()
     assert rc == 0
@@ -2848,6 +2864,7 @@ def test_main_prints_build_drift_findings_between_statement_and_action_lines(cap
                         lambda repo_root, home: ["epic-gate: TRAILS origin/main (at aaa, origin/main at bbb)",
                                                   "attended-session: not readable from this host — "
                                                   "no cross-host read"])
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", lambda repo_root, home: [])
 
     rc = epic_gate.main()
     assert rc == 0
@@ -2866,6 +2883,7 @@ def test_main_prints_nothing_extra_when_the_build_drift_moment_is_clean(capsys, 
     monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
     monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
     monkeypatch.setattr(epic_gate.drift, "build_findings", lambda repo_root, home: [])
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", lambda repo_root, home: [])
     rc = epic_gate.main()
     assert rc == 0
     out = capsys.readouterr().out
@@ -2879,6 +2897,7 @@ def test_main_exit_code_is_unaffected_by_drift_findings_never_a_gate(capsys, mon
     monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
     monkeypatch.setattr(epic_gate.drift, "build_findings",
                         lambda repo_root, home: ["surface: TRAILS origin/main (at a, origin/main at b)"])
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", lambda repo_root, home: [])
     rc = epic_gate.main()
     assert rc == 0
 
@@ -2893,9 +2912,66 @@ def test_main_passes_dispatch_dev_runner_home_and_the_factorys_own_root_to_build
     monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
     monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
     monkeypatch.setattr(epic_gate.drift, "build_findings", fake)
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", lambda repo_root, home: [])
     epic_gate.main()
     assert seen["repo_root"] == ROOT
     assert seen["home"] == epic_gate.dispatch.DEV_RUNNER_HOME
+
+
+# ============================================================================
+# it-33 slice 6 (issue #462) — the sweep ALSO folds in the deploy-record comparison, readable only
+# here: printed the same way as build_findings' own lines, advisory only.
+# ============================================================================
+
+def test_main_prints_deploy_record_findings_after_build_findings(capsys, monkeypatch):
+    monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+    monkeypatch.setattr(epic_gate.drift, "build_findings",
+                        lambda repo_root, home: ["epic-gate: TRAILS origin/main (at a, origin/main at b)"])
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings",
+                        lambda repo_root, home: ["deploy-record: dispatch: DISAGREES (record says c, live states d)"])
+    rc = epic_gate.main()
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[1] == "epic-gate: drift — epic-gate: TRAILS origin/main (at a, origin/main at b)"
+    assert lines[2] == ("epic-gate: drift — deploy-record: dispatch: DISAGREES "
+                        "(record says c, live states d)")
+    assert "nothing to do" in lines[3]
+
+
+def test_main_passes_dispatch_dev_runner_home_and_the_factorys_own_root_to_deploy_record_findings(monkeypatch):
+    seen = {}
+
+    def fake(repo_root, home):
+        seen["repo_root"], seen["home"] = repo_root, home
+        return []
+
+    monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+    monkeypatch.setattr(epic_gate.drift, "build_findings", lambda repo_root, home: [])
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", fake)
+    epic_gate.main()
+    assert seen["repo_root"] == ROOT
+    assert seen["home"] == epic_gate.dispatch.DEV_RUNNER_HOME
+
+
+def test_main_never_reaches_gh_for_464_by_default(monkeypatch):
+    """Structural pin for the module's `_no_deploy_record_gh_reach` autouse fixture: with NO
+    per-test override, `main()`'s call into `deploy_record_findings` must never fall through to
+    `tools/sources.py`'s real `gh` subprocess seam. `sources.issue_trail` is patched to explode if
+    reached at all; the autouse fixture's stub (returning `[]` without calling `issue_trail`)
+    must make this a no-op. If the autouse fixture is ever removed or narrowed, this test is the
+    one that catches it — not a live `gh` reach discovered later on the build host."""
+    def _boom(repo, issue):
+        raise AssertionError(f"main() reached gh for {repo}#{issue} without a test-injected trail")
+
+    monkeypatch.setattr(epic_gate.drift.sources, "issue_trail", _boom)
+    monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+    monkeypatch.setattr(epic_gate.drift, "build_findings", lambda repo_root, home: [])
+    # deploy_record_findings deliberately left to the autouse fixture's default stub above.
+    rc = epic_gate.main()
+    assert rc == 0
 
 
 # ============================================================================
