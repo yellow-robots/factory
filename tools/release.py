@@ -95,8 +95,8 @@ def _version_at_commit(commit: str) -> str | None:
         return None
 
 
-def _existing_version_tags() -> tuple[bool, list[tuple[tuple[int, int, int], str]], str]:
-    """Every `skill/vX.Y.Z` tag on origin, as (version-tuple, tag-name) pairs, oldest first.
+def _existing_version_tags() -> tuple[bool, list[tuple[str, tuple[int, int, int]]], str]:
+    """Every `skill/vX.Y.Z` tag on origin, as (tag-name, version-tuple) pairs, oldest first.
     (ok, tags, detail) — ok is False only when the remote was unreadable."""
     rc, out, err = _run(["git", "ls-remote", "origin", f"{TAG_PREFIX}*"], cwd=str(REPO_ROOT))
     if rc != 0:
@@ -123,17 +123,21 @@ def _bump_commit(version: str, commit: str) -> tuple[str | None, str]:
     after the bump, which is exactly the failure this guards). Returns (sha, detail); sha is None
     only when the remote or the history walk was unreadable (fail-closed to the caller). When the
     declared version never appears anywhere in range, the commit under validation is its own
-    anchor — an unchanged (empty) tree, by construction."""
+    anchor — an unchanged (empty) tree, by construction. A non-semver `version` never raises: it
+    can't be compared against existing tags, so it falls back to the full-history walk (no
+    previous-tag bound) — a too-early start costs time, never correctness."""
     ok, tags, detail = _existing_version_tags()
     if not ok:
         return None, (f"could not read origin's tags: {detail} — an unreadable remote never "
                       f"passes (fail-closed)")
-    want = tuple(int(g) for g in version.split("."))
-    below = [name for name, v in tags if v < want]
-    prev_tag = below[-1] if below else None
+    prev_tag = None
+    if _VERSION_RE.match(version):
+        want = tuple(int(g) for g in version.split("."))
+        below = [name for name, v in tags if v < want]
+        prev_tag = below[-1] if below else None
     rng = f"{prev_tag}..{commit}" if prev_tag else commit
-    rc, out, err = _run(["git", "log", "--first-parent", "--reverse", "--format=%H", rng],
-                        cwd=str(REPO_ROOT))
+    rc, out, err = _run(["git", "log", "--first-parent", "--reverse", "--format=%H", rng,
+                        "--", ".claude-plugin/plugin.json"], cwd=str(REPO_ROOT))
     if rc != 0:
         return None, f"could not walk first-parent history over {rng!r}: {err.strip()}"
     for sha in (s for s in out.splitlines() if s.strip()):
@@ -240,29 +244,36 @@ def _judged_at_commit(commit: str) -> tuple[str, str]:
              timeout=WORKTREE_TIMEOUT)
 
 
-def validate(repo: str, commit: str, version: str | None) -> tuple[int, str]:
-    """CONDITIONS, in conditions_display order, fail-closed. Returns (rc, evidence)."""
+def validate(repo: str, commit: str, version: str | None) -> tuple[int, str, list[str]]:
+    """CONDITIONS, in conditions_display order, fail-closed. Returns (rc, evidence, evaluated) —
+    `evaluated` names only the conditions actually judged this call (version_spans_content runs
+    only when a version is given), so a caller never claims a condition it didn't run."""
     span_evidence = ""
+    evaluated: list[str] = []
     if version is not None:
         at = _version_at_commit(commit)
         if at != version:
             return _fail("version_mismatch",
                          f"plugin.json at {commit[:9]} says {at!r}, not {version!r} — the tag "
-                         f"must anchor the commit that shipped the version"), ""
+                         f"must anchor the commit that shipped the version"), "", evaluated
+        evaluated.append("version_spans_content")
         token, detail = _version_spans_content(version, commit)
         if token:
-            return _fail(token, detail), ""
+            return _fail(token, detail), "", evaluated
         span_evidence = detail
+    evaluated.append("model_loads")
     token, detail = _judged_at_commit(commit)
     if token == "model_loads":
-        return _fail(token, detail), ""
+        return _fail(token, detail), "", evaluated
+    evaluated.append("server_ci_green")
     ok, ci_evidence = _ci_green_at(repo, commit)
     if not ok:
-        return _fail("server_ci_green", ci_evidence), ""
+        return _fail("server_ci_green", ci_evidence), "", evaluated
+    evaluated.append("no_drift")
     if token == "no_drift":
-        return _fail(token, detail), ""
+        return _fail(token, detail), "", evaluated
     evidence = "; ".join(e for e in (span_evidence, detail, ci_evidence) if e)
-    return 0, evidence
+    return 0, evidence, evaluated
 
 
 def record_body(version: str, commit: str, validation: str, who: str, mode: str) -> str:
@@ -303,10 +314,11 @@ def _release(repo: str, version: str, commit_ref: str, who: str | None, mode: st
     if out.strip():
         return _fail("tag_exists", f"refs/tags/{tag} already exists on origin — a version is "
                                    f"released once; a re-release is a new version")
-    rc, evidence = validate(repo, commit, version)
+    rc, evidence, evaluated = validate(repo, commit, version)
     if rc != 0:
         return rc
-    body = record_body(version, commit, evidence, _who(who), mode)
+    validation = f"{' '.join(evaluated)} ({evidence})" if evaluated else evidence
+    body = record_body(version, commit, validation, _who(who), mode)
     if test_mode:
         print(f"TEST-MODE: no tag, no Release, no trail — the plan only")
         print(f"would tag:     {tag} at {commit}")
@@ -359,9 +371,9 @@ def main(argv: list[str] | None = None) -> int:
         commit = _resolve_commit(args.commit)
         if not commit:
             return _fail("commit_unresolvable", f"{args.commit!r} does not resolve")
-        rc, evidence = validate(args.repo, commit, args.version)
+        rc, evidence, evaluated = validate(args.repo, commit, args.version)
         if rc == 0:
-            print(f"ok: {' '.join(CONDITIONS)} ({evidence})")
+            print(f"ok: {' '.join(evaluated)} ({evidence})")
         return rc
     if args.cmd == "ship":
         rc, _, err = _run(["git", "fetch", "origin"], cwd=str(REPO_ROOT),

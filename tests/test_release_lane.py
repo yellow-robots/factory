@@ -618,3 +618,79 @@ def test_version_mismatch_still_wins_first_when_content_also_spans(monkeypatch, 
     rc = release.main(["validate", "--commit", tip, "--version", "9.9.9"])
     out = capsys.readouterr().out
     assert rc == 1 and out.splitlines()[0] == "version_mismatch"
+
+
+# ── cold-review folds (commit 561c9ee's review): the ok-line, the tag-shape agreement, the ─────────
+# malformed-version guard, empty-diff coverage, and the emitted record's own validation field ──────
+
+def test_ok_line_omits_version_spans_content_when_no_version_given(monkeypatch, capsys):
+    """`validate` with no --version never runs the new condition — the ok-line must never claim
+    it (review fold 2: print only the conditions actually evaluated)."""
+    fake = _Fake()
+    rc = _v(monkeypatch, fake, ["validate", "--commit", SHA_100])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.splitlines()[0].startswith("ok:")
+    assert "version_spans_content" not in out.splitlines()[0]
+
+
+def test_ok_line_names_version_spans_content_when_version_given(monkeypatch, capsys):
+    fake = _Fake(plugin_version="1.0.0")
+    rc = _v(monkeypatch, fake, ["validate", "--commit", SHA_100, "--version", "1.0.0"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "version_spans_content" in out.splitlines()[0]
+
+
+def test_existing_version_tags_shape_agrees_name_first(tmp_path, monkeypatch):
+    """Review fold 3: the annotation/docstring say (tag-name, version-tuple) — prove the actual
+    return shape agrees, not just the consumer's unpacking order."""
+    work = _make_release_repo(tmp_path)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    ok, tags, _detail = release._existing_version_tags()
+    assert ok and tags
+    name, version_tuple = tags[0]
+    assert name == "skill/v1.0.0"
+    assert version_tuple == (1, 0, 0)
+
+
+def test_bump_commit_malformed_version_falls_back_to_full_history(tmp_path, monkeypatch):
+    """Review fold 4: a non-semver declared version must never raise comparing against existing
+    tags — it falls back to the full-history walk (no previous-tag bound); safe by construction,
+    since the declared version can never match a real commit's plugin.json anyway."""
+    work = _make_release_repo(tmp_path)
+    tip = _rev_parse(work)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    bump, detail = release._bump_commit("not-a-semver", tip)
+    assert bump == tip
+    assert "never appears in range" in detail
+
+
+def test_version_spans_content_passes_when_bump_differs_but_diff_is_empty(monkeypatch, capsys,
+                                                                          tmp_path,
+                                                                          stub_other_conditions):
+    """Review fold 5a: bump != commit, but nothing tracked changed in between (an empty commit)
+    — the condition judges the TREE, not commit identity, so this still passes."""
+    work = _make_release_repo(tmp_path)
+    _write_plugin_version(work, "1.0.1")
+    _commit_all(work, "bump to 1.0.1")
+    _git(["commit", "--allow-empty", "-q", "-m", "empty follow-up, no tree change"], work)
+    tip = _rev_parse(work)
+    _git(["push", "-q", "origin", "release-trunk"], work)
+    monkeypatch.setattr(release, "REPO_ROOT", work)
+    rc = release.main(["validate", "--commit", tip, "--version", "1.0.1"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.splitlines()[0].startswith("ok:")
+
+
+def test_emitted_record_validation_field_names_version_spans_content(monkeypatch, capsys):
+    """Review fold 5b: not just the registry row's notes — the RENDERED YR-RELEASE record's own
+    validation field must name the condition, at the render site (`_release`'s TEST-MODE body
+    print, since --test-mode writes nothing else)."""
+    fake = _Fake(plugin_version="1.0.0")
+    rc = _v(monkeypatch, fake, ["backfill", "--version", "1.0.0", "--who", "@jbrey",
+                                "--test-mode"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    validation_line = next(l for l in out.splitlines() if l.startswith("validation:"))
+    assert "version_spans_content" in validation_line
