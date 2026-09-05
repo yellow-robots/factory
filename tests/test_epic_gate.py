@@ -31,6 +31,19 @@ import board_plumbing  # noqa: E402  (issue #388: the one home the epic gate now
 REPO = "yellow-robots/yellow-robots"
 
 
+@pytest.fixture(autouse=True)
+def _no_deploy_record_gh_reach(monkeypatch):
+    """Structural hermeticity (it-33 slice 6 review, issue #462): `epic_gate.main()` folds
+    `drift.deploy_record_findings` into every sweep, which — UNSTUBBED — reaches real
+    `gh issue view 464` via `tools/sources.py` (network + auth, and a hang there can absorb
+    GH_TIMEOUT per unstubbed `main()` call across this whole file). Autouse so EVERY test here is
+    safe by default with zero per-test boilerplate; a test that wants to exercise the real
+    integration re-patches `epic_gate.drift.deploy_record_findings` (or
+    `epic_gate.drift.sources.issue_trail`) itself, inside its own body, AFTER this fixture has
+    already run — the later `monkeypatch.setattr` on the same target simply wins."""
+    monkeypatch.setattr(epic_gate.drift, "deploy_record_findings", lambda repo_root, home: [])
+
+
 # ============================================================================
 # execution-context import (epic #126): production runs epic_gate.py as a bare script
 # (tools/dispatch.py spawns `tools/epic_gate.py` directly, stderr routed to DEVNULL) — Python puts the
@@ -2940,6 +2953,25 @@ def test_main_passes_dispatch_dev_runner_home_and_the_factorys_own_root_to_deplo
     epic_gate.main()
     assert seen["repo_root"] == ROOT
     assert seen["home"] == epic_gate.dispatch.DEV_RUNNER_HOME
+
+
+def test_main_never_reaches_gh_for_464_by_default(monkeypatch):
+    """Structural pin for the module's `_no_deploy_record_gh_reach` autouse fixture: with NO
+    per-test override, `main()`'s call into `deploy_record_findings` must never fall through to
+    `tools/sources.py`'s real `gh` subprocess seam. `sources.issue_trail` is patched to explode if
+    reached at all; the autouse fixture's stub (returning `[]` without calling `issue_trail`)
+    must make this a no-op. If the autouse fixture is ever removed or narrowed, this test is the
+    one that catches it — not a live `gh` reach discovered later on the build host."""
+    def _boom(repo, issue):
+        raise AssertionError(f"main() reached gh for {repo}#{issue} without a test-injected trail")
+
+    monkeypatch.setattr(epic_gate.drift.sources, "issue_trail", _boom)
+    monkeypatch.setattr(epic_gate, "_gh", FakeIntakeGh([], {}, open_issues={}))
+    monkeypatch.setattr(epic_gate, "_registered_repos", lambda: [])
+    monkeypatch.setattr(epic_gate.drift, "build_findings", lambda repo_root, home: [])
+    # deploy_record_findings deliberately left to the autouse fixture's default stub above.
+    rc = epic_gate.main()
+    assert rc == 0
 
 
 # ============================================================================

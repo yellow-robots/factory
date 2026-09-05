@@ -183,20 +183,28 @@ posting anything. The act:
    `$DEV_RUNNER_HOME` names a still-live pid. The same lock files `tools/epic_gate.py`'s
    `_default_build_lock_held` reads — never `ps`.
 2. **`git pull --ff-only origin main`.**
-3. **`XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart dispatch`** — IFF the pull touched a
+3. **The runbook's post-deploy checks** — `py_compile` over `tools/`, `bash -n tools/dev-runner.sh`,
+   `.venv/bin/python tools/process.py validate` — run BEFORE any restart, against the pulled tree.
+   Any failure refuses (exit 1), naming both the old and new `HEAD` (the pull already happened;
+   nothing is rolled back — attended, loud, the human decides); nothing is posted, and `dispatch`
+   is never restarted into a tree that failed its own checks (under `Restart=on-failure` a broken
+   import closure would otherwise crash-loop the service while `systemctl restart` itself still
+   returns 0).
+4. **`XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart dispatch`** — IFF the pull touched a
    file in the dispatcher's own import closure (`tools/dispatch.py` plus every sibling `tools/*.py`
    module it imports, transitively — currently `board_plumbing.py` and `provenance.py`). `dev-runner`
    and `epic-gate` need no restart: they recompute their own version statement fresh on every
    invocation.
-4. **The runbook's post-deploy checks** — `py_compile` over `tools/`, `bash -n tools/dev-runner.sh`,
-   `.venv/bin/python tools/process.py validate`. Any failure refuses (exit 1); nothing is posted.
 5. **The `YR-DEPLOY` record** — `surface`, `commit`, `who` (an actor CLASS, `human` or
    `attended-agent` — never a login), `restart` — posted once, with `gh`, on
    [yellow-robots/factory#464](https://github.com/yellow-robots/factory/issues/464), the deploy
    trail. A refused or environmentally-failed act posts nothing; the sweep's drift check
-   (`tools/drift.py`'s `deploy_record_findings`) compares the latest record there against each named
-   build-host surface's own live statement, reporting a disagreement as drift (readable only at the
-   sweep — the workspace host never reaches a build-host surface's live statement).
+   (`tools/drift.py`'s `deploy_record_findings`) compares the trail's records against each named
+   build-host surface's own live statement — `dev-runner`/`epic-gate` against the latest record,
+   `dispatch` (a resident process) against the latest record that actually claims `restart: yes`
+   (a `restart: no` deploy legitimately leaves it on its prior commit, never drift) — reporting a
+   genuine disagreement as drift (readable only at the sweep — the workspace host never reaches a
+   build-host surface's live statement).
 
 Exit codes: `0` deployed, `1` refused (quiescence or a post-deploy check), `2` usage, `3`
 environmental (`git pull` / `systemctl` / `gh` failure). Every external act is overridable

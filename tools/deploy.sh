@@ -119,12 +119,17 @@ _live_run_dirs() {
 }
 
 probe_quiescence() {
+  # the lock HOME is dirname(DISPATCH_LOCK) — dispatch.py's own derivation (repo_lock_path /
+  # slot_lock_path both live beside DISPATCH_LOCK, never assumed to equal DEV_RUNNER_HOME
+  # directly, even though that IS today's default) — so an operator override of DISPATCH_LOCK
+  # alone (matching dispatch.py's own env contract) relocates the probe too.
+  local lock_home; lock_home="$(dirname "$DISPATCH_LOCK")"
   local lock
-  for lock in "$DEV_RUNNER_HOME"/dispatch-*.lock; do
+  for lock in "$lock_home"/dispatch-*.lock; do
     [ -e "$lock" ] || continue
     _lock_held "$lock" && refuse "a build lock is held: $lock"
   done
-  for lock in "$DEV_RUNNER_HOME"/capslot-*.lock; do
+  for lock in "$lock_home"/capslot-*.lock; do
     [ -e "$lock" ] || continue
     _lock_held "$lock" && refuse "a capacity-slot lock is held: $lock"
   done
@@ -143,10 +148,13 @@ probe_quiescence() {
 WHO=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --who)      WHO="${2:-}"; shift 2 ;;
+    --who)      [ $# -ge 2 ] || { echo "deploy: --who requires a value" >&2; usage; }
+                WHO="$2"; shift 2 ;;
     --dry-run)  DRY_RUN=1; shift ;;
-    --repo)     DEPLOY_REPO="${2:-}"; shift 2 ;;
-    --issue)    DEPLOY_ISSUE="${2:-}"; shift 2 ;;
+    --repo)     [ $# -ge 2 ] || { echo "deploy: --repo requires a value" >&2; usage; }
+                DEPLOY_REPO="$2"; shift 2 ;;
+    --issue)    [ $# -ge 2 ] || { echo "deploy: --issue requires a value" >&2; usage; }
+                DEPLOY_ISSUE="$2"; shift 2 ;;
     -h|--help)  usage ;;
     -*)         echo "deploy: unknown flag: $1" >&2; usage ;;
     *)          echo "deploy: unexpected arg: $1" >&2; usage ;;
@@ -174,7 +182,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "deploy: dry-run — already at origin/main's tip ($NEW_HEAD); nothing would be pulled; restart: no"
     exit 0
   fi
-  CLOSURE_FILES="$(_import_closure)"
+  CLOSURE_FILES="$(_import_closure)" \
+    || envfail "could not compute the dispatcher's import closure at $DEPLOY_ROOT"
   # shellcheck disable=SC2086 — intentional word-splitting: one path per line, none containing spaces
   CHANGED="$("$GIT_BIN" -C "$DEPLOY_ROOT" diff --name-only "$OLD_HEAD" "$NEW_HEAD" -- $CLOSURE_FILES)"
   if [ -n "$CHANGED" ]; then
@@ -190,15 +199,28 @@ fi
 NEW_HEAD="$("$GIT_BIN" -C "$DEPLOY_ROOT" rev-parse HEAD)" \
   || envfail "could not read the new HEAD at $DEPLOY_ROOT after pulling"
 
+# ── the runbook's post-deploy checks, BEFORE any restart — a tree that fails these must never be
+#    restarted into: under Restart=on-failure a broken import closure would crash-loop the service
+#    while `systemctl restart` itself returns 0, hiding the failure from the act's own exit code.
+#    Any failure REFUSES (exit 1) naming both HEADs (the pull already happened; nothing is rolled
+#    back — attended, loud, the human decides); no record is posted. ────────────────────────────
+"$PY_BIN" -m compileall -q "$DEPLOY_ROOT/tools" \
+  || refuse "post-deploy check failed: py_compile over tools/ (pulled $OLD_HEAD -> $NEW_HEAD; the tree is NOT rolled back, dispatch was NOT restarted)"
+bash -n "$DEPLOY_ROOT/tools/dev-runner.sh" \
+  || refuse "post-deploy check failed: bash -n tools/dev-runner.sh (pulled $OLD_HEAD -> $NEW_HEAD; the tree is NOT rolled back, dispatch was NOT restarted)"
+"$VENV_PYTHON" "$DEPLOY_ROOT/tools/process.py" validate \
+  || refuse "post-deploy check failed: .venv/bin/python tools/process.py validate (pulled $OLD_HEAD -> $NEW_HEAD; the tree is NOT rolled back, dispatch was NOT restarted)"
+
 RESTARTED="no"
 if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
-  CLOSURE_FILES="$(_import_closure)"
+  CLOSURE_FILES="$(_import_closure)" \
+    || envfail "could not compute the dispatcher's import closure at $DEPLOY_ROOT (checks already passed at $NEW_HEAD)"
   # shellcheck disable=SC2086 — intentional word-splitting: one path per line, none containing spaces
   CHANGED="$("$GIT_BIN" -C "$DEPLOY_ROOT" diff --name-only "$OLD_HEAD" "$NEW_HEAD" -- $CLOSURE_FILES)"
   if [ -n "$CHANGED" ]; then
     log "restarting dispatch — import closure changed: $(echo "$CHANGED" | tr '\n' ' ')"
     XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" "$SYSTEMCTL_BIN" --user restart dispatch \
-      || envfail "systemctl --user restart dispatch failed"
+      || envfail "systemctl --user restart dispatch failed (checks already passed at $NEW_HEAD)"
     RESTARTED="yes"
   else
     log "import closure unchanged — dispatch not restarted"
@@ -206,14 +228,6 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
 else
   log "already at origin/main's tip ($NEW_HEAD) — nothing pulled, dispatch not restarted"
 fi
-
-# ── the runbook's post-deploy checks — any failure REFUSES (exit 1), posts no record ────────────
-"$PY_BIN" -m compileall -q "$DEPLOY_ROOT/tools" \
-  || refuse "post-deploy check failed: py_compile over tools/"
-bash -n "$DEPLOY_ROOT/tools/dev-runner.sh" \
-  || refuse "post-deploy check failed: bash -n tools/dev-runner.sh"
-"$VENV_PYTHON" "$DEPLOY_ROOT/tools/process.py" validate \
-  || refuse "post-deploy check failed: .venv/bin/python tools/process.py validate"
 
 # ── the one record: surface, commit, who (actor class), restart — once, on the deploy trail ─────
 # `--body` inline (never `--body-file`): the record is a handful of short field lines — small

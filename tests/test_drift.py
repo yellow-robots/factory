@@ -246,19 +246,65 @@ def test_deploy_record_findings_silent_when_the_record_agrees_with_every_surface
     assert findings == []
 
 
-def test_deploy_record_findings_names_dispatch_when_it_never_restarted(tmp_path, monkeypatch):
-    """The checkout itself is at the recorded commit (dev-runner/epic-gate agree, since they
-    recompute fresh), but dispatch's captured statement still names the PRIOR commit — exactly the
-    live signature of a restart that should have happened but didn't."""
+def test_deploy_record_findings_a_restart_no_deploy_leaving_dispatch_stale_is_not_drift(tmp_path, monkeypatch):
+    """A `restart: no` deploy LEGITIMATELY leaves dispatch (a resident process) on its prior
+    commit — that is never drift. dev-runner/epic-gate still agree (they recompute fresh from the
+    checkout, which IS at the recorded commit); dispatch has no `restart: yes` record yet to be
+    judged against at all, so this is silent, not a disagreement."""
     checkout, sha, _ = _origin_and_checkout(tmp_path)
     home = tmp_path / "home"
-    _write_statement(home, "0" * 40)
+    _write_statement(home, "0" * 40)   # dispatch never restarted -- still an older statement
     monkeypatch.setattr(drift.sources, "issue_trail",
                         lambda repo, issue: (True, [_deploy_body(sha, restart="no")]))
+    assert drift.deploy_record_findings(checkout, home) == []
+
+
+def test_deploy_record_findings_flags_dispatch_against_its_own_latest_restart_yes_record(tmp_path, monkeypatch):
+    """The counterpart to the restart:no case above: a record that DOES claim `restart: yes` but
+    disagrees with dispatch's live statement is a genuine disagreement."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, "2" * 40)   # restart claimed, but dispatch's live statement disagrees
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [_deploy_body(sha, restart="yes")]))
     findings = drift.deploy_record_findings(checkout, home)
-    assert len(findings) == 1, findings
-    assert findings[0].startswith("deploy-record: dispatch: DISAGREES")
-    assert sha[:12] in findings[0]
+    dispatch_findings = [f for f in findings if f.startswith("deploy-record: dispatch:")]
+    assert len(dispatch_findings) == 1, findings
+    assert "DISAGREES" in dispatch_findings[0]
+    assert sha[:12] in dispatch_findings[0]
+
+
+def test_deploy_record_findings_a_later_restart_no_record_does_not_silence_an_earlier_stale_dispatch(tmp_path, monkeypatch):
+    """A later `restart: no` record must not silence dispatch's real disagreement against its OWN
+    latest `restart: yes` record — dispatch is judged against the latest record that actually
+    claims the restart, not merely the trail's overall latest record."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, "3" * 40)   # never matches the restart:yes record below
+    restarted = _deploy_body(sha, restart="yes")
+    later_no_op = _deploy_body(sha, restart="no")
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [restarted, later_no_op]))
+    findings = drift.deploy_record_findings(checkout, home)
+    dispatch_findings = [f for f in findings if f.startswith("deploy-record: dispatch:")]
+    assert len(dispatch_findings) == 1, findings
+    assert "DISAGREES" in dispatch_findings[0]
+
+
+def test_deploy_record_findings_reports_a_stale_record_after_a_hand_pull_on_every_surface(tmp_path, monkeypatch):
+    """A human hand-pulled and hand-restarted (never posting a new record): the checkout and
+    dispatch have BOTH moved past the trail's only (restart:yes) record — every named surface
+    disagrees, still caught as drift."""
+    checkout, sha, _ = _origin_and_checkout(tmp_path)
+    home = tmp_path / "home"
+    _write_statement(home, sha)   # dispatch WAS hand-restarted onto the new commit
+    stale = "9" * 40
+    monkeypatch.setattr(drift.sources, "issue_trail",
+                        lambda repo, issue: (True, [_deploy_body(stale, restart="yes")]))
+    findings = drift.deploy_record_findings(checkout, home)
+    named = {f.split(":")[1].strip() for f in findings}
+    assert named == {"dispatch", "dev-runner", "epic-gate"}, findings
+    assert all("DISAGREES" in f for f in findings)
 
 
 def test_deploy_record_findings_silent_when_no_record_exists_yet(tmp_path, monkeypatch):

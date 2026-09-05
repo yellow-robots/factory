@@ -184,6 +184,15 @@ def test_invalid_who_is_usage_error(tmp_path):
     assert "actor CLASS" in r.stderr
 
 
+def test_who_with_no_value_is_a_clean_usage_error_not_a_bare_shift_failure(tmp_path):
+    """`--who` as the LAST argument (no following value) must hit `usage` (exit 2, a clear
+    message) — not a bare, unmessaged failure out of `shift 2` running past the argument list."""
+    r = _run(["--who"], {**os.environ, "DEV_RUNNER_HOME": str(tmp_path / "home")})
+    assert r.returncode == 2
+    assert "usage" in r.stderr.lower()
+    assert "requires a value" in r.stderr
+
+
 def test_who_human_and_attended_agent_both_pass_validation(tmp_path):
     # neither reaches a real repo (DEPLOY_ROOT absent) -> environmental (3), never usage (2)
     home = tmp_path / "home"
@@ -289,6 +298,30 @@ def test_clean_quiescence_proceeds_past_the_probe(tmp_path):
     assert r.returncode == 3   # no repo at DEPLOY_ROOT -> environmental, past the probe
 
 
+def test_dispatch_lock_override_relocates_the_probes_lock_home(tmp_path):
+    """The probe's lock globs live beside DISPATCH_LOCK (dispatch.py's own derivation), never
+    hardcoded to DEV_RUNNER_HOME — a lock held at a DISPATCH_LOCK-relocated home must still refuse,
+    even though DEV_RUNNER_HOME itself points elsewhere (and holds nothing)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    lock_path = elsewhere / "dispatch-yellow--robots.lock"
+    lock_path.touch()
+    fd = os.open(str(lock_path), os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        env = {**os.environ, "DEV_RUNNER_HOME": str(home),
+              "DISPATCH_LOCK": str(elsewhere / "dispatch.lock")}
+        r = _run(["--who", "human"], env)
+        assert r.returncode == 1
+        assert "REFUSED" in r.stderr
+        assert str(lock_path) in r.stderr
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 # ============ dry-run: probes and reports, never mutates/posts ============
 
 def test_dry_run_reports_restart_yes_without_pulling_or_posting(tmp_path):
@@ -315,6 +348,22 @@ def test_dry_run_reports_restart_no_for_an_unrelated_change(tmp_path):
     r = _run(["--who", "human", "--dry-run"], env)
     assert r.returncode == 0, r.stderr
     assert "restart: no" in r.stdout
+
+
+def test_a_broken_import_closure_computation_is_environmental_not_a_bare_set_e_crash(tmp_path):
+    """`CLOSURE_FILES="$(_import_closure)"` under `set -e`, left unguarded, would abort with a
+    bare, unmessaged exit 1 — indistinguishable from a deliberate `refuse`. Guarded with
+    `|| envfail`, a broken PY_BIN here must land as a clearly-messaged exit 3 instead. Exercised
+    via --dry-run, whose only PY_BIN use IS the closure computation (the real-run path guards the
+    identical call the same way, right after the same checks that already exercise PY_BIN)."""
+    checkout, sha1, sha2 = _fixture(tmp_path, touch_closure=True)
+    binp = _bin(tmp_path)
+    env = _env(tmp_path, deploy_root=checkout, dev_runner_home=tmp_path / "home", binp=binp,
+              extra={"PY_BIN": str(tmp_path / "no-such-python")})
+    r = _run(["--who", "human", "--dry-run"], env)
+    assert r.returncode == 3
+    assert "ENVIRONMENTAL" in r.stderr
+    assert "import closure" in r.stderr
 
 
 # ============ the real act: pull, conditional restart, checks, the one record ============
@@ -387,7 +436,25 @@ def test_a_failing_post_deploy_check_refuses_and_posts_nothing(tmp_path):
     assert r.returncode == 1
     assert "REFUSED" in r.stderr
     assert "process.py validate" in r.stderr
+    assert sha1 in r.stderr and sha2 in r.stderr   # both HEADs named -- recovery is derivable
     assert not _calls(calls_log)   # no record posted on a refused act
+
+
+def test_a_failing_post_deploy_check_never_restarts_dispatch_even_when_the_closure_changed(tmp_path):
+    """Checks run BEFORE any restart: a tree that fails py_compile/validate must never be
+    restarted into (Restart=on-failure would otherwise crash-loop it while `systemctl restart`
+    itself still returns 0) — even when the pulled change DID touch the import closure."""
+    checkout, sha1, sha2 = _fixture(tmp_path, touch_closure=True)
+    binp = _bin(tmp_path)
+    sysctl_log = tmp_path / "sysctl.log"
+    calls_log = tmp_path / "calls.log"
+    env = _env(tmp_path, deploy_root=checkout, dev_runner_home=tmp_path / "home", binp=binp,
+              systemctl_log=sysctl_log, calls_log=calls_log, extra={"STUB_VALIDATE_EXIT": "1"})
+    r = _run(["--who", "human"], env)
+    assert r.returncode == 1
+    assert "REFUSED" in r.stderr
+    assert not sysctl_log.exists() or not sysctl_log.read_text()
+    assert not _calls(calls_log)
 
 
 def test_git_pull_failure_is_environmental_not_refused(tmp_path):

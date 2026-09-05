@@ -154,25 +154,29 @@ def _deploy_field(lines: list[str], field: str) -> str | None:
     return None
 
 
-def _latest_deploy_record(texts: list[str]) -> tuple[str, str] | None:
-    """The LATEST (last, in trail order) `YR-DEPLOY` record among `texts` that carries both
-    `surface` and `commit` — `(surface, commit)`. A record missing either field is skipped, never
-    mistaken for the latest complete one (mirrors the grammar `check_trail.py`'s `_missing_fields`
-    enforces — a record must be complete within ONE text). Reads `records.toml`'s own row for the
-    marker, never a hardcoded string, so a canon-side marker change is never silently missed here."""
+def _parse_deploy_records(texts: list[str]) -> list[dict]:
+    """Every well-formed `YR-DEPLOY` record among `texts`, IN TRAIL ORDER, as
+    `{"surface", "commit", "restart"}` dicts. A record missing `surface` or `commit` is skipped,
+    never mistaken for a complete one (mirrors the grammar `check_trail.py`'s `_missing_fields`
+    enforces — a record must be complete within ONE text). `restart` is the lowercased, stripped
+    field text, or `""` when the field is absent — never mistaken for a stated `"no"`. Reads
+    `records.toml`'s own row for the marker, never a hardcoded string, so a canon-side marker
+    change is never silently missed here."""
     reg = records.load()
     row = records.get(reg, "YR-DEPLOY")
     marker = row["marker"]
-    found: tuple[str, str] | None = None
+    out: list[dict] = []
     for text in texts:
         lines = text.splitlines()
         if not any(textutil.marker_line_matches(l, marker, mode=textutil.MARKER_PREFIX) for l in lines):
             continue
         surface = _deploy_field(lines, "surface")
         commit = _deploy_field(lines, "commit")
+        restart = _deploy_field(lines, "restart")
         if surface and commit:
-            found = (surface, commit)
-    return found
+            out.append({"surface": surface, "commit": commit,
+                       "restart": (restart or "").strip().lower()})
+    return out
 
 
 def _surface_statement(name: str, checkout_root: Path | str, home: Path | str) -> str | None:
@@ -195,26 +199,45 @@ def _surface_statement(name: str, checkout_root: Path | str, home: Path | str) -
 
 def deploy_record_findings(checkout_root: Path | str, home: Path | str, *,
                            repo: str = DEPLOY_TRAIL_REPO, issue: str = DEPLOY_TRAIL_ISSUE) -> list[str]:
-    """The sweep-only moment: the latest `YR-DEPLOY` record on `repo`#`issue` (read LIVE through
-    `tools/sources.py issue_trail` — the one trail read in this module) against each build-host
-    surface it names, on THIS host's own live statement. Silent when they agree, when the trail
-    cannot be read (a bounded, never-raising fetch — the caller still gets a named finding, not a
-    crash), or when no `YR-DEPLOY` record exists yet. A finding per disagreeing or unreadable named
-    surface; an unrecognized surface name is itself a finding (the record names something this
-    alarm has no live statement for)."""
+    """The sweep-only moment: the deploy trail's `YR-DEPLOY` records (read LIVE through
+    `tools/sources.py issue_trail` — the one trail read in this module), against each build-host
+    surface the LATEST record names, on THIS host's own live statement. `dev-runner`/`epic-gate`
+    recompute fresh on every invocation, so they are judged against the latest record's commit
+    regardless of its `restart` value. `dispatch` is a resident process: a `restart: no` deploy
+    LEGITIMATELY leaves it on its prior commit — that is never drift — so dispatch is judged
+    against the latest record that actually claims `restart: yes` (silent when none exists yet,
+    e.g. every deploy so far left the closure untouched); a genuinely stale record (someone hand-
+    pulled and hand-restarted without ever posting one) still surfaces as a disagreement, because
+    the live statement has moved past what that last `restart: yes` record claimed.
+
+    Silent when everything agrees, when the trail cannot be read (a bounded, never-raising fetch —
+    the caller still gets a named finding, not a crash), or when no `YR-DEPLOY` record exists yet.
+    A finding per disagreeing or unreadable named surface; an unrecognized surface name is itself a
+    finding (the record names something this alarm has no live statement for)."""
     ok, texts = sources.issue_trail(repo, str(issue))
     if not ok:
         return [f"deploy-record ({repo}#{issue}): UNREADABLE — {texts}"]
-    record = _latest_deploy_record(texts)
-    if record is None:
+    parsed = _parse_deploy_records(texts)
+    if not parsed:
         return []
-    surface_field, commit = record
+    latest = parsed[-1]
+    latest_restart_yes = next((r for r in reversed(parsed) if r["restart"] == "yes"), None)
+
     findings: list[str] = []
-    for name in [s.strip() for s in surface_field.split(",") if s.strip()]:
-        live = _surface_statement(name, checkout_root, home)
-        if live is None:
+    for name in [s.strip() for s in latest["surface"].split(",") if s.strip()]:
+        if name == "dispatch":
+            if latest_restart_yes is None:
+                continue   # never claimed a restart yet -- nothing to judge dispatch against
+            commit = latest_restart_yes["commit"]
+        elif name in _DEPLOY_SURFACES:
+            commit = latest["commit"]
+        else:
             findings.append(f"deploy-record: {name}: not a recognized build-host surface")
-        elif live.startswith("unreadable"):
+            continue
+        # `name` is one of `_DEPLOY_SURFACES` on every path that reaches here (the unrecognized
+        # case already `continue`d above), so `_surface_statement` never returns None below.
+        live = _surface_statement(name, checkout_root, home)
+        if live.startswith("unreadable"):
             findings.append(f"deploy-record: {name}: UNREADABLE — {live.removeprefix('unreadable: ')}")
         elif commit != live:
             findings.append(f"deploy-record: {name}: DISAGREES (record says {commit[:12]}, "

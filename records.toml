@@ -489,9 +489,9 @@ mode = "prefix"
 fields = ["surface", "commit", "who", "restart"]
 emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
 emitter = "the deploy act — registered here at its grammar's minting (it-33 slice 3, epic #455); the act itself (a typed record on the deployed surface's own trail) is slice 6's"
-readers = ["the drift check (slice 6 — not yet wired)", "the next round's evaluator (slice 6 — not yet wired)"]
+readers = ["tools/drift.py deploy_record_findings, at the sweep (it-33 slice 6, issue #462)", "the next round's evaluator (not yet wired)"]
 surfaces = ["issue-trail"]
-notes = "surface names what was deployed (dispatch|epic-gate|dev-runner|...); commit is the version statement of the deployed tree; restart states whether the service restarted. Grammar only in this slice — no reader reads it yet (slice 6's)."
+notes = "surface names what was deployed (dispatch|epic-gate|dev-runner|...); commit is the version statement of the deployed tree; restart states whether the service restarted. tools/deploy.sh (it-33 slice 6) is the emitter; tools/drift.py's deploy_record_findings, called from tools/epic_gate.py's sweep, is the first reader — it compares the trail's latest record against each named build-host surface's own live statement (dispatch judged against the latest restart:yes record; dev-runner/epic-gate against the latest record), reporting disagreement as drift."
 
 [[record]]
 name = "YR-CROSSOVER"
