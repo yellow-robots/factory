@@ -490,6 +490,26 @@ def test_attended_invocation_still_emits_to_the_terminal(tmp_path):
     assert any("starting" in l and "run dir" in l for l in lines)
 
 
+# ============ it-33 slice 2 (issue #457): the run banner states the commit it runs from ============
+# Every declared runtime surface names the commit of the whole tree it is executing from. dev-runner's
+# run-opening banner shells out to the shared helper (tools/provenance.py) best-effort, never a `git
+# rev-parse` of its own — see tools/provenance.py:factory_commit, the single home of that read.
+
+def test_opening_line_states_the_commit_of_the_factory_tree_it_runs_from(tmp_path):
+    binp = tmp_path / "bin"; _stubs(binp)
+    env = _env(tmp_path, binp)
+    env["BASE_REPO"] = str(_manifest_repo(tmp_path))
+    r = _run(["7", "--repo", "test/repo", "--dry-run"], env)
+    assert r.returncode == 0, r.stderr
+
+    real = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    lines = [l for l in r.stderr.splitlines() if l.startswith("dev-runner:") and "starting" in l]
+    assert lines, "no opening self-identification line found"
+    assert any(f"commit: {real}" in l for l in lines), \
+        "the run banner never names the whole tree's commit"
+
+
 # ============ needs-info / dry-run ============
 
 def test_needs_info_on_empty_criteria(tmp_path):

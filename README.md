@@ -15,6 +15,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | Path | What |
 |---|---|
 | `tools/dispatch.py` | the host endpoint n8n calls to fire a build (RFC 0004) |
+| `tools/provenance.py` | the one self-locate helper: every declared runtime surface's `commit: <sha>` version statement runs through here |
 | `tools/dev-runner.sh` | the staged pipeline: gate → implement → independent test → check → independent review → PR (RFC 0002) — builder ≠ verifier, by construction |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/merge_shadow.py` | the merge-decision evaluator + shadow-completion |
