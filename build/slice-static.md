@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.5.1 sha256:2a1a7a73c8ae0b7f — never hand-edit -->
+<!-- GENERATED from process.toml v1.6.0 sha256:6490c10fe944a814 — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 

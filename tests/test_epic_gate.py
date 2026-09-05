@@ -80,10 +80,12 @@ VALID_RECORD = (
 )
 
 # The close-lane mandates, grammar-complete in one comment (it-31 slice 9: a finished non-debt epic
-# holds until these exist on its trail — fixtures that expect the self-close carry them).
+# holds until these exist on its trail — fixtures that expect the self-close carry them). `deployed`
+# (it-33 slice 3, epic #455, v1.6.0) joined YR-ROUND-RECORD's fields alongside every other machinery
+# record's new `commit` field — this fixture predates both, so it carries `deployed` explicitly.
 CLOSE_RECORDS = (
     "YR-ROUND-RECORD: the round's observable counts\n"
-    "refusals: 0\nrecords-demanded: 0\ndetector-findings: 0\nescalations: 0\n"
+    "refusals: 0\nrecords-demanded: 0\ndetector-findings: 0\nescalations: 0\ndeployed: none\n"
     "\n"
     "YR-SHIP-WALK: walked at close\nwho: @human\nscope: this epic's slices\n"
 )
@@ -345,6 +347,20 @@ def test_happy_path_promotes_first_open_task_child():
     # #102 (the later child) is untouched — no edit, no comment on it
     assert not any(e[0] == "PI-102" for e in fake.edits)
     assert not any(c[1] == "102" for c in fake.comments)
+
+
+def test_promoted_body_carries_the_sweep_own_commit_statement():
+    """it-33 slice 3 (epic #455): YR-AUTO-PROMOTED gained `commit` in records.toml's `fields` — the
+    body must carry a `commit:` line the LIVE registry's field grammar accepts, indented under the
+    marker (never a bare column-0 line — the debt hold's lesson generalized)."""
+    import check_trail
+    import records as records_mod
+    body = epic_gate._promoted_body(100)
+    assert body.splitlines()[0] == "YR-AUTO-PROMOTED"
+    assert body.splitlines()[1] == f"  {epic_gate.COMMIT_STATEMENT}"
+    reg = records_mod.load()
+    row = records_mod.get(reg, "YR-AUTO-PROMOTED")
+    assert check_trail._missing_fields(row, [body]) == []
 
 
 def test_happy_path_only_sets_status_to_ready():
@@ -3549,6 +3565,42 @@ def test_finished_epic_without_close_records_holds_naming_each():
     assert {"epic": 100, "action": "hold-close", "missing": 2} in actions
 
 
+def test_close_hold_body_carries_the_sweep_own_commit_statement():
+    """it-33 slice 3 (epic #455): YR-CLOSE-HOLD gained `commit` in records.toml's `fields` — line 0
+    stays exactly the sentinel marker (mode=sentinel is whole-line equality), the `commit:` field
+    rides line 1, indented so it never reads as one more '- '-prefixed finding bullet."""
+    import check_trail
+    import records as records_mod
+    body = epic_gate._close_hold_body(["close: YR-ROUND-RECORD: mandated record absent (marker "
+                                       "'YR-ROUND-RECORD:', mode prefix)"])
+    lines = body.splitlines()
+    assert lines[0] == "YR-CLOSE-HOLD"
+    assert lines[1] == f"  {epic_gate.COMMIT_STATEMENT}"
+    reg = records_mod.load()
+    row = records_mod.get(reg, "YR-CLOSE-HOLD")
+    assert check_trail._missing_fields(row, [body]) == []
+
+
+# it-33 slice 3 (epic #455): every YR-EPIC-GATE raise-family row gained `commit` in records.toml's
+# `fields` — one pin per emitter, each checked against the LIVE registry's own field grammar.
+def test_every_epic_gate_raise_body_carries_the_commit_field():
+    import check_trail
+    import records as records_mod
+    reg = records_mod.load()
+    cases = {
+        "YR-EPIC-GATE: no-approval": epic_gate._needs_info_body("no comment carries the record"),
+        "YR-EPIC-GATE: not-a-task": epic_gate._not_a_task_body(101),
+        "YR-EPIC-GATE: not-onboarded": epic_gate._not_onboarded_body(),
+        "YR-EPIC-GATE: open-questions": epic_gate._open_questions_body([(3, "YR-OPEN-QUESTION: x")]),
+        "YR-EPIC-GATE: gate-touching": epic_gate._gate_touching_body(101, "touches check_cmd"),
+        "YR-EPIC-GATE: stranded claim": epic_gate._stranded_body(60.0),
+    }
+    for name, body in cases.items():
+        row = records_mod.get(reg, name)
+        assert check_trail._marker_present(row, [body]), name
+        assert check_trail._missing_fields(row, [body]) == [], name
+
+
 def test_close_hold_comment_and_reason_set_exactly_once_across_ticks():
     board, epics = _finished_feature_epic([VALID_RECORD])
     fake = FakeGh(board, epics)
@@ -3573,7 +3625,7 @@ def test_close_records_split_across_two_comments_also_satisfy():
     """Each record complete within ONE text (the field-pooling rule) — but the two records may ride
     separate comments."""
     round_rec = ("YR-ROUND-RECORD: counts\nrefusals: 1\nrecords-demanded: 2\n"
-                 "detector-findings: 0\nescalations: 0\n")
+                 "detector-findings: 0\nescalations: 0\ndeployed: none\n")
     walk_rec = "YR-SHIP-WALK: walked\nwho: @human\nscope: epic\n"
     board, epics = _finished_feature_epic([VALID_RECORD, round_rec, walk_rec])
     fake = FakeGh(board, epics)

@@ -88,6 +88,12 @@ REASON_FIELD_ID = board_plumbing.reason_field_id()
 STATUS_OPT = board_plumbing.status_opt()
 REASON_OPT = board_plumbing.reason_opt()
 
+# The sweep's own version statement (it-33 slice 3, epic #455): the same `commit: <sha>` line the
+# `main()` banner already printed (slice 2), now also the source every board-write record's own
+# `commit` field reads from — computed once at import, never a per-call re-read of a possibly-moving
+# tree (records.toml: YR-AUTO-PROMOTED, the six YR-EPIC-GATE raise rows, YR-CLOSE-HOLD).
+COMMIT_STATEMENT = provenance.statement(pathlib.Path(__file__).resolve().parent.parent)
+
 # a child is "in flight / off-track" — the line is busy — while it holds any of these
 BUSY_STATUS = {"Ready", "In Progress", "In Review"}
 BUSY_REASON = {"Blocked", "Needs-info"}
@@ -305,7 +311,7 @@ def _stranded_body(age_min):
     return (
         f"YR-EPIC-GATE: stranded claim — In Progress {int(age_min)} min with no live build; likely a "
         "hard runner death (see `deploy/DISPATCH.md`). Recover: clear the Reason and re-Ready if the fix "
-        "warrants."
+        f"warrants.\n\n{COMMIT_STATEMENT}"
     )
 
 
@@ -496,9 +502,16 @@ def _has_ledger_verdict(comments):
 
 
 # --- comment bodies (each raise tells the human to clear the epic's Reason to resume) ------------------
+# it-33 slice 3 (epic #455): every one of these carries the sweep's own `commit: <sha>` statement, one
+# field indented right under the record's marker line (`records.toml`'s `commit` field on YR-AUTO-
+# PROMOTED and the six YR-EPIC-GATE raise rows) — indented so it reads as inside the record's own
+# block even where the body below also quotes another marker's name (the debt hold's lesson, see
+# `_close_hold_body`); `check_trail._missing_fields` lstrips before matching, so the indent is cosmetic
+# to the grammar and load-bearing only for a human reading the comment.
 def _promoted_body(epic_number):
     return (
-        "YR-AUTO-PROMOTED\n\n"
+        "YR-AUTO-PROMOTED\n"
+        f"  {COMMIT_STATEMENT}\n\n"
         f"Promoted **automatically** by the epic-gate under epic #{epic_number} "
         "(standing approval on record). This is the next open Task in sub-issue order — one slice in "
         "flight per epic. Promotion is automatic, not a human act."
@@ -507,7 +520,8 @@ def _promoted_body(epic_number):
 
 def _needs_info_body(reason):
     return (
-        f"{NO_APPROVAL_MARKER}\n\n"
+        f"{NO_APPROVAL_MARKER}\n"
+        f"  {COMMIT_STATEMENT}\n\n"
         f"no valid standing-approval record found: {reason}. The epic-gate needs a comment with a line "
         "beginning `YR-EPIC-APPROVAL` at column 0, carrying non-empty `design:`, `review:`, and `who:` "
         "fields, before it will promote any child — nothing was promoted. Add the record, then clear this "
@@ -517,7 +531,8 @@ def _needs_info_body(reason):
 
 def _not_a_task_body(child_number):
     return (
-        f"{NOT_A_TASK_MARKER}\n\n"
+        f"{NOT_A_TASK_MARKER}\n"
+        f"  {COMMIT_STATEMENT}\n\n"
         f"next open child #{child_number} is not a Task — nested decompositions are out of "
         "scope; promotion stopped. The gate does not skip ahead to a later Task. Reorder so the next open "
         "child is a Task (or split it out), then clear this epic's Reason to resume."
@@ -528,7 +543,8 @@ def _gate_touching_body(child_number, reason):
     # `reason` is backticked, never reproduced at column 0 — a self-triggering record must not satisfy its
     # own detector on the next sweep (same discipline as `_open_questions_body`).
     return (
-        f"{GATE_TOUCHING_MARKER}\n\n"
+        f"{GATE_TOUCHING_MARKER}\n"
+        f"  {COMMIT_STATEMENT}\n\n"
         f"next open child #{child_number} declares itself gate-touching (`{reason}`) — promotion stopped. "
         "Gate evolution is attended work: the pipeline builds under fixed gates, so a slice that touches "
         "checks, CI, or the manifest is not the factory's to promote itself. Land the change by hand, "
@@ -538,7 +554,8 @@ def _gate_touching_body(child_number, reason):
 
 def _not_onboarded_body():
     return (
-        f"{NOT_ONBOARDED_MARKER}\n\n"
+        f"{NOT_ONBOARDED_MARKER}\n"
+        f"  {COMMIT_STATEMENT}\n\n"
         "this repo is not onboarded — no `.yr/factory.toml` found at the base ref, so no "
         "build could ever run here. Onboarding (auth, onboarding the repo, arming) is attended, "
         "design-side work — never a slice the factory can pick up itself. Onboard the repo, then "
@@ -552,7 +569,8 @@ def _open_questions_body(lines):
     # documents one of them). Each marker is named by line number plus a backticked excerpt instead.
     named = "\n".join(f"- line {n}: `{line}`" for n, line in lines)
     return (
-        f"{OPEN_QUESTIONS_MARKER}\n\n"
+        f"{OPEN_QUESTIONS_MARKER}\n"
+        f"  {COMMIT_STATEMENT}\n\n"
         "this epic's body carries an un-dispositioned open question — promotion stopped, nothing "
         f"promoted (rule: open questions never ride the epic, `skills/factory/references/authoring.md` "
         f"step 3 / `skills/factory/references/architect.md`). A line beginning `{OPEN_QUESTION_PREFIX}` "
@@ -580,10 +598,13 @@ def _close_records_findings(body, comments):
 def _close_hold_body(findings):
     # The debt lesson (see _debt_hold_body): never spell a mandated field as a bare `key: value`
     # line — each finding rides a "- "-indented line, so a prefix-mode marker can never anchor at
-    # column 0 inside this comment.
+    # column 0 inside this comment. The record's OWN `commit` field (it-33 slice 3) is the one
+    # exception, deliberately indented right under the marker (never a "- " bullet, never bare at
+    # column 0 either) — inside the record's own block, not read as one of the findings it lists.
     joined = "\n".join(f"- {f}" for f in findings)
     return (
-        f"{CLOSE_HOLD_MARKER}\n\n"
+        f"{CLOSE_HOLD_MARKER}\n"
+        f"  {COMMIT_STATEMENT}\n\n"
         "This Feature epic has no open children left, but its mandated close records are not on the "
         "trail — the epic-gate will not self-close it until they are (the model's close-lane "
         "mandates, judged by the detector's own grammar check; it-31 slice 9). Missing:\n\n"
@@ -1230,7 +1251,7 @@ def main(argv=None):
     """CLI entrypoint: run one real sweep with the default `gh` runner over the workspace-discovered
     registered repos, and print what it did."""
     repo_root = pathlib.Path(__file__).resolve().parent.parent
-    print(f"epic-gate: {provenance.statement(repo_root)}")
+    print(f"epic-gate: {COMMIT_STATEMENT}")
     for finding in drift.build_findings(repo_root, dispatch.DEV_RUNNER_HOME):
         print(f"epic-gate: drift — {finding}")
     actions = sweep_epics(repos=_registered_repos())
