@@ -214,6 +214,35 @@ def test_record_schema_and_fixed_fields():
     assert REQUIRED_FIELDS <= set(rec), f"missing fields: {REQUIRED_FIELDS - set(rec)}"
 
 
+def test_record_carries_the_evaluator_own_commit_statement():
+    """it-33 slice 3 (epic #455): every record this evaluator emits states the commit of the tree IT
+    runs from (tools/provenance.py), memoized on first use — never a per-call re-read."""
+    import provenance
+    rec = _record(_all_pass())
+    assert rec["commit"] == merge_shadow._factory_commit()
+    assert rec["commit"] == provenance.factory_commit(merge_shadow.FACTORY_ROOT)
+
+
+def test_classify_checks_never_calls_factory_commit(monkeypatch, tmp_path):
+    """cold-review fold-in: `classify-checks` runs inside dev-runner.sh's bounded CI-wait poll loop
+    and emits no record — it must never reach `provenance.factory_commit`'s `git rev-parse`
+    subprocess, so a wedged git can't stall a poll tick behind that call's 10s timeout. Only the
+    record-emitting path (`build_record` -> `_factory_commit`, memoized) may call it at all."""
+    merge_shadow._factory_commit_cache = None    # undo any memoization an earlier test left behind
+    calls = []
+
+    def _boom(root):
+        calls.append(root)
+        raise AssertionError("provenance.factory_commit must not be called from classify-checks")
+
+    monkeypatch.setattr(merge_shadow.provenance, "factory_commit", _boom)
+    rollup = tmp_path / "rollup.json"
+    rollup.write_text(json.dumps({"statusCheckRollup": [CR_OK, CR_INFLIGHT, CR_FAIL]}))
+    rc = merge_shadow.main(["classify-checks", "--rollup-file", str(rollup)])
+    assert rc == 0
+    assert calls == []
+
+
 def test_record_pulls_the_fixed_fields_from_the_bundle():
     rec = _record(_all_pass())
     assert rec["bundle_sha256"] == "abc123"
@@ -245,6 +274,41 @@ def test_render_comment_first_line_then_fenced_block():
     parsed = json.loads(body[:body.index("```")])
     assert parsed["schema"] == "yr-merge-record/1"
     assert parsed["decision"] == "WOULD-MERGE"
+
+
+def test_render_comment_carries_a_plain_text_commit_field_line():
+    """it-33 slice 3: `records.toml`'s YR-MERGE(-SHADOW) rows now declare `fields = ["commit"]` —
+    `check_trail.py`'s `_missing_fields` wants a line starting `commit:` (lstripped), not merely a
+    JSON key (a `"commit":` line never matches, the leading quote defeats `startswith`). Line 2, right
+    under the marker, carries it verbatim; the JSON block's own `commit` key agrees with it."""
+    rec = _record(_all_pass())
+    comment = merge_shadow.render_comment(rec)
+    lines = comment.splitlines()
+    assert lines[1] == f"commit: {rec['commit']}"
+    start = comment.index("```yr-merge-record") + len("```yr-merge-record")
+    body = comment[start:]
+    parsed = json.loads(body[:body.index("```")])
+    assert parsed["commit"] == rec["commit"]
+
+
+def test_rendered_merge_and_shadow_comments_satisfy_check_trail_s_commit_field(tmp_path):
+    """End-to-end pin against the real registry: a rendered YR-MERGE / YR-MERGE-SHADOW comment must
+    satisfy `check_trail.check_texts`'s field grammar for the live `commit` field — not just look
+    right to the eye."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import check_trail
+    import records
+
+    reg = records.load()
+    shadow_rec = _record(_all_pass())
+    shadow_comment = merge_shadow.render_comment(shadow_rec)
+    row = records.get(reg, "YR-MERGE-SHADOW")
+    assert check_trail._missing_fields(row, [shadow_comment]) == []
+
+    armed_rec = _record(_all_pass(), mode="armed", decision="MERGED")
+    armed_comment = merge_shadow.render_comment(armed_rec)
+    row = records.get(reg, "YR-MERGE")
+    assert check_trail._missing_fields(row, [armed_comment]) == []
 
 
 def test_record_cli_roundtrip(tmp_path):

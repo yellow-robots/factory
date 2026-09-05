@@ -28,7 +28,8 @@ from the four base conditions.
 Three stdlib-only subcommands (like tools/review_bundle.py / tools/registry.py):
   classify-checks  — reduce a PR statusCheckRollup to `<total> <in_flight> <failed>`, the fields the
                      runner's bounded CI-wait loop polls on.
-  record           — emit the PR comment: line 1 the loud marker, then a fenced `yr-merge-record` JSON
+  record           — emit the PR comment: line 1 the loud marker, line 2 the evaluator's own
+                     `commit: <sha>` statement (it-33 slice 3), then a fenced `yr-merge-record` JSON
                      block at schema yr-merge-record/1. `--mode shadow` derives WOULD-MERGE/WOULD-BLOCK
                      from the conditions; `--mode armed --decision MERGED|BLOCKED` posts the durable
                      merge/blocked record.
@@ -46,7 +47,28 @@ import pathlib
 import re
 import sys
 
+import provenance
 import textutil
+
+# The tree this evaluator itself runs from (it-33 slice 3, epic #455): the same
+# `Path(__file__).resolve().parent.parent` self-locate `tools/dispatch.py` and `tools/epic_gate.py`
+# use on origin/main.
+FACTORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_factory_commit_cache = None
+
+
+def _factory_commit():
+    """The evaluator's own `commit` statement — computed LAZILY, on first call, and memoized: only
+    `build_record` (the record-emitting path) ever calls this, so the non-emitting subcommands
+    (`classify-checks`, inside dev-runner.sh's bounded CI-wait poll loop; `shadow-complete`;
+    `last-record`) never pay `provenance.factory_commit`'s `git rev-parse` subprocess — a wedged git
+    would otherwise stall every poll tick behind that call's 10s timeout. Still computed once PER
+    PROCESS, never a per-call re-read of a possibly-moving tree — the memoization keeps that property,
+    just deferred from import time to first use."""
+    global _factory_commit_cache
+    if _factory_commit_cache is None:
+        _factory_commit_cache = provenance.factory_commit(FACTORY_ROOT)
+    return _factory_commit_cache
 
 MARKER_SHADOW = "YR-MERGE-SHADOW"
 MARKER_ARMED = "YR-MERGE"
@@ -169,6 +191,7 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
         "decision": decision,
         "mode": mode,
         "machinery_ok": True,
+        "commit": _factory_commit(),
         "failed_condition": failed_condition,
         "conditions": results,
         "sentinel": sentinel,
@@ -198,12 +221,14 @@ def build_record(*, results, bundle, base_sha, head_sha, main_tip_sha, checks, c
 
 
 def render_comment(record, note=None):
-    """Line 1 the loud marker; then the fenced `yr-merge-record` JSON block. The marker prefix is
-    `YR-MERGE` for an armed record (MERGED/BLOCKED) and `YR-MERGE-SHADOW` for a shadow record
-    (WOULD-MERGE/WOULD-BLOCK). A block/blocked record names its reason on line 1. `note`, when given, is
-    appended after its own em dash regardless of decision — display-only, never persisted in the JSON
-    block (no new record grammar): the armed-but-shadow-incomplete `armed, shadow-incomplete n/N`
-    progress note and the `--re-evaluate` supersession note (issue #70) both render this way."""
+    """Line 1 the loud marker; line 2 the emitting evaluator's own `commit: <sha>` statement (it-33
+    slice 3, epic #455 — read straight off the record's own `commit` field, so text and JSON can never
+    disagree); then the fenced `yr-merge-record` JSON block. The marker prefix is `YR-MERGE` for an
+    armed record (MERGED/BLOCKED) and `YR-MERGE-SHADOW` for a shadow record (WOULD-MERGE/WOULD-BLOCK).
+    A block/blocked record names its reason on line 1. `note`, when given, is appended after its own em
+    dash regardless of decision — display-only, never persisted in the JSON block (no new record
+    grammar): the armed-but-shadow-incomplete `armed, shadow-incomplete n/N` progress note and the
+    `--re-evaluate` supersession note (issue #70) both render this way."""
     prefix = MARKER_ARMED if record.get("mode") == "armed" else MARKER_SHADOW
     decision = record["decision"]
     if decision in ("WOULD-MERGE", "MERGED"):
@@ -212,8 +237,9 @@ def render_comment(record, note=None):
         marker = f"{prefix}: {decision} — {record['failed_condition']}"
     if note:
         marker += f" — {note}"
+    commit_line = f"commit: {record.get('commit')}"
     block = json.dumps(record, indent=2, sort_keys=True)
-    return f"{marker}\n\n```yr-merge-record\n{block}\n```\n"
+    return f"{marker}\n{commit_line}\n\n```yr-merge-record\n{block}\n```\n"
 
 
 # ---------------------------------------------------------------------------

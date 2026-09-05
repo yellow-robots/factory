@@ -23,7 +23,7 @@
 #     class stays fail-closed per `caller_default`;
 [model]
 contract = "yr-process/1"
-version = "1.5.1"
+version = "1.6.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 13000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
@@ -33,6 +33,16 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.6.0"
+date = "2026-09-06"
+kind = "widen"
+touches = ["pr.approved->merged.evaluator", "task.backlog->ready.epic-child",
+           "task.ready->done.epic-close"]
+reason = "every machinery record states the commit it runs from (it-33 slice 3, epic #455, tools/provenance.py's `commit: <sha>` statement): YR-MERGE, YR-MERGE-SHADOW, YR-AUTO-PROMOTED, the six YR-EPIC-GATE raise rows and YR-CLOSE-HOLD all gain `commit` in their registry `fields`, YR-DEPLOY registers its grammar ahead of its emitter (the act itself is slice 6's), and YR-ROUND-RECORD gains `deployed`; this widens what the merge/epic/close lanes demand of a trail's own text, not just presence. Effective 2026-09-06, one day past the ship date, because `check_trail.py`'s `--scope-created` comparison (~:260) is `str(scope_created)[:10] < str(effective)` — a strict, date-only, EXCLUSIVE less-than: a scope dated exactly the effective date is NOT version-scoped out. Epic #455's own trail and every it-33 slice's trail were created on or before 2026-09-05 (today), so the effective date has to be strictly later than that to place all of them under the prior version (v1.5.1) — 2026-09-06 is the earliest date that satisfies `2026-09-05 < effective`."
+review = "yellow-robots/factory#460"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.5.1"
 date = "2026-08-17"
@@ -1013,7 +1023,7 @@ because = "the epic's self-close: the board move is GitHub's, and the close duti
   [[transition.guard]]
   predicate = "record_present"
   args = { record = "YR-ROUND-RECORD" }
-  why = "the round record (refusals · records-demanded · detector-findings · escalations) lands at close"
+  why = "the round record (refusals · records-demanded · detector-findings · escalations · deployed) lands at close"
 
   [[transition.post]]
   predicate = "facet_is"

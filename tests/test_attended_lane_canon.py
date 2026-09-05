@@ -70,7 +70,8 @@ def test_the_rounds_own_records_carry_rows_and_fields(reg):
         ("YR-ACCEPT", {"who", "date"}),
         ("YR-BOARD-FLIP", {"who", "to"}),
         ("YR-SHIP-WALK", {"who", "scope"}),
-        ("YR-ROUND-RECORD", {"refusals", "records-demanded", "detector-findings", "escalations"}),
+        ("YR-ROUND-RECORD", {"refusals", "records-demanded", "detector-findings", "escalations",
+                             "deployed"}),
         ("YR-ESCALATION", {"act", "why"}),
         ("YR-HUMAN-INSTRUCTION", {"who", "act"}),
     ):

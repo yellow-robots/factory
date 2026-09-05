@@ -232,6 +232,33 @@ def test_cli_vault_doc_without_root_exits_two(tmp_path):
     assert "--vault-root" in out.stderr
 
 
+# ── it-33 slice 3 (epic #455): the v1.6.0 amendment's --scope-created effect, pinned both ways ─────
+# process.toml's v1.6.0 amendment (effective 2026-09-06) widened YR-MERGE's fields with `commit`. A
+# trail dated ON OR BEFORE the amendment's own ship date (2026-09-05, today) must still pass — the
+# mandates it was actually held to (v1.5.1) never demanded the field. A trail dated on/after the
+# effective date is judged under v1.6.0 and must fail when the field is missing. These exercise the
+# CLI in-process (`_cli`) against the LIVE registry + process.toml, hermetically: the one external —
+# `gh` — is injected via monkeypatching `fetch_pr_trail`, never a live network read.
+
+_MISSING_COMMIT_PR_BODY = "YR-MERGE: MERGED\n\n```yr-merge-record\n{}\n```\n"
+
+
+def test_scope_created_pre_ship_trail_is_version_scoped_out(monkeypatch, capsys):
+    monkeypatch.setattr(check_trail, "fetch_pr_trail", lambda repo, n: [_MISSING_COMMIT_PR_BODY])
+    rc = check_trail._cli(["--lane", "merge", "--pr", "1", "--scope-created", "2026-09-05"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "version-scoped" in out
+
+
+def test_scope_created_post_ship_trail_fails_the_new_commit_field(monkeypatch, capsys):
+    monkeypatch.setattr(check_trail, "fetch_pr_trail", lambda repo, n: [_MISSING_COMMIT_PR_BODY])
+    rc = check_trail._cli(["--lane", "merge", "--pr", "1", "--scope-created", "2026-09-06"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "YR-MERGE" in out and "commit" in out
+
+
 # ── the live registry stays detector-compatible ──────────────────────────────────────────────────
 
 def test_live_registry_modes_all_dispatchable():

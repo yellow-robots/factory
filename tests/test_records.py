@@ -52,6 +52,38 @@ def test_every_yr_family_marker_is_under_the_umbrella(reg):
             assert r["marker"].startswith(yr), r["name"]
 
 
+# ── it-33 slice 3 (epic #455): every machinery record carries the statement ─────────────────────────
+
+def test_machinery_records_carry_the_commit_field(reg):
+    """Every declared record `records.toml`'s own callout names — YR-MERGE, YR-MERGE-SHADOW,
+    YR-AUTO-PROMOTED, the six YR-EPIC-GATE raise rows, and YR-CLOSE-HOLD — gained `commit` in `fields`
+    (the emitting surface's `provenance.statement()` line, `tools/provenance.py`)."""
+    names = [
+        "YR-MERGE", "YR-MERGE-SHADOW", "YR-AUTO-PROMOTED",
+        "YR-EPIC-GATE: no-approval", "YR-EPIC-GATE: not-a-task", "YR-EPIC-GATE: not-onboarded",
+        "YR-EPIC-GATE: open-questions", "YR-EPIC-GATE: gate-touching", "YR-EPIC-GATE: stranded claim",
+        "YR-CLOSE-HOLD",
+    ]
+    for name in names:
+        assert "commit" in records.get(reg, name)["fields"], name
+
+
+def test_round_record_gains_deployed(reg):
+    r = records.get(reg, "YR-ROUND-RECORD")
+    assert "deployed" in r["fields"]
+    # the pre-existing four fields stay — additive, never a silent narrowing
+    assert {"refusals", "records-demanded", "detector-findings", "escalations"} <= set(r["fields"])
+
+
+def test_deploy_record_registered(reg):
+    r = records.get(reg, "YR-DEPLOY")
+    assert r["marker"] == "YR-DEPLOY:"
+    assert r["mode"] == "prefix"
+    assert set(r["fields"]) == {"surface", "commit", "who", "restart"}
+    assert set(r["emitted_by"]) == {"human", "attended-agent"}
+    assert r["surfaces"] == ["issue-trail"]
+
+
 def test_get_unregistered_is_loud(reg):
     with pytest.raises(records.RegistryError, match="unsanctioned"):
         records.get(reg, "YR-NEVER-MINTED")
