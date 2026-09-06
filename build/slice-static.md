@@ -1,4 +1,4 @@
-<!-- GENERATED from process.toml v1.7.0 sha256:9b2ae1a811b9ec4a — never hand-edit -->
+<!-- GENERATED from process.toml v1.8.0 sha256:9a3d651053b955ab — never hand-edit -->
 
 # The attended lane — the delivered slice (static half)
 
@@ -64,7 +64,7 @@
   - open: doc.frontmatter.status.cli: the `obsidian` CLI or REST API from a shell (detected by YR-ACCEPT)
 - **design-doc.draft->active.machinery** [machinery; door one-way; partial; chokepoint: none — client-side hook coverage only] — the cold adversarial review, typed into the doc; the architect's fit verdict at the spec-ready moment; the airlock rule: an open question blocks the activation; machinery's own door (rule M): a one-way transition naming machinery must carry an evaluator_pass guard — the doc's own YR-TRIAGE go disposition, deterministically checked, never inferred; builder != verifier held over the doc's own YR-DESIGN-REVIEW/YR-DESIGN-FIT authorship before machinery may activate it. the human input gate's standing approval, exercised mechanically: machinery may activate a design doc only under a human's own YR-TRIAGE `go` disposition and an independence check — never by inference (rule M's own shape)
   - open: doc.frontmatter.status.cli: the `obsidian` CLI or REST API from a shell (detected by YR-ACCEPT)
-- **plugin.release.validated** [human/attended-agent; door one-way; prevented; chokepoint: none — client-side hook coverage only] — the release conditions are the tool's own, in its order, with its fail-closed semantics: version_spans_content, model_loads, server_ci_green, no_drift. a published version reaches every attended session the moment the plugin reloads — consequences are one-way even where the diff is revertible; validation is delegated to the funnel (tools/release.py), whose refusal is the deterministic gate, and the record types the version exactly once
+- **plugin.release.validated** [human/attended-agent; door one-way; prevented; chokepoint: none — client-side hook coverage only] — the release conditions are the tool's own, in its order, with its fail-closed semantics: version_spans_content, manual_current, model_loads, server_ci_green, no_drift. a published version reaches every attended session the moment the plugin reloads — consequences are one-way even where the diff is revertible; validation is delegated to the funnel (tools/release.py), whose refusal is the deterministic gate, and the record types the version exactly once
 
 ## Honesty block
 - caller_trust = `declared` — the caller class is declared, not proven; the journal and the detector find the shape afterwards.
