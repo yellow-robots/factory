@@ -13,6 +13,11 @@
 # `rank` orders entries WITHIN one provider only — ranks are not comparable across providers.
 # `quota_pool` names the shared rate/spend pool an entry draws from (informational to this loader;
 # consumed by whatever meters usage).
+#
+# `roles.pm` and `roles.arch_review` (it-36 slice F): the PM agent's own drafting/adversarial stages
+# and the architect's fit/architecture-review stages are upper-pipeline work — the same strongest-
+# class convention as `review`, never `build`'s down-tier default. The registry's own `validate()`
+# refuses either role naming an entry that is not its provider's highest-ranked one.
 # `input_price_per_mtok` is the Claude API list price, USD per million input tokens (read 2026-07-15).
 # It feeds the ledger's shadow-cost read (tools/ledger.py) only — never rank/role resolution. Optional:
 # an entry with no price carries `price: null` in a ledger row and is excluded from that row's
@@ -37,3 +42,5 @@ input_price_per_mtok = 5.00
 [roles]
 build = "sonnet"
 review = "opus"
+pm = "opus"
+arch_review = "opus"

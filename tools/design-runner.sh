@@ -100,3 +100,11 @@ cp "$RUN_DIR/fold.log" "$RUN_DIR/draft-final.md"
 ledger_row fold ok
 
 log "done: final draft at $RUN_DIR/draft-final.md (the vault write is a later slice's own duty)"
+
+# the drafting run's own pointer (it-36 slice F, #471): a later, SEPARATE review-stage invocation
+# (tools/design-review-runner.sh) — spawned once this process has already exited, so it naturally
+# carries its OWN run id, the independence evaluator's whole point — locates this run's draft through
+# this one small, additive side file. Never read by this script itself; harmless to every existing
+# assertion here (no test closes the run dir's own file set).
+mkdir -p "$DEV_RUNNER_HOME/pm"
+printf '%s\n' "$RUN_DIR" > "$DEV_RUNNER_HOME/pm/latest-draft-$(printf '%s' "$REPO" | tr '/.' '-').txt"
