@@ -136,6 +136,23 @@ the new content or its previous home is demoted.
    `/reload-plugins` or a fresh session — ship as one coherent version so router and references never
    split.)
 
+4. **Run the act.** The release is the human's own — no agent may execute it — so its commands live
+   here rather than in a session's memory. Run them from the repo root of a checkout **current with
+   `main`**: a stale checkout's `release.py` rejects flags it predates, naming them as unrecognized
+   arguments rather than as staleness.
+
+```
+tools/release.py validate --version <X.Y.Z> --commit <sha>    # judge only — writes nothing
+tools/release.py ship --version <X.Y.Z>                       # release origin/main's tip
+tools/release.py backfill --version <X.Y.Z> --commit <sha>    # type a version shipped before the act
+```
+
+   `--test-mode` on `ship`/`backfill` runs the full validation and writes nothing — no tag, no
+   Release, no trail. `--manual-unaffected "<reason>"` answers step 2's manual condition by
+   declaration, and the reason lands verbatim in the record's `manual:` field. On a pass the act
+   writes the annotated `skill/vX.Y.Z` tag, the GitHub Release, and the `YR-RELEASE` record; on any
+   failing condition it writes nothing and prints the condition's token as its first line.
+
 ### Gate
 
 The release scan must be fully green. A dangling link, orphan reference, or description mismatch is a
