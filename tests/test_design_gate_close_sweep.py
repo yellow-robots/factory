@@ -65,8 +65,8 @@ def _sweep(gh, epics, *, active_state=None):
     def close_active(repo, number):
         return state.get((repo, number), False)
 
-    def spawn_close(repo, number):
-        spawned.append((repo, number))
+    def spawn_close(repo, number, component_root="", strategy_doc=""):
+        spawned.append((repo, number, component_root, strategy_doc))
         state[(repo, number)] = True
 
     actions = design_gate.sweep_close(gh=gh, epics=epics, close_active=close_active,
@@ -77,7 +77,7 @@ def _sweep(gh, epics, *, active_state=None):
 def test_a_finished_epic_carrying_the_hold_with_no_close_records_yet_is_spawned():
     gh = FakeGh({100: [CLOSE_HOLD_BODY]})
     actions, spawned, _ = _sweep(gh, [{"repo": REPO, "number": 100}])
-    assert spawned == [(REPO, 100)]
+    assert spawned == [(REPO, 100, "", "")]
     assert {"repo": REPO, "number": 100, "action": "spawned"} in actions
 
 
@@ -111,7 +111,7 @@ def test_partial_close_records_still_earn_a_spawn():
     this sweep still spawns (mirrors the close arm's own grammar-not-just-presence rule)."""
     gh = FakeGh({100: [CLOSE_HOLD_BODY, ROUND_RECORD_BODY]})   # SHIP-WALK still missing
     actions, spawned, _ = _sweep(gh, [{"repo": REPO, "number": 100}])
-    assert spawned == [(REPO, 100)]
+    assert spawned == [(REPO, 100, "", "")]
     assert {"repo": REPO, "number": 100, "action": "spawned"} in actions
 
 
@@ -124,7 +124,7 @@ def test_multiple_epics_are_each_judged_independently():
     actions, spawned, _ = _sweep(gh, [
         {"repo": REPO, "number": 100}, {"repo": REPO, "number": 101}, {"repo": REPO, "number": 102},
     ])
-    assert spawned == [(REPO, 100)]
+    assert spawned == [(REPO, 100, "", "")]
     by_number = {a["number"]: a["action"] for a in actions}
     assert by_number == {100: "spawned", 101: "no-hold", 102: "already-shipped"}
 
@@ -146,6 +146,76 @@ def test_close_hold_sentinel_requires_the_bare_line_not_a_prose_mention():
     assert {"repo": REPO, "number": 100, "action": "no-hold"} in actions
 
 
+# ---- B3 (#472 fold review): component_root/strategy_doc thread from the epic entry onto spawn_close,
+#      never a shared env var (one value for every swept repo) and never stripped by dispatch's own
+#      spawn-env allowlist -------------------------------------------------------------------------------
+
+def test_component_root_and_strategy_doc_thread_from_the_epic_entry_to_spawn_close():
+    gh = FakeGh({100: [CLOSE_HOLD_BODY]})
+    actions, spawned, _ = _sweep(gh, [{"repo": REPO, "number": 100,
+                                       "component_root": "/vault/04 projects/acme",
+                                       "strategy_doc": "/vault/04 projects/acme/strategy/main.md"}])
+    assert spawned == [(REPO, 100, "/vault/04 projects/acme",
+                       "/vault/04 projects/acme/strategy/main.md")]
+
+
+def test_missing_component_root_and_strategy_doc_on_the_entry_default_to_empty_never_a_crash():
+    gh = FakeGh({100: [CLOSE_HOLD_BODY]})
+    actions, spawned, _ = _sweep(gh, [{"repo": REPO, "number": 100}])   # no component_root/strategy_doc key
+    assert spawned == [(REPO, 100, "", "")]
+
+
+def test_default_spawn_close_puts_component_root_and_strategy_doc_on_argv_never_env(tmp_path, monkeypatch):
+    """B3's own wire-shape fix: the real seam is ARGV, not an environment variable — an env var
+    would be (a) one value shared across every swept repo despite each config entry declaring its
+    own, and (b) silently stripped by dispatch's own spawn-env allowlist under the PM instance."""
+    import design_gate as dg
+    monkeypatch.setattr(dg, "DEV_RUNNER_HOME", str(tmp_path))
+    argv_log = tmp_path / "argv.log"
+    fake_runner = tmp_path / "fake-close-runner.sh"
+    fake_runner.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_log}"\nexec sleep 300\n')
+    fake_runner.chmod(0o755)
+    monkeypatch.setattr(dg, "CLOSE_RUNNER", str(fake_runner))
+
+    dg._default_spawn_close(REPO, 100, "/vault/04 projects/acme", "/vault/04 projects/acme/strategy/main.md")
+    try:
+        import time as _time
+        for _ in range(50):
+            if argv_log.exists() and argv_log.read_text():
+                break
+            _time.sleep(0.05)
+        lines = argv_log.read_text().splitlines()
+        assert lines == [REPO, "100", "/vault/04 projects/acme",
+                         "/vault/04 projects/acme/strategy/main.md"]
+    finally:
+        _kill_close_pidfile(dg, REPO, 100)
+
+
+def _kill_close_pidfile(dg, repo, epic_number):
+    """N6: a robust cleanup — SIGTERM, confirm, SIGKILL if it didn't take — so a spawned test
+    fixture never outlives its test even if the first signal is swallowed."""
+    import os
+    import signal
+    import time as _time
+    pidfile = dg._close_pidfile(repo, epic_number)
+    if not pidfile.is_file():
+        return
+    try:
+        pid = int(pidfile.read_text().strip())
+    except (OSError, ValueError):
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except OSError:
+            return   # already gone
+        _time.sleep(0.05)
+        try:
+            os.killpg(pid, 0)
+        except OSError:
+            return   # confirmed gone
+
+
 def test_default_close_active_and_spawn_close_use_a_real_pidfile(tmp_path, monkeypatch):
     """The production seams (`_default_close_active`/`_default_spawn_close`) mirror
     `_default_design_active`/`_default_spawn_stage`'s own pidfile shape — exercised here with a
@@ -153,20 +223,13 @@ def test_default_close_active_and_spawn_close_use_a_real_pidfile(tmp_path, monke
     import design_gate as dg
     monkeypatch.setattr(dg, "DEV_RUNNER_HOME", str(tmp_path))
     fake_runner = tmp_path / "fake-close-runner.sh"
-    fake_runner.write_text("#!/bin/sh\nsleep 5\n")
+    fake_runner.write_text("#!/bin/sh\nexec sleep 300\n")   # N6: exec'd, so proc.pid stays valid
     fake_runner.chmod(0o755)
     monkeypatch.setattr(dg, "CLOSE_RUNNER", str(fake_runner))
 
-    assert dg._default_close_active(REPO, 100) is False
-    dg._default_spawn_close(REPO, 100)
-    assert dg._default_close_active(REPO, 100) is True
-
-    # cleanup: kill the spawned process group so the test suite leaves nothing running.
-    import os
-    import signal
-    pidfile = dg._close_pidfile(REPO, 100)
-    pid = int(pidfile.read_text().strip())
     try:
-        os.killpg(pid, signal.SIGTERM)
-    except OSError:
-        pass
+        assert dg._default_close_active(REPO, 100) is False
+        dg._default_spawn_close(REPO, 100)
+        assert dg._default_close_active(REPO, 100) is True
+    finally:
+        _kill_close_pidfile(dg, REPO, 100)

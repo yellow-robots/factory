@@ -492,17 +492,25 @@ def _default_close_active(repo, epic_number):
     return True
 
 
-def _default_spawn_close(repo, epic_number):
-    """Detached spawn of `tools/close-runner.sh <repo> <epic_number>` — mirrors
-    `_default_spawn_stage`'s own pidfile-tracked, `start_new_session=True` shape, keyed by
-    `(repo, epic_number)` rather than `(repo, seed)`: more than one epic in the SAME repo can finish
-    and hold in the same window, each earning its own close stage, independent of any design draft
-    in flight for that repo."""
+def _default_spawn_close(repo, epic_number, component_root="", strategy_doc=""):
+    """Detached spawn of `tools/close-runner.sh <repo> <epic_number> [<component_root>
+    [<strategy_doc>]]` — mirrors `_default_spawn_stage`'s own pidfile-tracked,
+    `start_new_session=True` shape, keyed by `(repo, epic_number)` rather than `(repo, seed)`: more
+    than one epic in the SAME repo can finish and hold in the same window, each earning its own
+    close stage, independent of any design draft in flight for that repo. `component_root`/
+    `strategy_doc` ride on ARGV (B3's own fix, #472 fold review): the pm-repos.json config entry
+    already declares both per repo (`_resolve_entry` reads them, the SAME fields `rank.ranked_seeds`/
+    `strategy.parse_strategy` already consume) — an env-var seam would be (a) one value shared
+    across every swept repo when each entry declares its own, and (b) stripped by dispatch's own
+    spawn-env allowlist under the PM instance, silently starving every close stage of both paths
+    forever. Positional and OPTIONAL (an absent component_root/strategy_doc still spawns — the
+    runner itself decides what it can and cannot do without them, loudly)."""
     log_dir = pathlib.Path(DEV_RUNNER_HOME) / "runs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"close-{_slug(repo)}-{epic_number}-{int(time.time() * 1000)}.log"
+    argv = [CLOSE_RUNNER, repo, str(epic_number), component_root or "", strategy_doc or ""]
     with open(log_path, "ab") as log_f:
-        proc = subprocess.Popen([CLOSE_RUNNER, repo, str(epic_number)], stdin=subprocess.DEVNULL,
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
                                 stdout=log_f, stderr=subprocess.STDOUT, start_new_session=True)
     _close_pidfile(repo, epic_number).write_text(str(proc.pid))
 
@@ -525,14 +533,17 @@ def _already_shipped(reg, texts):
 
 
 def sweep_close(*, gh=None, epics, close_active=None, spawn_close=None):
-    """One pass over `epics` (`[{"repo": .., "number": ..}, ...]` — explicit input, never board-
-    discovered inside this pure core, mirroring `sweep_designs(repos=...)`'s own rule; `main()`
-    supplies the real, discovered list). For each: fetch its trail (issue body + comments — the
-    SAME `body,comments` shape `sources.pr_trail_texts_from_json` already parses, issue and PR
-    alike); if it carries `YR-CLOSE-HOLD` and its own mandated close records are not already on the
-    trail, spawn the close stage UNLESS one is already in flight for this exact epic. Every external
-    is injectable so this is unit-testable with a `FakeGh` and no live network, no live pidfiles, no
-    real subprocess spawn."""
+    """One pass over `epics` (`[{"repo": .., "number": .., "component_root": .., "strategy_doc": ..},
+    ...]` — explicit input, never board-discovered inside this pure core, mirroring
+    `sweep_designs(repos=...)`'s own rule; `main()` supplies the real, discovered list, threading
+    each repo's OWN `component_root`/`strategy_doc` from the SAME pm-repos.json config entry
+    `_resolve_entry` already reads — B3's own fix, #472 fold review). For each: fetch its trail
+    (issue body + comments — the SAME `body,comments` shape `sources.pr_trail_texts_from_json`
+    already parses, issue and PR alike); if it carries `YR-CLOSE-HOLD` and its own mandated close
+    records are not already on the trail, spawn the close stage (with that repo's own
+    `component_root`/`strategy_doc` on argv) UNLESS one is already in flight for this exact epic.
+    Every external is injectable so this is unit-testable with a `FakeGh` and no live network, no
+    live pidfiles, no real subprocess spawn."""
     gh = gh or _gh
     close_active = close_active or _default_close_active
     spawn_close = spawn_close or _default_spawn_close
@@ -551,7 +562,7 @@ def sweep_close(*, gh=None, epics, close_active=None, spawn_close=None):
         if close_active(repo, number):
             actions.append({"repo": repo, "number": number, "action": "in-flight"})
             continue
-        spawn_close(repo, number)
+        spawn_close(repo, number, entry.get("component_root", ""), entry.get("strategy_doc", ""))
         actions.append({"repo": repo, "number": number, "action": "spawned"})
     return actions
 
@@ -561,7 +572,9 @@ def _default_discover_close_hold(gh, repo):
     OPEN issues carrying the `YR-CLOSE-HOLD` sentinel anywhere on their trail — the SAME set
     `tools/epic_gate.py`'s own sweep already comments on (a held epic stays `Status=Ready`,
     `Reason=Needs-info`; searching by content means this module never has to duplicate the board's
-    own field-reading plumbing to find it)."""
+    own field-reading plumbing to find it). Returns bare `{"repo", "number"}` dicts — `main()` is the
+    one that attaches `component_root`/`strategy_doc` from the config entry, since a search result
+    carries no config of its own."""
     out = gh(["search", "issues", "--repo", repo, "YR-CLOSE-HOLD", "--state", "open", "--json", "number"])
     data = _as_json(out)
     return [{"repo": repo, "number": item["number"]} for item in (data or []) if isinstance(item, dict)]
@@ -1041,13 +1054,21 @@ def main(argv=None):
 
     # the close sweep (it-36 slice H, #473): discovered per configured repo, real but untested here
     # (mirrors `_resolve_entry`'s own real-vault-read role) — `sweep_close`'s own core is what
-    # `tests/test_design_gate_close_sweep.py` drives, with a `FakeGh` and no live search.
+    # `tests/test_design_gate_close_sweep.py` drives, with a `FakeGh` and no live search. Each found
+    # epic gets ITS OWN repo's `component_root`/`strategy_doc` from the SAME config entry
+    # `_resolve_entry` already reads (B3, #472 fold review) — a search result names no config of its
+    # own, so `main()` is the one attaching it.
     close_epics = []
     for r in raw_repos:
         try:
-            close_epics.extend(_default_discover_close_hold(_gh, r["repo"]))
+            found = _default_discover_close_hold(_gh, r["repo"])
         except Exception as e:  # noqa: BLE001 — a discovery failure is loud, never fatal to the sweep
             print(f"design_gate: close-hold discovery failed for {r['repo']}: {e}", file=sys.stderr)
+            continue
+        for f in found:
+            f["component_root"] = r.get("component_root", "")
+            f["strategy_doc"] = r.get("strategy_doc", "")
+        close_epics.extend(found)
     actions += sweep_close(epics=close_epics)
 
     print(json.dumps(actions, indent=2))

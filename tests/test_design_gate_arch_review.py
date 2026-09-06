@@ -272,11 +272,15 @@ def test_activation_through_the_real_vault_client_confirms_every_write_via_read_
                 self.store[path] = data.decode("utf-8")
                 return 200, b""
             if method == "PATCH":
+                # the JSON-instruction body mode (it-36 slice H, #473 fold, B1/N7): the whole
+                # instruction rides as the PATCH body, never Target-Type/Target headers.
                 import textutil
                 text = self.store.get(path, "---\n---\n\n")
                 meta, body = textutil.split_frontmatter(text)
-                key = headers["Target"]
-                value = json.loads(data)["value"]
+                instruction = json.loads(data)
+                assert instruction["targetType"] == "frontmatter"
+                key = instruction["target"]
+                value = instruction["value"]
                 meta[key] = value
                 lines = ["---"] + [f"{k}: {v}" for k, v in meta.items()] + ["---", "", body.lstrip("\n")]
                 self.store[path] = "\n".join(lines)

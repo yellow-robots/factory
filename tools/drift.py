@@ -179,6 +179,12 @@ def _parse_deploy_records(texts: list[str]) -> list[dict]:
     return out
 
 
+# N2 (#472 fold review, it-36 slice H, #473): a public name for the one grammar above — this module
+# is the shared authority `tools/round_record.py` (and any future reader) parses `YR-DEPLOY` through,
+# never re-implementing it; the underscore-prefixed name stays as the historical, in-module spelling.
+parse_deploy_records = _parse_deploy_records
+
+
 def _surface_statement(name: str, checkout_root: Path | str, home: Path | str) -> str | None:
     """One build-host surface's own live version statement, mirroring `build_findings` above:
     `dispatch` reads its captured statement file (a resident process, statement fixed at import);

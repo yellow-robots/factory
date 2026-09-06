@@ -2,36 +2,41 @@
 """round_record.py — the close stage's own records module (it-36 slice H, #473).
 
 The close stage's three trail records, computed and applied so a finished epic satisfies the gate's
-hold arm (`tools/epic_gate.py`'s close arm, `:972-1004`, itself UNCHANGED — this module only makes
-what it demands appear):
+hold arm (`tools/epic_gate.py`'s close arm — `_process_epic` `:977`, its close branch `:1010-1031`,
+itself UNCHANGED — this module only makes what it demands appear):
 
   * `YR-ROUND-RECORD` (`records.toml:423-431`) — four counts computed from the trails alone, never
     `tools/ledger.py`'s `rows.jsonl` (that sits on the build host, not this one): refusals (the
     runner's Needs-info/Blocked comments on the CHILD trails), records-demanded (`YR-EPIC-GATE`/
-    `YR-CLOSE-HOLD` raises on the EPIC trail), detector-findings (`tools/check_trail.py`'s own close
-    lane, run over the round's own trails), escalations (`YR-ESCALATION` records across the round) —
+    `YR-CLOSE-HOLD` raises on the EPIC trail), detector-findings (`tools/check_trail.py check_texts`
+    `:124`'s own close lane, run over the round's own trails, EXCLUDING the close lane's own two
+    mandates' bare absence — always true at compute time, by construction, since this call runs
+    BEFORE this round's own records post), escalations (`YR-ESCALATION` records across the round) —
     plus the `deployed` field (it-33's addition): the latest `YR-DEPLOY` record on
     yellow-robots/factory#464, read live through `tools/sources.py issue_trail` (the SAME grammar
-    `tools/drift.py`'s own `_parse_deploy_records` reads — imported, never re-implemented here).
+    `tools/drift.py`'s own `parse_deploy_records` reads — imported, never re-implemented here).
   * `YR-CROSSOVER` (`records.toml:467-475`) — the epic's own merged-PR usage (`tools/sources.py
-    pr_usage`, summed), the verdict a comparison against the strategy doc's own theme `budget_usd`
-    (`tools/ledger.py`'s own `_cli_crossover` reads a local, build-host ledger dir — never this
-    machinery's own path).
+    pr_usage`, summed over its MERGED linked PRs), the verdict a comparison against the strategy
+    doc's own theme `budget_usd`, honest about incompleteness when not every linked PR could be
+    priced (`tools/ledger.py`'s own `_cli_crossover` `:568` reads a local, build-host ledger dir —
+    never this machinery's own path).
   * `YR-SHIP-WALK` (`records.toml:412-420`) — posted once the close-walk stage's own directive (the
-    grounding list walked: a living-reference SECTION update, superseded research stamped) has been
-    applied through `tools/vault_api.py` — the ONLY vault write path — and verified by its own
-    read-back.
+    grounding list walked: a living-reference SECTION update, superseded research stamped, the
+    deterministic `check_supersession.py --sweep` run over the component) has been applied through
+    `tools/vault_api.py` — the ONLY vault write path — and verified by its own read-back. Idempotent
+    (`ship_walk_already_posted`): a re-run after a failed `round-record`/`crossover` never re-runs
+    the close-walk stage or re-patches the vault a second time.
 
 Pure core + injectable seams (`gh`, the vault client), a thin CLI drives `tools/close-runner.sh`:
-`fetch` (the epic + its children's trails and linked merged-PR numbers, one GraphQL call), `round-
-record` / `crossover` / `ship-walk` (compute + render + post, or `--test-mode` print-only — the
-`tools/ledger.py crossover` CLI's own shape).
+`fetch` (the epic + its children's trails and linked merged-PR numbers, one GraphQL call), `already-
+shipped` (I3's idempotence guard), `round-record` / `crossover` / `ship-walk` (compute + render +
+post, or `--test-mode` print-only — the `tools/ledger.py crossover` CLI's own shape).
 
-Gotcha (the mandate's own words, `tools/epic_gate.py`'s `_close_hold_body` is the precedent): a
-machinery-emitted close record must never spell a MANDATED FIELD at column 0 inside a body that
-carries another marker. Each of the three renderers below produces its OWN body, carrying exactly
-ONE marker, with field values that are always short counts/strings — never a quoted excerpt of
-another record's raw marker text — so this can never arise by construction; `tests/test_round_
+Gotcha (the mandate's own words, `tools/epic_gate.py`'s `_close_hold_body` `:601` is the
+precedent): a machinery-emitted close record must never spell a MANDATED FIELD at column 0 inside a
+body that carries another marker. Each of the three renderers below produces its OWN body, carrying
+exactly ONE marker, with field values that are always short counts/strings — never a quoted excerpt
+of another record's raw marker text — so this can never arise by construction; `tests/test_round_
 record.py` pins it directly (no render function's body ever satisfies another record's presence
 check).
 """
@@ -46,13 +51,16 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import check_trail  # noqa: E402
-import drift        # noqa: E402 — sibling import: reuses drift._parse_deploy_records, the one grammar
-import records      # noqa: E402
-import sources      # noqa: E402
-import strategy     # noqa: E402
-import textutil     # noqa: E402
-import vault_api    # noqa: E402
+import check_trail   # noqa: E402
+import design_gate   # noqa: E402 — sibling import: reuses design_gate._matching_theme, the one rule
+import drift         # noqa: E402 — sibling import: reuses drift.parse_deploy_records, the one grammar
+import records       # noqa: E402
+import sources       # noqa: E402
+import strategy      # noqa: E402
+import textutil      # noqa: E402
+import vault_api     # noqa: E402
+
+GH_TIMEOUT = int(os.environ.get("YR_ROUND_RECORD_GH_TIMEOUT", "20"))  # N3: bounded, like sources._run
 
 # ── refusals: the runner's own bounce/block comment prose (tools/dev-runner.sh, prose, not a YR-*
 #    record — `:1114`/`:1150`) — counted on the CHILD trails only, the runner's own scope ────────────
@@ -97,28 +105,72 @@ def count_escalations(all_texts: list, reg=None) -> int:
     return count
 
 
+# B5's own fix: the close lane mandates EXACTLY these two records (records.lanes(reg)["close"]) —
+# checking for their bare ABSENCE here is meaningless by construction, since this call always runs
+# BEFORE this round's own YR-ROUND-RECORD/YR-SHIP-WALK post (it-33's own hand count was 0; this
+# detector, unfixed, always read 2). A finding that a record is instead PRESENT-BUT-MALFORMED (a
+# stray, already-posted record on the trail missing a field) is real trail hygiene trouble and stays
+# counted — only the "mandated record absent" finding for these two names is excluded.
+_SELF_MANDATE_NAMES = ("YR-ROUND-RECORD", "YR-SHIP-WALK")
+
+
 def count_detector_findings(reg, epic_texts: list, child_texts_by_number: dict) -> int:
-    """The close lane's own trail-shape check (`tools/check_trail.py check_texts`), run over the
-    round's own trails — epic AND every child, pooled — as one `issue-trail` surface. Not the same
-    question as the close arm's own `_close_records_findings` (that runs on the epic's trail alone,
-    at hold time); this is the round's own hygiene metric, priced for the human, never a gate."""
+    """The close lane's own trail-shape check (`tools/check_trail.py check_texts` `:124`), run over
+    the round's own trails — epic AND every child, pooled — as one `issue-trail` surface, EXCLUDING
+    the close lane's own two mandates' bare absence (see `_SELF_MANDATE_NAMES` above — B5). Not the
+    same question as the close arm's own `_close_records_findings` (that runs on the epic's trail
+    alone, at hold time, and is never filtered — it needs the real absence to hold); this is the
+    round's own hygiene metric, priced for the human, never a gate."""
     all_texts = list(epic_texts)
     for texts in child_texts_by_number.values():
         all_texts.extend(texts)
-    return len(check_trail.check_texts(reg, "close", {"issue-trail": all_texts}))
+    findings = check_trail.check_texts(reg, "close", {"issue-trail": all_texts})
+    findings = [f for f in findings if not any(
+        f.startswith(f"close: {name}: mandated record absent") for name in _SELF_MANDATE_NAMES)]
+    return len(findings)
 
 
 def deployed_field(deploy_texts: list) -> str:
-    """The `deployed` field's own value: the latest well-formed `YR-DEPLOY` record among
-    `deploy_texts` (yellow-robots/factory#464's own trail, read through `tools/sources.py
-    issue_trail` — the same way `tools/drift.py deploy_record_findings` reads it), rendered as
-    `surface=... commit=<12> restart=...`. `'none'` when no record exists yet — the literal token
-    the close lane's own fixtures already use (`tests/test_epic_gate.py`'s `CLOSE_RECORDS`)."""
-    parsed = drift._parse_deploy_records(deploy_texts)
+    """The `deployed` field's own value: per-surface (I2), mirroring `drift.deploy_record_findings`'s
+    own per-surface rule exactly — every surface the latest `YR-DEPLOY` record names (its own comma-
+    separated `surface` list) reads the LATEST record's commit, except `dispatch` (a resident process
+    a `restart: no` deploy legitimately leaves on its prior commit), which reads the latest record
+    that actually claims `restart: yes` instead, or is named as carrying no such record yet. Parsed
+    from `deploy_texts` (yellow-robots/factory#464's own trail, read through `tools/sources.py
+    issue_trail` — the same way `tools/drift.py deploy_record_findings` reads it) via
+    `drift.parse_deploy_records`, the one shared grammar. `'none'` when no record exists yet — the
+    literal token the close lane's own fixtures already use (`tests/test_epic_gate.py`'s
+    `CLOSE_RECORDS`). Callers distinguish "no record yet" from "the trail could not be read at all"
+    themselves (I1) — this function only ever sees texts, never a fetch failure."""
+    parsed = drift.parse_deploy_records(deploy_texts)
     if not parsed:
         return "none"
     latest = parsed[-1]
-    return f"surface={latest['surface']} commit={latest['commit'][:12]} restart={latest['restart'] or 'unstated'}"
+    latest_restart_yes = next((r for r in reversed(parsed) if r["restart"] == "yes"), None)
+    parts = []
+    for name in [s.strip() for s in latest["surface"].split(",") if s.strip()]:
+        if name == "dispatch":
+            if latest_restart_yes is None:
+                parts.append(f"{name}: no restart:yes record yet")
+                continue
+            commit = latest_restart_yes["commit"]
+        else:
+            commit = latest["commit"]
+        parts.append(f"{name}: commit={commit[:12]}")
+    return ", ".join(parts) if parts else "none"
+
+
+def ship_walk_already_posted(epic_texts: list, reg=None) -> bool:
+    """True once `YR-SHIP-WALK` already rides the epic trail — the ship-walk's own idempotence guard
+    (I3), mirroring `tools/epic_gate.py`'s own `already_held` precedent for its hold markers: a
+    re-run of the close stage (say, after a failed `round-record`/`crossover`) must never re-run the
+    close-walk stage or re-patch the vault a second time."""
+    reg = reg or records.load()
+    row = records.get(reg, "YR-SHIP-WALK")
+    return any(
+        any(textutil.marker_line_matches(l, row["marker"], mode=row["mode"]) for l in text.splitlines())
+        for text in epic_texts
+    )
 
 
 def round_record_body(*, refusals, records_demanded, detector_findings, escalations, deployed,
@@ -143,43 +195,63 @@ def round_record_body(*, refusals, records_demanded, detector_findings, escalati
 
 
 # ── YR-CROSSOVER: this epic's own merged-PR usage vs. the strategy doc's theme budget ────────────────
-def crossover_verdict(total_cost_usd: float, budget_usd) -> str:
+def crossover_verdict(total_cost_usd: float, budget_usd, *, priced_count: int, linked_count: int) -> str:
+    """Honest about incompleteness (B4): `unpriceable` when NOT ONE linked PR could be priced (no
+    cost evidence at all — a bare `within-budget` here would be a fabricated reading of $0);
+    `within-budget-partial` / `over-budget-partial` when only SOME of the linked PRs priced (the
+    total undercounts real cost, so a within-budget reading is provisional, never asserted plain);
+    the ordinary three-way verdict only once EVERY linked PR priced."""
+    if priced_count <= 0:
+        return "unpriceable"
     if not isinstance(budget_usd, (int, float)):
         return "no-budget-declared"
-    return "within-budget" if total_cost_usd <= budget_usd else "over-budget"
+    base = "within-budget" if total_cost_usd <= budget_usd else "over-budget"
+    return f"{base}-partial" if priced_count < linked_count else base
 
 
-def crossover_from_pr_usages(pr_usages: dict, budget_usd) -> dict:
-    """`pr_usages`: `{"<repo>#<pr>": <tools/sources.py pr_usage result dict>}` — already-fetched, so
-    this stays pure and network-free. Returns `{"cost_usd", "pr_count", "verdict"}`."""
+def crossover_from_pr_usages(pr_usages: dict, budget_usd, *, linked_count: int) -> dict:
+    """`pr_usages`: `{"<repo>#<pr>": <tools/sources.py pr_usage result dict>}` for every linked PR
+    that COULD be priced — already-fetched, so this stays pure and network-free. `linked_count` is
+    the TOTAL linked-PR count (priced or not — B4's own fix: silently dropping the unpriceable ones
+    from the denominator understated a real round's cost by more than half on #455's own trail: 7
+    linked, 3 priced, $9.15 read as the whole story against a $21.43 ledger truth). Returns
+    `{"cost_usd", "pr_count" (priced), "linked_count", "verdict"}`."""
+    priced_count = len(pr_usages)
     total = sum((u.get("cost_usd") or 0) for u in pr_usages.values())
-    return {"cost_usd": total, "pr_count": len(pr_usages), "verdict": crossover_verdict(total, budget_usd)}
+    verdict = crossover_verdict(total, budget_usd, priced_count=priced_count, linked_count=linked_count)
+    return {"cost_usd": total, "pr_count": priced_count, "linked_count": linked_count, "verdict": verdict}
 
 
-def crossover_body(*, cost_usd, pr_count, budget_usd, verdict, who, reg=None) -> str:
+def crossover_body(*, cost_usd, pr_count, linked_count, budget_usd, verdict, who, reg=None) -> str:
     reg = reg or records.load()
     marker = records.get(reg, "YR-CROSSOVER")["marker"]
-    budget_text = f"${budget_usd:.2f}/round" if isinstance(budget_usd, (int, float)) else "none declared"
+    # I7: the budget rides AS DECLARED — no invented period unit (no canon names one).
+    budget_text = f"${budget_usd:.2f}" if isinstance(budget_usd, (int, float)) else "none declared"
+    unpriced = linked_count - pr_count
+    if unpriced > 0:
+        pr_text = (f"across {pr_count} of {linked_count} linked PR(s) "
+                  f"({unpriced} carried no dev-runner usage comment)")
+    else:
+        pr_text = f"across {pr_count} merged PR(s)"
     return (
         f"{marker}\n"
-        f"cost: ${cost_usd:.2f} across {pr_count} merged PR(s) (theme budget {budget_text})\n"
+        f"cost: ${cost_usd:.2f} {pr_text} (theme budget {budget_text})\n"
         f"verdict: {verdict}\n"
         f"who: {who}\n\n"
         "The crossover test's typed verdict (it-36 slice H, #473): cost is this epic's own "
-        "merged-PR usage (tools/sources.py pr_usage, summed); verdict compares that cost against "
-        "the strategy doc's own theme budget_usd. The pricing judgment stays the human's."
+        "merged-PR usage (tools/sources.py pr_usage, summed over its priceable linked PRs); verdict "
+        "compares that cost against the strategy doc's own theme budget_usd, naming any linked PR "
+        "this evidence could not price rather than silently dropping it from the count. The pricing "
+        "judgment stays the human's."
     )
 
 
 def matching_theme_budget(parsed_strategy: dict, repo: str):
     """The first theme (declared order) whose `repos` names `repo` -> its `budget_usd`, or `None`
-    when no theme targets this repo (mirrors `tools/design_gate.py`'s own `_matching_theme`, not
-    imported — that module's theme-matching is private and this is a one-line rule, not a shared
-    grammar worth coupling two sweep modules over)."""
-    for theme in parsed_strategy.get("themes") or []:
-        if repo in (theme.get("repos") or []):
-            return theme.get("budget_usd")
-    return None
+    when no theme targets this repo — delegates to `tools/design_gate.py`'s own `_matching_theme`
+    (I7: the ONE theme-matching rule, cited here rather than re-derived)."""
+    theme = design_gate._matching_theme(parsed_strategy, repo)
+    return theme.get("budget_usd") if theme else None
 
 
 # ── YR-SHIP-WALK: the close-walk stage's own directive, applied through the vault client ─────────────
@@ -199,11 +271,15 @@ SHIP_WALK_SUPERSEDED_LINE_RE = re.compile(r"^[ \t]*(?P<path>\S.*?)[ \t]*:[ \t]*(
 def parse_ship_walk_output(raw_text: str) -> dict:
     """The close-walk stage's own output grammar -> `{"living_reference": {"path", "heading_path",
     "content"} | None, "superseded": [(path, superseded_by), ...]}`. `heading` may name a nested
-    heading path joined by `'::'` (documentation-model.md `:278`'s own delimiter for a heading
-    target's array-of-heading-texts, outermost first) -> `heading_path`, a list. A `target` of
-    `none` (case-insensitive) is a declared no-op, dropped, never applied. Raises `ValueError` on a
-    malformed or entirely-empty shape — a stage output this runner cannot act on is a loud stop,
-    never a guessed partial apply (`tools/cross.py split_draft`'s own discipline)."""
+    heading path, PLAIN TEXT ONLY (never `#`/`##`-prefixed — B1: a real heading `target` is the
+    heading's own text, verified 2026-09-06 against the live `/openapi.yaml`), joined by `'::'` for
+    this module's OWN close-walk output grammar only — a plain-text convention for the stage's
+    instruction, unrelated to the vault's actual wire encoding (`vault_api.patch_section` sends the
+    resulting `heading_path` list as the server's own JSON array `target`, never re-joined) ->
+    `heading_path`, a list. A `target` of `none` (case-insensitive) is a declared no-op, dropped,
+    never applied. Raises `ValueError` on a malformed or entirely-empty shape — a stage output this
+    runner cannot act on is a loud stop, never a guessed partial apply (`tools/cross.py split_draft`'s
+    own discipline)."""
     m = SHIP_WALK_LIVING_REF_RE.search(raw_text)
     living_reference = None
     if m:
@@ -237,12 +313,12 @@ def parse_ship_walk_output(raw_text: str) -> dict:
 def apply_ship_walk(vault, parsed: dict) -> dict:
     """Applies a parsed close-walk directive through the vault client — the ONLY vault write path
     (`tools/vault_api.py`). The living reference's own named section is updated via a heading-
-    targeted PATCH (never a whole-body overwrite — documentation-model.md `:277` names exactly this
-    hazard for a repeatedly-edited living reference), anchored to the document map's own `version`
-    as the concurrency token (`ifMatch`); each superseded doc is stamped `status: superseded` +
-    `superseded_by`, both frontmatter writes the vault client already verifies by read-back on its
-    own. Returns a summary dict; raises `vault_api.VaultUnreachable` on any refused or unconfirmed
-    write — a loud stop, never a partial, silently-accepted apply."""
+    targeted PATCH (never a whole-body overwrite — the hazard the `ifMatch` concurrency token exists
+    to prevent for a repeatedly-edited living reference), anchored to the document map's own
+    `version` as that token; each superseded doc is stamped `status: superseded` + `superseded_by`,
+    both frontmatter writes the vault client already verifies by read-back on its own. Returns a
+    summary dict; raises `vault_api.VaultUnreachable` on any refused or unconfirmed write — a loud
+    stop, never a partial, silently-accepted apply."""
     applied = {"living_reference": None, "superseded": []}
     lr = parsed.get("living_reference")
     if lr:
@@ -257,16 +333,24 @@ def apply_ship_walk(vault, parsed: dict) -> dict:
     return applied
 
 
-def ship_walk_body(*, who, scope, reg=None) -> str:
+def ship_walk_body(*, who, scope, supersession_sweep=None, reg=None) -> str:
+    """`supersession_sweep` (I10): the deterministic `check_supersession.py --sweep`'s own outcome
+    over the walked component, as a short status string (e.g. `"clean (exit 0)"` or `"3 finding(s)
+    — see run log"`) — folded into the record's own prose so "the grounding list was walked" is
+    backed by a run of the existing deterministic sweep, never asserted on prose alone. `None` when
+    the caller had no component to sweep (an entirely superseded-only walk names nothing to check)."""
     reg = reg or records.load()
     marker = records.get(reg, "YR-SHIP-WALK")["marker"]
+    sweep_sentence = (f" The component's supersession sweep (`check_supersession.py --sweep`) ran: "
+                      f"{supersession_sweep}." if supersession_sweep else "")
     return (
         f"{marker} walked at close\n"
         f"who: {who}\n"
         f"scope: {scope}\n\n"
-        "The grounding list was walked, the living reference's section updated in place through the "
+        "The grounding list was walked: the living reference's section updated in place through the "
         "vault client (a heading-targeted PATCH, never a whole-body overwrite), and any superseded "
-        "research stamped — each write verified by its own read-back (it-36 slice H, #473)."
+        f"research stamped — each write verified by its own read-back.{sweep_sentence} "
+        "(it-36 slice H, #473)."
     )
 
 
@@ -283,17 +367,26 @@ query($owner: String!, $name: String!, $number: Int!) {
           body
           repository { nameWithOwner }
           comments(first: 100) { nodes { body } }
-          closedByPullRequestsReferences(first: 10) { nodes { number repository { nameWithOwner } } }
+          closedByPullRequestsReferences(first: 10) {
+            nodes { number merged repository { nameWithOwner } }
+          }
         }
       }
     }
   }
 }
 """
+# I5: none of the three connections above (an epic's own comments, a child's own comments, a
+# child's own linked-PR list) paginate past their `first:` cap — a real epic/child/PR-linkage set
+# past 100/100/10 reads as though it stopped there, silently. Stated plainly rather than fixed: a
+# GraphQL connection nested three deep needs a per-parent cursor walk to paginate correctly (a
+# bigger lift than this fold's own scope), and every one of these caps is generous for a single
+# round's own trail in practice. `_cli_fetch` does not detect or report a truncated page.
 
 
 def _gh(argv):
-    proc = subprocess.run([os.environ.get("GH_BIN", "gh"), *argv], capture_output=True, text=True)
+    proc = subprocess.run([os.environ.get("GH_BIN", "gh"), *argv], capture_output=True, text=True,
+                          timeout=GH_TIMEOUT)
     if proc.returncode != 0:
         raise RuntimeError(f"gh {' '.join(argv)} failed ({proc.returncode}): {proc.stderr.strip()}")
     return proc.stdout
@@ -328,10 +421,25 @@ def _cli_fetch(argv):
         child_texts[key] = [c.get("body") or ""] + [
             cc.get("body") or "" for cc in ((c.get("comments") or {}).get("nodes") or [])]
         for pr in ((c.get("closedByPullRequestsReferences") or {}).get("nodes") or []):
+            # I6: an OPEN linked PR (closes-by-reference without being merged — e.g. a superseding
+            # PR, or one still in flight when this closed) is never priced as a merged one.
+            if not pr.get("merged"):
+                continue
             pr_repo = (pr.get("repository") or {}).get("nameWithOwner") or child_repo
             pr_refs.append({"repo": pr_repo, "number": pr.get("number")})
     print(json.dumps({"epic_texts": epic_texts, "child_texts": child_texts, "pr_refs": pr_refs}))
     return 0
+
+
+def _cli_already_shipped(argv):
+    """I3's idempotence guard, as a CLI check `close-runner.sh` runs BEFORE the close-walk stage:
+    exit 0 iff `YR-SHIP-WALK` already rides the epic trail (nothing left to walk or patch this
+    tick), exit 1 otherwise."""
+    ap = argparse.ArgumentParser(description="exit 0 iff YR-SHIP-WALK already rides the epic trail")
+    ap.add_argument("--fetch-json", required=True)
+    args = ap.parse_args(argv)
+    fetched = json.loads(pathlib.Path(args.fetch_json).read_text(encoding="utf-8"))
+    return 0 if ship_walk_already_posted(fetched["epic_texts"]) else 1
 
 
 def _cli_round_record(argv):
@@ -345,8 +453,10 @@ def _cli_round_record(argv):
     args = ap.parse_args(argv)
     fetched = json.loads(pathlib.Path(args.fetch_json).read_text(encoding="utf-8"))
     reg = records.load()
-    ok, deploy_texts = sources.issue_trail(args.deploy_repo, str(args.deploy_issue))
-    deployed = deployed_field(deploy_texts if ok else [])
+    # I1: "no record yet" (a clean read, nothing posted) and "the trail could not be read at all"
+    # are different facts — never conflated under the same "none" token.
+    ok, deploy_texts_or_reason = sources.issue_trail(args.deploy_repo, str(args.deploy_issue))
+    deployed = deployed_field(deploy_texts_or_reason) if ok else f"unreadable ({deploy_texts_or_reason})"
     all_child_texts = [t for texts in fetched["child_texts"].values() for t in texts]
     body = round_record_body(
         refusals=count_refusals(all_child_texts),
@@ -375,16 +485,23 @@ def _cli_crossover(argv):
     args = ap.parse_args(argv)
     fetched = json.loads(pathlib.Path(args.fetch_json).read_text(encoding="utf-8"))
     strategy_text = pathlib.Path(args.strategy_doc).read_text(encoding="utf-8")
-    parsed_strategy = strategy.parse_strategy(strategy_text)
+    try:
+        parsed_strategy = strategy.parse_strategy(strategy_text)
+    except strategy.StrategyError as e:
+        # I8: a stated refusal, never an unhandled traceback — named on the close-runner's own log.
+        print(f"round_record: crossover refused — strategy doc malformed: {e}", file=sys.stderr)
+        return 1
     budget_usd = matching_theme_budget(parsed_strategy, args.repo)
     pr_usages = {}
     for ref in fetched.get("pr_refs") or []:
         ok, usage = sources.pr_usage(ref["repo"], str(ref["number"]))
         if ok:
             pr_usages[f"{ref['repo']}#{ref['number']}"] = usage
-    result = crossover_from_pr_usages(pr_usages, budget_usd)
+    linked_count = len(fetched.get("pr_refs") or [])
+    result = crossover_from_pr_usages(pr_usages, budget_usd, linked_count=linked_count)
     body = crossover_body(cost_usd=result["cost_usd"], pr_count=result["pr_count"],
-                          budget_usd=budget_usd, verdict=result["verdict"], who=args.who)
+                          linked_count=result["linked_count"], budget_usd=budget_usd,
+                          verdict=result["verdict"], who=args.who)
     if args.test_mode:
         print("TEST-MODE: no trail write — the record only")
         print(body)
@@ -401,6 +518,8 @@ def _cli_ship_walk(argv):
     ap.add_argument("--epic", type=int, required=True)
     ap.add_argument("--who", required=True)
     ap.add_argument("--scope", required=True)
+    ap.add_argument("--supersession-sweep", default=None,
+                    help="check_supersession.py --sweep's own outcome, a short status string (I10)")
     ap.add_argument("--test-mode", action="store_true")
     args = ap.parse_args(argv)
     raw = pathlib.Path(args.in_path).read_text(encoding="utf-8")
@@ -414,7 +533,7 @@ def _cli_ship_walk(argv):
     except vault_api.VaultUnreachable as e:
         print(f"round_record: ship-walk apply stopped — {e}", file=sys.stderr)
         return 1
-    body = ship_walk_body(who=args.who, scope=args.scope)
+    body = ship_walk_body(who=args.who, scope=args.scope, supersession_sweep=args.supersession_sweep)
     if args.test_mode:
         print("TEST-MODE: no trail write — the record only")
         print(body)
@@ -426,6 +545,7 @@ def _cli_ship_walk(argv):
 
 _SUBCOMMANDS = {
     "fetch": _cli_fetch,
+    "already-shipped": _cli_already_shipped,
     "round-record": _cli_round_record,
     "crossover": _cli_crossover,
     "ship-walk": _cli_ship_walk,

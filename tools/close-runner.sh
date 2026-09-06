@@ -7,28 +7,41 @@
 # and every trail/vault write belongs to tools/round_record.py, never re-implemented here — this
 # script only runs the close-walk's own judgment call and hands finished files to that tool.
 #
-# Usage: close-runner.sh <owner/repo> <epic-number>
+# Usage: close-runner.sh <owner/repo> <epic-number> [<component-root> [<strategy-doc>]]
+#
+#   component-root / strategy-doc — the repo's OWN local vault-mirror paths (#472 fold review, B3):
+#                threaded on ARGV by tools/design_gate.py's own close sweep, from the SAME
+#                pm-repos.json config entry `_resolve_entry` already reads — never an environment
+#                variable (one shared value for every swept repo, and silently stripped by
+#                dispatch's own spawn-env allowlist under the PM instance). Either may be empty:
+#                an empty component-root skips the close-walk entirely (nothing to ground it
+#                against); an empty/unreadable strategy-doc skips only YR-CROSSOVER (advisory,
+#                never gate-mandated).
+#
+#   already-shipped — I3's own idempotence guard, checked right after `fetch`, before any LLM call:
+#                if YR-SHIP-WALK already rides the epic trail, the close-walk stage and the vault
+#                patch are BOTH skipped (a re-run after a failed round-record/crossover must never
+#                re-walk or re-patch) — round-record/crossover still run.
 #
 #   close-walk — the ship-walk over the grounding list (skills/factory/references/architect.md
 #                moment 3 / skills/factory/references/closing.md ss3): the model reads the epic's
-#                own technical-rfc body plus the component's CURRENT living reference (a local
-#                vault-mirror path, $CLOSE_COMPONENT_ROOT's own convention — the design-review-
-#                runner.sh precedent for a vault-mirror env seam) and names, in the fixed grammar
-#                tools/round_record.py's own parser reads, the ONE living-reference section to
-#                update (by heading, outermost first, joined by '::' for a nested heading) and any
-#                research now superseded. `$CLOSE_COMPONENT_ROOT` unset (item P's own human
-#                provisioning, not yet wired for this repo) stops here, loudly, exit 0 — nothing to
-#                walk without it, mirroring tools/design-review-runner.sh's own `DESIGN_COMPONENT_
-#                ROOT` unset case.
+#                own technical-rfc body plus the component's CURRENT living reference (the local
+#                vault-mirror path given on argv) and names, in the fixed grammar tools/round_
+#                record.py's own parser reads, the ONE living-reference section to update (by
+#                heading TEXT, outermost first — B1: never '#'/'##'-prefixed, the real vault API's
+#                own heading-target rule, verified live 2026-09-06) and any research now
+#                superseded.
 #
-#   Then, in order: `tools/round_record.py ship-walk` (applies the close-walk's own directive
-#   through tools/vault_api.py — the ONLY vault write path — and posts YR-SHIP-WALK); `tools/
-#   round_record.py round-record` (the round's own four counts + deployed, computed from the
-#   trails); `tools/round_record.py crossover` (this epic's own merged-PR usage vs. the strategy
-#   doc's theme budget — skipped, loudly, when $CLOSE_STRATEGY_DOC is unset: CROSSOVER is not one
-#   of the close arm's own gate-mandated records, so a missing strategy doc never blocks the epic's
-#   self-close, only this one advisory record). The close arm itself
-#   (tools/epic_gate.py, unchanged) decides when the epic actually closes, on its own next sweep.
+#   Then, in order: `check_supersession.py --sweep` over the component (I10: backs the ship-walk's
+#   own "grounding list was walked" claim with an actual deterministic sweep, advisory — never
+#   blocks); `tools/round_record.py ship-walk` (applies the close-walk's own directive through
+#   tools/vault_api.py — the ONLY vault write path — and posts YR-SHIP-WALK); `tools/round_
+#   record.py round-record` (the round's own four counts + deployed, computed from the trails);
+#   `tools/round_record.py crossover` (this epic's own merged-PR usage vs. the strategy doc's theme
+#   budget — skipped, loudly, when no strategy doc was given: CROSSOVER is not one of the close
+#   arm's own gate-mandated records, so its absence never blocks the epic's self-close). The close
+#   arm itself (tools/epic_gate.py, unchanged) decides when the epic actually closes, on its own
+#   next sweep.
 set -euo pipefail
 
 export YR_MACHINERY=1
@@ -41,15 +54,16 @@ DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SELF_DIR/stage_lib.sh"
 
-# ROUND_RECORD_PY is a test-only override (the CROSS_PY precedent, tools/cross-runner.sh) —
-# production never sets it, so the real tools/round_record.py runs; a test substitutes a fake to
-# exercise this script's own orchestration without a live gh/vault.
+# ROUND_RECORD_PY / CHECK_SUPERSESSION_PY are test-only overrides (the CROSS_PY precedent,
+# tools/cross-runner.sh) — production never sets them, so the real tools run; a test substitutes a
+# fake to exercise this script's own orchestration without a live gh/vault/vault-mirror tree.
 ROUND_RECORD_PY="${ROUND_RECORD_PY:-$SELF_DIR/round_record.py}"
+CHECK_SUPERSESSION_PY="${CHECK_SUPERSESSION_PY:-$SELF_DIR/check_supersession.py}"
 
 log(){ echo "close-runner: $*" >&2; }
-usage(){ echo "usage: close-runner.sh <owner/repo> <epic-number>" >&2; exit 2; }
+usage(){ echo "usage: close-runner.sh <owner/repo> <epic-number> [<component-root> [<strategy-doc>]]" >&2; exit 2; }
 
-REPO="${1:-}"; EPIC="${2:-}"
+REPO="${1:-}"; EPIC="${2:-}"; COMPONENT_ROOT="${3:-}"; STRATEGY_DOC="${4:-}"
 [ -n "$REPO" ] && [ -n "$EPIC" ] || usage
 
 resolve_role review "$DESIGN_MODEL" "" "$DESIGN_MODEL"
@@ -78,43 +92,64 @@ log "fetch: the epic + its children's trails and linked merged-PR numbers"
 python3 "$ROUND_RECORD_PY" fetch --repo "$REPO" --epic "$EPIC" > "$RUN_DIR/fetch.json" \
   || { log "fetch failed — stopping"; exit 1; }
 
-CLOSE_WALK_SYS="You are the PM agent's close-walk stage (it-36 slice H) — the ship-walk over the grounding list (skills/factory/references/architect.md moment 3). Read the epic's own technical-rfc body and the component's CURRENT living reference (the one note under its architecture/ home with 'type: note', kept current). Decide the ONE section that needs updating in light of what this round shipped, and any research this round makes superseded. Output EXACTLY this shape and nothing else: a ===LIVING-REFERENCE=== block naming 'path: <vault-relative path to the living reference>' then 'heading: <exact heading text, nested headings joined by ::>' then the section's full REPLACEMENT content between ===CONTENT=== and ===END-CONTENT===, closed by ===END-LIVING-REFERENCE===; then a ===SUPERSEDED=== block with zero or more 'PATH: TARGET' lines (TARGET is the superseding doc's vault-relative path, or the literal word none), closed by ===END-SUPERSEDED===. If nothing in the living reference needs updating, omit the ===LIVING-REFERENCE=== block entirely rather than inventing a change; if nothing is superseded, the ===SUPERSEDED=== block may be empty or omitted. No commentary, no preamble, no text outside those blocks."
+# I3: idempotence — if YR-SHIP-WALK already rides the epic trail, a re-run (e.g. after a failed
+# round-record/crossover on a prior tick) must never re-run the close-walk stage or re-patch the
+# vault a second time. round-record/crossover below still run unconditionally.
+if python3 "$ROUND_RECORD_PY" already-shipped --fetch-json "$RUN_DIR/fetch.json"; then
+  log "already-shipped: YR-SHIP-WALK already on the trail — skipping the close-walk stage and the vault patch"
+else
+  CLOSE_WALK_SYS="You are the PM agent's close-walk stage (it-36 slice H) — the ship-walk over the grounding list (skills/factory/references/architect.md moment 3). Read the epic's own technical-rfc body and the component's CURRENT living reference (the one note under its architecture/ home with 'type: note', kept current). Decide the ONE section that needs updating in light of what this round shipped, and any research this round makes superseded. Output EXACTLY this shape and nothing else: a ===LIVING-REFERENCE=== block naming 'path: <vault-relative path to the living reference>' then 'heading: <exact heading TEXT, nested headings joined by ::>' — the heading text ONLY, never a leading '#' or '##' (the real vault API addresses a heading by its bare text, e.g. 'Build hosts', never '## Build hosts') — then the section's full REPLACEMENT content between ===CONTENT=== and ===END-CONTENT===, closed by ===END-LIVING-REFERENCE===; then a ===SUPERSEDED=== block with zero or more 'PATH: TARGET' lines (TARGET is the superseding doc's vault-relative path, or the literal word none), closed by ===END-SUPERSEDED===. If nothing in the living reference needs updating, omit the ===LIVING-REFERENCE=== block entirely rather than inventing a change; if nothing is superseded, the ===SUPERSEDED=== block may be empty or omitted. No commentary, no preamble, no text outside those blocks."
 
-if [ -z "${CLOSE_COMPONENT_ROOT:-}" ]; then
-  log "warn: CLOSE_COMPONENT_ROOT unset — cannot ground the close-walk against a living reference; stopping short of the walk (no records posted this tick)"
-  exit 0
+  if [ -z "$COMPONENT_ROOT" ]; then
+    log "warn: no component-root given — cannot ground the close-walk against a living reference; stopping short of the walk (no records posted this tick)"
+    exit 0
+  fi
+
+  epic_body="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["epic_texts"][0])' "$RUN_DIR/fetch.json")"
+  living_ref_text=""
+  if [ -f "$COMPONENT_ROOT/architecture/README.md" ]; then
+    living_ref_text="$(cat "$COMPONENT_ROOT/architecture/README.md")"
+  fi
+
+  log "close-walk: $(basename "$CLAUDE_BIN") [$BUILD_ID] repo=$REPO epic=$EPIC"
+  run_stage "$CLOSE_WALK_SYS" \
+    "$(printf 'Epic technical-rfc body:\n%s\n\nComponent living reference (%s/architecture/README.md):\n%s' \
+       "$epic_body" "$COMPONENT_ROOT" "$living_ref_text")" \
+    "$RUN_DIR/close-walk.log" "Read Bash" "$BUILD_ID" \
+    || { ledger_row close-walk failed; log "close-walk stage failed — stopping"; exit 1; }
+  ledger_row close-walk ok
+
+  # I10: back "the grounding list was walked" with an actual run of the existing deterministic
+  # sweep — advisory (never blocks: a legacy finding is reported honestly in the record, not
+  # treated as a gate). VAULT_ROOT/SCOPE resolve through tools/design_gate.py's own helpers so this
+  # never re-derives the vault-relative path rule.
+  VAULT_ROOT_VAL="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import design_gate; print(design_gate.VAULT_ROOT)' "$SELF_DIR")"
+  SCOPE_VAL="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import design_gate; print(design_gate.vault_rel_path(sys.argv[2]))' "$SELF_DIR" "$COMPONENT_ROOT")"
+  log "supersession sweep: check_supersession.py --sweep --scope $SCOPE_VAL"
+  if python3 "$CHECK_SUPERSESSION_PY" --sweep --scope "$SCOPE_VAL" --vault-root "$VAULT_ROOT_VAL" \
+      > "$RUN_DIR/supersession-sweep.log" 2>&1; then
+    SWEEP_STATUS="clean (exit 0)"
+  else
+    SWEEP_STATUS="$(head -1 "$RUN_DIR/supersession-sweep.log" 2>/dev/null || echo "non-zero exit") — see $RUN_DIR/supersession-sweep.log"
+  fi
+
+  log "ship-walk: applying the close-walk's own directive and posting YR-SHIP-WALK"
+  python3 "$ROUND_RECORD_PY" ship-walk --in "$RUN_DIR/close-walk.log" --repo "$REPO" --epic "$EPIC" \
+    --who "$APP_SLUG" --scope "$REPO#$EPIC" --supersession-sweep "$SWEEP_STATUS" \
+    || { log "ship-walk apply/post failed — stopping short of the round-record (a partial close is never posted)"; exit 1; }
 fi
-
-epic_body="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["epic_texts"][0])' "$RUN_DIR/fetch.json")"
-living_ref_text=""
-if [ -f "$CLOSE_COMPONENT_ROOT/architecture/README.md" ]; then
-  living_ref_text="$(cat "$CLOSE_COMPONENT_ROOT/architecture/README.md")"
-fi
-
-log "close-walk: $(basename "$CLAUDE_BIN") [$BUILD_ID] repo=$REPO epic=$EPIC"
-run_stage "$CLOSE_WALK_SYS" \
-  "$(printf 'Epic technical-rfc body:\n%s\n\nComponent living reference (%s/architecture/README.md):\n%s' \
-     "$epic_body" "$CLOSE_COMPONENT_ROOT" "$living_ref_text")" \
-  "$RUN_DIR/close-walk.log" "Read Bash" "$BUILD_ID" \
-  || { ledger_row close-walk failed; log "close-walk stage failed — stopping"; exit 1; }
-ledger_row close-walk ok
-
-log "ship-walk: applying the close-walk's own directive and posting YR-SHIP-WALK"
-python3 "$ROUND_RECORD_PY" ship-walk --in "$RUN_DIR/close-walk.log" --repo "$REPO" --epic "$EPIC" \
-  --who "$APP_SLUG" --scope "$REPO#$EPIC" \
-  || { log "ship-walk apply/post failed — stopping short of the round-record (a partial close is never posted)"; exit 1; }
 
 log "round-record: computing + posting YR-ROUND-RECORD"
 python3 "$ROUND_RECORD_PY" round-record --fetch-json "$RUN_DIR/fetch.json" --repo "$REPO" --epic "$EPIC" \
   || { log "round-record failed — stopping"; exit 1; }
 
-if [ -n "${CLOSE_STRATEGY_DOC:-}" ] && [ -f "$CLOSE_STRATEGY_DOC" ]; then
+if [ -n "$STRATEGY_DOC" ] && [ -f "$STRATEGY_DOC" ]; then
   log "crossover: computing + posting YR-CROSSOVER"
   python3 "$ROUND_RECORD_PY" crossover --fetch-json "$RUN_DIR/fetch.json" \
-    --strategy-doc "$CLOSE_STRATEGY_DOC" --repo "$REPO" --epic "$EPIC" --who "$APP_SLUG" \
+    --strategy-doc "$STRATEGY_DOC" --repo "$REPO" --epic "$EPIC" --who "$APP_SLUG" \
     || log "warn: crossover failed to post (non-fatal — not one of the close arm's own gate-mandated records)"
 else
-  log "warn: CLOSE_STRATEGY_DOC unset or unreadable — YR-CROSSOVER not posted this tick (advisory only, never blocks self-close)"
+  log "warn: no strategy-doc given (or unreadable) — YR-CROSSOVER not posted this tick (advisory only, never blocks self-close)"
 fi
 
 log "done: close records posted for $REPO#$EPIC — the next epic-gate sweep decides the self-close"

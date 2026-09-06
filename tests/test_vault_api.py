@@ -146,25 +146,30 @@ def test_write_content_type_is_markdown():
     assert "markdown" in transport.calls[0]["headers"]["Content-Type"]
 
 
-# ---- patch_frontmatter(): typed-write, payload in `value` (never `content`), read back via frontmatter ----
+# ---- patch_frontmatter(): the JSON-instruction body, typed value in `value` never `content`,
+#      read back via frontmatter — the fold's B1/N7 fix (it-36 slice H, #473): the real server
+#      rejects the deprecated Target-Type/Target HEADER form outright without an explicit
+#      Markdown-Patch-Version; verified live against curl -s http://127.0.0.1:27123/openapi.yaml ----
 
-def test_patch_frontmatter_sends_operation_replace_and_target_headers():
+def test_patch_frontmatter_sends_no_deprecated_targeting_headers_at_all():
     text_after = "---\nstatus: active\n---\n\nbody\n"
     client, transport = _client([(200, b""), (200, text_after.encode("utf-8"))])
     client.patch_frontmatter("iterations/1-foo/01-foo.md", "status", "active")
     headers = transport.calls[0]["headers"]
-    assert headers["Operation"] == "replace"
-    assert headers["Target-Type"] == "frontmatter"
-    assert headers["Target"] == "status"
+    assert "Target-Type" not in headers
+    assert "Target" not in headers
+    assert "Operation" not in headers
+    assert "Markdown-Patch-Version" not in headers
+    assert headers["Content-Type"] == "application/json"
 
 
-def test_patch_frontmatter_payload_rides_in_value_never_content():
+def test_patch_frontmatter_body_is_the_whole_json_instruction():
     import json
     client, transport = _client([(200, b""), (200, b"---\nstatus: active\n---\n\nbody\n")])
     client.patch_frontmatter("some/path.md", "status", "active")
     payload = json.loads(transport.calls[0]["data"])
-    assert payload == {"value": "active"}
-    assert "content" not in payload
+    assert payload == {"targetType": "frontmatter", "target": "status", "operation": "replace",
+                       "value": "active", "createTargetIfMissing": True}
 
 
 def test_patch_frontmatter_confirms_via_read_back_of_the_file_not_the_cache():
@@ -190,27 +195,27 @@ def test_patch_frontmatter_raises_on_a_refused_patch():
     assert len(transport.calls) == 1
 
 
-# ---- document_map(): the enriched-GET media type, the version field is the concurrency token
-#      patch_section()'s own if_match anchors against (it-36 slice H, #473) ----------------------------
+# ---- document_map(): the document-map media type (NOT note+json, which carries no `version` at
+#      all) — the fold's B2 fix (it-36 slice H, #473) ---------------------------------------------------
 
-def test_document_map_sends_the_note_json_accept_header():
+def test_document_map_sends_the_document_map_accept_header_never_note_json():
     import json as _json
     client, transport = _client([(200, _json.dumps({"version": "v1"}).encode("utf-8"))])
     client.document_map("some/path.md")
     assert transport.calls[0]["method"] == "GET"
-    assert transport.calls[0]["headers"]["Accept"] == "application/vnd.olrapi.note+json"
+    assert transport.calls[0]["headers"]["Accept"] == "application/vnd.olrapi.document-map+json"
 
 
 def test_document_map_returns_the_parsed_json_body():
     import json as _json
-    payload = {"version": "abc123", "frontmatter": {"status": "active"}}
+    payload = {"version": "abc123", "headings": {}, "blocks": [], "frontmatterFields": ["status"]}
     client, transport = _client([(200, _json.dumps(payload).encode("utf-8"))])
     assert client.document_map("some/path.md") == payload
 
 
 def test_document_map_raises_when_the_body_has_no_version_field():
     import json as _json
-    client, transport = _client([(200, _json.dumps({"frontmatter": {}}).encode("utf-8"))])
+    client, transport = _client([(200, _json.dumps({"headings": {}}).encode("utf-8"))])
     with pytest.raises(vault_api.VaultUnreachable):
         client.document_map("some/path.md")
 
@@ -234,52 +239,62 @@ def test_document_map_refuses_without_reaching_the_transport_when_the_key_is_emp
     assert transport.calls == []
 
 
-# ---- patch_section(): a heading-targeted PATCH, never a whole-body overwrite (it-36 slice H, #473) ----
+# ---- patch_section(): the JSON-instruction body, targetType "heading", never a whole-body
+#      overwrite — the fold's B1 fix (it-36 slice H, #473): PLAIN heading text, never '##'-prefixed,
+#      never '::'-joined (that was the deprecated 1.x header form this client no longer sends) -------
 
-def test_patch_section_sends_operation_target_type_and_joined_heading_target():
+def test_patch_section_sends_no_deprecated_targeting_headers_at_all():
     client, transport = _client([(200, b""), (200, b"...NEW SECTION TEXT...")])
-    client.patch_section("some/path.md", ["## Parent", "### Child"], "NEW SECTION TEXT")
+    client.patch_section("some/path.md", ["Parent", "Child"], "NEW SECTION TEXT")
     headers = transport.calls[0]["headers"]
-    assert headers["Operation"] == "replace"
-    assert headers["Target-Type"] == "heading"
-    assert headers["Target"] == "## Parent::### Child"
+    assert "Target-Type" not in headers
+    assert "Target" not in headers
+    assert "Operation" not in headers
+    assert "Markdown-Patch-Version" not in headers
+    assert headers["Content-Type"] == "application/json"
 
 
-def test_patch_section_sends_raw_markdown_content_never_json():
+def test_patch_section_body_is_the_whole_json_instruction_with_plain_heading_array():
+    import json
     client, transport = _client([(200, b""), (200, b"...NEW SECTION TEXT...")])
-    client.patch_section("some/path.md", ["## H"], "NEW SECTION TEXT")
-    assert transport.calls[0]["data"] == b"NEW SECTION TEXT"
-    assert "markdown" in transport.calls[0]["headers"]["Content-Type"]
+    client.patch_section("some/path.md", ["Parent", "Child"], "NEW SECTION TEXT")
+    payload = json.loads(transport.calls[0]["data"])
+    assert payload == {"targetType": "heading", "target": ["Parent", "Child"], "operation": "replace",
+                       "content": "NEW SECTION TEXT", "createTargetIfMissing": True}
 
 
-def test_patch_section_carries_if_match_as_the_standard_http_conditional_header():
+def test_patch_section_carries_if_match_as_the_instructions_own_field():
+    import json
     client, transport = _client([(200, b""), (200, b"...NEW SECTION TEXT...")])
-    client.patch_section("some/path.md", ["## H"], "NEW SECTION TEXT", if_match="the-version-token")
-    assert transport.calls[0]["headers"]["If-Match"] == "the-version-token"
+    client.patch_section("some/path.md", ["H"], "NEW SECTION TEXT", if_match="the-version-token")
+    payload = json.loads(transport.calls[0]["data"])
+    assert payload["ifMatch"] == "the-version-token"
 
 
-def test_patch_section_omits_if_match_header_when_not_given():
+def test_patch_section_omits_if_match_field_when_not_given():
+    import json
     client, transport = _client([(200, b""), (200, b"...NEW SECTION TEXT...")])
-    client.patch_section("some/path.md", ["## H"], "NEW SECTION TEXT")
-    assert "If-Match" not in transport.calls[0]["headers"]
+    client.patch_section("some/path.md", ["H"], "NEW SECTION TEXT")
+    payload = json.loads(transport.calls[0]["data"])
+    assert "ifMatch" not in payload
 
 
 def test_patch_section_confirms_via_read_back_containment():
     client, transport = _client([(200, b""), (200, b"...before...NEW SECTION TEXT...after...")])
-    result = client.patch_section("some/path.md", ["## H"], "NEW SECTION TEXT")
+    result = client.patch_section("some/path.md", ["H"], "NEW SECTION TEXT")
     assert result == "...before...NEW SECTION TEXT...after..."
 
 
 def test_patch_section_raises_when_read_back_does_not_confirm_the_content():
     client, transport = _client([(200, b""), (200, b"unrelated text entirely")])
     with pytest.raises(vault_api.VaultUnreachable):
-        client.patch_section("some/path.md", ["## H"], "NEW SECTION TEXT")
+        client.patch_section("some/path.md", ["H"], "NEW SECTION TEXT")
 
 
 def test_patch_section_raises_on_a_refused_patch():
     client, transport = _client([(409, b"conflict - stale If-Match")])
     with pytest.raises(vault_api.VaultUnreachable):
-        client.patch_section("some/path.md", ["## H"], "NEW SECTION TEXT", if_match="stale")
+        client.patch_section("some/path.md", ["H"], "NEW SECTION TEXT", if_match="stale")
     assert len(transport.calls) == 1
 
 
