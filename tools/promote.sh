@@ -72,8 +72,10 @@ case "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" in
       python3 "$SELF_DIR/process.py" transition-check "task.backlog->ready.epic-flip.machinery" \
           --repo "$OWNER/$NAME" --issue "$ISSUE" \
         || refuse "the machinery epic-flip wall refused (see the rules above): the approval, the open-question rule, the governing design's activation, or the owner's own triage license does not hold for #$ISSUE"
-      WHO="${YR_GH_APP_SLUG:-}"
-      [ -n "$WHO" ] || refuse "YR_GH_APP_SLUG is unset — the machinery arm never falls back to \`gh api user\` (403 under an installation token)"
+      # WHO is the App slug, never `gh api user` (403 under an installation token) — the outer `if`
+      # above already guarantees YR_GH_APP_SLUG is non-empty here, so this is a plain assignment,
+      # never a second, unreachable refusal pretending to guard something the branch already checked.
+      WHO="$YR_GH_APP_SLUG"
       DESIGN="$(python3 "$SELF_DIR/design_resolver.py" name --repo "$OWNER/$NAME" --issue "$ISSUE" 2>/dev/null || true)"
       [ -n "$DESIGN" ] || refuse "the governing design's name could not be resolved from #$ISSUE's Source line — the record must name its design"
       BODY="$(printf 'YR-EPIC-READY\ndesign: %s\nwho: @%s\n\nFlipped to **Ready** via `tools/promote.sh`'"'"'s machinery arm (the epic lane'"'"'s funnel, ruling 5, under the App identity): the owner'"'"'s own triage `go` disposition converts the standing approval into autonomous building; the cord-pull stays the human'"'"'s veto. This record lands before the Status flip, by construction.' "$DESIGN" "$WHO")"

@@ -7,12 +7,32 @@
 # tools/cross.py, never re-implemented here — this script only drafts, reviews, and hands finished
 # files to that tool.
 #
-# Usage: cross-runner.sh <owner/repo> <design-doc-path> <vault-doc-rel-path> <design-name>
+# NAMED HONESTLY (cold-review I5): tools/design_gate.py's sweep has no `cross` position/spawn point
+# today — spawning this script mechanically (the natural next position after F's `activate`) is a
+# future slice's own duty. Until then, an attended operator (or a future sweep) invokes it directly
+# once a design doc has been drafted (E), reviewed and activated (F).
 #
-#   design-doc-path    — the ALREADY-ACTIVE governing design doc's local path (F's own activation,
-#                        upstream of this script) — the crossing projects it onto the target repo.
-#   vault-doc-rel-path — that same doc's REST-relative vault path, for the `crossed_to` stamp.
+# Usage: cross-runner.sh <owner/repo> <seed> <vault-doc-rel-path> <design-name>
+#
+#   seed               — the crossing's own ideas-file stem (YR-TRIAGE's own seed= identifier) —
+#                        locates the drafting run the SAME way design-review-runner.sh does (below),
+#                        and is written back onto the PM config (alongside the filed epic number) so
+#                        a LATER promote.sh machinery flip can resolve the owner's own triage license.
+#   vault-doc-rel-path — the ALREADY-ACTIVE governing design doc's REST-relative vault path (F's own
+#                        activation wrote it there) — never re-derived: `resolve-paths`' own iteration
+#                        ordinal is NOT idempotent to recompute after the fact (it scans the tree for
+#                        the highest existing folder — calling it again post-activation would find
+#                        the folder F's activation just created and return the NEXT one instead).
 #   design-name        — the governing design's name, for the `YR-EPIC-APPROVAL` record.
+#
+# Locates the drafting run through the SAME pointer tools/design-runner.sh leaves at its own exit
+# ($DEV_RUNNER_HOME/pm/latest-draft-<repo-slug>.txt naming that run's dir) that design-review-
+# runner.sh already reads — never re-derives it; `draft-final.md` there is the design doc's own
+# local text (also now active in the vault, per F). DESIGN_COMPONENT_ROOT (optional; F's own
+# provisioning) resolves ONLY the architecture home (`tools/design_gate.py resolve-paths` — the
+# `architecture_home` half of that call is stable/idempotent, unlike `vault_path`, since it never
+# depends on the iteration-ordinal scan) — when unset, the crossing still proceeds, just without a
+# real ADR (the epic body still carries the human-facing verdict/alternative prose).
 #
 #   cross-draft — the design doc + skills/factory/templates/technical-rfc.md +
 #                 skills/factory/templates/task.md on stdin -> one combined response, split by
@@ -29,8 +49,12 @@
 #   file        — `git fetch origin` on the target repo's own shared-clone checkout (never a
 #                 worktree cut), then `tools/cross.py file`: check_links, check_task (--base-ref
 #                 origin/main), the epic + its sub-issues filed by tool, YR-EPIC-APPROVAL,
-#                 crossed_to. The flip itself is tools/promote.sh's own machinery arm — a separate
-#                 act, on a separate trail event (the triage `go` disposition).
+#                 crossed_to, the ADR + YR-ARCH-REVIEW when DESIGN_COMPONENT_ROOT resolved one, and
+#                 the PM config write-back (epic_issue/seed). This script then leaves its own
+#                 output pointer, $DEV_RUNNER_HOME/pm/latest-epic-<repo-slug>.txt (design-runner.sh's
+#                 own `latest-draft` pointer's sibling). The flip itself is tools/promote.sh's own
+#                 machinery arm — a separate act, on a separate trail event (the triage `go`
+#                 disposition, keyed by this SAME seed).
 set -euo pipefail
 
 export YR_MACHINERY=1
@@ -50,11 +74,22 @@ CROSS_PY="${CROSS_PY:-$SELF_DIR/cross.py}"
 YR_WORKSPACE="${YR_WORKSPACE:-$(cd "$SELF_DIR/../.." && pwd)}"
 
 log(){ echo "cross-runner: $*" >&2; }
-usage(){ echo "usage: cross-runner.sh <owner/repo> <design-doc-path> <vault-doc-rel-path> <design-name>" >&2; exit 2; }
+usage(){ echo "usage: cross-runner.sh <owner/repo> <seed> <vault-doc-rel-path> <design-name>" >&2; exit 2; }
 
-REPO="${1:-}"; DESIGN_DOC="${2:-}"; VAULT_DOC="${3:-}"; DESIGN_NAME="${4:-}"
-[ -n "$REPO" ] && [ -n "$DESIGN_DOC" ] && [ -n "$VAULT_DOC" ] && [ -n "$DESIGN_NAME" ] || usage
-[ -f "$DESIGN_DOC" ] || { log "design doc not found at $DESIGN_DOC"; exit 2; }
+REPO="${1:-}"; SEED="${2:-}"; VAULT_DOC="${3:-}"; DESIGN_NAME="${4:-}"
+[ -n "$REPO" ] && [ -n "$SEED" ] && [ -n "$VAULT_DOC" ] && [ -n "$DESIGN_NAME" ] || usage
+
+# I1 (cold review of db47805): never fabricate the App identity — a missing YR_GH_APP_SLUG refuses,
+# the same discipline tools/promote.sh's machinery arm holds.
+[ -n "${YR_GH_APP_SLUG:-}" ] || { log "YR_GH_APP_SLUG is unset — refusing (never fabricate the App identity)"; exit 2; }
+APP_SLUG="$YR_GH_APP_SLUG"
+
+REPO_SLUG="$(printf '%s' "$REPO" | tr '/.' '--')"
+POINTER="$DEV_RUNNER_HOME/pm/latest-draft-$REPO_SLUG.txt"
+[ -f "$POINTER" ] || { log "no drafting run recorded for $REPO ($POINTER absent) — nothing to cross"; exit 2; }
+DRAFT_RUN_DIR="$(cat "$POINTER")"
+DESIGN_DOC="$DRAFT_RUN_DIR/draft-final.md"
+[ -f "$DESIGN_DOC" ] || { log "no draft-final.md at $DRAFT_RUN_DIR — nothing to cross"; exit 2; }
 
 REPO_NAME="${REPO#*/}"
 REPO_CHECKOUT="${CROSS_REPO_CHECKOUT:-$YR_WORKSPACE/$REPO_NAME}"
@@ -64,9 +99,22 @@ resolve_role review "$DESIGN_MODEL" "" "$DESIGN_MODEL"
 [ "$R_STATUS" != unknown ] || { log "design model unresolved — refusing"; exit 2; }
 BUILD_ID="$R_ID"
 
-APP_SLUG="${YR_GH_APP_SLUG:-yr-pm}"
+# ADR plumbing (I4): architecture_home is stable/idempotent to recompute (see the header note above
+# `vault_path`'s own non-idempotence); ADR_SLUG/ADR_TITLE follow design-review-runner.sh's own
+# convention. Absent DESIGN_COMPONENT_ROOT, the crossing still proceeds — just without a real ADR.
+ARCHITECTURE_HOME=""
+ADR_SLUG=""
+ADR_TITLE=""
+if [ -n "${DESIGN_COMPONENT_ROOT:-}" ]; then
+  PATHS_JSON="$(python3 "$SELF_DIR/design_gate.py" resolve-paths --component-root "$DESIGN_COMPONENT_ROOT" --seed "$SEED")"
+  ARCHITECTURE_HOME="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["architecture_home"])' "$PATHS_JSON")"
+  ADR_SLUG="$(date -u +%Y-%m-%d)-${SEED}-arch-decision"
+  ADR_TITLE="Architecture decision — ${SEED}"
+else
+  log "warn: DESIGN_COMPONENT_ROOT unset — crossing without a real ADR (the epic body still carries the verdict/alternative prose)"
+fi
 
-RUN_ID="cross-$(printf '%s' "$REPO" | tr '/.' '--')-$$"
+RUN_ID="cross-$REPO_SLUG-$$"
 RUN_DIR="$DEV_RUNNER_HOME/runs/$RUN_ID"
 mkdir -p "$RUN_DIR"
 WT="$RUN_DIR"   # no code worktree: the crossing files Issues, not a code change; run_stage's own
@@ -76,7 +124,7 @@ LEDGER_DIR="$DEV_RUNNER_HOME/ledger"
 ledger_row(){   # $1 = stage name, $2 = that stage's outcome ("ok"|"failed")
   local now_iso; now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   python3 "$SELF_DIR/ledger.py" append --ledger-dir "$LEDGER_DIR" --kind design --stage "$1" \
-    --run-id "$RUN_ID" --task "$REPO#$DESIGN_NAME" --repo "$REPO" --run-dir "$RUN_DIR" \
+    --run-id "$RUN_ID" --task "$REPO#$SEED" --repo "$REPO" --run-dir "$RUN_DIR" \
     --build-model "$BUILD_ID" --outcome-type "$2" \
     --ts-start "$now_iso" --ts-end "$now_iso" --wall-seconds 0 >/dev/null 2>&1 \
     || log "warn: ledger row not appended for stage '$1' (non-fatal)"
@@ -104,7 +152,7 @@ split_and_check(){   # $1 = raw combined-draft path -> (re)populates technical-r
     || { log "cross-draft output malformed — stopping"; exit 1; }
 }
 
-log "cross-draft: $(basename "$CLAUDE_BIN") [$BUILD_ID] repo=$REPO design=$DESIGN_NAME"
+log "cross-draft: $(basename "$CLAUDE_BIN") [$BUILD_ID] repo=$REPO seed=$SEED"
 run_stage "$CROSS_DRAFT_SYS" \
   "$(printf 'Design doc (%s):\n%s\n\nTechnical-rfc template:\n%s\n\nTask template:\n%s' \
      "$DESIGN_NAME" "$design_text" "$rfc_template_text" "$task_template_text")" \
@@ -193,13 +241,24 @@ for entry in json.load(open(sys.argv[1])):
     print(entry["path"] + "\t" + entry["kind"])
 ' "$RUN_DIR/manifest.json")
 
+ADR_ARGS=()
+if [ -n "$ARCHITECTURE_HOME" ]; then
+  ADR_ARGS=(--architecture-home "$ARCHITECTURE_HOME" --adr-slug "$ADR_SLUG" --adr-title "$ADR_TITLE")
+fi
+
 log "file: filing the epic and ${#SLICE_ARGS[@]} slice arg(s) via tools/cross.py"
-python3 "$CROSS_PY" file --repo "$REPO" --who "$APP_SLUG" --design "$DESIGN_NAME" \
+python3 "$CROSS_PY" file --repo "$REPO" --who "$APP_SLUG" --design "$DESIGN_NAME" --seed "$SEED" \
   --review "cold technical-rfc review: $RFC_VERDICT" \
-  --technical-rfc "$RUN_DIR/technical-rfc.md" "${SLICE_ARGS[@]}" \
+  --technical-rfc "$RUN_DIR/technical-rfc.md" "${SLICE_ARGS[@]}" "${ADR_ARGS[@]}" \
   --arch-result "$RUN_DIR/arch-result.json" --vault-doc "$VAULT_DOC" \
   --repo-root "$REPO_CHECKOUT" --base-ref origin/main \
   > "$RUN_DIR/cross-result.json" \
   || { log "filing refused or failed — see $RUN_DIR/cross-result.json"; exit 1; }
+
+EPIC_NUMBER="$(python3 -c 'import json; print(json.load(open("'"$RUN_DIR"'/cross-result.json")).get("epic_number", ""))')"
+if [ -n "$EPIC_NUMBER" ]; then
+  mkdir -p "$DEV_RUNNER_HOME/pm"
+  printf '%s\n' "$EPIC_NUMBER" > "$DEV_RUNNER_HOME/pm/latest-epic-$REPO_SLUG.txt"
+fi
 
 log "done: crossed — $(cat "$RUN_DIR/cross-result.json")"

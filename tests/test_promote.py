@@ -240,19 +240,28 @@ def test_refusal_exit_code_is_distinct_from_success(tmp_path):
 # here (not stubbed out): the epic's own trail carries both the YR-EPIC-APPROVAL record and, in the
 # SAME canned comments (the generic `issue view` stub answers any issue number identically — the
 # triage evaluator's own `gh issue view <triage_issue>` read lands on the very same fixture), the
-# owner's `YR-TRIAGE: seed=<issue#> disposition=go` record — `epic-triage-license`'s own scope-by-
-# issue addressing (`design_gate.triage_license`) treats the epic issue NUMBER itself as the seed.
+# owner's `YR-TRIAGE: seed=<the crossing's own seed stem>` record — the PM config's `seed` field
+# (written by `tools/cross.py` at filing time, alongside `epic_issue`) is what the evaluator now
+# resolves the seed from; the epic issue NUMBER itself is never a valid seed (the cold review of
+# db47805's own B5 finding — this suite's earlier fixture, keyed by `seed=7`, ratified the defect).
 # WHO comes from YR_GH_APP_SLUG; `gh api user` is never called (it answers 403 under an installation
 # token) — asserted directly against the call log.
 
-MACHINERY_TRIAGE_GO = {"body": "YR-TRIAGE: seed=7 disposition=go who=@the-owner",
+SEED = "pm-agent"
+MACHINERY_TRIAGE_GO = {"body": f"YR-TRIAGE: seed={SEED} disposition=go who=@the-owner",
                        "author": {"login": "the-owner"}}
+# the defect B5 caught: a record keyed by the epic issue NUMBER, exactly as an evaluator that
+# (wrongly) treated the issue number as the seed would have demanded — must never license the flip.
+MACHINERY_TRIAGE_GO_KEYED_BY_ISSUE_NUMBER = {
+    "body": "YR-TRIAGE: seed=7 disposition=go who=@the-owner", "author": {"login": "the-owner"}}
 
 
-def _pm_config(tmp, *, repo="test/repo", triage_issue=55, epic_issue=7):
+def _pm_config(tmp, *, repo="test/repo", triage_issue=55, epic_issue=7, seed=SEED):
     path = tmp / "pm-repos.json"
-    path.write_text(json.dumps({"repos": [
-        {"repo": repo, "triage_issue": triage_issue, "epic_issue": epic_issue}]}))
+    entry = {"repo": repo, "triage_issue": triage_issue, "epic_issue": epic_issue}
+    if seed is not None:
+        entry["seed"] = seed
+    path.write_text(json.dumps({"repos": [entry]}))
     return path
 
 
@@ -326,6 +335,28 @@ def test_machinery_arm_refuses_without_the_epic_approval_record_writes_nothing(t
     binp = _bin(tmp_path)
     env = _machinery_env(tmp_path, binp)
     env["STUB_COMMENTS"] = json.dumps([MACHINERY_TRIAGE_GO])   # no YR-EPIC-APPROVAL at all
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
+def test_machinery_arm_refuses_a_record_keyed_by_the_epic_issue_number_not_the_seed(tmp_path):
+    """B5 (cold review of db47805): `YR-TRIAGE: seed=<epic issue number>` must never license the
+    flip — only a record keyed by the crossing's own seed stem (the PM config's `seed` field) does."""
+    binp = _bin(tmp_path)
+    env = _machinery_env(tmp_path, binp, triage_go=False)
+    env["STUB_COMMENTS"] = json.dumps([APPROVAL_RECORD, MACHINERY_TRIAGE_GO_KEYED_BY_ISSUE_NUMBER])
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
+def test_machinery_arm_refuses_when_the_config_entry_has_no_seed_at_all(tmp_path):
+    """Before `tools/cross.py` writes `seed` back (an entry created before the crossing filed
+    anything, or a malformed config) — fails closed, never matches an empty-string seed."""
+    binp = _bin(tmp_path)
+    env = _machinery_env(tmp_path, binp)
+    env["YR_PM_CONFIG"] = str(_pm_config(tmp_path, seed=None))
     r = _run(["7", "--repo", "test/repo"], env)
     assert r.returncode != 0
     assert not _writes(_calls(tmp_path))

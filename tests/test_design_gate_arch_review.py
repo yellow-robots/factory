@@ -555,3 +555,116 @@ def test_resolve_activation_paths_shapes_iteration_and_architecture_home(tmp_pat
     paths = design_gate.resolve_activation_paths(component, "foo", vault_root=root)
     assert paths["vault_path"] == "04 projects/widget/iterations/1-foo/01-foo.md"
     assert paths["architecture_home"] == "04 projects/widget/architecture"
+
+
+# ============================================================================================
+# evaluate(issue=...) — the epic-triage-license scope (it-36 slice G, #472, cold-review B5):
+# the epic issue NUMBER is never the seed; the config entry's own `seed` field (written by
+# tools/cross.py at filing time, alongside `epic_issue`, via update_pm_config_entry) names it.
+# ============================================================================================
+
+def test_evaluate_by_issue_passes_for_a_conformant_seed_keyed_go_record(tmp_path):
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [
+        {"repo": "acme/widgets", "triage_issue": 99, "epic_issue": 7, "seed": "pm-agent"}]}))
+    gh = FakeGhTrail([("the-owner", "YR-TRIAGE: seed=pm-agent disposition=go who=@the-owner")])
+
+    rc, token = design_gate.evaluate(issue="7", gh=gh, config_path=str(config), owner_login="the-owner")
+    assert rc == 0
+    assert token == ""
+
+
+def test_evaluate_by_issue_refuses_without_a_seed_keyed_record(tmp_path):
+    """The defect the cold review caught: a record keyed by the epic issue NUMBER (`seed=7`) must
+    NEVER license the flip — only a record keyed by the real seed stem does."""
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [
+        {"repo": "acme/widgets", "triage_issue": 99, "epic_issue": 7, "seed": "pm-agent"}]}))
+    gh = FakeGhTrail([("the-owner", "YR-TRIAGE: seed=7 disposition=go who=@the-owner")])
+
+    rc, token = design_gate.evaluate(issue="7", gh=gh, config_path=str(config), owner_login="the-owner")
+    assert rc == 1
+    assert token == "triage_licensed"
+
+
+def test_evaluate_by_issue_refuses_with_no_record_at_all(tmp_path):
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [
+        {"repo": "acme/widgets", "triage_issue": 99, "epic_issue": 7, "seed": "pm-agent"}]}))
+    rc, token = design_gate.evaluate(issue="7", gh=FakeGhTrail([]), config_path=str(config),
+                                     owner_login="the-owner")
+    assert rc == 1
+    assert token == "triage_licensed"
+
+
+def test_evaluate_by_issue_refuses_when_the_epic_issue_is_not_yet_configured(tmp_path):
+    """Before `tools/cross.py` writes `epic_issue` back (the epic didn't exist until it filed it),
+    the lookup by issue number finds nothing — fails closed, never a traceback."""
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [{"repo": "acme/widgets", "triage_issue": 99}]}))
+    rc, token = design_gate.evaluate(issue="7", gh=FakeGhTrail([]), config_path=str(config))
+    assert rc == 1
+    assert token == "repo_unconfigured"
+
+
+def test_evaluate_by_issue_refuses_when_the_entry_has_no_seed_at_all(tmp_path):
+    """`epic_issue` matched but `seed` was never written (a malformed config) — fails closed rather
+    than matching an empty-string seed against an equally-empty disposition key."""
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [
+        {"repo": "acme/widgets", "triage_issue": 99, "epic_issue": 7}]}))
+    gh = FakeGhTrail([("the-owner", "YR-TRIAGE: seed= disposition=go who=@the-owner")])
+    rc, token = design_gate.evaluate(issue="7", gh=gh, config_path=str(config), owner_login="the-owner")
+    assert rc == 1
+    assert token == "triage_licensed"
+
+
+def test_evaluate_by_path_behaviour_is_untouched_by_the_issue_scope_fix(tmp_path):
+    """Byte-identical regression: the --path scope never reads `seed`/`epic_issue` at all — it keeps
+    deriving the seed from the drafting run's own task.txt sidecar."""
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [{"repo": "acme/widgets", "triage_issue": 99}]}))
+    run_dir = tmp_path / "runs" / "design-review-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "task.txt").write_text("acme/widgets#foo")
+    gh = FakeGhTrail([("the-owner", "YR-TRIAGE: seed=foo disposition=go who=@the-owner")])
+    rc, token = design_gate.evaluate(path=str(run_dir / "draft-final.md"), gh=gh,
+                                     config_path=str(config), owner_login="the-owner")
+    assert rc == 0
+    assert token == ""
+
+
+# ============================================================================================
+# update_pm_config_entry: the crossing's own write-back — epic_issue/seed onto the repo's entry
+# ============================================================================================
+
+def test_update_pm_config_entry_creates_the_file_and_entry_when_absent(tmp_path):
+    config = tmp_path / "pm-repos.json"
+    design_gate.update_pm_config_entry(str(config), repo="acme/widgets", epic_issue=7, seed="pm-agent")
+    data = json.loads(config.read_text())
+    assert data["repos"] == [{"repo": "acme/widgets", "epic_issue": 7, "seed": "pm-agent"}]
+
+
+def test_update_pm_config_entry_merges_onto_an_existing_entry_without_disturbing_others(tmp_path):
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [
+        {"repo": "acme/widgets", "triage_issue": 99},
+        {"repo": "acme/other", "triage_issue": 5, "epic_issue": 3, "seed": "other-seed"},
+    ]}))
+    design_gate.update_pm_config_entry(str(config), repo="acme/widgets", epic_issue=7, seed="pm-agent")
+    data = json.loads(config.read_text())
+    widgets = next(e for e in data["repos"] if e["repo"] == "acme/widgets")
+    other = next(e for e in data["repos"] if e["repo"] == "acme/other")
+    assert widgets == {"repo": "acme/widgets", "triage_issue": 99, "epic_issue": 7, "seed": "pm-agent"}
+    assert other == {"repo": "acme/other", "triage_issue": 5, "epic_issue": 3, "seed": "other-seed"}
+
+
+def test_update_pm_config_entry_is_reflected_by_a_later_evaluate_by_issue_call(tmp_path):
+    """End to end: cross's own write-back is exactly what makes the evaluator resolvable afterward."""
+    config = tmp_path / "pm-repos.json"
+    config.write_text(json.dumps({"repos": [{"repo": "acme/widgets", "triage_issue": 99}]}))
+    design_gate.update_pm_config_entry(str(config), repo="acme/widgets", epic_issue=7, seed="pm-agent")
+    gh = FakeGhTrail([("the-owner", "YR-TRIAGE: seed=pm-agent disposition=go who=@the-owner")])
+    rc, token = design_gate.evaluate(issue="7", gh=gh, config_path=str(config), owner_login="the-owner")
+    assert rc == 0
+    assert token == ""

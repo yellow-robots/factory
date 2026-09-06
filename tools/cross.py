@@ -8,32 +8,47 @@ value)`, `tools/vault_api.VaultClient`'s own shape) so this is unit-testable wit
 vault client — no live network, no live vault, no worktree cut.
 
 WHAT this does, in order (the acceptance criteria's own sequence): `check_links` on the technical-rfc
-draft (its `source_*` frontmatter must resolve); `check_task` on every typed slice draft (self-
-containedness, cited paths at `--base-ref`); the architecture review's verdict gates filing itself — a
-`block` verdict refuses (the runner's own one-fold-retry lives upstream, in `tools/cross-runner.sh`; this
-module never re-implements that loop) — a `fit`/`refit` verdict, its argued alternative(s) and an ADR
-section are rendered directly onto the technical-rfc body (no separate vault write: only `crossed_to` is
-stamped through the vault client, per the mandate). Only once every gate is clean does this file
+draft (its `source_*` frontmatter must resolve); `check_task` on every RUNNER-BUILT (typed) slice draft
+(self-containedness, cited paths at `--base-ref`) — an attended slice is drafting prose, never held to
+the automated DoR gate; the architecture review's verdict gates filing itself — a `block` verdict
+refuses (the runner's own one-fold-retry lives upstream, in `tools/cross-runner.sh`; this module never
+re-implements that loop) — a `fit`/`refit` verdict and its argued alternative(s) render as human-facing
+prose onto the technical-rfc body (never the raw stage transcript — see `render_arch_section`'s own
+note); when the caller also supplies `architecture_home`/`adr_slug`/`adr_title`, the ADR itself is
+written through the vault client (`design_gate.write_arch_adr`, F's own shape) and a `YR-ARCH-REVIEW:`
+line is appended to the governing design doc's own text — the vault-doc surface `records.toml` declares
+for that record, never widened onto the issue trail. Only once every gate is clean does this file
 anything: the epic (`gh issue create` + `updateIssue` to Type=Feature + `gh project item-add`), then one
-sub-issue per slice (`gh issue create` + `addSubIssue`, `updateIssue` to Type=Task on runner-built
-slices only — an attended slice stays untyped, the epic-gate's own `not-a-task` hold), the tool-emitted
-`YR-EPIC-APPROVAL` (`who` = the App slug) on the epic, and `crossed_to` on the governing design doc
-through the vault client.
+sub-issue per slice (`gh issue create` + `addSubIssue`, `updateIssue` to Type=Task on runner-built,
+non-escalated slices only — an attended slice, OR any slice carrying an escalation declaration, stays
+untyped, the epic-gate's own `not-a-task` hold), the tool-emitted `YR-EPIC-APPROVAL` (`who` = the App
+slug) on the epic, `crossed_to` on the governing design doc through the vault client, and — so a LATER
+`promote.sh` machinery flip can resolve the owner's own triage license — the filed epic number and the
+crossing's own seed written back onto the PM's config (`design_gate.update_pm_config_entry`).
 
 A slice whose own draft carries a `Declares: external dependency <name>` or `Declares: data migration`
 line (column 0, presence only, never inferred) still files normally — "nothing else waits on it" — but
-also carries a `YR-ESCALATION: act=park why=...` comment, parking it for the owner's approving review.
+files UNTYPED (never Type=Task, regardless of `runner_built`: the epic-gate's own `not-a-task` hold is
+the mechanism, not just a comment) and carries a `YR-ESCALATION: act=park why=...` comment, parking it
+for the owner's approving review.
+
+A mid-filing failure (the epic already exists, a later `gh`/vault call then raises) is caught and
+returned as `{"ok": False, "stage": "file", "filed": {...already-filed state...}, "error": ...}` —
+never an unhandled traceback that leaves the caller guessing what already landed.
 
 The flip itself is `tools/promote.sh`'s machinery arm's job, not this module's — filing an epic at
 Backlog is this module's whole mandate; promoting it to Ready is a separate act, on a separate trail
-event (the triage `go` disposition licensing it through the engine's own transition-check).
+event (the owner's own triage `go` disposition, keyed by the SEED — never the epic issue number —
+licensing it through the engine's own transition-check).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))   # repo root: `tools.*` package imports
@@ -47,6 +62,11 @@ from tools.check_links import check_links as _check_links  # noqa: E402
 from tools.check_task import check_task as _check_task  # noqa: E402
 
 # --- escalation declarations: presence only, never inferred (spec criterion 12's own gotcha) -----------
+# `external dependency` takes an arbitrary name tail (`\b.*` — presence-of-the-phrase, whatever
+# follows); `data migration` is the one exact literal with no tail at all: `Declares: data migration
+# of the ledger` does NOT park (the `\s*$` after the literal refuses any non-whitespace remainder) —
+# a deliberate, tested asymmetry: only "data migration" bare is the declared vocabulary, never a
+# qualified variant of it (cold review of db47805, a "notes" item).
 _ESCALATION_RE = re.compile(r"^Declares:\s*(external dependency\b.*|data migration)\s*$", re.MULTILINE)
 
 
@@ -73,46 +93,76 @@ _H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
 
 def _h1_title(body: str, dash_prefix: str) -> str:
+    """The H1 heading's own title text, with a leading `<dash_prefix> — ` (em-dash, the templates'
+    own convention) or `<dash_prefix> - ` (a plain hyphen, tolerated — an LLM drafting stage need not
+    reproduce the exact glyph) stripped when present."""
     m = _H1_RE.search(body)
     if not m:
         raise ValueError("draft is missing its H1 title heading")
     title = m.group(1).strip()
-    marker = f"{dash_prefix} —"
-    return title[len(marker):].strip() if title.startswith(marker) else title
+    for sep in (" — ", " - "):
+        marker = f"{dash_prefix}{sep}"
+        if title.startswith(marker):
+            return title[len(marker):].strip()
+    return title
 
 
-_ISSUE_BODY_START_RE = re.compile(r"ISSUE BODY[^\n]*\n")
-_ISSUE_BODY_END_RE = re.compile(r"\n<!--[^\n]*END ISSUE BODY")
+# B1 (cold review of db47805): the airlock's own blockquote in skills/factory/templates/technical-
+# rfc.md (`> ... only the body between the`ISSUE BODY`markers...`) carries the bare phrase "ISSUE
+# BODY" SEVEN LINES ABOVE the real marker comment — a naive `search()` for that bare phrase matches
+# the blockquote first and files the blockquote's own tail + the H1 + its HTML comment as if they
+# were the technical-rfc's body. Anchored on the marker comment's own, unique full phrasing instead
+# ("ISSUE BODY · file from here" / "END ISSUE BODY · file to here" — technical-rfc.md:27,64), which
+# the blockquote's prose never spells.
+_ISSUE_BODY_START_RE = re.compile(r"ISSUE BODY · file from here[^\n]*\n")
+_ISSUE_BODY_END_RE = re.compile(r"\n[^\n]*END ISSUE BODY · file to here")
 
 
 def technical_rfc_issue_body(draft_text: str) -> tuple[str, str]:
     """(title, filed body) off a `skills/factory/templates/technical-rfc.md`-shaped draft: the
     frontmatter and the authoring scaffold below the airlock never reach the Issue — only the text
-    between the template's own `ISSUE BODY` markers does (the template's own instruction, `:19-21`)."""
+    between the template's own `ISSUE BODY` marker COMMENTS does (the template's own instruction,
+    `:19-21`; the airlock's own prose blockquote a few lines above must never be mistaken for it —
+    see the anchoring note above the regexes)."""
     _, body = textutil.split_frontmatter(draft_text)
     title = _h1_title(body, "Technical RFC")
     start = _ISSUE_BODY_START_RE.search(body)
     end = _ISSUE_BODY_END_RE.search(body, start.end()) if start else None
     if not start or not end:
-        raise ValueError("technical-rfc draft is missing its ISSUE BODY markers")
+        raise ValueError("technical-rfc draft is missing its ISSUE BODY marker comments "
+                         "('ISSUE BODY · file from here' / 'END ISSUE BODY · file to here')")
     return title, body[start.end():end.start()].strip("\n")
 
 
 _GOAL_RE = re.compile(r"^##\s+Goal\s*$", re.MULTILINE)
 _TASK_FOOTER_RE = re.compile(r"\n-{3,}\s*\n\*Next stage:")
+# B2 (cold review of db47805): a column-0 YR-GATE-TOUCHING:/Declares: line legitimately sits in a
+# slice's own PREAMBLE (before ## Goal) — the epic's own precedent bodies place YR-GATE-TOUCHING
+# right after the framing line, never inside Goal/Acceptance/Context. epic_gate.py reads the
+# declaration from the CHILD's own FILED body (`_gate_touching_declaration`, `:474-483`); a line
+# dropped here would file a gate-touching slice as freely promotable. Hoisted verbatim, in order,
+# prepended to the filed body — never re-derived, never silently lost.
+_HOISTABLE_PREFIXES = ("YR-GATE-TOUCHING:", "Declares:")
 
 
 def task_issue_body(draft_text: str) -> tuple[str, str]:
     """(title, filed body) off a `skills/factory/templates/task.md`-shaped draft: from `## Goal`
     (the form's own first required field) to just before the authoring-aid footer — the frontmatter,
-    the "Filed as" preamble, and the footer are never filed, exactly as the template says."""
+    the "Filed as" preamble, and the footer are never filed, exactly as the template says. Any
+    column-0 `YR-GATE-TOUCHING:` / `Declares:` line found ABOVE `## Goal` (the preamble) is hoisted
+    into the filed body — see the note above `_HOISTABLE_PREFIXES`."""
     _, body = textutil.split_frontmatter(draft_text)
     title = _h1_title(body, "Task")
     start = _GOAL_RE.search(body)
     if not start:
         raise ValueError("task draft is missing its ## Goal heading")
+    preamble = body[:start.start()]
+    hoisted = [ln for ln in preamble.splitlines() if ln.startswith(_HOISTABLE_PREFIXES)]
     end = _TASK_FOOTER_RE.search(body, start.start())
-    return title, body[start.start():(end.start() if end else len(body))].strip("\n")
+    filed = body[start.start():(end.start() if end else len(body))].strip("\n")
+    if hoisted:
+        filed = "\n".join(hoisted) + "\n\n" + filed
+    return title, filed
 
 
 # --- cross-draft's own combined output shape: one technical-rfc + N slices in one stage response
@@ -140,17 +190,24 @@ def split_draft(raw_text: str) -> dict:
 
 
 # --- the architecture review: the SAME grammar design_gate.py's own arch stage produces (spec
-#     criterion 12 at the crossing too) — rendered onto the technical-rfc body, never a separate vault
-#     write (only `crossed_to` crosses through the vault client here) -------------------------------
-def render_arch_section(arch_result: dict) -> str:
+#     criterion 12 at the crossing too) --------------------------------------------------------------
+# B3/ruling 2 (cold review of db47805): the epic-body section is human-facing prose ONLY — verdict
+# plus the argued alternative(s), never the raw stage transcript (`arch_result["findings_text"]`,
+# the whole stage output INCLUDING its own column-0 `VERDICT:`/`ALTERNATIVE:` lines). records.toml's
+# own VERDICT row states the rule this section obeys: "a quoted transcript... blockquotes it
+# instead" — but the stronger fix, per ruling 2, is to never paste the transcript into the epic body
+# at all. The findings live in the ADR (`design_gate.write_arch_adr`, vault-only, I4) instead; a
+# raw column-0 `YR-OPEN-QUESTION:` surfacing mid-transcript could otherwise make the epic
+# PERMANENTLY unflippable (epic_gate.py's own open-question hold, process.toml's airlock guard).
+def render_arch_section(arch_result: dict, *, adr_path: str | None = None) -> str:
     alt_md = "\n".join(f"- {a}" for a in arch_result["alternatives"])
+    adr_line = f"\n\n**ADR:** `{adr_path}` (the vault's own architecture home)" if adr_path else ""
     return (
         "## Architecture review\n\n"
         f"**Verdict:** {arch_result['verdict']}\n\n"
         "**Alternatives considered:**\n"
-        f"{alt_md}\n\n"
-        "### ADR — architecture decision at the crossing\n\n"
-        f"{(arch_result.get('findings_text') or '').strip()}\n"
+        f"{alt_md}"
+        f"{adr_line}\n"
     )
 
 
@@ -243,17 +300,27 @@ def _comment(gh, *, repo, issue, body):
 
 
 # --- the pure(ish) core ----------------------------------------------------------------------------------
-def cross(*, gh, vault, technical_rfc_draft, slices, repo, who, design, review, arch_result,
+def cross(*, gh, vault, technical_rfc_draft, slices, repo, who, design, review, arch_result, seed,
           feature_type_id, task_type_id, owner=None, project_number=None,
           vault_doc_path=None, vault_root, repo_root=".", base_ref="origin/main",
-          check_links_fn=None, check_task_fn=None):
+          architecture_home=None, adr_slug=None, adr_title=None,
+          check_links_fn=None, check_task_fn=None, update_pm_config=None):
     """Files the epic + its slices when — and only when — every gate is clean; writes nothing on any
     refusal (the promote.sh precedent: a refusal writes nothing).
 
     `slices`: `[{"draft": <raw text>, "runner_built": bool}, ...]`, in filing order. `arch_result`:
     `{"verdict", "alternatives", "findings_text"}` (`design_gate.parse_arch_output`'s own shape) — a
     `block` verdict refuses here; the runner's own one-fold-retry is upstream of this call, never
-    re-implemented here. Returns a result dict; `ok: False` names the `stage` that refused."""
+    re-implemented here. `seed` is the crossing's own ideas-file stem (never the epic issue number —
+    the same identifier `YR-TRIAGE: seed=...` carries), written back onto the PM config alongside the
+    filed epic number so a LATER `promote.sh` machinery flip can resolve the owner's own triage
+    license (design_gate.py's `evaluate(issue=...)`, cold-review finding B5). `architecture_home` /
+    `adr_slug` / `adr_title` are optional: when all three are given (alongside `vault_doc_path`), the
+    ADR is written through the vault client and `YR-ARCH-REVIEW` is appended to the governing design
+    doc's own text (the vault-doc surface `records.toml` declares for that record); absent any of the
+    three, the epic body still carries the human-facing verdict/alternative prose, just no ADR.
+    Returns a result dict; `ok: False` names the `stage` that refused, and — once filing itself has
+    begun — `filed` names whatever already landed before a mid-filing exception was caught."""
     owner = owner or repo.partition("/")[0]
     project_number = project_number if project_number is not None else board_plumbing.project_number()
 
@@ -269,13 +336,17 @@ def cross(*, gh, vault, technical_rfc_draft, slices, repo, who, design, review, 
         except ValueError as e:
             task_errors[i] = [str(e)]
             continue
-        errs = gate_check_task(s["draft"], repo_root=repo_root, base_ref=base_ref, checker=check_task_fn)
-        if errs:
-            task_errors[i] = errs
-            continue
+        runner_built = bool(s.get("runner_built", True))
+        # I2 (cold review of db47805): check_task is the automated DoR gate for a RUNNER-BUILT slice
+        # only — an attended slice is drafting prose the mandate never holds to that bar.
+        if runner_built:
+            errs = gate_check_task(s["draft"], repo_root=repo_root, base_ref=base_ref,
+                                   checker=check_task_fn)
+            if errs:
+                task_errors[i] = errs
+                continue
         parsed_slices.append({
-            "title": title, "body": filed_body,
-            "runner_built": bool(s.get("runner_built", True)),
+            "title": title, "body": filed_body, "runner_built": runner_built,
             "escalations": escalation_declarations(s["draft"]),
         })
     if task_errors:
@@ -284,41 +355,71 @@ def cross(*, gh, vault, technical_rfc_draft, slices, repo, who, design, review, 
     if arch_result.get("verdict") not in ("fit", "refit"):
         return {"ok": False, "stage": "arch", "errors": [f"verdict={arch_result.get('verdict')!r}"]}
 
-    epic_title, epic_body_core = technical_rfc_issue_body(technical_rfc_draft)
-    epic_body = epic_body_core + "\n\n" + render_arch_section(arch_result)
+    # I3 (cold review of db47805): once gating has passed, a mid-filing exception (a `gh`/vault call
+    # raising) is caught rather than left to unwind with the epic already filed and nothing to show
+    # for it — `filed` accumulates exactly what has already landed, named in the refusal.
+    filed: dict = {}
+    try:
+        epic_title, epic_body_core = technical_rfc_issue_body(technical_rfc_draft)
 
-    epic_number, epic_url, epic_node_id = _file_issue(gh, repo=repo, title=epic_title, body=epic_body)
-    _set_issue_type(gh, node_id=epic_node_id, type_id=feature_type_id)
-    _add_to_project(gh, project_number=project_number, owner=owner, url=epic_url)
+        adr_path = None
+        write_adr = vault_doc_path and architecture_home and adr_slug and adr_title
+        if write_adr:
+            adr_path = design_gate.write_arch_adr(
+                vault, architecture_home=architecture_home, slug=adr_slug, title=adr_title,
+                verdict=arch_result["verdict"], alternatives=arch_result["alternatives"],
+                findings_text=arch_result.get("findings_text", ""))
+        epic_body = epic_body_core + "\n\n" + render_arch_section(arch_result, adr_path=adr_path)
 
-    slice_results = []
-    for parsed in parsed_slices:
-        s_number, s_url, s_node_id = _file_issue(gh, repo=repo, title=parsed["title"], body=parsed["body"])
-        if parsed["runner_built"]:
-            _set_issue_type(gh, node_id=s_node_id, type_id=task_type_id)
-        _add_sub_issue(gh, epic_node_id=epic_node_id, slice_node_id=s_node_id)
-        for declaration in parsed["escalations"]:
-            _comment(gh, repo=repo, issue=s_number, body=render_escalation_comment(declaration))
-        slice_results.append({
-            "number": s_number, "url": s_url, "runner_built": parsed["runner_built"],
-            "escalations": parsed["escalations"],
-        })
+        epic_number, epic_url, epic_node_id = _file_issue(gh, repo=repo, title=epic_title, body=epic_body)
+        filed["epic_number"], filed["epic_url"] = epic_number, epic_url
+        _set_issue_type(gh, node_id=epic_node_id, type_id=feature_type_id)
+        _add_to_project(gh, project_number=project_number, owner=owner, url=epic_url)
 
-    _comment(gh, repo=repo, issue=epic_number,
-             body=render_approval_body(design=design, review=review, who=who))
+        if update_pm_config is not None:
+            update_pm_config(repo=repo, epic_issue=epic_number, seed=seed)
 
-    crossed_to = f"{repo}#{epic_number}"
-    if vault_doc_path:
-        vault.patch_frontmatter(vault_doc_path, "crossed_to", crossed_to)
+        slice_results = []
+        filed["slices"] = slice_results
+        for parsed in parsed_slices:
+            s_number, s_url, s_node_id = _file_issue(gh, repo=repo, title=parsed["title"],
+                                                      body=parsed["body"])
+            escalated = bool(parsed["escalations"])
+            # B4 (cold review of db47805): an escalation-declaring slice files UNTYPED — the SAME
+            # mechanism that parks an attended slice (epic_gate.py's own `not-a-task` hold,
+            # `:1088-1096`) — never merely a comment beside an otherwise-freely-promotable Type=Task.
+            typed = parsed["runner_built"] and not escalated
+            if typed:
+                _set_issue_type(gh, node_id=s_node_id, type_id=task_type_id)
+            _add_sub_issue(gh, epic_node_id=epic_node_id, slice_node_id=s_node_id)
+            for declaration in parsed["escalations"]:
+                _comment(gh, repo=repo, issue=s_number, body=render_escalation_comment(declaration))
+            slice_results.append({
+                "number": s_number, "url": s_url, "runner_built": parsed["runner_built"],
+                "typed": typed, "escalations": parsed["escalations"],
+            })
 
-    return {"ok": True, "epic_number": epic_number, "epic_url": epic_url,
-            "slices": slice_results, "crossed_to": crossed_to}
+        _comment(gh, repo=repo, issue=epic_number,
+                 body=render_approval_body(design=design, review=review, who=who))
+
+        crossed_to = f"{repo}#{epic_number}"
+        if write_adr:
+            # YR-ARCH-REVIEW rides the vault-doc surface records.toml declares for it — appended to
+            # the governing design doc's own text, never posted as an issue-trail comment (I4).
+            current_text = vault.read(vault_doc_path)
+            review_line = f"\n\nYR-ARCH-REVIEW: who={who} verdict={arch_result['verdict']} adr={adr_path}\n"
+            vault.write(vault_doc_path, current_text.rstrip("\n") + review_line)
+        if vault_doc_path:
+            vault.patch_frontmatter(vault_doc_path, "crossed_to", crossed_to)
+        filed["crossed_to"] = crossed_to
+    except Exception as e:  # noqa: BLE001 — a mid-filing failure is a partial result, never a traceback
+        return {"ok": False, "stage": "file", "filed": filed, "error": str(e)}
+
+    return {"ok": True, **filed}
 
 
 # --- CLI -------------------------------------------------------------------------------------------------
 def _gh(argv):
-    import os
-    import subprocess
     proc = subprocess.run([os.environ.get("GH_BIN", "gh"), *argv], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"gh {' '.join(argv)} failed ({proc.returncode}): {proc.stderr.strip()}")
@@ -399,6 +500,12 @@ def _parse_slice_arg(raw):
     return path, kind == "task"
 
 
+def _default_pm_config_writer(config_path):
+    def _write(*, repo, epic_issue, seed):
+        design_gate.update_pm_config_entry(config_path, repo=repo, epic_issue=epic_issue, seed=seed)
+    return _write
+
+
 def _cli_file(argv):
     ap = argparse.ArgumentParser(description="file the epic and its slices, gated (it-36 slice G)")
     ap.add_argument("--repo", required=True, help="owner/name")
@@ -406,14 +513,27 @@ def _cli_file(argv):
     ap.add_argument("--who", required=True, help="the App slug (YR_GH_APP_SLUG)")
     ap.add_argument("--design", required=True, help="the governing design's name")
     ap.add_argument("--review", required=True, help="the cold technical-rfc review's attestation")
+    ap.add_argument("--seed", required=True,
+                    help="the crossing's own ideas-file stem (YR-TRIAGE's own seed= identifier, "
+                         "never the epic issue number) — written back onto the PM config so a "
+                         "later promote.sh machinery flip can resolve the owner's triage license")
     ap.add_argument("--technical-rfc", required=True)
     ap.add_argument("--slice", dest="slices", action="append", default=[],
                     metavar="PATH[:task|:attended]",
-                    help="repeatable; 'task' (default) types the filed slice Type=Task, "
+                    help="repeatable; 'task' (default) types the filed slice Type=Task (unless it "
+                         "carries an escalation declaration, which always files untyped), "
                          "'attended' files it untyped")
     ap.add_argument("--arch-result", required=True, help="path to the arch stage's parsed JSON")
     ap.add_argument("--vault-doc", default=None, help="the governing design doc's REST-relative path")
     ap.add_argument("--vault-root", default=None)
+    ap.add_argument("--architecture-home", default=None,
+                    help="the vault component's architecture home — with --adr-slug/--adr-title, "
+                         "writes the real ADR and a YR-ARCH-REVIEW line on the design doc")
+    ap.add_argument("--adr-slug", default=None)
+    ap.add_argument("--adr-title", default=None)
+    ap.add_argument("--pm-config", default=None,
+                    help="the PM config path to write epic_issue/seed back onto (default: "
+                         "$YR_PM_CONFIG or $DEV_RUNNER_HOME/pm-repos.json, design_gate.py's own)")
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--base-ref", default="origin/main")
     args = ap.parse_args(argv)
@@ -421,7 +541,11 @@ def _cli_file(argv):
     technical_rfc_draft = pathlib.Path(args.technical_rfc).read_text(encoding="utf-8")
     slices = []
     for raw in args.slices:
-        path, runner_built = _parse_slice_arg(raw)
+        try:
+            path, runner_built = _parse_slice_arg(raw)
+        except ValueError as e:
+            print(f"cross: {e}", file=sys.stderr)
+            return 2
         slices.append({"draft": pathlib.Path(path).read_text(encoding="utf-8"), "runner_built": runner_built})
     arch_result = json.loads(pathlib.Path(args.arch_result).read_text())
 
@@ -434,11 +558,15 @@ def _cli_file(argv):
         return 1
 
     vault_root = args.vault_root or design_gate.VAULT_ROOT
+    pm_config_path = args.pm_config or os.environ.get(
+        "YR_PM_CONFIG", str(pathlib.Path(design_gate.DEV_RUNNER_HOME) / "pm-repos.json"))
     result = cross(gh=_gh, vault=vault_api.VaultClient(), technical_rfc_draft=technical_rfc_draft,
                    slices=slices, repo=args.repo, who=args.who, design=args.design, review=args.review,
-                   arch_result=arch_result, feature_type_id=feature_type_id, task_type_id=task_type_id,
-                   owner=args.owner, vault_doc_path=args.vault_doc, vault_root=vault_root,
-                   repo_root=args.repo_root, base_ref=args.base_ref)
+                   seed=args.seed, arch_result=arch_result, feature_type_id=feature_type_id,
+                   task_type_id=task_type_id, owner=args.owner, vault_doc_path=args.vault_doc,
+                   vault_root=vault_root, repo_root=args.repo_root, base_ref=args.base_ref,
+                   architecture_home=args.architecture_home, adr_slug=args.adr_slug,
+                   adr_title=args.adr_title, update_pm_config=_default_pm_config_writer(pm_config_path))
     print(json.dumps(result, indent=1))
     return 0 if result.get("ok") else 1
 
