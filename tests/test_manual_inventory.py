@@ -120,16 +120,17 @@ def test_readme_points_a_human_operator_to_the_manual():
 def test_manual_verb_line_grammar_and_date_parses():
     text = _text(MANUAL)
     match = re.search(
-        r"Verbs in force at (\d{4}-\d{2}-\d{2}) — last changed by it-32", text
+        r"Verbs in force at (\d{4}-\d{2}-\d{2}) — last changed by it-36", text
     )
     assert match, (
         "docs/manual.md is missing the 'Verbs in force at <yyyy-mm-dd> — "
-        "last changed by it-32' line"
+        "last changed by it-36' line"
     )
     datetime.date.fromisoformat(match.group(1))  # raises ValueError if malformed
 
 
 VERB_PHRASES = [
+    r"Triage a seed",
     r"design.{0,15}`?active`?",
     r"standalone task to Ready",
     r"WHAT-call",
@@ -152,12 +153,12 @@ def _manual_verbs_section():
     return _section(_text(MANUAL), "Verbs in force at", "## The seven workflow types")
 
 
-def test_manual_carries_exactly_eight_verb_bullets():
+def test_manual_carries_exactly_nine_verb_bullets():
     section = _manual_verbs_section()
     bullets = re.findall(r"^- \*\*", section, re.MULTILINE)
-    assert len(bullets) == 8, (
-        f"docs/manual.md verb list carries {len(bullets)} bullets, expected the eight "
-        f"verbs the spec names"
+    assert len(bullets) == 9, (
+        f"docs/manual.md verb list carries {len(bullets)} bullets, expected the nine "
+        f"verbs the spec names (it-36 adds the triage disposition)"
     )
 
 
@@ -173,7 +174,7 @@ def test_manual_verb_bullets_each_cite_a_rule_home():
     section = _manual_verbs_section()
     bullet_blocks = re.split(r"\n(?=- \*\*)", section)
     bullet_blocks = [b for b in bullet_blocks if b.strip().startswith("- **")]
-    assert len(bullet_blocks) == 8
+    assert len(bullet_blocks) == 9
     uncited = [
         b.splitlines()[0]
         for b in bullet_blocks

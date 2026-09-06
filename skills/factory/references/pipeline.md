@@ -423,6 +423,47 @@ Pipeline: **corpus → sealed replay → deterministic grading → report.**
 under the repo's own check command — not independent proof of correctness, and not graded against the
 original PR's approach.
 
+## The design sweep and runner (it-36)
+
+The upper pipeline gets its own runner, a second `tools/dispatch.py` instance (`--instance pm`,
+`deploy/pm-dispatch.service`) that fires `tools/design_gate.py`'s two sweep passes on their own
+schedule and lock, separate from the build/epic-sweep locks — see `deploy/DISPATCH.md` for the
+two-instance deploy shape and [`pm.md`](pm.md) for the human's own half of the ritual.
+
+- **`POST /design-sweep` → `sweep_designs`.** One pass per configured repo: idle loudly when the vault
+  interface is unreadable, when no strategy theme targets the repo, or when the theme's
+  `loop_budget_usd_per_week` is exhausted (a `YR-ESCALATION`, posted once); read the triage trail
+  (`tools/rank.py` + `tools/strategy.py` feed the pack, `latest_triage_dispositions` reads it back);
+  post a `YR-TRIAGE-PACK` for every undecided ranked seed; stop an in-flight design on a `park`/`reject`
+  reversal or a withdrawn governing epic; spawn `tools/design-runner.sh`'s `product` stage for the
+  single top-ranked licensed seed with no design already running for that repo — one design in flight
+  per repository (distinct from the epic-gate's one-slice-per-epic).
+- **`tools/design-runner.sh`** (sourcing `tools/stage_lib.sh`, the same harness `dev-runner.sh` uses):
+  `product` (drafts a spec from the seed + strategy doc + the product-spec template), `adversarial`
+  (the cold-review standard, `VERDICT:`), `fold` — each stage its own `kind: design` ledger row.
+- **`tools/design-review-runner.sh`**, a separate invocation spawned once drafting exits (so it
+  naturally carries its own run id for the independence check): `fit` (the architect's spec-ready
+  moment, `YR-DESIGN-FIT`), `arch` (the architecture review, `YR-ARCH-REVIEW` + an ADR; a `block`
+  earns one fold-and-re-review), `activate` (`process.py transition-check
+  design-doc.draft->active.machinery`, writing only on exit 0 through `tools/vault_api.py`).
+- **`tools/cross-runner.sh` + `tools/cross.py`** (the crossing): `cross-draft`, the cold technical-rfc
+  review (one fold-and-re-review), the architecture review again (one fold-and-re-review on `block`) —
+  then `cross.py file`'s deterministic gates (`check_links`, `check_task` per typed slice) and the
+  filing act itself (the epic, its sub-issues, `YR-EPIC-APPROVAL`, `crossed_to`); an escalated slice
+  (`Declares: external dependency <name>` / `Declares: data migration`) files untyped instead.
+- **`tools/promote.sh`'s machinery arm**, gated on `YR_MACHINERY` and the App identity: the epic flip
+  through `task.backlog->ready.epic-flip.machinery`, licensed by the epic's own `YR-TRIAGE` `go`.
+- **`sweep_close` → `tools/close-runner.sh`**: when an epic carries `YR-CLOSE-HOLD` and its mandated
+  close records are still missing, spawns the close stage once per epic; depth: [`closing.md`](closing.md)
+  → *The round's close is machinery*.
+- **The machinery's own identity:** every native-surface act above runs under the GitHub App, never
+  the owner's login — `GH_BIN` pointed at `tools/gh-app` (the on-demand installation-token wrapper) is
+  the whole switch; every vault write runs through `tools/vault_api.py`'s REST client, never MCP (a
+  cold process has no MCP registration) and never a filesystem mutation.
+- **Model roles:** `models.toml`'s `pm`/`arch_review` roles resolve independently of the build/review
+  roles above — the upstream lane (drafting, both reviews, the architecture review, packs, strategy
+  work) runs on the strongest registered class; only implementation, test, and repair delegate down.
+
 ## The changelog and stakeholder notification
 
 `tools/changelog.py` and `tools/notify.py` (it-36 slice I, #474) are **attended-invoked today** —

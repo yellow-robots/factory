@@ -27,6 +27,7 @@ REQUIRED_REFS = [
     "onboarding.md",
     "architect.md",
     "debt-rounds.md",
+    "pm.md",
 ]
 
 
@@ -72,8 +73,8 @@ def _plugin_data():
 # File existence
 # ---------------------------------------------------------------------------
 
-def test_all_nine_references_exist():
-    """All nine operation references must be present on disk."""
+def test_all_ten_references_exist():
+    """All ten operation references must be present on disk (it-36 adds pm.md)."""
     for ref in REQUIRED_REFS:
         assert (REFS / ref).exists(), f"Missing reference file: skills/factory/references/{ref}"
 
@@ -472,17 +473,20 @@ def test_architect_md_cites_documentation_model():
         "architect.md does not cite documentation-model.md"
 
 
-def test_architect_md_has_three_bound_moments():
-    """Charter: the architect is bound to three existing pipeline moments, never a fourth
-    stage added on top — spec-ready, the crossing, and the ship-walk."""
+def test_architect_md_has_four_bound_moments():
+    """Charter (it-36): the architect is bound to four pipeline moments — spec-ready, the
+    architecture review, the crossing, and the ship-walk; the first three were never a stage
+    added on top, and the fourth's own verdict gates activation."""
     lower = _architect_text_normalized()
     assert "spec-ready" in lower or "spec ready" in lower, \
         "architect.md missing the spec-ready moment"
     assert "crossing" in lower, "architect.md missing the crossing moment"
     assert "ship-walk" in lower or "ship walk" in lower, \
         "architect.md missing the ship-walk moment"
-    assert "three" in lower, \
-        "architect.md does not state the charter is bound to three moments (never a fourth stage)"
+    assert "architecture review" in lower, \
+        "architect.md missing the fourth moment: the architecture review"
+    assert "four" in lower, \
+        "architect.md does not state the charter is bound to four moments"
 
 
 def test_architect_md_spec_ready_covers_grounding_and_disposition():

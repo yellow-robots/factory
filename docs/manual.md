@@ -7,13 +7,16 @@ rule. See [`AGENTS.md`](../AGENTS.md) for the SDLC in depth and
 [`skills/factory/SKILL.md`](../skills/factory/SKILL.md) for the operating router this page's inventory
 tracks.
 
-## Verbs in force at 2026-09-06 — last changed by it-32
+## Verbs in force at 2026-09-06 — last changed by it-36
 
-Eight acts only a human performs. Each line names the act and the home of its rule — read there for the
+Nine acts only a human performs. Each line names the act and the home of its rule — read there for the
 actor, the condition, and the consequence; this list is the index, not the rule.
 
+- **Triage a seed — go / park / reject.** Rule's home: `records.toml`, the `YR-TRIAGE` row (emitted by
+  the human actor class alone); [`skills/factory/references/pm.md`](../skills/factory/references/pm.md).
 - **Set a design `active`.** Rule's home: [`AGENTS.md`](../AGENTS.md) → *Conventions*, "Attended
-  operator sessions."
+  operator sessions." Still available directly, alongside a `go` triage record licensing the PM's own
+  machinery to do it instead.
 - **Promote a standalone task to Ready.** Rule's home: [`AGENTS.md`](../AGENTS.md) → *Workflow types*
   ("the floor," "direct seed-to-task lane" rows).
 - **Rule a WHAT-call.** Rule's home:
@@ -92,6 +95,7 @@ pointing at its reference:
   [`references/documentation-model.md`](../skills/factory/references/documentation-model.md)
 - **Architect** → [`references/architect.md`](../skills/factory/references/architect.md)
 - **Attended lane** → [`references/attended-lane.md`](../skills/factory/references/attended-lane.md)
+- **PM** → [`references/pm.md`](../skills/factory/references/pm.md)
 - **Debt rounds** → [`references/debt-rounds.md`](../skills/factory/references/debt-rounds.md)
 
 ## What keeps this page honest

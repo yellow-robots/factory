@@ -203,15 +203,16 @@ and watched switch-on follow the same discipline as `/sweep` above: run it manua
 throwaway seed/triage issue, watch a pack post and a `go` disposition spawn `tools/design-runner.sh`,
 then activate the schedule. `tools/design_gate.py evaluate`/`independence` (the triage-license and
 independence evaluators the process model already names on the activation/epic-flip transitions) are
-a later slice's build (F) — this slice's own sweep never activates a design doc or writes the vault.
+now built (it-36 slice F, #471) and used by `tools/design-review-runner.sh`'s own `activate` stage —
+this sweep itself (`sweep_designs`) still never activates a design doc or writes the vault directly;
+it only spawns the stage runners that do.
 
-**Open reachability question, named here for the slice that adds the route:** the PM instance's
-`DISPATCH_BIND=127.0.0.1` is deliberate (it is the one instance the vault key reaches) but n8n
-reaches the host over the docker bridge, not loopback (see "2. Networking" above) — n8n on the
-same host reaches `127.0.0.1` only if it runs outside Docker or with host networking. The loopback
-bind stays mandated; how the design-sweep schedule actually reaches it (a host-networked n8n, an
-SSH tunnel, a reverse proxy terminating on loopback) is undecided and belongs to that later
-slice.
+**Open reachability question, still unresolved:** the PM instance's `DISPATCH_BIND=127.0.0.1` is
+deliberate (it is the one instance the vault key reaches) but n8n reaches the host over the docker
+bridge, not loopback (see "2. Networking" above) — n8n on the same host reaches `127.0.0.1` only if
+it runs outside Docker or with host networking. The loopback bind stays mandated; how the
+design-sweep schedule actually reaches it (a host-networked n8n, an SSH tunnel, a reverse proxy
+terminating on loopback) is undecided — item P's own provisioning to settle, not a build slice's.
 
 ## Deploying a change — the scripted attended act (`tools/deploy.sh`, it-33 slice 6)
 

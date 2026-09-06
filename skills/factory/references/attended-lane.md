@@ -28,20 +28,27 @@ Each step emits the named record on the shared trail; the registry row carries t
 
 | # | Step | Trace it leaves (registry row where the trace is a record) | Surface |
 |---|---|---|---|
-| 1 | Backlog capture / sweep | the seed file (capture form) and the spec's sweep line — doc content, not a record grammar | vault-doc |
-| 2 | Cold adversarial review | `YR-DESIGN-REVIEW` | vault-doc |
-| 3 | Architect fit check | `YR-DESIGN-FIT` | vault-doc |
-| 4 | The accept act | `YR-ACCEPT` (+ tombstone pairs, sweep run) | vault-doc |
-| 5 | The crossing stamp | `crossed_to` — a frontmatter key, governed by the documentation model, not a record grammar | vault-doc |
-| 6 | The technical-rfc review | the review and its per-finding dispositions on the epic trail — prose under the review discipline, not a record grammar | issue-trail |
-| 7 | The standing-approval record | `YR-EPIC-APPROVAL` | issue-trail |
-| 8 | The standalone gates record | `YR-TASK-GATES` — demanded at the promote act itself | issue-trail |
-| 9 | Record-before-flip | `YR-BOARD-FLIP` | issue-trail |
-| 10 | The promote's own emission | `YR-PROMOTED` (standalone funnel) / `YR-AUTO-PROMOTED` (the epic gate's mechanical child promote) / `YR-EPIC-READY` (the epic flip's own funnel, ruling 5 — it-31 slice 4: record-before-flip through `tools/promote.sh`'s Feature arm) — landed by construction at the funnel, so a promoted trail without one means the flip happened outside it (a compiled-mandate addition, ruling 3) | issue-trail |
-| 11 | The ship-walk trace | `YR-SHIP-WALK` — the close names the pending walk; the trigger is a surfaced checkpoint, never a memory | issue-trail |
-| 12 | The round record | `YR-ROUND-RECORD` — the close's observable counts | issue-trail |
-| 13 | The armed merge's record | `YR-MERGE` — the evaluator's durable decision, the compiled `merge` lane's one mandate | pr-trail |
-| 14 | The release's record | `YR-RELEASE` — the validation-gated release act's typed record (ruling 6 — it-31 slice 7): the Release body and the annotated tag's message carry it, and the round's own close release is the funnel's live run | release |
+| 1 | The triage record (it-36) | `YR-TRIAGE` — the human actor class alone, on the component's triage issue; nothing below activates without a `go` naming it | issue-trail |
+| 2 | Backlog capture / sweep | the seed file (capture form) and the spec's sweep line — doc content, not a record grammar | vault-doc |
+| 3 | Cold adversarial review | `YR-DESIGN-REVIEW` | vault-doc |
+| 4 | Architect fit check | `YR-DESIGN-FIT` | vault-doc |
+| 5 | The architecture review (it-36) | `YR-ARCH-REVIEW` — the abstraction/pattern/libraries/language/boundaries verdict and its ADR, run on the draft after step 4 and again on the technical-rfc at the crossing (step 8) | vault-doc, pr-trail |
+| 6 | The accept act | `YR-ACCEPT` (+ tombstone pairs, sweep run) — **the machinery's own activation (it-36):** under a `go` triage record and an independence check, `design-doc.draft->active.machinery` walks this same step, emitting the identical record | vault-doc |
+| 7 | The crossing stamp | `crossed_to` — a frontmatter key, governed by the documentation model, not a record grammar | vault-doc |
+| 8 | The technical-rfc review | the review and its per-finding dispositions on the epic trail — prose under the review discipline, not a record grammar | issue-trail |
+| 9 | The standing-approval record | `YR-EPIC-APPROVAL` | issue-trail |
+| 10 | The standalone gates record | `YR-TASK-GATES` — demanded at the promote act itself | issue-trail |
+| 11 | Record-before-flip | `YR-BOARD-FLIP` | issue-trail |
+| 12 | The promote's own emission | `YR-PROMOTED` (standalone funnel) / `YR-AUTO-PROMOTED` (the epic gate's mechanical child promote) / `YR-EPIC-READY` (the epic flip's own funnel, ruling 5 — it-31 slice 4: record-before-flip through `tools/promote.sh`'s Feature arm) — landed by construction at the funnel, so a promoted trail without one means the flip happened outside it (a compiled-mandate addition, ruling 3). **The machinery's own flip (it-36):** under the epic's own `go` triage record, `task.backlog->ready.epic-flip.machinery` walks this same step through the same funnel | issue-trail |
+| 13 | The ship-walk trace | `YR-SHIP-WALK` — the close names the pending walk; the trigger is a surfaced checkpoint, never a memory | issue-trail |
+| 14 | The round record | `YR-ROUND-RECORD` — the close's observable counts | issue-trail |
+| 15 | The armed merge's record | `YR-MERGE` — the evaluator's durable decision, the compiled `merge` lane's one mandate | pr-trail |
+| 16 | The release's record | `YR-RELEASE` — the validation-gated release act's typed record (ruling 6 — it-31 slice 7): the Release body and the annotated tag's message carry it, and the round's own close release is the funnel's live run | release |
+
+**Rule M (it-36).** Every machinery variant above walks a **separate, disjoint transition row** — never
+a widened `actor` on the shared human/attended-agent row — and the model refuses at load
+(`tools/process.py`) any one-way door naming `machinery` in `actor` with no `evaluator_pass` guard
+licensing the walk: a triage-gated door can never ship ungated.
 
 Reification adds records, never new duties. The design-side records (steps 2–4) are **typed lines in
 the vault docs themselves** — no new surface (the crossing ruling of 2026-08-07, epic #415).
@@ -69,7 +76,10 @@ model rules on any disagreement. What the generated rows cannot say alone, state
 
 Her gates, stated here so the delivered slice compiles them rather than an agent recalling them:
 
-- setting a design `active` — the input gate; the accept act rides it
+- **the triage disposition (it-36)** — `go` / `park` / `reject`, the `YR-TRIAGE` record: the input
+  gate itself; nothing activates outside it
+- setting a design `active` directly — still hers to do; under a `go` the PM's machinery may do it
+  instead
 - ruling the callouts on a draft spec
 - promoting a standalone task to Ready
 - the merge click on a repo not yet armed (the named transitional exception)
@@ -88,6 +98,12 @@ a repo not yet armed keeps the human click as a named transitional exception —
 never the design. The **severity valve**: the agent may route a severe-implication decision to the
 human at the decision surface — severe means a one-way door (consequences, not diffs) — and every
 escalation lands as a `YR-ESCALATION` record, counted in the round record, so the valve is measured.
+
+**The attended PR's fragment duty (it-36, issue #474).** The merge evaluator's `fragment_present`
+condition demands a changelog fragment under the manifest's `changelog_dir` on the PR's own diff — the
+runner's implement stage writes one on every runner-built PR; a PR the runner did not open carries no
+such stage, so the session that opens it adds its own fragment by hand, or the merge blocks on the
+missing condition, same as any other.
 
 ## Delivery, the slice, and the close
 

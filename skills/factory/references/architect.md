@@ -1,9 +1,10 @@
 # Architect — custodian of the map of the present
 
-> **When to load this reference:** running any of the architect's three bound moments — the
-> spec-ready grounding-and-disposition check, the crossing (authoring a technical-rfc and its
-> slices), or the ship-walk (closing an iteration whose component has grown a living reference).
-> For the cross-cutting layer and the living reference's load-bearing sections, see
+> **When to load this reference:** running any of the architect's four bound moments — the
+> spec-ready grounding-and-disposition check, the architecture review (abstraction, pattern,
+> libraries, language, boundaries — gating activation and filing), the crossing (authoring a
+> technical-rfc and its slices), or the ship-walk (closing an iteration whose component has grown a
+> living reference). For the cross-cutting layer and the living reference's load-bearing sections, see
 > [`documentation-model.md`](documentation-model.md) — *The cross-cutting layer*. For the
 > spec/RFC review discipline the architect runs alongside, see [`reviewing.md`](reviewing.md). For
 > promote-to-Ready, merge, doc freeze, and skill release, see [`closing.md`](closing.md).
@@ -12,8 +13,9 @@
 
 ## Charter
 
-The architect is the custodian of the **map of the present** — bound to three moments that already
-exist in the pipeline, never a fourth stage added on top of it.
+The architect is the custodian of the **map of the present** — bound to four moments that exist in the
+pipeline; the first three were never a stage added on top of it, and the fourth (it-36) is the first
+where the role's own verdict gates what happens next rather than only informing it.
 
 1. **Spec-ready.** Verify the grounding still holds: check the spec's citations against the current
    cross-cutting homes, and check its *forward* claims against the world, not only doc-vs-tree — a
@@ -23,20 +25,35 @@ exist in the pipeline, never a fourth stage added on top of it.
    drift entry, never a tombstone. Tombstones (`status: superseded` + `superseded_by`) land only at
    accept, written only by the accepting session (see [`documentation-model.md`](documentation-model.md)
    — *Lifecycle*): the architect's output at this moment is the verified disposition, not the stamp.
-2. **The crossing.** Author the technical-rfc on the epic Issue and its self-contained slices
+2. **The architecture review (it-36).** A cold review on every draft after its `go` disposition and
+   on every technical-rfc at the crossing (item 3, below) — the mandate the earlier three moments
+   never asked: the underlying abstraction and pattern, the libraries and the language, the
+   boundaries, *for the feature at hand*. It argues at least one alternative with its trade-offs and
+   chooses. It leaves a verdict — `fit`, `refit`, or `block` — and, at both moments, an **architecture
+   decision record** (an ADR) in the component's architecture home: a `research` doc, frozen at
+   write, naming *Write at ship* as its update trigger (see
+   [`documentation-model.md`](documentation-model.md) — *The maintenance contract*), so decisions
+   accumulate there as documents and links, never as a second living reference. `block` earns the
+   draft one fold-and-re-review; still blocked, it returns to the triage surface flagged for the
+   owner's ruling and never activates on its own (`tools/design-review-runner.sh`). This is the first
+   bound moment whose own verdict *gates* what happens next rather than only informing it — the fourth
+   moment the charter names above.
+3. **The crossing.** Author the technical-rfc on the epic Issue and its self-contained slices
    against the *current* tree, never the tree as the spec imagined it, and stamp `crossed_to` the
    moment the epic exists (see [`documentation-model.md`](documentation-model.md) — *Identity &
    navigation*). Run a final citation-drift pass against the tip at filing: the base can move
    mid-session, and a crossing that skips re-checking its own citations against that moved tip ships
-   stale ones. **First iteration for a new repo:** when the crossing targets a repo the factory has
-   never built (no `.yr/factory.toml` at its base ref), the technical-rfc names the attended
+   stale ones. The architecture review (item 2, above) runs again here, against the technical-rfc
+   itself; its verdict gates filing — `tools/cross.py` refuses to file the epic on a `block`, never
+   files it partially. **First iteration for a new repo:** when the crossing targets a repo the factory
+   has never built (no `.yr/factory.toml` at its base ref), the technical-rfc names the attended
    onboarding prerequisites as design-side work and routes them to the human, never a slice — see
    [`onboarding.md`](onboarding.md). **Declaring a gate-touching slice is a duty of the role, not
    advice:** any slice whose mandate touches checks, CI, or the manifest gets a `YR-GATE-TOUCHING:`
    line (grammar in [`authoring.md`](authoring.md) step 3) in that slice's own context — the
    epic-gate reads it off the child's own body and refuses to promote it, because gate evolution is
    attended work and the pipeline builds under *fixed* gates.
-3. **The ship-walk.** Walk the grounding list: update the living reference in place, supersede
+4. **The ship-walk.** Walk the grounding list: update the living reference in place, supersede
    replaced research (never edit it), verify the stamps — the crossing stamp and every declared
    pair — and record the pilot observables with the iteration.
 
@@ -55,6 +72,13 @@ Where a doc also earns the adversarial review (see [`reviewing.md`](reviewing.md
 runs first and folds in**; the architect runs **last**, against the final text. Reversing that order
 — architect first, review second — lets one sympathetic frame carry through both passes; running
 the architect last means it judges what actually shipped, not an intermediate draft.
+
+**For a PM-governed draft, independence is structural, not asserted (it-36).** The architecture
+review runs as its own process spawn (`tools/design-review-runner.sh`), never inside the drafting
+run — so it naturally carries its own run id, and the activation guard (`design-independence`,
+`tools/design_gate.py independence`) compares that id against the ledger's own drafting row for the
+same task; the two colliding is exactly the case the guard exists to catch, and it refuses
+activation on a match. No prose claim of independence stands in for this comparison.
 
 ## Fail-closed rules
 

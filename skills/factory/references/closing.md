@@ -9,10 +9,13 @@
 
 ## 1. Promote to Ready
 
-**Who:** a human owns the input gate at the design artifacts — a human decides *what* gets built by
-setting a product-spec or feature-rfc `active`; no agent ever sets `active`. Below that standing approval,
-flipping a governed epic to Ready, promoting its next pre-approved slice, and closing a finished epic are
-**mechanical**, fail-closed back to the human on any doubt. A standalone task with no governing design
+**Who:** a human owns the input gate, and it is a **triage record** — nothing activates outside it. A
+human disposes each ranked seed `go` / `park` / `reject` on the component's triage surface, and only a
+`go` licenses a design artifact (a product-spec or feature-rfc) toward `active`, whether a human sets it
+directly or the PM's machinery does under that same license (it-36); no agent ever sets `active` outside
+a triage record. Below that standing approval, flipping a governed epic to Ready, promoting its next
+pre-approved slice, and closing a finished epic are **mechanical**, fail-closed back to the human on any
+doubt. A standalone task with no governing design
 above it has no standing approval to run on, so it keeps the original per-task human promotion — and its
 **body inherits the design gates** (ruled 2026-07-13): governed work's WHAT was adversarially reviewed and
 fit-checked upstream before anything crossed; a standalone task's body is that design, so the same cold
@@ -97,6 +100,34 @@ verbatim (the value-scoring line in [`documentation-model.md`](documentation-mod
 ideas-backlog* — deliberately words the same three axes in the front door's order; the two are not
 harmonized). The factory is ready when no factory candidate wins. And a gap surfacing mid-product
 re-enters the candidate set having just proven its value.
+
+---
+
+## 5. The round's close is machinery (it-36)
+
+For a PM-governed epic, §§1–4 above run as machinery, not as a closing session: `tools/design_gate.py`'s
+`sweep_close` finds an epic carrying `YR-CLOSE-HOLD` whose mandated close records are still missing and
+spawns `tools/close-runner.sh` once per epic. That runner runs one `close-walk` stage (the ship-walk
+over the grounding list) and then `tools/round_record.py`'s `ship-walk` / `round-record` / `crossover`
+subcommands in order — a failed walk stops short of the rest, so no partial close ever posts. Every
+write lands through `tools/vault_api.py`, the machinery's own client of the vault's REST interface (see
+[`documentation-model.md`](documentation-model.md) — *Editing safely*), under the App's identity, and is
+read back to confirm. `tools/epic_gate.py`'s close-hold arm itself — deciding *when* an epic wants to
+self-close and what it demands before it may — is untouched; this section names only what now *satisfies*
+the hold, not what raises it.
+
+**What shipped is published (it-36).** The merge evaluator's `fragment_present` condition (issue #474)
+demands a changelog fragment under the manifest's `changelog_dir` on every merging PR — the runner's own
+implement stage writes one; an attended PR's own duty to add one is *AGENTS.md* → *Conventions*. At an
+iteration's close, `tools/changelog.py` compiles those fragments (or a merged PR's own title, named as
+such, when its fragment is missing) into `CHANGELOG.md` and a release body carrying a fenced
+`yr-changelog` block; `tools/release.py` gains the `it/<n>` iteration-release family beside the existing
+skill family (`skill/vX.Y.Z`) to ship it; `tools/notify.py` delivers that release to the manifest's
+`[[stakeholders]]` table — telegram, webhook (signed), issue-comment, or the GitHub Release itself — then
+posts one `YR-CHANGELOG` naming the delivered set. Both tools are **attended-invoked today**: no sweep
+wires either one in yet (a board item tracks that), and until item P (the owner's Telegram credential and
+webhook secret) exists, no `[[stakeholders]]` entry can name a real address regardless. Depth:
+[`pipeline.md`](pipeline.md) → *The changelog and stakeholder notification*.
 
 ---
 

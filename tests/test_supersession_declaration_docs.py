@@ -393,14 +393,15 @@ def test_gates_advisory_paragraph_includes_check_supersession():
 
 
 # ---------------------------------------------------------------------------
-# Out-of-scope guards — this slice is doc-text only
+# Out-of-scope guards — this slice was doc-text only (superseded by it-36 slice K,
+# which legitimately adds skills/factory/references/pm.md)
 # ---------------------------------------------------------------------------
 
 def test_no_new_reference_file_added():
     expected = {
         "authoring.md", "closing.md", "documentation-model.md", "gates.md",
         "migrating.md", "onboarding.md", "pipeline.md", "reviewing.md",
-        "architect.md", "debt-rounds.md", "attended-lane.md",
+        "architect.md", "debt-rounds.md", "attended-lane.md", "pm.md",
     }
     actual = {p.name for p in REFS.iterdir() if p.is_file()}
     assert actual == expected, \
