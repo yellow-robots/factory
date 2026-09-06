@@ -24,15 +24,6 @@ THIS_FILE = pathlib.Path(__file__).resolve()
 POSITIVE_PIN_RE = re.compile(r'version.*==\s*"\d')
 NEGATIVE_PIN_RE = re.compile(r'version.*!=\s*"\d')
 
-# A different "version" entirely (found it-36 slice K, #476, cold review B/I): the process
-# model's own version field (process.toml, read through tools/process.py's `load()` as
-# `model["model"]["version"]`) coincidentally matches the same digit-quoted shape this
-# regex hunts for, but names no plugin version at all — test_merge_shadow.py's own
-# `test_conditions_display_names_fragment_present_in_process_toml` (added by slice I, #474)
-# pins it. Excluded by its own distinguishing dict-access shape, never by filename or
-# count, so a genuinely new plugin-version pin elsewhere still surfaces as a second hit.
-PROCESS_MODEL_VERSION_RE = re.compile(r'\["model"\]\["version"\]')
-
 
 def _test_py_files():
     for path in sorted(TESTS_DIR.glob("*.py")):
@@ -47,7 +38,7 @@ def _matching_lines(pattern):
     for path in _test_py_files():
         text = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), start=1):
-            if pattern.search(line) and not PROCESS_MODEL_VERSION_RE.search(line):
+            if pattern.search(line):
                 hits.append((f"{path.relative_to(ROOT)}:{lineno}", line.strip()))
     return hits
 
