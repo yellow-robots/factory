@@ -438,9 +438,10 @@ two-instance deploy shape and [`pm.md`](pm.md) for the human's own half of the r
   reversal or a withdrawn governing epic; spawn `tools/design-runner.sh`'s `product` stage for the
   single top-ranked licensed seed with no design already running for that repo — one design in flight
   per repository (distinct from the epic-gate's one-slice-per-epic).
-- **`tools/design-runner.sh`** — the sweep's own spawn (its stages are `AGENTS.md`'s own repo-map row,
-  cited there, never restated here). This is the only stage the sweep itself spawns; the two hops
-  below are **not wired to it today**.
+- **`tools/design-runner.sh`** — `sweep_designs`'s own spawn (its stages are `AGENTS.md`'s own
+  repo-map row, cited there, never restated here). Of the four stage runners this section names, only
+  this one and `sweep_close`'s own spawn (`close-runner.sh`, below) are wired to a sweep today; the two
+  hops between them — `design-review-runner.sh` and `cross-runner.sh` — are **not**.
 - **`tools/design-review-runner.sh`** (stages: `AGENTS.md`'s own repo-map row) — run once drafting
   exits, so it naturally carries its own run id for the independence check. `sweep_designs` never
   spawns this — an attended operator (or a future sweep) invokes it.
