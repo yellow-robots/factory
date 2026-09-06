@@ -1,6 +1,6 @@
 {
   "name": "YR design sweep — poll the vault, triage/strategy/KPI/changelog machinery",
-  "_comment": "STARTING SKELETON (it-36 slice D, #469) — import into n8n, then wire per deploy/DISPATCH.md's PM-instance section: the PM instance's dispatch URL + its OWN bearer token (never the build instance's) on the POST node. node typeVersions may need bumping to your n8n. Keep INACTIVE: /design-sweep is not yet a route tools/dispatch.py answers — that wiring, and tools/design_gate.py itself, are a later slice's (E/F). This file exists now so the PM instance's shape is reviewable alongside the model that licenses it.",
+  "_comment": "it-36 slice E (#470): /design-sweep and tools/design_gate.py are now built — import into n8n, then wire per deploy/DISPATCH.md's PM-instance section: the PM instance's dispatch URL + its OWN bearer token (never the build instance's) on the POST node. node typeVersions may need bumping to your n8n. Keep INACTIVE until item P's own human provisioning (the App, the yr-pm instance, the triage issues, the strategy doc, and this tool's --config repo list) is in place and watched once, the same discipline every other dispatch workflow follows before its schedule goes live.",
   "active": false,
   "settings": { "executionOrder": "v1" },
   "nodes": [

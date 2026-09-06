@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""tools/gh-app — the on-demand GitHub App installation-token wrapper behind `GH_BIN` (it-36 slice E,
+#470). The PM agent acts on every native surface under an identity that is not the owner's: this
+wrapper mints a fresh App installation token on demand, caches it to its own expiry, re-mints once
+fewer than five minutes remain (a token lives sixty minutes; a build can outlive it), then execs the
+real `gh` binary with the minted token — so pointing `GH_BIN` at this file is the whole switch
+(`tools/dev-runner.sh:48`, `tools/sources.py`'s own `GH_BIN` read, `tools/epic_gate.py`'s `_gh`, this
+module's own `main`).
+
+Stdlib only, like every other `tools/*.py` module, with ONE named carve-out: Python's stdlib carries
+no RSA signer, so the JWT's RS256 signature shells to `openssl dgst -sha256 -sign` (never a
+third-party crypto dependency) — everything else, including the HTTPS mint call itself, is
+`urllib.request`.
+
+Identity (GitHub Apps, `POST /app/installations/{installation}/access_tokens`):
+  1. A short-lived JWT, `RS256`-signed with the App's private key (`YR_GH_APP_KEY_PATH`), `iss` the
+     App id (`YR_GH_APP_ID`) — GitHub bounds a JWT's own `exp` to at most 10 minutes; this mints one
+     good for 9.
+  2. That JWT, as a Bearer token, mints an installation access token for `YR_GH_APP_INSTALLATION` —
+     good for 60 minutes, per GitHub's own contract.
+
+Every function here is injectable (mirrors `tools/dispatch.py`'s own seams) so the whole mint/cache/
+re-mint cycle is unit-testable against a fake HTTP endpoint and a fake `openssl`/`gh`, with no live
+network and no real App credential.
+"""
+from __future__ import annotations
+
+import base64
+import datetime
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+APP_ID = os.environ.get("YR_GH_APP_ID", "")
+KEY_PATH = os.environ.get("YR_GH_APP_KEY_PATH", "")
+INSTALLATION = os.environ.get("YR_GH_APP_INSTALLATION", "")
+API_BASE = os.environ.get("YR_GH_APP_API_BASE", "https://api.github.com")
+OPENSSL_BIN = os.environ.get("YR_GH_APP_OPENSSL_BIN", "openssl")
+# the REAL `gh` binary this wrapper execs into once a token is minted — deliberately its OWN env var,
+# never a read of `GH_BIN` (which a caller has pointed AT this wrapper): reading `GH_BIN` here would
+# just exec itself again.
+REAL_GH_BIN = os.environ.get("YR_GH_APP_GH_BIN", "gh")
+DEV_RUNNER_HOME = os.environ.get("DEV_RUNNER_HOME", str(pathlib.Path.home() / ".cache" / "dev-runner"))
+DEFAULT_CACHE_PATH = str(pathlib.Path(DEV_RUNNER_HOME) / "gh-app-token.json")
+TOKEN_CACHE_PATH = os.environ.get("YR_GH_APP_TOKEN_CACHE", DEFAULT_CACHE_PATH)
+
+# re-mint under five minutes to expiry (a token lives sixty minutes; a build can outlive it) —
+# the acceptance criterion's own number, named here once.
+EXPIRY_MARGIN_SECONDS = 5 * 60
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def sign_rs256(signing_input: bytes, key_path: str, *, openssl_bin: str = OPENSSL_BIN) -> bytes:
+    """RS256 over `signing_input` with the private key at `key_path` — the stdlib-only convention's
+    one named carve-out (no stdlib RSA signer), shelling to `openssl dgst -sha256 -sign` rather than a
+    third-party crypto dependency."""
+    proc = subprocess.run([openssl_bin, "dgst", "-sha256", "-sign", key_path],
+                          input=signing_input, capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"gh-app: openssl signing failed: {proc.stderr.decode(errors='replace')}")
+    return proc.stdout
+
+
+def mint_jwt(app_id: str, key_path: str, *, now: float | None = None,
+             openssl_bin: str = OPENSSL_BIN) -> str:
+    """The App JWT (RS256; `iss`=app_id): `iat` a minute in the past (clock-skew tolerance, GitHub's
+    own documented recommendation), `exp` nine minutes ahead — under GitHub's ten-minute JWT ceiling."""
+    now_i = int(now if now is not None else time.time())
+    header = {"alg": "RS256", "typ": "JWT"}
+    payload = {"iat": now_i - 60, "exp": now_i + 9 * 60, "iss": app_id}
+    signing_input = (
+        _b64url(json.dumps(header, separators=(",", ":")).encode())
+        + "." + _b64url(json.dumps(payload, separators=(",", ":")).encode())
+    )
+    signature = sign_rs256(signing_input.encode("ascii"), key_path, openssl_bin=openssl_bin)
+    return f"{signing_input}.{_b64url(signature)}"
+
+
+def _http_post(url: str, headers: dict) -> tuple[int, bytes]:
+    """The real HTTP POST (stdlib `urllib`, no body) — the injectable `fetch` seam's default; a test
+    fake serves canned mint/re-mint responses with no network, no App credential."""
+    req = urllib.request.Request(url, method="POST", headers=headers, data=b"")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 — a fixed https://api.github.com base
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def mint_installation_token(*, app_id: str = "", key_path: str = "", installation: str = "",
+                            api_base: str = "", openssl_bin: str = OPENSSL_BIN,
+                            fetch=None) -> dict:
+    """`POST /app/installations/{installation}/access_tokens` under a fresh JWT. `fetch` is the
+    injectable HTTP callable (`(url, headers) -> (status, body_bytes)`); defaults to `_http_post`.
+    Raises on any non-201 response or unparseable body — a broken mint must never be silently
+    swallowed into an empty/garbage token."""
+    app_id = app_id or APP_ID
+    key_path = key_path or KEY_PATH
+    installation = installation or INSTALLATION
+    api_base = api_base or API_BASE
+    if not (app_id and key_path and installation):
+        raise RuntimeError(
+            "gh-app: YR_GH_APP_ID / YR_GH_APP_KEY_PATH / YR_GH_APP_INSTALLATION must all be set")
+    jwt = mint_jwt(app_id, key_path, openssl_bin=openssl_bin)
+    url = f"{api_base}/app/installations/{installation}/access_tokens"
+    headers = {
+        "Authorization": f"Bearer {jwt}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    status, body = (fetch or _http_post)(url, headers)
+    if status != 201:
+        raise RuntimeError(f"gh-app: mint installation token failed ({status}): {body[:300]!r}")
+    data = json.loads(body)
+    return {"token": data["token"], "expires_at": data["expires_at"]}
+
+
+def _parse_expires_at(expires_at: str) -> float:
+    """GitHub's `expires_at` (`2026-09-06T12:34:56Z`) as a UTC epoch float."""
+    dt = datetime.datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ")
+    return dt.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def load_cached_token(cache_path: str = TOKEN_CACHE_PATH) -> tuple[str | None, float]:
+    """`(token, expires_epoch)` from the on-disk cache, or `(None, 0.0)` on any absence/corruption —
+    a broken cache file is never fatal, just treated as "mint fresh"."""
+    try:
+        data = json.loads(pathlib.Path(cache_path).read_text(encoding="utf-8"))
+        return data.get("token"), float(data.get("expires_epoch") or 0)
+    except (OSError, ValueError, TypeError):
+        return None, 0.0
+
+
+def save_cached_token(token: str, expires_epoch: float, cache_path: str = TOKEN_CACHE_PATH) -> None:
+    """Write the cache atomically (`.tmp` + rename) and `chmod 600` — the token is a live credential,
+    never left world/group readable, never observed half-written by a concurrent reader."""
+    path = pathlib.Path(cache_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"token": token, "expires_epoch": expires_epoch}), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+
+def get_token(*, now: float | None = None, cache_path: str = TOKEN_CACHE_PATH, **mint_kwargs) -> str:
+    """The cached token, iff more than `EXPIRY_MARGIN_SECONDS` remain to its expiry; otherwise mints,
+    caches, and returns a fresh one. `now`/`cache_path`/`**mint_kwargs` are all injectable — a test
+    drives mint/cache/re-mint with a fake clock, a scratch cache file, and a fake `fetch`, no network."""
+    now = now if now is not None else time.time()
+    token, expires_epoch = load_cached_token(cache_path)
+    if token and (expires_epoch - now) > EXPIRY_MARGIN_SECONDS:
+        return token
+    minted = mint_installation_token(**mint_kwargs)
+    expires_epoch = _parse_expires_at(minted["expires_at"])
+    save_cached_token(minted["token"], expires_epoch, cache_path)
+    return minted["token"]
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Mint/reuse the App token, then exec the real `gh` with it as `GH_TOKEN` — `os.execvpe` replaces
+    this process in place (stdio, argv, exit code all pass through untouched), so every caller already
+    invoking `"$GH_BIN" <args...>` sees exactly `gh`'s own behavior, just under the App's identity."""
+    argv = sys.argv[1:] if argv is None else argv
+    try:
+        token = get_token()
+    except Exception as e:  # noqa: BLE001 — a mint failure must be loud on stderr, never a silent gh call
+        print(f"gh-app: {e}", file=sys.stderr)
+        return 1
+    env = dict(os.environ)
+    env["GH_TOKEN"] = token
+    env.pop("GITHUB_TOKEN", None)   # never let a stale user-token env var outrank the App identity
+    os.execvpe(REAL_GH_BIN, [REAL_GH_BIN, *argv], env)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
