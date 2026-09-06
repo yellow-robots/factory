@@ -201,7 +201,7 @@ Every call is logged as a JSON argv array to `$STUB_CALLS_LOG` (if set) before d
 | Call | Behavior |
 |---|---|
 | `repo view` | prints `$STUB_REPO` (default `test/repo`) |
-| `api graphql` | dispatches on which canned input is present: `STUB_NODES` (set) → the board-scan org-wide `organization.projectV2.items.nodes` shape; else `STUB_ISSUE_RESPONSE` (set) → echoed verbatim (already-built promote issue-side shape); else `STUB_STATES` (set) → the tick-indexed watch-build issue-status shape (index from `$STUB_COUNTER`, default 0) |
+| `api graphql` | dispatches on which canned input is present: `STUB_PAGES` (set, N6/#475 fold review round 1) → a cursor-aware `organization.projectV2.items` page — a JSON array of `[nodes, has_next_page]` pairs, indexed by the `-F cursor=<n>` argv value (default `0`), returning that page's own `nodes` plus a `pageInfo` naming `hasNextPage`/`endCursor` (`tools/board.sh`'s own paging consumer, `test_board.py`); else `STUB_NODES` (set) → the board-scan org-wide `organization.projectV2.items.nodes` shape, no paging; else `STUB_ISSUE_RESPONSE` (set) → echoed verbatim (already-built promote issue-side shape); else `STUB_STATES` (set) → the tick-indexed watch-build issue-status shape (index from `$STUB_COUNTER`, default 0) |
 | `api user` | prints `$STUB_WHO` (default `operator`) |
 | `issue comment` | exit 1 if `STUB_COMMENT_FAIL`, else 0 |
 | `project item-edit` | exit 1 if `STUB_EDIT_FAIL`, else 0 |

@@ -457,6 +457,29 @@ def test_python_face_graphql_states_tick_indexed_shape(tmp_path):
     assert node["reason"] is None
 
 
+def test_python_face_graphql_pages_shape(tmp_path):
+    """N6 (#475 fold review round 1): STUB_PAGES is a fourth mode of the shared `api graphql`
+    dispatch, promoted from a test_board.py-local derived variant into this canonical home —
+    cursor-aware paging (`tools/board.sh`'s own consumer), a JSON array of `[nodes, has_next_page]`
+    pairs indexed by the `-F cursor=<n>` argv value (default 0)."""
+    pages = [([{"content": {"number": 1}}], True), ([{"content": {"number": 2}}], False)]
+    r = _run_python_face(tmp_path, ["api", "graphql", "-f", "query=..."],
+                          {"STUB_PAGES": json.dumps(pages)})
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    items = data["data"]["organization"]["projectV2"]["items"]
+    assert items["nodes"] == [{"content": {"number": 1}}]
+    assert items["pageInfo"] == {"hasNextPage": True, "endCursor": "1"}
+
+    r2 = _run_python_face(tmp_path, ["api", "graphql", "-f", "query=...", "-F", "cursor=1"],
+                          {"STUB_PAGES": json.dumps(pages)})
+    assert r2.returncode == 0
+    data2 = json.loads(r2.stdout)
+    items2 = data2["data"]["organization"]["projectV2"]["items"]
+    assert items2["nodes"] == [{"content": {"number": 2}}]
+    assert items2["pageInfo"] == {"hasNextPage": False, "endCursor": None}
+
+
 def test_python_face_graphql_no_canned_input_exits_nonzero(tmp_path):
     r = _run_python_face(tmp_path, ["api", "graphql", "-f", "query=..."])
     assert r.returncode == 9

@@ -604,10 +604,13 @@ def _default_discover_close_hold(gh, repo):
 
 # --- the triage-license evaluator (it-36 slice D declared the guard; the tool owns the trail-walk
 #     that decides it) --------------------------------------------------------------------------------
-def _load_pm_config(config_path):
+def load_pm_config(config_path):
     """The raw repo-config entries (`repo`/`triage_issue`/`epic_issue`), tolerant of a missing or
     unreadable file — an evaluator that cannot read its own config fails closed (a fail token), never
-    with a traceback."""
+    with a traceback. Public (it-36 slice J, #475): `tools/compile_slice.py`'s own triage banner reads
+    the SAME config entry (`repo` -> `triage_issue`/`component_root`) this evaluator does, the
+    `strategy.matching_theme` precedent (NN2, #473 fold review round 2) — a shared seam, never a
+    second private copy."""
     try:
         return json.loads(pathlib.Path(config_path).read_text()).get("repos") or []
     except (OSError, ValueError):
@@ -677,7 +680,7 @@ def evaluate(*, path=None, issue=None, gh=None, config_path=None, owner_login=No
     owner_login = owner_login if owner_login is not None else os.environ.get("YR_OWNER_LOGIN", "")
     config_path = config_path or os.environ.get(
         "YR_PM_CONFIG", str(pathlib.Path(DEV_RUNNER_HOME) / "pm-repos.json"))
-    entries = _load_pm_config(config_path)
+    entries = load_pm_config(config_path)
 
     if path:
         task = _task_sidecar(path)

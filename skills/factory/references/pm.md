@@ -96,11 +96,14 @@ A missing or malformed block is a loud finding, never a silent empty result. `lo
 is enforced today — `tools/design_gate.py`'s own loop-budget check reads it and escalates on exhaustion
 (the closed escalation list, below). `factory_cap` is declared, parsed by `tools/strategy.py`, and not
 yet enforced by anything — the cap on the factory's own theme is the spec's own rule, not yet a
-detector in this tree. `YR-STRATEGY` (`records.toml`) names its emitter as "the design sweep, posted
-when the strategy doc it tracks changes" — `tools/design_gate.py` carries no hash tracking or emitter
-for it today; like `YR-KPI` below, this is a declared grammar with no emitter yet.
+detector in this tree. `YR-STRATEGY` (`records.toml`) names its emitter as `tools/kpi.py`: it computes
+the strategy doc's own content hash on every run and posts the record when that hash has moved since
+the last one — `tools/design_gate.py`'s own sweep carries no hash tracking of its own at all. The one
+open item, the same as the KPI report's below, is the design sweep's own automatic trigger (running
+either report the moment the strategy doc's hash changes, rather than a human's "on request"),
+tracked as #520.
 
-## The KPI report (queued — it-36 slice J, #475, not yet built in this tree)
+## The KPI report
 
 The spec's own acceptance criterion: regenerated whenever the strategy doc changes or the owner asks,
 against the strategy doc's own `kpi_targets` — velocity, cycle time (seed → decision → active →
@@ -109,10 +112,16 @@ product-versus-factory ratio, and deploy lag, each computed from a native surfac
 comments, the board's own `createdAt`/issue-timeline fields, `git log` revert detection, the
 `YR-DEPLOY` trail, the ideas folder's frontmatter) — never the build-host ledger, which is per-host,
 not per-repo. Slice J's own deliverable is `tools/kpi.py`, posting one `YR-KPI` note per month into
-the component's operations home and a `YR-KPI` record on the triage issue; until that slice ships,
-`YR-KPI`'s `records.toml` row is a declared grammar with no emitter yet. The session's own delivered
-slice (`tools/compile_slice.py`) is slice J's to extend with a standing triage line naming how many
-seeds await the owner's own line — declared, not yet built.
+the component's operations home and a `YR-KPI` record on the triage issue; `YR-KPI`'s `records.toml`
+row names `tools/kpi.py report` as its emitter. The session's own delivered slice
+(`tools/compile_slice.py`'s `position()`) carries that standing triage line naming how many seeds
+await the owner's own line. As implemented (NEW-3, #475 fold review round 2 — a semantics question
+for the owner, not a defect): the product-versus-factory ratio classifies a delivered seed by
+STRATEGY-THEME MEMBERSHIP alone once a parsed strategy is available — any repo some theme names is
+"product", any repo no theme names is "factory", whatever it is actually called; a theme that ever
+legitimately names the factory repo itself would therefore invert the ratio's own labels, which the
+code does not detect or guard against. The one open item is the design sweep's own automatic trigger — running
+the report the moment the strategy doc's hash changes — tracked as #520.
 
 ## The closed escalation list — default-block
 
