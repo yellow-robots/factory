@@ -81,14 +81,31 @@ def count_refusals(child_texts: list) -> int:
     return sum(1 for t in child_texts if t.startswith(NEEDS_INFO_PREFIX) or t.startswith(BLOCKED_PREFIX))
 
 
+# The YR-EPIC-GATE raise family's own registered names (records.toml `:127-190`) + YR-CLOSE-HOLD —
+# named explicitly, the SAME convention `tools/epic_gate.py` itself uses for every marker it reads
+# (one module-level name per marker, never a `.startswith`/`==` scan over row names to discover a
+# "family": routing test wall11's own reach, tests/test_shared_marker_matcher.py). A future raise
+# row added to the registry needs a line here too — exactly the manual-list discipline epic_gate.py
+# already keeps for its own constants; there is no dynamic "family" grouping in the registry today.
+_RECORDS_DEMANDED_NAMES = (
+    "YR-EPIC-GATE: no-approval",
+    "YR-EPIC-GATE: not-a-task",
+    "YR-EPIC-GATE: not-onboarded",
+    "YR-EPIC-GATE: open-questions",
+    "YR-EPIC-GATE: gate-touching",
+    "YR-EPIC-GATE: stranded claim",
+    "YR-CLOSE-HOLD",
+)
+
+
 def count_records_demanded(epic_texts: list, reg=None) -> int:
-    """One count per EPIC-trail comment carrying ANY `YR-EPIC-GATE: *` raise-family marker or the
-    `YR-CLOSE-HOLD` sentinel — registry-driven (never a hardcoded marker list), so a canon-side
-    marker change is picked up automatically. A comment matching more than one such row still counts
-    once (one raise event, one comment)."""
+    """One count per EPIC-trail comment carrying ANY of `_RECORDS_DEMANDED_NAMES`'s own registered
+    markers — each row fetched by its EXACT name (`records.get`, fail-loud on an unregistered name,
+    never a silent skip) and tested via `textutil.marker_line_matches` with THAT row's own marker
+    and mode, never a hand-rolled `.startswith`/`==` against a marker literal. A comment matching
+    more than one such row still counts once (one raise event, one comment)."""
     reg = reg or records.load()
-    rows = [r for r in records.records(reg)
-           if r["name"].startswith("YR-EPIC-GATE") or r["name"] == "YR-CLOSE-HOLD"]
+    rows = [records.get(reg, name) for name in _RECORDS_DEMANDED_NAMES]
     count = 0
     for text in epic_texts:
         lines = text.splitlines()
