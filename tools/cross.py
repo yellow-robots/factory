@@ -30,7 +30,10 @@ A slice whose own draft carries a `Declares: external dependency <name>` or `Dec
 line (column 0, presence only, never inferred) still files normally — "nothing else waits on it" — but
 files UNTYPED (never Type=Task, regardless of `runner_built`: the epic-gate's own `not-a-task` hold is
 the mechanism, not just a comment) and carries a `YR-ESCALATION: act=park why=...` comment, parking it
-for the owner's approving review.
+for the owner's approving review. Accepted residual: `epic_gate.py` promotes strictly in sub-issue
+order and never skips ahead, so an untyped escalated slice also holds the promotion line for every
+slice ORDERED AFTER it (not just its own) until the owner resolves it — the crossing controls this by
+where it places an escalated slice in filing order, never by the filing act itself.
 
 A mid-filing failure (the epic already exists, a later `gh`/vault call then raises) is caught and
 returned as `{"ok": False, "stage": "file", "filed": {...already-filed state...}, "error": ...}` —
