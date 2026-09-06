@@ -224,6 +224,10 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   parse time, fail-closed, naming the offending line; absent key, byte-identical stage prompts to today
   (pinned). The **sentinel** kill switch (host file) blocks any merge if present — see
   [`deploy/DISPATCH.md`](deploy/DISPATCH.md).
+- **Lint and lens keys.** `lint_cmd`/`lint_fix_cmd` (issue #213) and `lens_cmd` (issue #214) are
+  manifest keys the runner reads the same way as `check_cmd` above; what each runs, when, and how a
+  lint failure repairs is [`skills/factory/references/gates.md`](skills/factory/references/gates.md)
+  → the gate table and *Judgment points* (`:17-63`), not restated here.
 - **Commits** credit the authoring model, never a hardcoded name: the runner stamps the body
   (`dev-runner, <model-id>`); an attended commit ends with
   `Co-Authored-By: <authoring model> <noreply@anthropic.com>`.
