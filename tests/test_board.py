@@ -4,7 +4,7 @@ Stubbed `gh` (no network, no `claude`): one `gh api graphql` call returns the or
 `organization.projectV2.items` shape; the script prints one TSV row per OPEN item
 (issue · repo · type · status · reason · title), skipping closed items.
 """
-import json, os, stat, subprocess, pathlib, sys
+import json, os, re, stat, subprocess, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "board.sh"
@@ -99,6 +99,69 @@ def test_multiple_open_items_across_repos_all_present(tmp_path):
     assert r.returncode == 0, r.stderr
     numbers = {row[0] for row in _rows(r.stdout)}
     assert numbers == {"1", "2", "3"}
+
+
+# ============ createdAt rides the query, and it pages beyond one hundred items (#475) ============
+
+def test_board_query_carries_createdat_in_the_issue_fragment():
+    """The KPI report's backlog-age metric needs each item's age — the query itself, not just the
+    printed columns, must carry `createdAt` inside the `... on Issue` content fragment."""
+    src = SCRIPT.read_text()
+    m = re.search(r"\.\.\.\s*on\s+Issue\s*\{[^}]*\}", src)
+    assert m, "no `... on Issue { ... }` fragment found in the board query"
+    assert "createdAt" in m.group(0)
+
+
+def test_board_query_declares_paging_machinery():
+    src = SCRIPT.read_text()
+    assert "pageInfo" in src and "hasNextPage" in src and "endCursor" in src
+
+
+# A dedicated stub (python face, cursor-aware) for the paging behavior alone — GH_STUB_TOOLS's single
+# canned STUB_NODES response has no pageInfo/cursor concept at all, so a second, purpose-built fake is
+# the honest seam here rather than stretching the shared one to a shape it was never asked to carry.
+GH_STUB_PAGED = '''#!/usr/bin/env python3
+import json, os, sys
+
+argv = sys.argv[1:]
+if argv[:2] == ["api", "graphql"]:
+    pages = json.loads(os.environ["STUB_PAGES"])
+    cursor = None
+    for i, a in enumerate(argv):
+        if a == "-F" and argv[i + 1].startswith("cursor="):
+            cursor = argv[i + 1].split("=", 1)[1]
+    idx = int(cursor) if cursor else 0
+    nodes, has_next = pages[idx]
+    page = {"nodes": nodes,
+            "pageInfo": {"hasNextPage": has_next, "endCursor": str(idx + 1) if has_next else None}}
+    print(json.dumps({"data": {"organization": {"projectV2": {"items": page}}}}))
+    sys.exit(0)
+sys.exit(9)
+'''
+
+
+def _run_paged(tmp, pages):
+    binp = tmp / "bin"
+    binp.mkdir(exist_ok=True)
+    _exec(binp / "gh", GH_STUB_PAGED)
+    env = {**os.environ, "GH_BIN": str(binp / "gh"), "STUB_PAGES": json.dumps(pages)}
+    return subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, env=env)
+
+
+def test_board_sh_pages_beyond_one_hundred_items(tmp_path):
+    page1 = [_node(i, repo="yr/alpha", title=f"item {i}") for i in range(100)]
+    page2 = [_node(i, repo="yr/alpha", title=f"item {i}") for i in range(100, 130)]
+    r = _run_paged(tmp_path, [(page1, True), (page2, False)])
+    assert r.returncode == 0, r.stderr
+    numbers = {row[0] for row in _rows(r.stdout)}
+    assert numbers == {str(i) for i in range(130)}, "items past the first page must not be lost"
+
+
+def test_board_sh_stops_paging_once_hasnextpage_is_false(tmp_path):
+    page1 = [_node(1, repo="yr/alpha")]
+    r = _run_paged(tmp_path, [(page1, False)])
+    assert r.returncode == 0, r.stderr
+    assert {row[0] for row in _rows(r.stdout)} == {"1"}
 
 
 # ============ no LLM anywhere ============

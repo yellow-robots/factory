@@ -19,6 +19,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 
 import compile_slice  # noqa: E402
+import design_gate     # noqa: E402 — same module object compile_slice.triage_banner imports internally
+import sources         # noqa: E402 — same module object compile_slice.triage_banner imports internally
 
 
 def _attended_env(**extra):
@@ -344,6 +346,120 @@ def test_position_is_repo_aware_not_hardcoded():
     assert "--repo yellow-robots/factory" not in src
     sh = (REPO / "hooks" / "deliver.sh").read_text(encoding="utf-8")
     assert "--repo yellow-robots/factory" not in sh
+
+
+# ── it-36 slice J (#475) — the triage banner: how many seeds await the owner's line, on which
+#    triage issue — best-effort, silent on absence ───────────────────────────────────────────────
+
+def _write_seed(ideas_dir, stem, *, status="open", value=5, effort="M"):
+    (ideas_dir / f"{stem}.md").write_text(
+        f"---\nstatus: {status}\nvalue: {value}\neffort: {effort}\n---\n# {stem}\n")
+
+
+def test_triage_banner_names_the_undecided_seed_count_and_the_triage_issue(monkeypatch, tmp_path):
+    component_root = tmp_path / "component"
+    ideas = component_root / "ideas"
+    ideas.mkdir(parents=True)
+    _write_seed(ideas, "seed-a")
+    _write_seed(ideas, "seed-b")
+    _write_seed(ideas, "seed-c")
+
+    monkeypatch.setattr(design_gate, "load_pm_config",
+                        lambda path: [{"repo": "acme/widgets", "triage_issue": "123",
+                                      "component_root": str(component_root)}])
+    monkeypatch.setattr(sources, "triage_surface",
+                        lambda repo, issue: (True, [
+                            ("owner1", "YR-TRIAGE: seed=seed-a disposition=go who=@owner1"),
+                        ]))
+    monkeypatch.setenv("YR_OWNER_LOGIN", "owner1")
+
+    assert compile_slice.triage_banner("acme/widgets") == "triage: 2 seeds await your line on #123"
+
+
+def test_triage_banner_is_none_once_every_seed_carries_an_owner_disposition(monkeypatch, tmp_path):
+    component_root = tmp_path / "component"
+    ideas = component_root / "ideas"
+    ideas.mkdir(parents=True)
+    _write_seed(ideas, "seed-a")
+
+    monkeypatch.setattr(design_gate, "load_pm_config",
+                        lambda path: [{"repo": "acme/widgets", "triage_issue": "123",
+                                      "component_root": str(component_root)}])
+    monkeypatch.setattr(sources, "triage_surface",
+                        lambda repo, issue: (True, [
+                            ("owner1", "YR-TRIAGE: seed=seed-a disposition=park who=@owner1"),
+                        ]))
+    monkeypatch.setenv("YR_OWNER_LOGIN", "owner1")
+
+    assert compile_slice.triage_banner("acme/widgets") is None
+
+
+def test_triage_banner_is_none_when_the_repo_carries_no_pm_config(monkeypatch):
+    monkeypatch.setattr(design_gate, "load_pm_config", lambda path: [])
+    assert compile_slice.triage_banner("acme/widgets") is None
+
+
+def test_triage_banner_is_none_when_the_config_entry_is_incomplete(monkeypatch):
+    # no component_root on the entry
+    monkeypatch.setattr(design_gate, "load_pm_config",
+                        lambda path: [{"repo": "acme/widgets", "triage_issue": "123"}])
+    assert compile_slice.triage_banner("acme/widgets") is None
+
+
+def test_triage_banner_is_none_when_the_triage_trail_read_fails(monkeypatch, tmp_path):
+    component_root = tmp_path / "component"
+    ideas = component_root / "ideas"
+    ideas.mkdir(parents=True)
+    _write_seed(ideas, "seed-a")
+
+    monkeypatch.setattr(design_gate, "load_pm_config",
+                        lambda path: [{"repo": "acme/widgets", "triage_issue": "123",
+                                      "component_root": str(component_root)}])
+    monkeypatch.setattr(sources, "triage_surface", lambda repo, issue: (False, "network error"))
+    assert compile_slice.triage_banner("acme/widgets") is None
+
+
+def test_triage_banner_ignores_a_disposition_posted_by_someone_other_than_the_owner(monkeypatch, tmp_path):
+    component_root = tmp_path / "component"
+    ideas = component_root / "ideas"
+    ideas.mkdir(parents=True)
+    _write_seed(ideas, "seed-a")
+
+    monkeypatch.setattr(design_gate, "load_pm_config",
+                        lambda path: [{"repo": "acme/widgets", "triage_issue": "123",
+                                      "component_root": str(component_root)}])
+    monkeypatch.setattr(sources, "triage_surface",
+                        lambda repo, issue: (True, [
+                            ("someone-else", "YR-TRIAGE: seed=seed-a disposition=go who=@someone-else"),
+                        ]))
+    monkeypatch.setenv("YR_OWNER_LOGIN", "owner1")
+
+    assert compile_slice.triage_banner("acme/widgets") == "triage: 1 seeds await your line on #123"
+
+
+def test_position_appends_the_triage_banner_when_one_is_present(monkeypatch):
+    def fake_run(argv, timeout):
+        j = " ".join(str(a) for a in argv)
+        if "repo view" in j:
+            return 0, "acme/widgets\n"
+        return 0, ""
+    monkeypatch.setattr(compile_slice, "_run", fake_run)
+    monkeypatch.setattr(compile_slice, "triage_banner",
+                        lambda repo: "triage: 4 seeds await your line on #123")
+    out = compile_slice.position(REPO)
+    assert "triage: 4 seeds await your line on #123" in out
+
+
+def test_position_has_no_triage_line_when_the_banner_is_absent(monkeypatch):
+    def fake_run(argv, timeout):
+        j = " ".join(str(a) for a in argv)
+        if "repo view" in j:
+            return 0, "acme/widgets\n"
+        return 0, ""
+    monkeypatch.setattr(compile_slice, "_run", fake_run)
+    monkeypatch.setattr(compile_slice, "triage_banner", lambda repo: None)
+    out = compile_slice.position(REPO)
+    assert "triage:" not in out
 
 
 def test_deliver_sh_leaves_no_temp_files(tmp_path):

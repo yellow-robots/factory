@@ -17,14 +17,23 @@ Two entry points, both for the delivery hook:
                    checkout's own commit (DIR — the session's `$CWD`, never `__file__`-relative) and
                    the plugin cache's commit (cross-checked against the installer's record), the
                    drift-alarm findings for this host (`drift.py`'s workspace-host moment), the
-                   stored probe-drift note, the repo, its open PRs, and this repo's board rows —
-                   every read bounded, every failure a loud line, exit always 0.
+                   stored probe-drift note, the repo, its open PRs, this repo's board rows, and —
+                   when the PM's config names this repo — the triage line (it-36 slice J, #475):
+                   how many ranked seeds carry no owner disposition yet, on which triage issue.
+                   Every read bounded, every failure a loud line except the triage line's own (best-
+                   effort, silent on absence — most repos carry no PM config at all), exit always 0.
+
+Cold pipeline stages never reach this module at all: `hooks/deliver.sh` exits before calling
+`compile_slice.py --position` when `YR_MACHINERY` is set (the runner's own standing declaration) —
+so the triage line, like the rest of the position element, is attended-session-only by construction,
+never by a second check repeated here.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +51,43 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     except (OSError, subprocess.TimeoutExpired):
         return 1, ""
     return out.returncode, out.stdout or ""
+
+
+def triage_banner(repo: str) -> str | None:
+    """*triage: N seeds await your line on #<issue>* — one line, best-effort and silent on absence
+    (it-36 slice J, #475). Read entirely through `sources.triage_surface` (the PM's own owner-only
+    trail reader) plus `rank.ranked_seeds`/`design_gate.latest_triage_dispositions` — the SAME
+    undecided-seed rule `design_gate.py`'s own sweep judges a seed by (`_process_repo`'s own
+    `dispositions.get(stem) is None`), never a second one. `None` whenever this repo carries no PM
+    config, its config entry is incomplete, or any read fails — most repos have no PM wiring at all,
+    and that is silence, not a loud failure (unlike the Board/PR sections above, which failed and
+    still name it: those read THIS repo's own git/gh state, so a failure there is this session's own
+    trouble; a repo simply outside the PM's config is not a defect anywhere)."""
+    try:
+        import design_gate
+        import rank
+        import sources
+
+        config_path = os.environ.get(
+            "YR_PM_CONFIG", str(Path(design_gate.DEV_RUNNER_HOME) / "pm-repos.json"))
+        entries = design_gate.load_pm_config(config_path)
+        entry = next((e for e in entries if e.get("repo") == repo), None)
+        if not entry or not entry.get("triage_issue") or not entry.get("component_root"):
+            return None
+        triage_issue = entry["triage_issue"]
+        seeds = rank.ranked_seeds(Path(entry["component_root"]))
+        ok, trail = sources.triage_surface(repo, str(triage_issue))
+        if not ok:
+            return None
+        owner_login = os.environ.get("YR_OWNER_LOGIN", "")
+        dispositions = design_gate.latest_triage_dispositions(trail, owner_login)
+        undecided = [s for s in seeds
+                    if dispositions.get(Path(s["path"]).stem) is None]
+        if not undecided:
+            return None
+        return f"triage: {len(undecided)} seeds await your line on #{triage_issue}"
+    except Exception:  # noqa: BLE001 — best-effort, silent: absence is the common, unremarkable case
+        return None
 
 
 def position(root: Path) -> str:
@@ -89,6 +135,9 @@ def position(root: Path) -> str:
                 rows.append(f"  #{f[0]} [{mark}] {f[5]}")
         if rows:
             lines.append("Board (this repo, open items):\n" + "\n".join(rows[:12]))
+    banner = triage_banner(repo)
+    if banner:
+        lines.append(banner)
     return "\n".join(lines) + "\n"
 
 

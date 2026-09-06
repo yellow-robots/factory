@@ -29,29 +29,64 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-BOARD_QUERY='query($org: String!, $project: Int!) {
+# `createdAt` rides the Issue fragment (it-36 slice J, #475): the backlog-age KPI's own read needs
+# each item's age, and this org-wide query is the one authoritative board-scan shape (BOARD_QUERY,
+# same read tools/epic_gate.py's sweep uses) — never a second, parallel query for the same items.
+BOARD_QUERY='query($org: String!, $project: Int!, $cursor: String) {
   organization(login: $org) {
     projectV2(number: $project) {
-      items(first: 100) {
+      items(first: 100, after: $cursor) {
         nodes {
-          content { ... on Issue { number title state issueType { name } repository { nameWithOwner } } }
+          content { ... on Issue { number title state createdAt issueType { name } repository { nameWithOwner } } }
           status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
           reason: fieldValueByName(name: "Reason") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
 }'
 
-OUT="$("$GH_BIN" api graphql -f "query=$BOARD_QUERY" -F "org=$YR_ORG" -F "project=$PROJECT_NUMBER" 2>/dev/null)" \
-  || die "could not query project #$PROJECT_NUMBER on $YR_ORG (is the gh 'project' scope granted?)"
-
-printf '%s' "$OUT" | python3 -c '
+# A board past 100 items must not silently lose everything past the first page (the gotcha this
+# slice names explicitly) — page until the query's own `pageInfo.hasNextPage` says stop. A capped
+# loop (100 pages, 10k items) keeps a malformed/looping response from spinning forever.
+PAGES_FILE="$(mktemp)"
+trap 'rm -f "$PAGES_FILE"' EXIT
+CURSOR=""
+PAGE_COUNT=0
+while :; do
+  PAGE_COUNT=$((PAGE_COUNT + 1))
+  [ "$PAGE_COUNT" -le 100 ] || die "board query did not terminate after 100 pages (project #$PROJECT_NUMBER on $YR_ORG)"
+  ARGS=(api graphql -f "query=$BOARD_QUERY" -F "org=$YR_ORG" -F "project=$PROJECT_NUMBER")
+  [ -n "$CURSOR" ] && ARGS+=(-F "cursor=$CURSOR")
+  PAGE_OUT="$("$GH_BIN" "${ARGS[@]}" 2>/dev/null)" \
+    || die "could not query project #$PROJECT_NUMBER on $YR_ORG (is the gh 'project' scope granted?)"
+  printf '%s\n' "$PAGE_OUT" >> "$PAGES_FILE"
+  CURSOR="$(printf '%s' "$PAGE_OUT" | python3 -c '
 import json, sys
-
 d = json.load(sys.stdin)
 if "data" in d: d = d["data"]
-nodes = (((d.get("organization") or {}).get("projectV2") or {}).get("items") or {}).get("nodes") or []
+items = (((d.get("organization") or {}).get("projectV2") or {}).get("items") or {})
+page = items.get("pageInfo") or {}
+print(page.get("endCursor") or "" if page.get("hasNextPage") else "")
+')"
+  [ -n "$CURSOR" ] || break
+done
+
+python3 -c '
+import json, sys
+
+nodes = []
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        d = json.loads(line)
+        if "data" in d: d = d["data"]
+        items = (((d.get("organization") or {}).get("projectV2") or {}).get("items") or {})
+        nodes += items.get("nodes") or []
+
 for it in nodes:
     c = it.get("content") or {}
     if not c or (c.get("state") or "").upper() != "OPEN":
@@ -63,4 +98,4 @@ for it in nodes:
     reason = (it.get("reason") or {}).get("name") or ""
     title = c.get("title") or ""
     print("\t".join([str(number), repo, itype, status, reason, title]))
-'
+' "$PAGES_FILE"

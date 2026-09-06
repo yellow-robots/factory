@@ -527,10 +527,10 @@ marker = "YR-STRATEGY:"
 mode = "prefix"
 fields = ["who", "doc"]
 emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "the design sweep, posted on the strategy issue's trail when the strategy doc it tracks changes"
-readers = ["tools/design_gate.py"]
+emitter = "tools/kpi.py (the KPI report's own run — it-36 slice J, #475; corrected from the earlier 'the design sweep' attribution, which never emitted this: tools/design_gate.py's sweep does not compute a strategy-doc content hash at all)"
+readers = ["humans reading the issue's own trail (no automated reader yet)"]
 surfaces = ["issue-trail"]
-notes = "who names the doc's editor; doc names the vault path the sweep observed change on."
+notes = "who names the actor that ran the report; doc names the local strategy-doc path whose content hash moved since the report's last run."
 
 [[record]]
 name = "YR-KPI"
@@ -538,10 +538,10 @@ marker = "YR-KPI:"
 mode = "prefix"
 fields = ["who", "period"]
 emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "the design sweep's periodic KPI record"
-readers = ["tools/design_gate.py"]
+emitter = "tools/kpi.py report (it-36 slice J, #475; corrected from the earlier 'the design sweep' attribution, which never emitted this)"
+readers = ["tools/kpi.py (idempotence key: a period already carrying this record is never re-commented)", "humans reading the note/issue trail"]
 surfaces = ["vault-doc", "issue-trail"]
-notes = ""
+notes = "who names the actor that ran the report; period is the \"YYYY-MM\" the note covers. Rides the bottom of the vault-doc note itself AND the issue-trail comment announcing it."
 
 [[record]]
 name = "YR-ARCH-REVIEW"
@@ -570,10 +570,10 @@ name = "yr-strategy/1"
 marker = "yr-strategy"
 mode = "toml-schema"
 emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "the design sweep (the fenced ```yr-strategy TOML block riding the YR-STRATEGY comment)"
-readers = ["tools/design_gate.py"]
+emitter = "tools/kpi.py (the fenced ```yr-strategy TOML block, re-emitted verbatim from the doc's own fence, riding the YR-STRATEGY comment — it-36 slice J, #475; corrected from the earlier 'the design sweep' attribution)"
+readers = ["humans reading the issue's own trail (no automated reader yet)"]
 surfaces = ["issue-trail"]
-notes = "The fence word yr-strategy is itself part of the parse grammar — the yr-merge-record precedent (json-schema), applied to a TOML fence instead of JSON (the new toml-schema mode)."
+notes = "The fence word yr-strategy is itself part of the parse grammar — the yr-merge-record precedent (json-schema), applied to a TOML fence instead of JSON (the new toml-schema mode). The SAME grammar tools/strategy.py reads off the doc itself — this comment's block is a snapshot of what the report observed change, never a second, independent parse."
 
 [[record]]
 name = "yr-changelog/1"
