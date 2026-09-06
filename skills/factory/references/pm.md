@@ -110,9 +110,10 @@ comments, the board's own `createdAt`/issue-timeline fields, `git log` revert de
 `YR-DEPLOY` trail, the ideas folder's frontmatter) — never the build-host ledger, which is per-host,
 not per-repo. Slice J's own deliverable is `tools/kpi.py`, posting one `YR-KPI` note per month into
 the component's operations home and a `YR-KPI` record on the triage issue; until that slice ships,
-`YR-KPI`'s `records.toml` row is a declared grammar with no emitter yet. The session's own delivered
-slice (`tools/compile_slice.py`) is slice J's to extend with a standing triage line naming how many
-seeds await the owner's own line — declared, not yet built.
+`YR-KPI`'s `records.toml` row is a declared grammar with no emitter yet. Slice J has since shipped: the report exists (`tools/kpi.py`), and the session's own delivered slice
+(`tools/compile_slice.py`'s `position()`) now carries that standing triage line naming how many seeds
+await the owner's own line — only the design sweep's own automatic trigger, running the report the
+moment the strategy doc's hash changes, remains not yet built, tracked as #520.
 
 ## The closed escalation list — default-block
 
