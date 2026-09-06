@@ -132,7 +132,8 @@ def test_cycle_time_hours_reports_lead_time_and_queue_time_separately():
 
 
 def test_cycle_time_hours_empty_events_reports_none_not_a_crash():
-    assert kpi.cycle_time_hours([]) == {"mean_total_hours": None, "mean_queue_hours": None, "count": 0}
+    assert kpi.cycle_time_hours([]) == {"mean_total_hours": None, "mean_queue_hours": None, "count": 0,
+                                        "gap_reason": "no PR merged this window"}
 
 
 # ============ blocked rate: the runner's own bounce/block prose ============
@@ -329,17 +330,18 @@ def test_render_kpi_note_shows_the_period_header_and_actual_vs_target():
 
 
 def test_render_kpi_note_carries_frontmatter_so_the_vault_plugin_can_stamp_it():
-    """N3, #475 fold review round 1: `type: note` + this write-round's own `status`/`created`/
-    `updated` — documentation-model.md's base set every doc carries. Without it the vault's own
-    stamping plugin has nothing well-formed to modify at all (AGENTS.md: "writes nothing at all when
-    the frontmatter cannot be parsed")."""
+    """N3, #475 fold review round 1; corrected NEW-2, round 2: `type: note` + `status: active`
+    ONLY — documentation-model.md:219's stamping rule forbids hand-stamping `created`/`updated` at
+    all ("the vault's update-time plugin stamps both ... supply `created` only to backdate"). Those
+    two, alone, still give the plugin something well-formed to modify on the note's first write
+    (AGENTS.md: "writes nothing at all when the frontmatter cannot be parsed")."""
     report = kpi.compute_report(_full_inputs(), period="2026-09")
-    note = kpi.render_kpi_note(report, targets={}, now="2026-09-15T00:00:00Z")
+    note = kpi.render_kpi_note(report, targets={})
     assert note.startswith("---\n")
     assert "type: note\n" in note
     assert "status: active\n" in note
-    assert "created: 2026-09-15T00:00:00Z\n" in note
-    assert "updated: 2026-09-15T00:00:00Z\n" in note
+    assert "created:" not in note, "hand-stamping created/updated is the vault plugin's job alone"
+    assert "updated:" not in note
 
 
 def test_render_kpi_note_labels_velocity_as_runner_prs_only():
@@ -357,8 +359,27 @@ def test_render_kpi_note_states_when_cycle_time_and_revert_were_never_read():
     inputs = _full_inputs(cycle_events=[], commit_subjects=None)
     report = kpi.compute_report(inputs, period="2026-09")
     note = kpi.render_kpi_note(report, targets={})
-    assert "cycle_time_hours**: None — no merged PR resolved a linked issue's own createdAt" in note
+    assert "cycle_time_hours**: None — no PR merged this window" in note
     assert "revert_rate**: None — --code-root not declared" in note
+
+
+def test_render_kpi_note_distinguishes_no_linked_issue_from_a_failed_issue_read():
+    """B1, #475 fold review round 2: the legibility line must not blur "this PR named no linked
+    issue" and "it named one but the read failed" into one bare reason — they are different facts
+    about different failure surfaces."""
+    events_no_link = [{"created": None, "ready_at": None, "merged": "2026-09-01T00:00:00Z",
+                       "link_status": "no_linked_issue"}]
+    r = kpi.cycle_time_hours(events_no_link)
+    assert r["gap_reason"] == "no merged PR named a linked issue this window"
+
+    events_failed = [{"created": None, "ready_at": None, "merged": "2026-09-01T00:00:00Z",
+                      "link_status": "read_failed"}]
+    r2 = kpi.cycle_time_hours(events_failed)
+    assert r2["gap_reason"] == "the linked issue's own read failed for every merged PR this window"
+
+    events_mixed = events_no_link + events_failed
+    r3 = kpi.cycle_time_hours(events_mixed)
+    assert r3["gap_reason"] == "1 merged PR(s) named no linked issue, 1 linked-issue read(s) failed"
 
 
 def test_note_path_names_one_note_per_month_in_the_operations_home():
@@ -521,9 +542,16 @@ def test_gather_report_inputs_reads_every_native_surface(tmp_path, monkeypatch):
         if argv[:2] == ["pr", "list"]:
             return [{"number": 7, "mergedAt": "2026-09-10T00:00:00Z"}]
         if argv[:2] == ["pr", "view"]:
-            # B1, #475 fold review round 1: closingIssuesReferences rides the SAME call.
+            # B1, #475 fold review round 2: the REAL pr-view projection (verified live against
+            # yellow-robots/factory#431) — id/number/repository/url ONLY, no createdAt anywhere.
             return {"body": "", "comments": [{"body": usage_comment}],
-                    "closingIssuesReferences": [{"number": 3, "createdAt": "2026-09-01T00:00:00Z"}]}
+                    "closingIssuesReferences": [
+                        {"id": "I_x", "number": 3, "repository": {"name": "factory"},
+                         "url": "https://github.com/yellow-robots/factory/issues/3"}]}
+        if argv[0] == "api" and argv[1].startswith("repos/"):
+            # the SEPARATE REST issue read — snake_case created_at, never the projection above.
+            assert argv[1] == "repos/acme/widgets/issues/3"
+            return {"number": 3, "created_at": "2026-09-01T00:00:00Z"}
         if argv[:2] == ["api", "graphql"]:
             return {"data": {"organization": {"projectV2": {"items": {
                 "nodes": [_board_node(1, repo="acme/widgets")],
@@ -544,7 +572,8 @@ def test_gather_report_inputs_reads_every_native_surface(tmp_path, monkeypatch):
     assert inputs["merge_dates"] == ["2026-09-10T00:00:00Z"]
     assert len(inputs["pr_usages"]) == 1 and inputs["pr_usages"][0]["cost_usd"] > 0
     assert inputs["cycle_events"] == [
-        {"created": "2026-09-01T00:00:00Z", "ready_at": None, "merged": "2026-09-10T00:00:00Z"}]
+        {"created": "2026-09-01T00:00:00Z", "ready_at": None, "merged": "2026-09-10T00:00:00Z",
+         "link_status": "linked"}]
     assert inputs["commit_subjects"] == ['Revert "add feature A"', "add feature A"], \
         "revert detection must read ONLY code_root — the vault mirror's own commit never appears"
     assert len(inputs["board_rows"]) == 1 and inputs["board_rows"][0]["createdAt"]
@@ -557,6 +586,77 @@ def test_gather_report_inputs_reads_every_native_surface(tmp_path, monkeypatch):
     assert report["inflow_outflow"] == {"inflow": 1, "outflow": 1}
     assert report["product_factory_ratio"] == {"product": 1, "factory": 0, "ratio": float("inf")}
     assert report["spend_usd"] > 0
+
+
+def test_gather_report_inputs_never_reads_createdat_off_the_pr_view_projection(monkeypatch):
+    """B1, #475 fold review round 2: `gh pr view --json closingIssuesReferences` is a NARROW
+    projection — verified live against a real PR (yellow-robots/factory#431): id/number/repository/
+    url ONLY, no `createdAt` anywhere on it. Pins BOTH real shapes so a future edit can't silently
+    reintroduce the fabricated-field bug: the pr-view response below carries no createdAt/created_at
+    key at all (the honest shape), and `created` can ONLY come from the separate
+    `gh api repos/<owner>/<repo>/issues/<n>` REST read (snake_case `created_at`)."""
+    calls = []
+
+    def fake_gh(argv):
+        calls.append(argv)
+        if argv[:2] == ["pr", "list"]:
+            return [{"number": 7, "mergedAt": "2026-09-10T00:00:00Z"}]
+        if argv[:2] == ["pr", "view"]:
+            return {"body": "", "comments": [],
+                    "closingIssuesReferences": [
+                        {"id": "I_x", "number": 3, "repository": {"name": "factory"},
+                         "url": "https://github.com/yellow-robots/factory/issues/3"}]}
+        if argv[0] == "api" and argv[1].startswith("repos/"):
+            return {"number": 3, "created_at": "2026-09-01T00:00:00Z"}
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (False, "unreachable"))
+    inputs = kpi.gather_report_inputs(gh=fake_gh, repo="acme/widgets", org="yellow-robots", project=1,
+                                      component_root="/nonexistent", period="2026-09",
+                                      now="2026-09-15T00:00:00Z")
+
+    assert inputs["cycle_events"][0]["created"] == "2026-09-01T00:00:00Z"
+    assert inputs["cycle_events"][0]["link_status"] == "linked"
+
+    pr_view_calls = [c for c in calls if c[:2] == ["pr", "view"]]
+    assert pr_view_calls and all("createdAt" not in " ".join(c) for c in pr_view_calls), \
+        "pr view must never even ASK for createdAt — this projection never serves it"
+    assert any(c[0] == "api" and c[1].startswith("repos/") for c in calls), \
+        "createdAt must come from the separate issues REST read, never the pr-view projection"
+
+
+def test_gather_report_inputs_distinguishes_no_link_from_a_failed_issue_read(monkeypatch):
+    """B1, #475 fold review round 2: a PR with NO closingIssuesReferences entry gets
+    `link_status: no_linked_issue`; a PR whose linked issue exists but whose REST read fails gets
+    `link_status: read_failed` — two different facts, never collapsed into the same bare `None`."""
+    def fake_gh(argv):
+        if argv[:2] == ["pr", "list"]:
+            return [{"number": 7, "mergedAt": "2026-09-10T00:00:00Z"},
+                    {"number": 8, "mergedAt": "2026-09-11T00:00:00Z"}]
+        if argv[:2] == ["pr", "view"] and argv[2] == "7":
+            return {"body": "", "comments": [], "closingIssuesReferences": []}
+        if argv[:2] == ["pr", "view"] and argv[2] == "8":
+            return {"body": "", "comments": [],
+                    "closingIssuesReferences": [{"number": 9}]}
+        if argv[0] == "api" and argv[1].startswith("repos/"):
+            raise RuntimeError("gh api failed (stub)")
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (False, "unreachable"))
+    inputs = kpi.gather_report_inputs(gh=fake_gh, repo="acme/widgets", org="yellow-robots", project=1,
+                                      component_root="/nonexistent", period="2026-09",
+                                      now="2026-09-15T00:00:00Z")
+    by_merge = {e["merged"]: e for e in inputs["cycle_events"]}
+    assert by_merge["2026-09-10T00:00:00Z"]["link_status"] == "no_linked_issue"
+    assert by_merge["2026-09-10T00:00:00Z"]["created"] is None
+    assert by_merge["2026-09-11T00:00:00Z"]["link_status"] == "read_failed"
+    assert by_merge["2026-09-11T00:00:00Z"]["created"] is None
 
 
 def test_gather_report_inputs_commit_subjects_is_none_when_code_root_is_not_declared(tmp_path, monkeypatch):
@@ -743,3 +843,67 @@ def test_run_report_never_persists_the_strategy_digest_when_the_post_fails(tmp_p
     result2 = _run()
     assert result2["strategy_post_failed"] is True, \
         "the digest never persisted after the failed post — the doc still reads as changed"
+
+
+# ============ main(): exit code reflects a stated failure ============
+
+def test_main_returns_nonzero_when_a_post_is_refused(tmp_path, monkeypatch):
+    """NEW-6, #475 fold review round 2: `run_report` turns a failed/refused post into a stated
+    `kpi_post_failed`/`strategy_post_failed` result field rather than raising — but a bare `return 0`
+    from `main()` would still tell the caller (a shell, a cron wrapper) that the run succeeded."""
+    monkeypatch.setattr(kpi, "DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+    monkeypatch.setattr(kpi.vault_api, "VaultClient", lambda: FakeVault())
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (True, []))
+    # an unreadable trail (N5) refuses the YR-KPI post outright — kpi_post_failed=True.
+    monkeypatch.setattr(kpi.sources, "issue_trail", lambda repo, issue: (False, "trail unreachable"))
+
+    def fake_gh(argv):
+        if argv[:2] == ["pr", "list"]:
+            return []
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        if argv[:2] == ["issue", "comment"]:
+            return ""
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    monkeypatch.setattr(kpi, "_gh", fake_gh)
+
+    strategy_doc = tmp_path / "strategy.md"
+    strategy_doc.write_text("# no fence here")
+    component_root = tmp_path / "component"
+    component_root.mkdir()
+
+    rc = kpi.main(["report", "--repo", "acme/widgets", "--issue", "55", "--project", "1",
+                  "--component-root", str(component_root), "--strategy-doc", str(strategy_doc),
+                  "--operations-home", "04 projects/acme/operations", "--period", "2026-09"])
+    assert rc != 0, "a stated failure must exit non-zero, never a bare success code"
+
+
+def test_main_returns_zero_when_nothing_failed(tmp_path, monkeypatch):
+    monkeypatch.setattr(kpi, "DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+    monkeypatch.setattr(kpi.vault_api, "VaultClient", lambda: FakeVault())
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (True, []))
+    monkeypatch.setattr(kpi.sources, "issue_trail", lambda repo, issue: (True, []))
+
+    def fake_gh(argv):
+        if argv[:2] == ["pr", "list"]:
+            return []
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        if argv[:2] == ["issue", "comment"]:
+            return ""
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    monkeypatch.setattr(kpi, "_gh", fake_gh)
+
+    strategy_doc = tmp_path / "strategy.md"
+    strategy_doc.write_text("# no fence here")
+    component_root = tmp_path / "component"
+    component_root.mkdir()
+
+    rc = kpi.main(["report", "--repo", "acme/widgets", "--issue", "55", "--project", "1",
+                  "--component-root", str(component_root), "--strategy-doc", str(strategy_doc),
+                  "--operations-home", "04 projects/acme/operations", "--period", "2026-09"])
+    assert rc == 0

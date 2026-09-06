@@ -107,15 +107,37 @@ def velocity_per_week(merge_dates: list[str], *, start: str, end: str) -> dict:
 # --- cycle time: the issue timeline (created -> Ready -> merged) ------------------------------------
 
 def cycle_time_hours(events: list[dict]) -> dict:
-    """`events`: `{"created": iso, "ready_at": iso|None, "merged": iso}` per delivered issue.
-    `mean_total_hours` is created->merged (the lead time every event with both bounds contributes);
-    `mean_queue_hours` is created->Ready, reported only from events that actually carry a `ready_at`
-    (GitHub's REST/GraphQL surfaces expose no per-field ProjectV2 status-change history without the
-    audit-log API — an event missing it degrades this ONE figure, never the whole metric, and is
-    never guessed at)."""
+    """`events`: `{"created": iso, "ready_at": iso|None, "merged": iso, "link_status": ...}` per
+    delivered issue. `mean_total_hours` is created->merged (the lead time every event with both
+    bounds contributes); `mean_queue_hours` is created->Ready, reported only from events that
+    actually carry a `ready_at` (GitHub's REST/GraphQL surfaces expose no per-field ProjectV2
+    status-change history without the audit-log API — an event missing it degrades this ONE figure,
+    never the whole metric, and is never guessed at).
+
+    `gap_reason` (B1, #475 fold review round 2): `None` once at least one event resolved a
+    `created` — otherwise names WHY none did, distinguishing "no merged PR named a linked issue"
+    from "a linked issue's own read failed" (`link_status`, `gather_report_inputs`'s own field) —
+    never one blanket claim that could misstate which actually happened this window."""
     total = [_hours_between(e["created"], e["merged"]) for e in events if e.get("created") and e.get("merged")]
     queue = [_hours_between(e["created"], e["ready_at"]) for e in events if e.get("created") and e.get("ready_at")]
-    return {"mean_total_hours": _mean(total), "mean_queue_hours": _mean(queue), "count": len(total)}
+    gap_reason = None
+    if not total:
+        if not events:
+            gap_reason = "no PR merged this window"
+        else:
+            no_link = sum(1 for e in events if e.get("link_status") == "no_linked_issue")
+            failed = sum(1 for e in events if e.get("link_status") == "read_failed")
+            if no_link and failed:
+                gap_reason = (f"{no_link} merged PR(s) named no linked issue, "
+                              f"{failed} linked-issue read(s) failed")
+            elif failed:
+                gap_reason = "the linked issue's own read failed for every merged PR this window"
+            elif no_link:
+                gap_reason = "no merged PR named a linked issue this window"
+            else:
+                gap_reason = "no merged PR resolved a linked issue's own createdAt this window"
+    return {"mean_total_hours": _mean(total), "mean_queue_hours": _mean(queue), "count": len(total),
+           "gap_reason": gap_reason}
 
 
 # --- blocked / repair rates: the runner's own bounce/block prose + a repair stage in the PR's usage --
@@ -346,13 +368,17 @@ def against_targets(report: dict, kpi_targets: dict) -> dict:
 
 # --- rendering the note ------------------------------------------------------------------------------
 
-def render_kpi_note(report: dict, *, targets: dict, now: str | None = None) -> str:
-    """The note's own frontmatter (N3, #475 fold review round 1): `type: note` + this write-round's
-    own `status`/`created`/`updated` — documentation-model.md's base set every doc carries. Without
-    it the vault's own stamping plugin has nothing well-formed to modify (AGENTS.md: "writes nothing
-    at all when the frontmatter cannot be parsed") — a frontmatter-less note would never get a real
-    `created`/`updated` at all, silently, no error anywhere."""
-    now = now or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def render_kpi_note(report: dict, *, targets: dict) -> str:
+    """The note's own frontmatter (N3, #475 fold review round 1; corrected NEW-2, round 2):
+    `type: note` + `status: active` ONLY — documentation-model.md:219's stamping rule: "Never
+    hand-stamp `created`/`updated` — the vault's update-time plugin stamps both ... supply `created`
+    only to backdate". Hand-stamping both on every regeneration would reset `created` every run
+    (never backdating), use an ISO-Z format that is not the plugin's own, and race the plugin's own
+    re-stamp (it fires within seconds of any parseable write) against `vault_api.write`'s read-back.
+    `type`/`status` alone still give the plugin something well-formed to modify on the note's first
+    write (AGENTS.md: it "writes nothing at all when the frontmatter cannot be parsed") — the plugin
+    owns `created`/`updated` from there on, exactly as every other doc in this tree already gets
+    them."""
 
     def line(label, actual, unit="", *, reason=None):
         t = targets.get(label)
@@ -366,16 +392,14 @@ def render_kpi_note(report: dict, *, targets: dict, now: str | None = None) -> s
         report["revert"], report["backlog_age"], report["inflow_outflow"],
         report["product_factory_ratio"], report["deploy_lag"],
     )
-    frontmatter = f"---\ntype: note\nstatus: active\ncreated: {now}\nupdated: {now}\n---\n"
+    frontmatter = "---\ntype: note\nstatus: active\n---\n"
     lines = [f"# KPI — {report['period']}", ""]
     # N1 (#475 fold review round 1): velocity narrows to runner-authored PRs (`--search "Produced by
     # dev-runner in:body"`, merged_runner_prs's own filter) — say so, never let a bare "merged" count
     # read as every merge this window.
     lines.append(line("velocity_per_week", v["per_week"], "/week") +
                 f" ({v['merged']} runner PRs merged; attended PRs excluded)")
-    cycle_reason = "no merged PR resolved a linked issue's own createdAt this window" \
-        if c["mean_total_hours"] is None else None
-    lines.append(line("cycle_time_hours", c["mean_total_hours"], "h", reason=cycle_reason) +
+    lines.append(line("cycle_time_hours", c["mean_total_hours"], "h", reason=c.get("gap_reason")) +
                 (f" (queue: {c['mean_queue_hours']}h)" if c["mean_queue_hours"] is not None else ""))
     lines.append(line("blocked_rate", b["rate"]) + f" ({b['blocked']}/{b['total']})")
     lines.append(line("repair_rate", rp["rate"]) + f" ({rp['repaired']}/{rp['total']})")
@@ -564,10 +588,12 @@ def gather_report_inputs(*, gh, repo, org, project, component_root, code_root=No
     for pr in prs:
         merge_dates.append(pr["mergedAt"])
         try:
-            # B1 (#475 fold review round 1): `closingIssuesReferences` rides the SAME call as
-            # `body,comments` — the linked issue's own `createdAt` is cycle time's "created" bound
-            # (created -> merged); `ready_at` stays None, documented at `cycle_time_hours` itself
-            # (no per-field ProjectV2 status-change history without the audit-log API).
+            # B1 (#475 fold review round 2): `closingIssuesReferences` rides the SAME call as
+            # `body,comments` — but it is a NARROW projection (verified live against a real PR,
+            # yellow-robots/factory#431: id/number/repository/url ONLY, no createdAt anywhere on
+            # it). The issue NUMBER comes from here; `ready_at` stays None, documented at
+            # `cycle_time_hours` itself (no per-field ProjectV2 status-change history without the
+            # audit-log API).
             data = _as_json(gh(["pr", "view", str(pr["number"]), "--repo", repo,
                                "--json", "body,comments,closingIssuesReferences"]))
         except Exception:
@@ -576,9 +602,26 @@ def gather_report_inputs(*, gh, repo, org, project, component_root, code_root=No
         pr_trails.append(texts)
         ok, usage = sources.pr_usage_from_texts(texts) if texts else (False, "")
         pr_usages.append(usage if ok else {"stages": [], "cost_usd": 0.0})
+
+        # The linked issue's own `createdAt` is a SEPARATE read the pr-view projection can never
+        # answer — the REST issue resource (`gh api repos/<owner>/<repo>/issues/<n>`, the mandate's
+        # own `gh api` wording; REST's own snake_case `created_at`, never GraphQL's `createdAt`).
+        # `link_status` distinguishes "this PR named no linked issue at all" from "it named one but
+        # that read failed" — two different facts the note must never blur into one bare `None`.
         refs = (data or {}).get("closingIssuesReferences") or []
-        created = refs[0].get("createdAt") if refs and isinstance(refs[0], dict) else None
-        cycle_events.append({"created": created, "ready_at": None, "merged": pr["mergedAt"]})
+        created = None
+        link_status = "no_linked_issue"
+        if refs and isinstance(refs[0], dict) and refs[0].get("number"):
+            link_status = "read_failed"
+            try:
+                issue_data = _as_json(gh(["api", f"repos/{repo}/issues/{refs[0]['number']}"]))
+                created = (issue_data or {}).get("created_at")
+                if created:
+                    link_status = "linked"
+            except Exception:
+                pass
+        cycle_events.append({"created": created, "ready_at": None, "merged": pr["mergedAt"],
+                             "link_status": link_status})
 
     if code_root:
         try:
@@ -648,7 +691,7 @@ def run_report(*, gh, vault, repo, issue, org, project, component_root, code_roo
 
     report = compute_report(inputs, period=period, parsed_strategy=parsed_strategy)
     targets = against_targets(report, kpi_targets)
-    note = render_kpi_note(report, targets=targets, now=inputs.get("now"))
+    note = render_kpi_note(report, targets=targets)
     kpi_line = render_yr_kpi_line(who=who, period=period)
     vault.write(note_path(operations_home, period), note + "\n" + kpi_line)
 
@@ -729,7 +772,7 @@ def main(argv=None):
                 parsed_strategy = None
                 kpi_targets = {}
         report = compute_report(inputs, period=period, parsed_strategy=parsed_strategy)
-        note = render_kpi_note(report, targets=against_targets(report, kpi_targets), now=inputs.get("now"))
+        note = render_kpi_note(report, targets=against_targets(report, kpi_targets))
         print("TEST-MODE: no vault write, no comment posted — the plan only")
         print(note)
         return 0
@@ -740,7 +783,11 @@ def main(argv=None):
                         code_root=args.code_root, strategy_doc=args.strategy_doc,
                         operations_home=args.operations_home, who=args.who, period=args.period)
     print(json.dumps(result))
-    return 0
+    # NEW-6 (#475 fold review round 2): a stated failure exits as one — `run_report` already turns
+    # a failed comment post into `kpi_post_failed`/`strategy_post_failed` rather than raising, but a
+    # bare `return 0` here would still tell the caller (a shell, a cron wrapper) that the run
+    # succeeded.
+    return 1 if (result.get("kpi_post_failed") or result.get("strategy_post_failed")) else 0
 
 
 if __name__ == "__main__":
