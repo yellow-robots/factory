@@ -111,10 +111,11 @@ spawns `tools/close-runner.sh` once per epic. That runner runs one `close-walk` 
 over the grounding list) and then `tools/round_record.py`'s `ship-walk` / `round-record` / `crossover`
 subcommands in order — a failed walk stops short of the rest, so no partial close ever posts. Every
 write lands through `tools/vault_api.py`, the machinery's own client of the vault's REST interface (see
-[`documentation-model.md`](documentation-model.md) — *Editing safely*), under the App's identity, and is
-read back to confirm. `tools/epic_gate.py`'s close-hold arm itself — deciding *when* an epic wants to
-self-close and what it demands before it may — is untouched; this section names only what now *satisfies*
-the hold, not what raises it.
+[`documentation-model.md`](documentation-model.md) — *Editing safely*), under `YR_VAULT_API_KEY` — the
+vault credential, not the GitHub App identity, which governs native-surface acts instead (the epic and
+issue trail, never the vault) — and is read back to confirm. `tools/epic_gate.py`'s close-hold arm
+itself — deciding *when* an epic wants to self-close and what it demands before it may — is untouched;
+this section names only what now *satisfies* the hold, not what raises it.
 
 **What shipped is published (it-36).** The merge evaluator's `fragment_present` condition (issue #474)
 demands a changelog fragment under the manifest's `changelog_dir` on every merging PR — the runner's own

@@ -306,6 +306,7 @@ def test_closing_md_promote_section_matches_skill_md_granularity():
     section = _closing_promote_section()
     bullet = _input_gate_bullet()
     shared_terms = [
+        r"triage record",
         r"design artifact",
         r"`active`",
         r"mechanical",

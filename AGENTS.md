@@ -20,7 +20,7 @@ product/RFC discussion (vault)  →  file a Task (Issue Form = Definition of Rea
 ```
 
 The human **input** gate is the **triage record**: nothing activates outside it (it-36). A human
-disposes each ranked seed on the component's triage surface — `go` / `park` / `reject`, under his own
+disposes each ranked seed on the component's triage surface — `go` / `park` / `reject`, under their own
 identity — and only a `go` licenses anything downstream; a design artifact (a product-spec, or a legacy
 feature-rfc) still needs that **standing approval** before it reaches `active`, whether a human sets it
 directly or, under the license, the PM's own machinery does. Under a `go`, the PM carries the design to
@@ -43,7 +43,7 @@ State lives on native GitHub primitives, never labels: `Backlog → Ready → In
 
 | Transition | Who | When |
 |---|---|---|
-| → Ready | **human** (standalone) / **epic-gate** (epic child) | standalone: DoR met, human decides; epic child: standing approval auto-promotes the next slice |
+| → Ready | **human** (standalone) / **epic-gate** (epic child) / **machinery** (the epic's own flip, it-36) | standalone: DoR met, human decides; epic child: standing approval auto-promotes the next slice; epic flip: an attended session, or, under a `go` triage record, `tools/promote.sh`'s `epic-flip.machinery` arm |
 | → Done | native automation | PR merged (factory-executed for an armed repo, human otherwise) |
 
 Remaining transitions and the board are RFC 0003's detail.
@@ -281,14 +281,15 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   invocation: site, elapsed seconds, disposition), which `append` folds into the row as a top-level
   `gates` list. `per-model`/`report` are read-only aggregations over those rows (depth:
   `skills/factory/references/pipeline.md` → "The ledger").
-- **The PM is the actor of the upper lane** (it-36): under a `go` triage record it drafts, reviews,
-  activates, crosses, and — at close — ships a design end to end, under its own App identity, with no
-  attended session opening or steering the round. **The residual attended class** is what is left once
-  the PM governs a component: host, ops, and auth work; a PR the runner did not open; gate-touching
-  slices (the pipeline builds under fixed gates); and anything on the closed escalation list (a new
-  external dependency, a data migration, spend over a theme's or the loop's budget, out-of-direction
-  work) — each parks with a record until the owner's approving review. Where an attended session still
-  runs, it does so under the human's standing grants (settled 2026-07-03, dogfooded through it-6→10):
+- **Attended operator sessions** are now the residual class, once a component is PM-governed (it-36:
+  **the PM is the actor of the upper lane** — under a `go` triage record it drafts, reviews, activates,
+  crosses, and — at close — ships a design end to end, under its own App identity, with no attended
+  session opening or steering the round). What's left for an attended session: host, ops, and auth
+  work; a PR the runner did not open; gate-touching slices (the pipeline builds under fixed gates); and
+  anything on the closed escalation list (a new external dependency, a data migration, spend over a
+  theme's or the loop's budget, out-of-direction work) — each parks with a record until the owner's
+  approving review. Where an attended session still runs, it does so under the human's standing grants
+  (settled 2026-07-03, dogfooded through it-6→10):
   cold design reviews with per-finding dispositions; the crossing's technical-rfc and decomposition
   review as its gate; epic Ready flips under a design's standing approval and standalone flips on
   explicit instruction — always record-before-flip on the trail. Never: set a design `active` outside a

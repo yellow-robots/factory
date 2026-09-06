@@ -438,19 +438,16 @@ two-instance deploy shape and [`pm.md`](pm.md) for the human's own half of the r
   reversal or a withdrawn governing epic; spawn `tools/design-runner.sh`'s `product` stage for the
   single top-ranked licensed seed with no design already running for that repo — one design in flight
   per repository (distinct from the epic-gate's one-slice-per-epic).
-- **`tools/design-runner.sh`** (sourcing `tools/stage_lib.sh`, the same harness `dev-runner.sh` uses):
-  `product` (drafts a spec from the seed + strategy doc + the product-spec template), `adversarial`
-  (the cold-review standard, `VERDICT:`), `fold` — each stage its own `kind: design` ledger row.
-- **`tools/design-review-runner.sh`**, a separate invocation spawned once drafting exits (so it
-  naturally carries its own run id for the independence check): `fit` (the architect's spec-ready
-  moment, `YR-DESIGN-FIT`), `arch` (the architecture review, `YR-ARCH-REVIEW` + an ADR; a `block`
-  earns one fold-and-re-review), `activate` (`process.py transition-check
-  design-doc.draft->active.machinery`, writing only on exit 0 through `tools/vault_api.py`).
-- **`tools/cross-runner.sh` + `tools/cross.py`** (the crossing): `cross-draft`, the cold technical-rfc
-  review (one fold-and-re-review), the architecture review again (one fold-and-re-review on `block`) —
-  then `cross.py file`'s deterministic gates (`check_links`, `check_task` per typed slice) and the
-  filing act itself (the epic, its sub-issues, `YR-EPIC-APPROVAL`, `crossed_to`); an escalated slice
-  (`Declares: external dependency <name>` / `Declares: data migration`) files untyped instead.
+- **`tools/design-runner.sh`** — the sweep's own spawn (its stages are `AGENTS.md`'s own repo-map row,
+  cited there, never restated here). This is the only stage the sweep itself spawns; the two hops
+  below are **not wired to it today**.
+- **`tools/design-review-runner.sh`** (stages: `AGENTS.md`'s own repo-map row) — run once drafting
+  exits, so it naturally carries its own run id for the independence check. `sweep_designs` never
+  spawns this — an attended operator (or a future sweep) invokes it.
+- **`tools/cross-runner.sh` + `tools/cross.py`** (the crossing; stages and the filing act: `AGENTS.md`'s
+  own repo-map rows) — an escalated slice files untyped instead, park-and-wait. `tools/design_gate.py`'s
+  sweep has no `cross` spawn point either (named honestly in `cross-runner.sh`'s own header) — an
+  attended operator (or a future sweep) invokes it once a design is drafted, reviewed, and activated.
 - **`tools/promote.sh`'s machinery arm**, gated on `YR_MACHINERY` and the App identity: the epic flip
   through `task.backlog->ready.epic-flip.machinery`, licensed by the epic's own `YR-TRIAGE` `go`.
 - **`sweep_close` → `tools/close-runner.sh`**: when an epic carries `YR-CLOSE-HOLD` and its mandated
@@ -460,9 +457,12 @@ two-instance deploy shape and [`pm.md`](pm.md) for the human's own half of the r
   the owner's login — `GH_BIN` pointed at `tools/gh-app` (the on-demand installation-token wrapper) is
   the whole switch; every vault write runs through `tools/vault_api.py`'s REST client, never MCP (a
   cold process has no MCP registration) and never a filesystem mutation.
-- **Model roles:** `models.toml`'s `pm`/`arch_review` roles resolve independently of the build/review
-  roles above — the upstream lane (drafting, both reviews, the architecture review, packs, strategy
-  work) runs on the strongest registered class; only implementation, test, and repair delegate down.
+- **Model roles:** `models.toml` registers `pm`/`arch_review` (both `opus`, the strongest class) beside
+  `build`/`review`, but no runner resolves them today — `design-runner.sh`, `design-review-runner.sh`,
+  `cross-runner.sh`, and `close-runner.sh` all call `resolve_role review`, the SAME role the lower
+  pipeline's reviewer resolves. The registry's own convention still holds in effect (the upper lane
+  runs on the strongest class, since `review` already defaults there) — `pm`/`arch_review` are a
+  declared distinction not yet wired to any caller.
 
 ## The changelog and stakeholder notification
 

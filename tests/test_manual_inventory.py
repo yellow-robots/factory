@@ -113,7 +113,8 @@ def test_readme_points_a_human_operator_to_the_manual():
 # ---------------------------------------------------------------------------
 # the verb line's grammar and date (criterion: "carry the human verb list in
 # force at its ship date on a line in the grammar 'Verbs in force at
-# <yyyy-mm-dd> — last changed by it-32'")
+# <yyyy-mm-dd> — last changed by <iteration>'"; it-36 slice K bumps the
+# iteration tag and adds the ninth verb, the triage disposition)
 # ---------------------------------------------------------------------------
 
 

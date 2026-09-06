@@ -324,8 +324,12 @@ def test_template_keeps_supersedes_scaffold():
 
 
 def test_agents_md_input_gate_names_feature_rfc_as_legacy():
+    """it-36 slice K reworded the paragraph's own opening from '...gate sits at the design
+    artifacts' to '...gate is the triage record' (the round's new granularity — nothing
+    activates outside a triage record); the anchor tracks the load-bearing prefix only, the
+    same re-anchoring test_input_gate_invariant_granularity.py's _input_gate_bullet() got."""
     text = AGENTS.read_text(encoding="utf-8")
-    match = re.search(r"input.{0,10}gate sits at the design artifacts.*?veto", text, re.DOTALL)
+    match = re.search(r"input.{0,10}gate is.*?veto", text, re.DOTALL)
     assert match, "AGENTS.md is missing the input-gate paragraph"
     para = match.group(0)
     assert re.search(r"product-spec", para, re.IGNORECASE), \

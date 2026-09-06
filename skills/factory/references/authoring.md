@@ -107,9 +107,11 @@ crossing when it happens; the close-time freeze only verifies it (see
 [`documentation-model.md`](documentation-model.md) — *Identity & navigation*).
 
 **Gate: *the technical-rfc review* — the adversarial review discipline under the standing approval.**
-The human's structural gate sits at design-active, upstream; past the airlock there is no per-RFC
-human sign-off, and open questions never ride the epic — an unresolved WHAT-call sends the question
-back into the governing design doc. For the review discipline that feeds this gate, see
+The human's structural gate sits at the **triage record**, upstream of design-active (it-36) — where a
+`go` disposition licenses either a human or, under it, the PM's own machinery to carry the design to
+`active`; past the airlock there is no per-RFC human sign-off, and open questions never ride the epic —
+an unresolved WHAT-call sends the question back into the governing design doc. For the review
+discipline that feeds this gate, see
 [`reviewing.md`](reviewing.md).
 
 **The epic-gate enforces this mechanically.** A filed epic-body line beginning `YR-OPEN-QUESTION:` at
@@ -133,8 +135,8 @@ unindented — either the block form (the marker alone on its own line, then `de
 non-empty: `design` names the governing product-spec/feature-rfc, `review` names the technical-rfc
 review's outcome, `who` names who is attesting it. Posted by the **attended operator session**, under the
 design's standing approval, record-before-flip (see `AGENTS.md` — *Attended operator sessions*) — the
-human's gate sits at design-active, never per-epic, per the owner's ruling of 2026-08-04 ("flipping an
-epic is not my gate"); and never satisfied by the epic-gate's own refusal comment, which names the marker
+human's gate sits at the triage record, never per-epic, per the owner's ruling of 2026-08-04 ("flipping
+an epic is not my gate"); and never satisfied by the epic-gate's own refusal comment, which names the marker
 and fields only in prose, never at column 0. `tools/epic_gate.py`'s `_has_valid_approval` re-reads this
 record on every sweep; absent, unmatched, or short a field, it blocks every child's promotion until the
 record is corrected.

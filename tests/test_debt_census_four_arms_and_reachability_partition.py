@@ -355,7 +355,7 @@ def test_debt_rounds_names_architect_reference_without_renaming_its_role():
         "debt-rounds.md system-shape arm does not cite architect.md for the kind of judgment "
         "behind it"
     )
-    assert "none of them this arm" in section or "never a fourth" in section, (
+    assert "none of them this arm" in section, (
         "debt-rounds.md does not restate that architect.md binds the architect role to its own "
         "named moments, none of them this arm"
     )

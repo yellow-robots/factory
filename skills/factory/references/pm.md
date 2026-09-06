@@ -12,10 +12,14 @@
 ## Why this reference exists (it-36)
 
 The PM is one role, one actor, two duties: *headless*, it keeps every open seed **decision-ready** and
-carries a licensed one to Done end to end; *with the owner*, it keeps the triage surface and the
-strategy pack current so a decision costs minutes, never a meeting. This reference is the human's own
-half of that second duty — the two rituals as she meets them: reading a pack and writing a disposition,
-and revising a strategy doc.
+is mandated to carry a licensed one to Done end to end — drafting, review, activation, the crossing,
+the build, the close; *with the owner*, it keeps the triage surface and the strategy pack current so a
+decision costs minutes, never a meeting. In this tree today the sweep itself only spawns drafting
+(`tools/design-runner.sh`) and the close (`tools/close-runner.sh`, once `YR-CLOSE-HOLD` fires); the two
+middle hops — the review runner and the crossing — exist as tools but are not spawned by anything yet
+(see [`pipeline.md`](pipeline.md) → *The design sweep and runner*). This reference is the human's own
+half of the second duty — the two rituals as the owner meets them: reading a pack and writing a
+disposition, and revising a strategy doc.
 
 ## Ritual 1 — the triage pack and the `YR-TRIAGE` disposition
 
@@ -51,9 +55,9 @@ author. The sweep's `latest_triage_dispositions` reads the **last** record per s
 disposition; a record from anyone but the configured owner login is ignored outright. Nothing a
 triage record does not name ever activates: `tools/design_gate.py evaluate` (the
 `design-triage-license` / `epic-triage-license` evaluators `process.toml` names on the activation and
-epic-flip transitions) fails closed on an absent or non-`go` disposition, and the model's own **Rule
-M** refuses at load any one-way door naming `machinery` in `actor` with no `evaluator_pass` guard
-licensing the walk — so a triage-gated door can never ship ungated by construction.
+epic-flip transitions) fails closed on an absent or non-`go` disposition — Rule M's own guarantee that
+a triage-gated door can never ship ungated (see [`attended-lane.md`](attended-lane.md) → *The mandatory
+step set*, cited there, never restated here).
 
 **Reversal.** A `park`/`reject` on a seed already in flight (a design already drafting) stops it: the
 sweep kills the running stage group and notes it on the triage issue — no resume without a fresh `go`.
@@ -67,7 +71,7 @@ independent of it.
 
 ## Ritual 2 — the strategy doc
 
-The owner's **only** direction input, revised whenever she chooses, at no fixed cadence — no
+The owner's **only** direction input, revised whenever the owner chooses, at no fixed cadence — no
 in-direction candidate means the PM idles and says so on the triage issue, never a fallback to factory
 work. One per component, a `note` under `<component>/strategy/`, carrying exactly one fenced
 ` ```yr-strategy ` TOML block (`tools/strategy.py`, mirroring `tools/merge_shadow.py`'s own fence-word
@@ -85,14 +89,16 @@ stop_when = "..."
 constraints = ["..."]
 kpi_targets = { ... }
 loop_budget_usd_per_week = 0
-factory_cap = "..."
+factory_cap = 3
 ```
 
 A missing or malformed block is a loud finding, never a silent empty result. `loop_budget_usd_per_week`
-bounds the PM's own headless loop; `factory_cap` caps the factory's own theme explicitly, so a
-component's ranked backlog can never be all factory work by construction. When the sweep observes the
-doc's hash change it posts `YR-STRATEGY: who=<editor> doc=<path>` on the triage issue's trail — the
-record names that a change happened and who made it, never a second copy of the doc's own content.
+is enforced today — `tools/design_gate.py`'s own loop-budget check reads it and escalates on exhaustion
+(the closed escalation list, below). `factory_cap` is declared, parsed by `tools/strategy.py`, and not
+yet enforced by anything — the cap on the factory's own theme is the spec's own rule, not yet a
+detector in this tree. `YR-STRATEGY` (`records.toml`) names its emitter as "the design sweep, posted
+when the strategy doc it tracks changes" — `tools/design_gate.py` carries no hash tracking or emitter
+for it today; like `YR-KPI` below, this is a declared grammar with no emitter yet.
 
 ## The KPI report (queued — it-36 slice J, #475, not yet built in this tree)
 
@@ -106,21 +112,24 @@ not per-repo. Slice J's own deliverable is `tools/kpi.py`, posting one `YR-KPI` 
 the component's operations home and a `YR-KPI` record on the triage issue; until that slice ships,
 `YR-KPI`'s `records.toml` row is a declared grammar with no emitter yet. The session's own delivered
 slice (`tools/compile_slice.py`) is slice J's to extend with a standing triage line naming how many
-seeds await the owner's own line — read this reference again once #475 lands, this section is written
-ahead of that PR.
+seeds await the owner's own line — declared, not yet built.
 
 ## The closed escalation list — default-block
 
-Out-of-direction work, arming, auth and tokens, spend over a theme's budget or the loop's, a new
-external dependency, a data migration, and any PR the runner did not open: each parks the item with a
-record until the owner's own approving review; everything else runs default-proceed under the
-license. Two arms are wired in this tree today: `tools/design_gate.py` posts one `YR-ESCALATION:
-act=idle why=loop-budget-exhausted` when a repo's trailing-week `kind=design` ledger spend exhausts
-its own `loop_budget_usd_per_week`, then idles (posted once, never repeated); `tools/cross.py` files a
-slice declaring `Declares: external dependency <name>` or `Declares: data migration` **untyped** — the
-epic-gate's own `not-a-task` hold, so it structurally cannot promote — and carries a `YR-ESCALATION`
-comment naming the declaration, with nothing else waiting on it. Arming and auth are never machinery-
-capable acts at all (`process.toml`'s actor list names `human` alone on those doors) — a structural
-refusal, not an escalation record. The remaining arms (spend over a *theme's* own budget, distinct
-from the loop's; out-of-direction work as a named escalation rather than a silent idle) are the closed
-list's own scope, not yet a second detector in this tree.
+The spec's own closed list: out-of-direction work, arming, auth and tokens, spend over a theme's budget
+or the loop's, a new external dependency, a data migration, and any PR the runner did not open — each
+parks the item with a record until the owner's own approving review; everything else runs
+default-proceed under the license. Where each entry actually sits in this tree today, three shapes:
+
+- **Parks with a `YR-ESCALATION` record, wired.** `tools/design_gate.py` posts one `YR-ESCALATION:
+  act=idle why=loop-budget-exhausted` when a repo's trailing-week `kind=design` ledger spend exhausts
+  its own `loop_budget_usd_per_week`, then idles (posted once, never repeated). `tools/cross.py` files
+  an escalated slice untyped and carries its own `YR-ESCALATION` comment — grammar cited from
+  `AGENTS.md`'s own `tools/cross.py` repo-map row, never restated here.
+- **Structural refusal, not an escalation record.** Arming: `process.toml`'s `arming.disarmed->armed`
+  transition names `human` alone in `actor` — machinery cannot even propose it, let alone escalate a
+  refusal. Auth and tokens: no `auth` machine exists in `process.toml` at all — its home is `AGENTS.md`
+  → *Auth is human work*, a rule outside the model entirely, never a door for machinery to approach.
+- **The closed list's own scope, not yet a second detector in this tree.** Spend over a *theme's* own
+  budget (distinct from the loop's, which IS wired above); out-of-direction work as a named escalation
+  rather than the silent idle `sweep_designs` posts today when no theme targets a repo.

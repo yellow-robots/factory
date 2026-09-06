@@ -99,11 +99,10 @@ never the design. The **severity valve**: the agent may route a severe-implicati
 human at the decision surface — severe means a one-way door (consequences, not diffs) — and every
 escalation lands as a `YR-ESCALATION` record, counted in the round record, so the valve is measured.
 
-**The attended PR's fragment duty (it-36, issue #474).** The merge evaluator's `fragment_present`
-condition demands a changelog fragment under the manifest's `changelog_dir` on the PR's own diff — the
-runner's implement stage writes one on every runner-built PR; a PR the runner did not open carries no
-such stage, so the session that opens it adds its own fragment by hand, or the merge blocks on the
-missing condition, same as any other.
+**The attended PR's fragment duty (it-36, issue #474)** is stated once, in full, at `AGENTS.md` →
+*Conventions*, "Attended operator sessions" — cited here, never restated: a PR the runner did not open
+carries no automatic changelog fragment, and the merge evaluator's `fragment_present` condition blocks
+on the missing one.
 
 ## Delivery, the slice, and the close
 
