@@ -62,7 +62,7 @@ name = "YR-EPIC-APPROVAL"
 marker = "YR-EPIC-APPROVAL"
 mode = "prefix"
 fields = ["design", "review", "who"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the attended operator session (a comment on the epic's trail, record-before-flip)"
 readers = ["tools/epic_gate.py _has_valid_approval (:420, mode=prefix; block or one-line form)"]
 surfaces = ["issue-trail"]
@@ -336,7 +336,7 @@ name = "YR-DESIGN-REVIEW"
 marker = "YR-DESIGN-REVIEW:"
 mode = "prefix"
 fields = ["who", "verdict"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the independent cold reviewer's record, typed into the reviewed vault doc"
 readers = ["tools/check_trail.py (design lane)"]
 surfaces = ["vault-doc"]
@@ -347,7 +347,7 @@ name = "YR-DESIGN-FIT"
 marker = "YR-DESIGN-FIT:"
 mode = "prefix"
 fields = ["who", "verdict"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the architect's fit verdict, typed into the vault doc at the spec-ready moment"
 readers = ["tools/check_trail.py (design lane)"]
 surfaces = ["vault-doc"]
@@ -369,7 +369,7 @@ name = "YR-EPIC-READY"
 marker = "YR-EPIC-READY"
 mode = "prefix"
 fields = ["design", "who"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the epic-flip funnel (tools/promote.sh), record-before-flip — deliberately no separate why: the design IS the why"
 readers = ["tools/check_trail.py (epic lane)", "tools/process.py (the epic-flip transition's post)"]
 surfaces = ["issue-trail"]
@@ -391,7 +391,7 @@ name = "YR-ACCEPT"
 marker = "YR-ACCEPT:"
 mode = "prefix"
 fields = ["who", "date"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the accepting session's provenance line in the accepted doc (tombstones + sweep ride the act)"
 readers = ["tools/check_trail.py (design lane)"]
 surfaces = ["vault-doc"]
@@ -413,7 +413,7 @@ name = "YR-SHIP-WALK"
 marker = "YR-SHIP-WALK:"
 mode = "prefix"
 fields = ["who", "scope"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the ship-walk session's trace on the epic (or standalone task) trail"
 readers = ["tools/check_trail.py (close lane)"]
 surfaces = ["issue-trail"]
@@ -424,7 +424,7 @@ name = "YR-ROUND-RECORD"
 marker = "YR-ROUND-RECORD:"
 mode = "prefix"
 fields = ["refusals", "records-demanded", "detector-findings", "escalations", "deployed"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the closing session, on the epic (or standalone task) trail"
 readers = ["tools/check_trail.py (close lane)", "the human (prices counts against attended attention)"]
 surfaces = ["issue-trail"]
@@ -435,7 +435,7 @@ name = "YR-ESCALATION"
 marker = "YR-ESCALATION:"
 mode = "prefix"
 fields = ["act", "why"]
-emitted_by = ["attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "the agent, at the decision surface, when implications are severe (a one-way door)"
 readers = ["tools/check_trail.py", "the round record's counts"]
 surfaces = ["issue-trail"]
@@ -468,7 +468,7 @@ name = "YR-CROSSOVER"
 marker = "YR-CROSSOVER"
 mode = "prefix"
 fields = ["cost", "verdict", "who"]
-emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
+emitted_by = ["human", "attended-agent", "machinery"]   # typed actor classes (rule S's column)
 emitter = "tools/ledger.py crossover (the closing session's typed crossover verdict — the cost evidence is the ledger's own crossover-cost axis, read at close; --test-mode writes nothing)"
 readers = ["a census hand-run of tools/check_trail.py over the epic trail (not a compiled lane mandate: the verdict is the close's judgment, priced by the human)", "humans at close"]
 surfaces = ["issue-trail"]
@@ -497,3 +497,90 @@ emitter = "the attended session, recording the human's explicit instruction for 
 readers = ["tools/check_trail.py", "tools/process.py (the shared-ref push transition's guard, on the branch's open PR trail — it-31 slice 5); arming still refuses categorically at the store-permission tier, no record licensing it"]
 surfaces = ["issue-trail", "pr-trail"]
 notes = "The record a wall condition names must itself be registered — the canon's own rule, applied to the conditions."
+
+# ── the strategy machinery's records (it-36 slice D, #469): the triage license and its trail ────
+
+[[record]]
+name = "YR-TRIAGE"
+marker = "YR-TRIAGE:"
+mode = "prefix"
+fields = ["seed", "disposition", "who"]
+emitted_by = ["human"]   # typed actor classes (rule S's column) — human-only, by design
+emitter = "the human, triaging one ideas-backlog seed on the strategy issue's trail"
+readers = ["tools/design_gate.py (the triage-license evaluator: a go disposition licenses the machinery activation / epic-flip transitions it names)"]
+surfaces = ["issue-trail"]
+notes = "Grammar: `YR-TRIAGE: seed=<ideas file stem> disposition=go|park|reject who=@<login>`. Human-only in emitted_by: the triage decision is the input gate itself, never delegable to machinery or an attended agent."
+
+[[record]]
+name = "YR-TRIAGE-PACK"
+marker = "YR-TRIAGE-PACK"
+mode = "sentinel"
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "the design sweep's triage-pack comment (one seed batch surfaced for the human's YR-TRIAGE dispositions)"
+readers = ["tools/design_gate.py (idempotence key, mode=sentinel — a re-run never reposts an outstanding pack)"]
+surfaces = ["issue-trail"]
+notes = "The pack comment's own dedup marker, on the YR-CLOSE-HOLD/YR-DEBT-DUE sentinel shape — the pack's content is prose, not a parsed grammar; only its presence is."
+
+[[record]]
+name = "YR-STRATEGY"
+marker = "YR-STRATEGY:"
+mode = "prefix"
+fields = ["who", "doc"]
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "the design sweep, posted on the strategy issue's trail when the strategy doc it tracks changes"
+readers = ["tools/design_gate.py"]
+surfaces = ["issue-trail"]
+notes = "who names the doc's editor; doc names the vault path the sweep observed change on."
+
+[[record]]
+name = "YR-KPI"
+marker = "YR-KPI:"
+mode = "prefix"
+fields = ["who", "period"]
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "the design sweep's periodic KPI record"
+readers = ["tools/design_gate.py"]
+surfaces = ["vault-doc", "issue-trail"]
+notes = ""
+
+[[record]]
+name = "YR-ARCH-REVIEW"
+marker = "YR-ARCH-REVIEW:"
+mode = "prefix"
+fields = ["who", "verdict", "adr"]
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "the design sweep's architecture-review record, typed at an ADR's review"
+readers = ["tools/design_gate.py"]
+surfaces = ["vault-doc", "pr-trail"]
+notes = "adr names the reviewed ADR's identifier/path."
+
+[[record]]
+name = "YR-CHANGELOG"
+marker = "YR-CHANGELOG:"
+mode = "prefix"
+fields = ["iteration", "release", "delivered"]
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "the design sweep's changelog record, typed at an iteration's close"
+readers = ["tools/design_gate.py"]
+surfaces = ["issue-trail"]
+notes = ""
+
+[[record]]
+name = "yr-strategy/1"
+marker = "yr-strategy"
+mode = "toml-schema"
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "the design sweep (the fenced ```yr-strategy TOML block riding the YR-STRATEGY comment)"
+readers = ["tools/design_gate.py"]
+surfaces = ["issue-trail"]
+notes = "The fence word yr-strategy is itself part of the parse grammar — the yr-merge-record precedent (json-schema), applied to a TOML fence instead of JSON (the new toml-schema mode)."
+
+[[record]]
+name = "yr-changelog/1"
+marker = "yr-changelog"
+mode = "toml-schema"
+emitted_by = ["machinery"]   # typed actor classes (rule S's column)
+emitter = "the design sweep (the fenced ```yr-changelog TOML block riding the YR-CHANGELOG comment)"
+readers = ["tools/design_gate.py"]
+surfaces = ["issue-trail"]
+notes = "The fence word yr-changelog is itself part of the parse grammar, same discipline as yr-strategy/1."

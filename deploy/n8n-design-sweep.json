@@ -1,0 +1,37 @@
+{
+  "name": "YR design sweep — poll the vault, triage/strategy/KPI/changelog machinery",
+  "_comment": "STARTING SKELETON (it-36 slice D, #469) — import into n8n, then wire per deploy/DISPATCH.md's PM-instance section: the PM instance's dispatch URL + its OWN bearer token (never the build instance's) on the POST node. node typeVersions may need bumping to your n8n. Keep INACTIVE: /design-sweep is not yet a route tools/dispatch.py answers — that wiring, and tools/design_gate.py itself, are a later slice's (E/F). This file exists now so the PM instance's shape is reviewable alongside the model that licenses it.",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule tick",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [260, 300],
+      "parameters": { "rule": { "interval": [ { "field": "minutes", "minutesInterval": 10 } ] } }
+    },
+    {
+      "id": "design-sweep",
+      "name": "POST /design-sweep",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://REPLACE_BIND_IP:8771/design-sweep",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Authorization", "value": "Bearer REPLACE_WITH_PM_DISPATCH_TOKEN" }
+        ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule tick": { "main": [ [ { "node": "POST /design-sweep", "type": "main", "index": 0 } ] ] }
+  }
+}

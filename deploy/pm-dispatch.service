@@ -1,0 +1,36 @@
+[Unit]
+# YR PM dispatch endpoint (it-36 slice D, #469). Receives POST /design-sweep from n8n and fires the
+# design-sweep machinery — the SAME dispatch.py listener as deploy/dispatch.service, run as a SECOND,
+# separate instance so the two never share a process, a port, or a bearer token. This is the one
+# dispatch instance the vault credential (YR_VAULT_API_KEY) ever reaches — see the ExecStart's
+# `--instance pm` below and tools/dispatch.py's _INSTANCE / _PM_ONLY_KEYS.
+# Install as a USER service: ~/.config/systemd/user/pm-dispatch.service
+Description=YR PM dispatch endpoint (design-sweep)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Same checkout as the build instance — the code is identical; only the instance identity and the
+# env file differ. %h resolves to yr-factory's home at unit start.
+WorkingDirectory=%h/yellow-robots/factory
+# secret + config live here, NOT in the repo (see pm-dispatch.env.example); chmod 600. Its own
+# DISPATCH_TOKEN, DISPATCH_PORT, and (unlike the build instance) DISPATCH_BIND=127.0.0.1 — this
+# instance is never exposed past localhost, since it is the one instance the vault key reaches.
+EnvironmentFile=%h/.config/dev-runner/pm-dispatch.env
+# The instance discriminator is an ARGV FLAG, never an env var (it-36 slice D, #469, corrected by
+# review round 2): `man 5 systemd.exec` — "Settings from these [EnvironmentFile=] files override
+# settings made with Environment=" — so a unit-file Environment=DISPATCH_INSTANCE=... pin is INERT
+# against this SAME unit's own env file above (a mangled pm-dispatch.env could silently flip it
+# back to build and stop passing the vault key). `--instance pm` on ExecStart is the only source
+# tools/dispatch.py's _INSTANCE ever takes; no env-file line, stray or not, can move it.
+ExecStart=%h/yellow-robots/factory/.venv/bin/python %h/yellow-robots/factory/tools/dispatch.py --instance pm
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+# KillMode=process: on `stop`, signal only the listener — let any in-flight design-sweep (a detached
+# child) run to completion.
+KillMode=process
+
+[Install]
+WantedBy=default.target

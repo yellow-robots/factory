@@ -294,16 +294,28 @@ _EXACT_DENY = {"board.write.gh-cli", "board.write.funnel", "board.write.graphql"
                "design.stamp.obsidian-mcp",
                "release.funnel-ship", "release.funnel-backfill", "release.gh-cli"}
 
+# it-36 slice D (#469): these two bindings carry no `writes` row (no store models
+# issue-type-setting or sub-issue linkage yet) — `compile_acts` (process.py:741) and the decision
+# loop (process.py:~1216) both iterate `writes`, so an empty list means neither ever produces a
+# row, EXACT precision or not. They cannot deny (there is nothing for `_EXACT_DENY` to assert), so
+# this is an explicit pin of the observed None outcome, never silence: matching the vector and
+# then doing nothing is the honest, verified behavior of a binding with no `writes` yet.
+_NO_WRITES_OBSERVES_NOTHING = {"design-sweep.update-issue", "design-sweep.add-sub-issue"}
+
 
 def test_unknown_always_disposes_closed_never_open(model, vectors, monkeypatch):
     """Every source down: each exact-binding vector DENIES for the attended class; each
     over-matching vector advises without ever denying. A fail-open regression flips these."""
     _fail_more_sources(monkeypatch)
     for v in [v for v in vectors if v["kind"] == "journal-independence"]:
-        out, _ = process.decide(model, {**v["act"], "session_id": "conf"}, env=ATTENDED)
+        out, rows = process.decide(model, {**v["act"], "session_id": "conf"}, env=ATTENDED)
         if v["binding"] in _EXACT_DENY:
             assert out is not None, f"{v['binding']}: silence under UNKNOWN is fail-open"
             assert out["hookSpecificOutput"].get("permissionDecision") == "deny", v["binding"]
+        elif v["binding"] in _NO_WRITES_OBSERVES_NOTHING:
+            assert out is None and rows == [], (
+                f"{v['binding']}: a writes-less binding must produce no decision and no journal "
+                f"row at all — not even UNKNOWN")
         elif out is not None:
             hso = out["hookSpecificOutput"]
             assert hso.get("permissionDecision") in (None, "ask"), (
@@ -354,3 +366,189 @@ def test_funnel_and_raw_spellings_reach_the_same_transition(model, vectors, monk
 def test_transition_check_unknown_transition_is_rc2(model):
     rc, msgs = process.transition_check(model, "task.nonesuch", {})
     assert rc == 2 and "unknown transition" in msgs[0]
+
+
+# ── it-36 slice D (#469): rule M, the machinery doors, {scope.path} ──────────────────────────────
+
+def test_rule_m_one_way_machinery_without_evaluator_pass_refused(reg):
+    m = _raw()
+    t = next(t for t in m["transition"] if t["id"] == "task.backlog->ready.epic-flip.machinery")
+    t["guard"] = [g for g in t["guard"] if g["predicate"] != "evaluator_pass"]
+    _expect_error(m, reg, "rule M")
+
+
+def test_rule_m_ignores_reversible_machinery_rows(reg):
+    """Rule M bites one-way doors only: task.backlog->ready.epic-child is machinery-only and
+    reversible, carrying no evaluator_pass guard at all — it must load clean regardless."""
+    m = _raw()
+    t = next(t for t in m["transition"] if t["id"] == "task.backlog->ready.epic-child")
+    assert t["door"] == "reversible"
+    assert not any(g["predicate"] == "evaluator_pass" for g in t["guard"])
+    process._validate(m, reg, "mutated")   # must not raise
+
+
+def test_rule_m_ignores_rows_with_no_machinery(reg):
+    """A one-way door with no machinery in actor is untouched by rule M even with zero guards of
+    any kind — the rule's own condition is `machinery in actor`, not `door == one-way` alone."""
+    m = _raw()
+    t = next(t for t in m["transition"] if t["id"] == "task.backlog->ready.standalone")
+    assert "machinery" not in t["actor"]
+    process._validate(m, reg, "mutated")   # must not raise (already loads; this pins WHY)
+
+
+def test_shipped_machinery_rows_carry_the_evaluator_pass_guard(model):
+    for tid in ("design-doc.draft->active.machinery", "task.backlog->ready.epic-flip.machinery"):
+        t = next(t for t in model["transition"] if t["id"] == tid)
+        assert t["door"] == "one-way"
+        assert t["actor"] == ["machinery"]
+        assert any(g["predicate"] == "evaluator_pass" for g in t["guard"]), tid
+
+
+def test_design_doc_activation_gains_both_evaluators(model):
+    t = next(t for t in model["transition"] if t["id"] == "design-doc.draft->active.machinery")
+    evs = {g["args"]["evaluator"] for g in t["guard"] if g["predicate"] == "evaluator_pass"}
+    assert evs == {"design-triage-license", "design-independence"}
+
+
+def test_human_attended_rows_are_disjoint_from_the_machinery_rows(model):
+    """The regression the review caught: widening `actor` on the SHARED human/attended-agent row
+    would have made every existing propose depend on an evaluator this slice only names, turning
+    `ask` into `deny`. The fix is a disjoint sibling row — pinned here so it can't silently drift
+    back to a shared-row shape."""
+    for base_id, machinery_id in (
+        ("design-doc.draft->active", "design-doc.draft->active.machinery"),
+        ("task.backlog->ready.epic-flip", "task.backlog->ready.epic-flip.machinery"),
+    ):
+        base = next(t for t in model["transition"] if t["id"] == base_id)
+        mech = next(t for t in model["transition"] if t["id"] == machinery_id)
+        assert "machinery" not in base["actor"]
+        assert not set(base["actor"]) & set(mech["actor"])
+        assert not any(g["predicate"] == "evaluator_pass" and
+                      g["args"]["evaluator"] in ("design-triage-license", "design-independence",
+                                                 "epic-triage-license")
+                      for g in base["guard"])
+
+
+def test_doc_frontmatter_status_writable_by_gains_machinery(model):
+    store = model["_stores"]["doc.frontmatter.status"]
+    assert "machinery" in store["writable_by"]
+
+
+def _stub_evaluator_rc(monkeypatch, rc, token=""):
+    class _Out:
+        def __init__(self):
+            self.returncode = rc
+            self.stdout = token
+            self.stderr = ""
+
+    monkeypatch.setattr(process.subprocess, "run", lambda *a, **k: _Out())
+
+
+def _licensed_design_doc(tmp_path, reg):
+    rows_txt = "".join(records.get(reg, n)["marker"] + " done\nwho: r\nverdict: pass\n"
+                       for n in ("YR-DESIGN-REVIEW", "YR-DESIGN-FIT"))
+    doc = tmp_path / "x.md"
+    doc.write_text(f"---\nstatus: draft\n---\n{rows_txt}", encoding="utf-8")
+    return doc
+
+
+def test_scope_path_substitutes_in_the_evaluator_argv(model, reg, tmp_path, monkeypatch):
+    """The engine's argv substitution gains `{scope.path}` (previously only {scope.repo}/
+    {scope.pr}/{scope.issue}/{act.body} were spelled) — pinned by capturing the REAL argv an
+    evaluator_pass guard runs and asserting the literal placeholder never survives."""
+    doc = _licensed_design_doc(tmp_path, reg)
+    seen = []
+
+    class _Out:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _run(argv, **kw):
+        seen.append(argv)
+        return _Out()
+
+    monkeypatch.setattr(process.subprocess, "run", _run)
+    rc, failures = process.transition_check(model, "design-doc.draft->active.machinery",
+                                            {"path": str(doc)})
+    assert rc == 0 and failures == []
+    assert seen, "no evaluator ran — the guard never fired"
+    for argv in seen:
+        assert not any("{scope.path}" in a for a in argv), argv
+    assert any(str(doc) in a for argv in seen for a in argv), seen
+
+
+def test_transition_check_licensed_doc_passes_unlicensed_fails(model, reg, tmp_path, monkeypatch):
+    """The acceptance line, literally: a transition check for a licensed doc passes and for an
+    unlicensed one fails — driven purely by the triage-license evaluator's own verdict, every
+    other guard held constant."""
+    doc = _licensed_design_doc(tmp_path, reg)
+    _stub_evaluator_rc(monkeypatch, 0)
+    rc, failures = process.transition_check(model, "design-doc.draft->active.machinery",
+                                            {"path": str(doc)})
+    assert rc == 0 and failures == []
+
+    _stub_evaluator_rc(monkeypatch, 1, "triage_licensed")
+    rc2, failures2 = process.transition_check(model, "design-doc.draft->active.machinery",
+                                              {"path": str(doc)})
+    assert rc2 == 1
+    assert any("design-triage-license" in f for f in failures2)
+
+
+def test_epic_flip_transition_check_licensed_passes_unlicensed_fails(model, reg, monkeypatch):
+    """Same shape, the epic-flip machinery door: {scope.issue} resolves through the existing
+    substitution, {scope.path} through the new one — this pins the issue-addressed sibling."""
+    approval = records.get(reg, "YR-EPIC-APPROVAL")
+    approval_text = approval["marker"] + "\n" + "\n".join(f"{f}: x" for f in approval["fields"]) + "\n"
+    monkeypatch.setattr(sources, "issue_trail",
+                        lambda repo, issue: (True, [approval_text]))
+    monkeypatch.setattr(sources, "issue_trail_timed",
+                        lambda repo, issue: (True, [("2026-09-06T00:00:00Z", approval_text)]))
+    monkeypatch.setattr(sources, "issue_board_position",
+                        lambda repo, issue: (True, {"status": "Backlog", "reason": "",
+                                                    "itype": "Feature"}))
+    _stub_evaluator_rc(monkeypatch, 0)
+    rc, failures = process.transition_check(model, "task.backlog->ready.epic-flip.machinery",
+                                            {"repo": "yellow-robots/factory", "issue": "469"})
+    assert rc == 0 and failures == []
+
+    _stub_evaluator_rc(monkeypatch, 1, "triage_licensed")
+    rc2, failures2 = process.transition_check(model, "task.backlog->ready.epic-flip.machinery",
+                                              {"repo": "yellow-robots/factory", "issue": "469"})
+    assert rc2 == 1
+    assert failures2
+
+
+def test_machinery_observes_never_refuses_on_activation_and_flip_vectors(model, reg, vectors,
+                                                                          monkeypatch):
+    """Test expectations' own line: conformance vectors for the activation and flip rows under
+    machinery are `observe`, never `refuse`, once the licensing guards hold."""
+    rows_txt = "".join(records.get(reg, n)["marker"] + " done\nwho: r\nverdict: pass\n"
+                       for n in ("YR-DESIGN-REVIEW", "YR-DESIGN-FIT"))
+    monkeypatch.setattr(sources, "vault_doc",
+                        lambda p: (True, f"---\nstatus: draft\n---\n{rows_txt}"))
+    approval = records.get(reg, "YR-EPIC-APPROVAL")
+    approval_text = approval["marker"] + "\n" + "\n".join(f"{f}: x" for f in approval["fields"]) + "\n"
+    monkeypatch.setattr(sources, "issue_trail", lambda repo, issue: (True, [approval_text]))
+    monkeypatch.setattr(sources, "issue_trail_timed",
+                        lambda repo, issue: (True, [("2026-09-06T00:00:00Z", approval_text)]))
+    monkeypatch.setattr(sources, "board_item", lambda item_id: (True, {
+        "status": "Backlog", "reason": "", "itype": "Feature", "updatedAt": "2026-09-06T00:00:00Z",
+        "repo": "yellow-robots/factory", "issue": "469"}))
+    _stub_evaluator_rc(monkeypatch, 0)
+
+    doc_vec = next(v for v in vectors if v["kind"] == "journal-independence"
+                  and v["binding"] == "design.stamp.obsidian-mcp")
+    out, rows = process.decide(model, {**doc_vec["act"], "session_id": "conf-m"},
+                               env={"YR_CALLER": "machinery"})
+    assert out is None
+    assert rows and rows[0]["stance"] == "observe"
+    assert rows[0]["transition_id"] == "design-doc.draft->active.machinery"
+
+    flip_vec = next(v for v in vectors if v["kind"] == "journal-independence"
+                    and v["binding"] == "board.write.gh-cli")
+    out2, rows2 = process.decide(model, {**flip_vec["act"], "session_id": "conf-m2"},
+                                 env={"YR_CALLER": "machinery"})
+    assert out2 is None
+    assert rows2 and rows2[0]["stance"] == "observe"
+    assert rows2[0]["transition_id"] == "task.backlog->ready.epic-flip.machinery"

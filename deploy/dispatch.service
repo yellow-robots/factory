@@ -13,7 +13,13 @@ Type=simple
 WorkingDirectory=%h/yellow-robots/factory
 # secret + config live here, NOT in the repo (see dispatch.env.example); chmod 600.
 EnvironmentFile=%h/.config/dev-runner/dispatch.env
-ExecStart=%h/yellow-robots/factory/.venv/bin/python %h/yellow-robots/factory/tools/dispatch.py
+# The instance discriminator is an ARGV FLAG, never an env var (it-36 slice D, #469, corrected by
+# review round 2): `man 5 systemd.exec` — "Settings from these [EnvironmentFile=] files override
+# settings made with Environment=" — so a unit-file Environment=DISPATCH_INSTANCE=... pin is INERT
+# against this SAME unit's own env file above and would buy no security property. `--instance
+# build` on ExecStart is the only source tools/dispatch.py's _INSTANCE ever takes; no env-file line,
+# stray or not, can move it.
+ExecStart=%h/yellow-robots/factory/.venv/bin/python %h/yellow-robots/factory/tools/dispatch.py --instance build
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

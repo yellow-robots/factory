@@ -3,9 +3,24 @@ import contextlib, errno, fcntl, importlib, json, os, pathlib, re, shlex, signal
 import urllib.error, urllib.request
 from http.server import HTTPServer
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import dispatch  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _restore_dispatch_instance(monkeypatch):
+    """Order-independence pin (it-36 slice D, #469, review round 3): `dispatch.main()` assigns
+    module-level `dispatch._INSTANCE` directly (never through monkeypatch), so a test that calls
+    `main(["--instance", "pm"])` leaks that value into whichever test runs next — reproduced by
+    the reviewer running `test_main_accepts_each_valid_instance_value` immediately before
+    `test_spawn_env_excludes_vault_api_key_on_the_build_instance` (an order xdist/random-order CI
+    can produce, collection order alone does not). Recording the value here and letting
+    `monkeypatch` restore it after EVERY test in this file — regardless of whether that test used
+    monkeypatch itself to change it — closes this structurally rather than per-test."""
+    monkeypatch.setattr(dispatch, "_INSTANCE", dispatch._INSTANCE)
 
 
 def _capture_cmd(**kwargs):
@@ -694,14 +709,68 @@ def test_build_task_spawn_env_is_not_empty_and_not_the_full_parent_environ(tmp_p
     assert "SOME_OTHER_RANDOM_VAR_237" not in got             # not a wholesale copy of the parent either
 
 
-def test_spawn_env_excludes_vault_api_key(monkeypatch):
-    # issue #393: the brain credential (YR_VAULT_API_KEY) must never reach a cold build stage — it is
-    # neither a listed key in _ENV_ALLOW_KEYS nor matched by any of _ENV_ALLOW_PREFIXES (LC_/STUB_/
-    # YR_POOL_), so the default-deny already excludes it; this pins that fact directly against
-    # dispatch._spawn_env() so a future allowlist edit can't silently let it back in.
+def test_spawn_env_excludes_vault_api_key_on_the_build_instance(monkeypatch):
+    # issue #393, restored to a structural default-deny (it-36 slice D, #469, review round 2 —
+    # the env-based discriminator was inert per systemd.exec(5): an EnvironmentFile= always
+    # overrides that SAME unit's own Environment=, so no unit-file pin could ever be trusted).
+    # YR_VAULT_API_KEY is NOT a member of _ENV_ALLOW_KEYS at all: the build instance's spawn
+    # never lists the key, let alone its value. _INSTANCE (an argv flag, set once in main() from
+    # --instance, never read from the environment) defaults to "build".
+    assert dispatch._INSTANCE == "build"
     monkeypatch.setenv("YR_VAULT_API_KEY", "top-secret-vault-key-should-never-reach-a-stage")
     env = dispatch._spawn_env()
     assert "YR_VAULT_API_KEY" not in env
+    monkeypatch.setattr(dispatch, "_INSTANCE", "build")   # explicit, not just the module default
+    env = dispatch._spawn_env()
+    assert "YR_VAULT_API_KEY" not in env
+
+
+def test_spawn_env_includes_vault_api_key_on_the_pm_instance(monkeypatch):
+    # the PM instance (deploy/pm-dispatch.service, `--instance pm`) is the one dispatch process
+    # that DOES hand the vault key to its spawned design-sweep child — the flip side of the build
+    # instance's exclusion above, both pinned so a future edit can't silently collapse either way.
+    monkeypatch.setattr(dispatch, "_INSTANCE", "pm")
+    monkeypatch.setenv("YR_VAULT_API_KEY", "top-secret-vault-key-reaches-the-pm-child")
+    env = dispatch._spawn_env()
+    assert env.get("YR_VAULT_API_KEY") == "top-secret-vault-key-reaches-the-pm-child"
+
+
+def test_spawn_env_app_keys_flow_on_either_instance(monkeypatch):
+    # the GitHub App identity is NOT vault-gated: both instances may need to authenticate as the
+    # App (the build instance for its own PR/issue writes, the PM instance for design-sweep issue
+    # creation), so these five ride the general allowlist unconditionally, on the module default.
+    app_keys = {
+        "YR_GH_APP_ID": "12345", "YR_GH_APP_KEY_PATH": "/etc/yr/app.pem",
+        "YR_GH_APP_INSTALLATION": "67890", "YR_GH_APP_SLUG": "yr-bot",
+        "YR_OWNER_LOGIN": "yellow-robots",
+    }
+    for k, v in app_keys.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(dispatch, "_INSTANCE", "build")
+    env = dispatch._spawn_env()
+    for k, v in app_keys.items():
+        assert env.get(k) == v
+
+
+# ---- I1, corrected off the env channel (it-36 slice D, #469, review round 2): each unit's ----
+# ---- ExecStart carries its own --instance flag; neither unit sets DISPATCH_INSTANCE at all. ----
+
+def _unit_lines(name):
+    return (ROOT / "deploy" / name).read_text(encoding="utf-8").splitlines()
+
+
+def test_build_unit_execstart_carries_its_instance_flag():
+    lines = _unit_lines("dispatch.service")
+    execstart = next(l for l in lines if l.startswith("ExecStart="))
+    assert execstart.rstrip().endswith("--instance build")
+    assert not any(l.startswith("Environment=DISPATCH_INSTANCE") for l in lines)
+
+
+def test_pm_unit_execstart_carries_its_instance_flag():
+    lines = _unit_lines("pm-dispatch.service")
+    execstart = next(l for l in lines if l.startswith("ExecStart="))
+    assert execstart.rstrip().endswith("--instance pm")
+    assert not any(l.startswith("Environment=DISPATCH_INSTANCE") for l in lines)
 
 
 def test_run_sweep_spawn_env_excludes_dispatch_token(tmp_path, monkeypatch):
@@ -772,7 +841,7 @@ def test_main_installs_sigchld_ignore_before_serve_forever(monkeypatch):
     monkeypatch.setattr(dispatch.signal, "signal", fake_signal)
     monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
 
-    rc = dispatch.main()
+    rc = dispatch.main([])
 
     assert rc == 0
     assert ("signal", signal.SIGCHLD, signal.SIG_IGN) in order   # the exact disposition required
@@ -789,7 +858,7 @@ def test_main_without_token_never_touches_sigchld_or_serves(monkeypatch):
     monkeypatch.setattr(dispatch, "HTTPServer", lambda *a, **kw: (_ for _ in ()).throw(
         AssertionError("HTTPServer must not be constructed without a token")))
 
-    rc = dispatch.main()
+    rc = dispatch.main([])
 
     assert rc == 2
     assert order == []
@@ -877,7 +946,7 @@ def test_main_prints_the_statement_on_its_startup_line(monkeypatch, capsys):
 
     monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
 
-    rc = dispatch.main()
+    rc = dispatch.main([])
 
     assert rc == 0
     err = capsys.readouterr().err
@@ -899,7 +968,7 @@ def test_main_writes_the_statement_file_at_startup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
 
-    rc = dispatch.main()
+    rc = dispatch.main([])
 
     assert rc == 0
     stmt_path = tmp_path / "drhome" / "dispatch.statement"
@@ -910,7 +979,57 @@ def test_main_without_token_never_writes_the_statement_file(tmp_path, monkeypatc
     monkeypatch.delenv("DISPATCH_TOKEN", raising=False)
     monkeypatch.setattr(dispatch, "DEV_RUNNER_HOME", str(tmp_path / "drhome"))
 
-    rc = dispatch.main()
+    rc = dispatch.main([])
 
     assert rc == 2
     assert not (tmp_path / "drhome" / "dispatch.statement").exists()
+
+
+# ---- N2, corrected off the env channel (it-36 slice D, #469, review round 2): the discriminator
+# ---- is now an argv flag with a closed `choices` set — argparse refuses a typo loudly by
+# ---- construction, so the custom warning this section used to pin is moot; what's left to pin
+# ---- is that argparse's own refusal names the value, exits non-zero, and never a secret. ----
+
+def _main_with_fake_server(monkeypatch):
+    monkeypatch.setenv("DISPATCH_TOKEN", "secret")
+    monkeypatch.setattr(dispatch.signal, "signal", lambda *a, **kw: None)
+
+    class FakeServer:
+        def __init__(self, *a, **kw):
+            pass
+
+        def serve_forever(self):
+            pass
+
+    monkeypatch.setattr(dispatch, "HTTPServer", FakeServer)
+
+
+def test_main_rejects_an_invalid_instance_value(monkeypatch, capsys):
+    _main_with_fake_server(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc:
+        dispatch.main(["--instance", "PM"])   # a plausible typo — wrong case
+
+    assert exc.value.code != 0
+    err = capsys.readouterr().err
+    assert "PM" in err
+    assert "secret" not in err   # the token never rides the diagnostic
+
+
+def test_main_accepts_each_valid_instance_value(monkeypatch):
+    for value in ("build", "pm"):
+        _main_with_fake_server(monkeypatch)
+
+        rc = dispatch.main(["--instance", value])
+
+        assert rc == 0
+        assert dispatch._INSTANCE == value
+
+
+def test_main_defaults_to_build_with_no_instance_flag(monkeypatch):
+    _main_with_fake_server(monkeypatch)
+
+    rc = dispatch.main([])
+
+    assert rc == 0
+    assert dispatch._INSTANCE == "build"

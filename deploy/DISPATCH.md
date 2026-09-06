@@ -153,6 +153,54 @@ needed if the service is already running `/build`; `/sweep` is live on the same 
 `KillMode=process`). To stop *only* promotions while builds keep running, deactivate just the epic-sweep
 n8n workflow — the build workflow (and `/build`) is unaffected.
 
+## Deploying the PM instance (design sweep, it-36 slice D, #469)
+
+The design-sweep machinery runs as a **second, separate** dispatch instance —
+`deploy/pm-dispatch.service` — never a route bolted onto the build instance above. Same code
+(`tools/dispatch.py`), a different identity: its own bind (`127.0.0.1` — never the docker-bridge
+gateway the build instance exposes), its own port, its own bearer token, and its ExecStart's own
+`--instance pm` **argv flag**. That flag is the one thing that matters for credentials, and it is
+an argv flag rather than an env var on purpose: `man 5 systemd.exec` states that settings from a
+unit's `EnvironmentFile=` override that SAME unit's own `Environment=`, so no unit-file line could
+ever be trusted to pin it — a mangled or stray value in the unit's own env file would silently
+win. `--instance` is parsed once in `main()` and stored in `tools/dispatch.py`'s `_INSTANCE`,
+never read from `os.environ`; `_spawn_env` hands the vault key (`YR_VAULT_API_KEY`) to a spawned
+child **only** when `_INSTANCE == "pm"` — the build instance's `--instance build` (its own
+ExecStart, and the default when the flag is omitted) never carries it to a runner or a sweep, and
+the key is not even a member of the general allowlist (`_ENV_ALLOW_KEYS`) on that instance. The
+GitHub App identity (`YR_GH_APP_ID`, `YR_GH_APP_KEY_PATH`, `YR_GH_APP_INSTALLATION`,
+`YR_GH_APP_SLUG`, `YR_OWNER_LOGIN`) is not vault-gated — either instance may declare it in its own
+env file, unconditionally.
+
+```bash
+mkdir -p ~/.config/dev-runner
+cp deploy/pm-dispatch.env.example ~/.config/dev-runner/pm-dispatch.env
+# edit: its OWN DISPATCH_TOKEN (never reuse the build instance's), DISPATCH_PORT, the vault key,
+# the App identity
+chmod 600 ~/.config/dev-runner/pm-dispatch.env
+
+cp deploy/pm-dispatch.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now pm-dispatch
+systemctl --user status pm-dispatch
+```
+
+`deploy/n8n-design-sweep.json` is the same schedule -> POST shape as `deploy/n8n-epic-sweep.json`,
+wired to the PM instance's own URL and token — **import it, but keep it inactive.**
+`POST /design-sweep` is not yet a route `tools/dispatch.py` answers: this slice licenses the
+machinery in the registry and the process model (the records, the `machinery` actor on the
+activation/epic-flip transitions, the allowlist, the two GitHub App mutation bindings) and stands
+up the PM instance's shape for review; the route itself and `tools/design_gate.py` (the
+triage-license/independence evaluators the model already names) are a later slice's build.
+
+**Open reachability question, named here for the slice that adds the route:** the PM instance's
+`DISPATCH_BIND=127.0.0.1` is deliberate (it is the one instance the vault key reaches) but n8n
+reaches the host over the docker bridge, not loopback (see "2. Networking" above) — n8n on the
+same host reaches `127.0.0.1` only if it runs outside Docker or with host networking. The loopback
+bind stays mandated; how the design-sweep schedule actually reaches it (a host-networked n8n, an
+SSH tunnel, a reverse proxy terminating on loopback) is undecided and belongs to that later
+slice.
+
 ## Deploying a change — the scripted attended act (`tools/deploy.sh`, it-33 slice 6)
 
 There is no automatic trigger: a deploy is run BY A HUMAN (or an attended agent under explicit human

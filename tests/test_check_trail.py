@@ -132,8 +132,11 @@ MODES_EXTRA = (
     'emitter = "e"\n' + EB + 'readers = ["r"]\nsurfaces = ["stage-log"]\n'
     '[[record]]\nname = "row/1"\nmarker = "row/1"\nmode = "json-schema"\n'
     'emitter = "e"\n' + EB + 'readers = ["r"]\nsurfaces = ["ledger"]\n'
+    '[[record]]\nname = "toml-row/1"\nmarker = "toml-row"\nmode = "toml-schema"\n'
+    'emitter = "e"\n' + EB + 'readers = ["r"]\nsurfaces = ["issue-trail"]\n'
 )
-LANES_EXTRA = {"gates": ["GATES"], "review": ["VERDICT"], "stage": ["ESCAPE"], "ledger": ["row/1"]}
+LANES_EXTRA = {"gates": ["GATES"], "review": ["VERDICT"], "stage": ["ESCAPE"], "ledger": ["row/1"],
+               "strategy": ["toml-row/1"]}
 
 
 def _reg2(tmp_path):
@@ -174,6 +177,18 @@ def test_json_schema_mode_requires_a_parsing_object(tmp_path):
     assert len(check_trail.check_texts(reg, "ledger", lanes_map=LANES_EXTRA, texts_by_surface=broken)) == 1
     wrong_key = {"ledger": ['{"name": "row/1"}\n']}
     assert len(check_trail.check_texts(reg, "ledger", lanes_map=LANES_EXTRA, texts_by_surface=wrong_key)) == 1
+
+
+def test_toml_schema_mode_requires_the_fence_word(tmp_path):
+    """it-36 slice D (#469): the fence word is itself part of the parse grammar (json-schema's
+    `"schema" == marker` precedent, carried on the fence since TOML has no self-naming field)."""
+    reg = _reg2(tmp_path)
+    fenced = {"issue-trail": ['prose\n```toml-row\nwho = "@x"\ndoc = "y"\n```\n']}
+    assert check_trail.check_texts(reg, "strategy", lanes_map=LANES_EXTRA, texts_by_surface=fenced) == []
+    wrong_fence = {"issue-trail": ['```toml\nwho = "@x"\n```\n']}
+    assert len(check_trail.check_texts(reg, "strategy", lanes_map=LANES_EXTRA, texts_by_surface=wrong_fence)) == 1
+    prose = {"issue-trail": ["the toml-row schema is documented here\n"]}
+    assert len(check_trail.check_texts(reg, "strategy", lanes_map=LANES_EXTRA, texts_by_surface=prose)) == 1
 
 
 def test_fields_must_be_complete_in_one_record(tmp_path):
@@ -263,6 +278,7 @@ def test_scope_created_post_ship_trail_fails_the_new_commit_field(monkeypatch, c
 
 def test_live_registry_modes_all_dispatchable():
     reg = records.load()
-    dispatchable = {"prefix", "sentinel", "strict-line", "verdict-line", "stage-escape", "json-schema"}
+    dispatchable = {"prefix", "sentinel", "strict-line", "verdict-line", "stage-escape",
+                   "json-schema", "toml-schema"}
     for r in records.records(reg):
         assert r["mode"] in dispatchable
