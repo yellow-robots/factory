@@ -221,7 +221,10 @@ class _Fake:
         self.beh = {"validate_rc": 0, "drift_rc": 0, "pulls": [{"number": 427,
                     "head": {"sha": "HEAD" * 10}}], "trees_equal": True,
                     "runs": [{"name": "test", "status": "completed", "conclusion": "success"}],
-                    "tag_exists": False, "plugin_version": None, "tree_paths": []}
+                    "tag_exists": False, "plugin_version": None, "tree_paths": [],
+                    "epic_state": "CLOSED", "epic_body": "",
+                    "epic_comments": [{"body": "YR-ROUND-RECORD: refusals=0 records-demanded=0 "
+                                               "detector-findings=0 escalations=0 deployed=n/a"}]}
         self.beh.update(beh)
         self.calls = []
 
@@ -230,6 +233,11 @@ class _Fake:
         j = " ".join(argv)
         if "worktree add" in j or "worktree remove" in j or argv[:2] == ["git", "fetch"]:
             return 0, "", ""
+        if argv[:3] == ["gh", "issue", "view"] and j.endswith("--json state"):
+            return 0, json.dumps({"state": self.beh["epic_state"]}), ""
+        if argv[:3] == ["gh", "issue", "view"] and j.endswith("--json body,comments"):
+            return 0, json.dumps({"body": self.beh["epic_body"],
+                                  "comments": self.beh["epic_comments"]}), ""
         if "process.py" in j and "validate" in j:
             return self.beh["validate_rc"], "", "load failed" if self.beh["validate_rc"] else ""
         if "process.py" in j and "check" in j:
@@ -357,6 +365,104 @@ def test_bad_version_refuses(monkeypatch, capsys):
     fake = _Fake()
     rc = _v(monkeypatch, fake, ["ship", "--version", "banana", "--who", "@x", "--test-mode"])
     assert rc == 1 and capsys.readouterr().out.splitlines()[0] == "version_malformed"
+
+
+# ── the it/<n> iteration-release family (it-36 slice I, #474) ──────────────────────────────────
+# Its own conditions beside the skill family's CONDITIONS (untouched — pinned below); the SAME
+# YR-RELEASE record shape (record_body, generalized with a third mode, "iteration").
+
+def test_it_conditions_tuple_and_skill_conditions_untouched():
+    assert release.IT_CONDITIONS == ("epic_closed", "round_record_present", "server_ci_green")
+    assert release.CONDITIONS == ("version_spans_content", "manual_current", "model_loads",
+                                  "server_ci_green", "no_drift")
+    assert release.IT_TAG_PREFIX == "it/"
+
+
+def test_validate_it_passes_when_epic_closed_round_record_present_and_ci_green(monkeypatch):
+    fake = _Fake()
+    monkeypatch.setattr(release, "_run", fake)
+    rc, evidence, evaluated = release.validate_it("yellow-robots/factory", SHA_100, "465")
+    assert rc == 0
+    assert evaluated == ["epic_closed", "round_record_present", "server_ci_green"]
+    assert "epic #465 is closed" in evidence
+    assert "YR-ROUND-RECORD" in evidence
+
+
+def test_validate_it_refuses_epic_not_closed(monkeypatch, capsys):
+    fake = _Fake(epic_state="OPEN")
+    monkeypatch.setattr(release, "_run", fake)
+    rc, _, evaluated = release.validate_it("yellow-robots/factory", SHA_100, "465")
+    assert rc == 1 and evaluated == ["epic_closed"]
+
+
+def test_validate_it_refuses_when_no_round_record_on_the_trail(monkeypatch):
+    fake = _Fake(epic_comments=[{"body": "just a comment, no marker"}])
+    monkeypatch.setattr(release, "_run", fake)
+    rc, _, evaluated = release.validate_it("yellow-robots/factory", SHA_100, "465")
+    assert rc == 1 and evaluated == ["epic_closed", "round_record_present"]
+
+
+def test_validate_it_round_record_present_reads_epic_body_too(monkeypatch):
+    """The marker may sit on the epic's OWN body, not just a comment (a small epic closed in one
+    shot) — round_record_present reads both, matching check_trail's own presence discipline."""
+    fake = _Fake(epic_body="YR-ROUND-RECORD: refusals=0 records-demanded=0 detector-findings=0 "
+                          "escalations=0 deployed=n/a", epic_comments=[])
+    monkeypatch.setattr(release, "_run", fake)
+    ok, evidence = release._round_record_present("yellow-robots/factory", "465")
+    assert ok is True
+    assert "YR-ROUND-RECORD" in evidence
+
+
+def test_validate_it_refuses_on_red_rollup(monkeypatch):
+    fake = _Fake(runs=[{"name": "test", "status": "completed", "conclusion": "failure"}])
+    monkeypatch.setattr(release, "_run", fake)
+    rc, _, evaluated = release.validate_it("yellow-robots/factory", SHA_100, "465")
+    assert rc == 1 and evaluated == ["epic_closed", "round_record_present", "server_ci_green"]
+
+
+def test_ship_it_refuses_on_existing_tag(monkeypatch, capsys):
+    fake = _Fake(tag_exists=True)
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey"])
+    assert rc == 1 and capsys.readouterr().out.splitlines()[0] == "tag_exists"
+    assert fake.wrote() == []
+
+
+def test_ship_it_refuses_on_non_integer_iteration(monkeypatch, capsys):
+    fake = _Fake()
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "thirty-six", "--epic", "465"])
+    assert rc == 1 and capsys.readouterr().out.splitlines()[0] == "iteration_malformed"
+    assert fake.wrote() == []
+
+
+def test_ship_it_test_mode_writes_nothing(monkeypatch, capsys):
+    fake = _Fake()
+    rc = _v(monkeypatch, fake,
+           ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey", "--test-mode"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.wrote() == [], "test mode creates no tag, no Release, no trail"
+    assert "TEST-MODE" in out and "it/36" in out
+
+
+def test_ship_it_live_tags_and_releases(monkeypatch):
+    fake = _Fake()
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey"])
+    assert rc == 0
+    wrote = [" ".join(a) for a in fake.wrote()]
+    assert any("tag" in w and "it/36" in w for w in wrote)
+    assert any("push" in w and "refs/tags/it/36" in w for w in wrote)
+    assert any("release create it/36" in w for w in wrote)
+
+
+def test_record_body_iteration_mode_satisfies_its_own_grammar(reg):
+    body = release.record_body("it/36", SHA_100,
+                               "epic_closed round_record_present server_ci_green "
+                               "(epic #465 is closed)",
+                               "@jbrey", mode="iteration", manual=release.IT_MANUAL_NA)
+    row = records.get(reg, "YR-RELEASE")
+    assert body.splitlines()[0].startswith(row["marker"])
+    assert check_trail._missing_fields(row, [body]) == []
+    assert "it/36" in body and "n/a" in body
 
 
 # ── the bounded fetcher ──────────────────────────────────────────────────────────────────────────

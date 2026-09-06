@@ -46,7 +46,7 @@ below).
 | **Check gate** | Runner (not LLM) runs `check_cmd` from `.yr/factory.toml`, bounded by `check_timeout` (issue #308; env > manifest > 1200s default, resolved once at start-of-run — the armed re-green reuses it). One repair attempt on a code failure (at the registry's `check_repair` stage tier when set, else the build model); no repair on an environment failure (exit 126/127). An OBSERVED expiry (the wrapper itself firing, never inferred from the exit code alone) disposes as a code failure through this same path — a wedged process tree is killed with no survivor. | `Blocked` |
 | **Review** | Independent cold process on the **review role's model**, fed the hashed **review bundle** (`tools/review_bundle.py`: base→head diff, acceptance criteria, check output, resolved role pair; each round's verdict appended). Judges correctness, maintainability, simplicity, security — and, since #366, **duplication within the change's own seam** (see below). Emits `VERDICT: APPROVE` or `REQUEST_CHANGES`, plus a `YR-NIT:` record per finding; one repair attempt; fail-closed — anything but a clean `APPROVE` blocks. | `Blocked` |
 | **PR** | Commit, push `task/<id>-<slug>`, open PR, post the review. | — |
-| **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · rank gate (review >= build, one provider, both ranked, the reviewer is never weaker) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block (one exception: an environmental failure after freshness remediation already force-pushed the branch — see *Shadow merge choreography* below) |
+| **Merge evaluator** | Deterministic terminal step (no LLM): evaluates CI-green (bounded poll; zero configured checks fails fast) · freshness against `main`'s tip (decision-time re-fetch) · terminal clean `APPROVE` · rank gate (review >= build, one provider, both ranked, the reviewer is never weaker) · `fragment_present` (does the PR's own diff, base..head, touch a path under the manifest's `changelog_dir`? — issue #474; a runner-built PR always carries this, an attended PR must add one by its own duty) — in order, in code, indeterminate = failed. **Armed repo** (manifest `auto_merge = true` read live from the base ref, shadow complete, host sentinel not thrown): all-pass → factory **squash-merges**, posts `YR-MERGE: MERGED`, native close → Done; any fail → `YR-MERGE: BLOCKED — <condition>` + `Reason=Blocked`. **Every other repo (shadow):** posts a loud `YR-MERGE-SHADOW: WOULD-MERGE / WOULD-BLOCK` record, sets `Status=In Review`, and stops for the human. | environmental → no record, resumable, never a hard block (one exception: an environmental failure after freshness remediation already force-pushed the branch — see *Shadow merge choreography* below) |
 
 **Environmental vs code failure, everywhere:** a stage or step that *cannot run* — quota exhaustion on
 an LLM stage, a broken toolchain (exit 126/127), a gh/network blip in the evaluator — is classified
@@ -263,8 +263,9 @@ concept of "a build is currently running." That makes the human side of the chor
   branch onto the moved tip by hand (attended — the runner never rebases outside its own armed-merge
   remediation) so the diff is unchanged and the existing review verdict still applies; then run
   `tools/dev-runner.sh <issue#> --repo <owner/name> --re-evaluate <pr#>`. When the PR already carries a
-  prior `YR-MERGE(-SHADOW)` record, this re-runs *only* the four terminal conditions (`ci_green` /
-  `freshness` / `terminal_approval` / `rank_gate`) against the PR's *current* head — no DoR gate, no
+  prior `YR-MERGE(-SHADOW)` record, this re-runs *only* the five terminal conditions (`ci_green` /
+  `freshness` / `terminal_approval` / `rank_gate` / `fragment_present`, issue #474) against the PR's
+  *current* head — no DoR gate, no
   claim, no worktree, no LLM stage — reusing the originating run's review verdict, bundle hash, and
   resolved build/review roles/ranks from `$DEV_RUNNER_HOME/runs/<issue>-<id>/` (located via the
   `run_id` on the PR's last merge record). It posts a record whose note names the one it supersedes,
@@ -288,7 +289,7 @@ concept of "a build is currently running." That makes the human side of the chor
   (`diff.base_sha` in `$DEV_RUNNER_HOME/runs/<issue>-<id>/review-bundle.json`) — the record's absence
   stops being a refusal condition and becomes a fact carried in the new record's note. It then evaluates
   the PR's *current* state under the exact same conditions the end-of-build terminal step applies —
-  `ci_green` / `freshness` / `terminal_approval` / `rank_gate`, plus (armed) the host sentinel and shadow
+  `ci_green` / `freshness` / `terminal_approval` / `rank_gate` / `fragment_present`, plus (armed) the host sentinel and shadow
   completion — via the very same code, and produces exactly the record class the repo's arming state
   permits: a shadow `WOULD-MERGE` / `WOULD-BLOCK` on a non-armed repo, or an armed `YR-MERGE: MERGED`
   (the factory squash-merges) / `YR-MERGE: BLOCKED — <condition>` on an armed one. The one difference

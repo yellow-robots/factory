@@ -167,16 +167,20 @@ win. `--instance` is parsed once in `main()` and stored in `tools/dispatch.py`'s
 never read from `os.environ`; `_spawn_env` hands the vault key (`YR_VAULT_API_KEY`) to a spawned
 child **only** when `_INSTANCE == "pm"` — the build instance's `--instance build` (its own
 ExecStart, and the default when the flag is omitted) never carries it to a runner or a sweep, and
-the key is not even a member of the general allowlist (`_ENV_ALLOW_KEYS`) on that instance. The
-GitHub App identity (`YR_GH_APP_ID`, `YR_GH_APP_KEY_PATH`, `YR_GH_APP_INSTALLATION`,
-`YR_GH_APP_SLUG`, `YR_OWNER_LOGIN`) is not vault-gated — either instance may declare it in its own
-env file, unconditionally.
+the key is not even a member of the general allowlist (`_ENV_ALLOW_KEYS`) on that instance.
+`YR_NOTIFY_SECRET` (it-36 slice I, #474 — `tools/notify.py`'s HMAC signing key for the telegram/
+webhook stakeholder channels) is PM-only for the same reason and joins the vault key in
+`_PM_ONLY_KEYS`: a task-typed build the build instance spawns never notifies a stakeholder — only
+the close-time act does, which rides this same PM-instance pipeline (`design_gate.py`'s close sweep
+-> `close-runner.sh`). The GitHub App identity (`YR_GH_APP_ID`, `YR_GH_APP_KEY_PATH`,
+`YR_GH_APP_INSTALLATION`, `YR_GH_APP_SLUG`, `YR_OWNER_LOGIN`) is not vault-gated — either instance
+may declare it in its own env file, unconditionally.
 
 ```bash
 mkdir -p ~/.config/dev-runner
 cp deploy/pm-dispatch.env.example ~/.config/dev-runner/pm-dispatch.env
 # edit: its OWN DISPATCH_TOKEN (never reuse the build instance's), DISPATCH_PORT, the vault key,
-# the App identity
+# YR_NOTIFY_SECRET (item P — the owner's own webhook signing secret), the App identity
 chmod 600 ~/.config/dev-runner/pm-dispatch.env
 
 cp deploy/pm-dispatch.service ~/.config/systemd/user/

@@ -461,6 +461,7 @@ def test_record_cli_passes_through_server_ci_and_source(tmp_path):
     subprocess.run([
         sys.executable, str(ROOT / "tools" / "merge_shadow.py"), "record",
         "--ci-green", "pass", "--freshness", "pass", "--terminal-approval", "pass", "--rank-gate", "pass",
+        "--fragment-present", "pass",
         "--bundle", str(bundle), "--base-sha", "b" * 40, "--head-sha", "h" * 40,
         "--main-tip-sha", "m" * 40, "--ci-state", "not_required_declared",
         "--server-ci", "none", "--server-ci-source", "manifest",
@@ -481,6 +482,7 @@ def test_record_cli_passes_through_server_ci_rejected(tmp_path):
     subprocess.run([
         sys.executable, str(ROOT / "tools" / "merge_shadow.py"), "record",
         "--ci-green", "fail", "--freshness", "pass", "--terminal-approval", "pass", "--rank-gate", "pass",
+        "--fragment-present", "pass",
         "--bundle", str(bundle), "--base-sha", "b" * 40, "--head-sha", "h" * 40,
         "--main-tip-sha", "m" * 40, "--ci-state", "server_ci_invalid",
         "--server-ci-rejected", "sometimes", "--server-ci-source", "manifest",
@@ -503,6 +505,7 @@ def test_record_cli_rejects_server_ci_value_outside_declared_choices(tmp_path):
     r = subprocess.run([
         sys.executable, str(ROOT / "tools" / "merge_shadow.py"), "record",
         "--ci-green", "pass", "--freshness", "pass", "--terminal-approval", "pass", "--rank-gate", "pass",
+        "--fragment-present", "pass",
         "--bundle", str(bundle), "--base-sha", "b" * 40, "--head-sha", "h" * 40,
         "--main-tip-sha", "m" * 40, "--ci-state", "server_ci_invalid",
         "--server-ci", "sometimes",

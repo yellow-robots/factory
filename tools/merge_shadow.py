@@ -9,7 +9,7 @@ ref's current tip), the host sentinel is not thrown, and shadow is complete. An 
 conditions all pass is squash-merged BY THE FACTORY and recorded as a durable `YR-MERGE: MERGED`;
 everything else stays in shadow (`YR-MERGE-SHADOW`) or armed-blocked (`YR-MERGE: BLOCKED`).
 
-The four base conditions, in evaluation order (their ids are the WOULD-BLOCK / BLOCKED reason):
+The five base conditions, in evaluation order (their ids are the WOULD-BLOCK / BLOCKED reason):
   ci_green           — every configured check on the PR head concluded successful (bounded wait for
                        in-flight runs upstream; a rollup still empty after a bounded registration
                        grace — see shadow_ci's own env pair — is a failure).
@@ -17,6 +17,11 @@ The four base conditions, in evaluation order (their ids are the WOULD-BLOCK / B
   terminal_approval  — the final review round is a clean `VERDICT: APPROVE`.
   rank_gate          — the resolved pair satisfies review-rank >= build-rank on one provider (the
                        reviewer is never weaker).
+  fragment_present   — the PR's own diff (base..head) touches a path under the manifest's
+                       changelog_dir (issue #474): a runner-built PR always carries this (the
+                       implement stage writes the fragment before its single commit); an attended
+                       PR must add one by the attended lane's own duty; a PR predating this
+                       condition, or a malformed changelog_dir, fails here — legibly, never silently.
 For an armed repo two more gate the merge: `sentinel` (the host kill switch is not thrown) and shadow
 completion (below). A moved main (freshness fail) on an otherwise-armed pass is REMEDIATED by the runner
 (rebase + re-green), not blocked. A repo that declares `server_ci = none` (issue #274) passes `ci_green`
@@ -82,7 +87,11 @@ SCHEMA = "yr-merge-record/1"
 # genuine armed record and a genuine shadow record are still recognized.
 RECORD_MARKER_TOKENS = (MARKER_ARMED + ":", MARKER_SHADOW + ":")
 # Order is the contract: the FIRST failed condition names the WOULD-BLOCK reason (shadow mode).
-SHADOW_ORDER = ("ci_green", "freshness", "terminal_approval", "rank_gate")
+# fragment_present (issue #474) is APPENDED, never inserted: the rolling shadow-completion window
+# (tools/dev-runner.sh's compute_shadow_complete) reads prior records by their OWN failed_condition
+# value, never by SHADOW_ORDER's positional index, so appending at the end changes no prior record's
+# meaning and adds one more thing a PR can fail on, last in line.
+SHADOW_ORDER = ("ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present")
 
 # Shadow-completion window defaults (the epic's pinned N/K).
 DEFAULT_WINDOW = 5
@@ -413,6 +422,7 @@ def _cli_record(args):
         "freshness": args.freshness,
         "terminal_approval": args.terminal_approval,
         "rank_gate": args.rank_gate,
+        "fragment_present": args.fragment_present,
     }
     decision, failed = None, _UNSET   # shadow: let build_record derive from the conditions
     if args.mode == "armed":
@@ -503,7 +513,7 @@ def main(argv=None):
     p_cc.set_defaults(func=_cli_classify_checks)
 
     p_r = sub.add_parser("record", help="emit the PR comment (marker line + yr-merge-record block)")
-    for cond in ("ci-green", "freshness", "terminal-approval", "rank-gate"):
+    for cond in ("ci-green", "freshness", "terminal-approval", "rank-gate", "fragment-present"):
         p_r.add_argument(f"--{cond}", required=True, choices=("pass", "fail"),
                          dest=cond.replace("-", "_"))
     p_r.add_argument("--bundle", required=True, help="the review bundle (for sha256/rounds/build/review)")

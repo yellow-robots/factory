@@ -59,6 +59,18 @@ WORKTREE_TIMEOUT = 120
 
 CONDITIONS = ("version_spans_content", "manual_current", "model_loads", "server_ci_green",
               "no_drift")
+# The iteration-release family (it-36 slice I, #474) — a SEPARATE tag family beside the skill
+# family above, its own conditions, its own CLI verbs (validate-it/ship-it); CONDITIONS/`validate`/
+# `ship`/`backfill` above stay byte-identical. `record_body` below is the ONE shared record shape —
+# generalized with a third `mode` ("iteration"), never duplicated — since `YR-RELEASE`'s registered
+# `fields` (`version`, `commit`, `validation`, `who`, `manual`) are pinned for both families
+# (tests/test_release_lane.py::test_registry_row): `version` carries the tag itself ("it/<n>", not
+# X.Y.Z — check_trail's field grammar is presence-only, never format-validated), and `manual` is
+# always recorded "n/a" (the manual's ruled update trigger is a skill-family-only condition; a
+# required, never-defaulted field must still state a fact, so "n/a" is that fact, not a guess).
+IT_TAG_PREFIX = "it/"
+IT_CONDITIONS = ("epic_closed", "round_record_present", "server_ci_green")
+IT_MANUAL_NA = "n/a — an iteration release, not a skill version; the manual's ruled update trigger applies only to the skill family"
 MANUAL_PATH = "docs/manual.md"                       # the human's manual (it-32 slice 4)
 MANUAL_SOURCES = ("skills/factory/SKILL.md", "AGENTS.md")   # what it renders by citation
 _OK_CONCLUSIONS = {"success", "neutral", "skipped"}
@@ -365,13 +377,18 @@ def validate(repo: str, commit: str, version: str | None,
 def record_body(version: str, commit: str, validation: str, who: str, mode: str, *,
                 manual: str) -> str:
     """The YR-RELEASE record. `manual` is required, never defaulted: a record emitter with a
-    fail-open default would state a fact no judgment produced once the manual exists."""
+    fail-open default would state a fact no judgment produced once the manual exists. `mode`
+    "iteration" (it-36 slice I, #474) is the it/<n> family's own tail, beside "ship"/"backfill" —
+    the field shape stays the one YR-RELEASE grammar, pinned across both families."""
     tail = {
         "ship": ("Released via `tools/release.py` (the validation-gated, git-native release act — "
                  "it-31 slice 7, ruling 6): the annotated tag anchors the commit; the validation "
                  "evidence above is the record's own."),
         "backfill": ("Backfilled via `tools/release.py` (spec callout (d) as ruled 2026-08-16: "
                      "both shipped versions typed retroactively against their commits)."),
+        "iteration": ("Released via `tools/release.py` (the it/<n> tag family, it-36 slice I, "
+                      "#474): the epic's own close — closed, YR-ROUND-RECORD present, server CI "
+                      "green at the tagged commit — is the validation evidence above."),
     }[mode]
     return (f"YR-RELEASE\n"
             f"version: {version}\n"
@@ -379,6 +396,113 @@ def record_body(version: str, commit: str, validation: str, who: str, mode: str,
             f"validation: {validation}\n"
             f"who: {who}\n"
             f"manual: {manual}\n\n{tail}\n")
+
+
+# ── the it/<n> iteration-release family (it-36 slice I, #474) ──────────────────────────────────
+
+def _epic_closed(repo: str, epic: str) -> tuple[bool, str]:
+    """'' the epic issue is CLOSED — (ok, evidence-or-reason)."""
+    rc, out, err = _run(["gh", "issue", "view", epic, "--repo", repo, "--json", "state"],
+                        timeout=GH_TIMEOUT)
+    if rc != 0:
+        return False, f"could not read epic #{epic}: {err.strip() or rc}"
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return False, f"unparseable issue payload for epic #{epic}"
+    state = str(data.get("state") or "").upper()
+    if state != "CLOSED":
+        return False, f"epic #{epic} is {state or 'unknown'}, not CLOSED"
+    return True, f"epic #{epic} is closed"
+
+
+def _round_record_present(repo: str, epic: str) -> tuple[bool, str]:
+    """A `YR-ROUND-RECORD:` marker line (column 0, records.toml's own grammar) somewhere on the
+    epic's own trail — its body or any comment. Presence only, content-blind, the same discipline
+    tools/check_trail.py's `_marker_present` applies to every other registered record."""
+    rc, out, err = _run(["gh", "issue", "view", epic, "--repo", repo, "--json", "body,comments"],
+                        timeout=GH_TIMEOUT)
+    if rc != 0:
+        return False, f"could not read epic #{epic}'s trail: {err.strip() or rc}"
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return False, f"unparseable issue payload for epic #{epic}"
+    texts = [data.get("body") or ""] + [c.get("body") or "" for c in (data.get("comments") or [])]
+    marker = "YR-ROUND-RECORD:"
+    if any(line.startswith(marker) for text in texts for line in text.splitlines()):
+        return True, f"YR-ROUND-RECORD found on epic #{epic}'s trail"
+    return False, f"no {marker} record found on epic #{epic}'s trail"
+
+
+def validate_it(repo: str, commit: str, epic: str) -> tuple[int, str, list[str]]:
+    """IT_CONDITIONS, in order, fail-closed. Returns (rc, evidence, evaluated) — mirrors `validate`'s
+    contract (exit 0 pass; exit 1 + failed-condition token as stdout's first line printed by `_fail`;
+    `evaluated` names only the conditions actually judged before a failure)."""
+    evaluated: list[str] = []
+    evaluated.append("epic_closed")
+    ok, epic_evidence = _epic_closed(repo, epic)
+    if not ok:
+        return _fail("epic_closed", epic_evidence), "", evaluated
+    evaluated.append("round_record_present")
+    ok, rr_evidence = _round_record_present(repo, epic)
+    if not ok:
+        return _fail("round_record_present", rr_evidence), "", evaluated
+    evaluated.append("server_ci_green")
+    ok, ci_evidence = _ci_green_at(repo, commit)
+    if not ok:
+        return _fail("server_ci_green", ci_evidence), "", evaluated
+    evidence = "; ".join(e for e in (epic_evidence, rr_evidence, ci_evidence) if e)
+    return 0, evidence, evaluated
+
+
+def _release_it(repo: str, iteration: str, commit_ref: str, epic: str, who: str | None,
+                test_mode: bool) -> int:
+    if not iteration.isdigit():
+        return _fail("iteration_malformed",
+                     f"{iteration!r} is not a bare integer — it/<n> names an iteration number")
+    commit = _resolve_commit(commit_ref)
+    if not commit:
+        return _fail("commit_unresolvable", f"{commit_ref!r} does not resolve")
+    tag = f"{IT_TAG_PREFIX}{iteration}"
+    rc, out, err = _run(["git", "ls-remote", "origin", f"refs/tags/{tag}"], cwd=str(REPO_ROOT))
+    if rc != 0:
+        return _fail("tag_exists", f"could not read origin's tags: {err.strip() or rc} — "
+                                   f"an unreadable remote never passes (fail-closed)")
+    if out.strip():
+        return _fail("tag_exists", f"refs/tags/{tag} already exists on origin — an iteration "
+                                   f"ships once; a re-release is a new iteration")
+    rc, evidence, evaluated = validate_it(repo, commit, epic)
+    if rc != 0:
+        return rc
+    validation = f"{' '.join(evaluated)} ({evidence})"
+    body = record_body(tag, commit, validation, _who(who), "iteration", manual=IT_MANUAL_NA)
+    if test_mode:
+        print(f"TEST-MODE: no tag, no Release, no trail — the plan only")
+        print(f"would tag:     {tag} at {commit}")
+        print(f"would release: {tag} on {repo}")
+        print("--- record body ---")
+        print(body, end="")
+        return 0
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                     prefix="yr-release-it-body-") as f:
+        f.write(body)
+        body_file = f.name
+    rc, _, err = _run(["git", "tag", "-a", tag, commit, "-F", body_file], cwd=str(REPO_ROOT))
+    if rc != 0:
+        return _fail("tag_write_failed", err.strip() or str(rc))
+    rc, _, err = _run(["git", "push", "origin", f"refs/tags/{tag}"], cwd=str(REPO_ROOT),
+                      timeout=WORKTREE_TIMEOUT)
+    if rc != 0:
+        return _fail("tag_push_failed", err.strip() or str(rc))
+    rc, out, err = _run(["gh", "release", "create", tag, "--repo", repo,
+                         "--title", tag, "--notes-file", body_file,
+                         "--verify-tag"], timeout=WORKTREE_TIMEOUT)
+    if rc != 0:
+        return _fail("release_create_failed", err.strip() or str(rc))
+    print(f"released: {tag} at {commit} (iteration)")
+    print(out.strip())
+    return 0
 
 
 def _who(explicit: str | None) -> str:
@@ -459,6 +583,17 @@ def main(argv: list[str] | None = None) -> int:
                        help="record docs/manual.md unaffected by this range, with the reason")
     p_b.add_argument("--commit", default=None,
                      help="required for a version outside the pinned BACKFILL pair")
+    p_vi = sub.add_parser("validate-it", help="judge only, the it/<n> family: exit 0 pass; exit 1 + token line on fail")
+    p_vi.add_argument("--repo", default=DEFAULT_REPO)
+    p_vi.add_argument("--commit", default="origin/main")
+    p_vi.add_argument("--epic", required=True, help="the closing epic's issue number")
+    p_si = sub.add_parser("ship-it", help="release origin/main's tip as it/<iteration>")
+    p_si.add_argument("--repo", default=DEFAULT_REPO)
+    p_si.add_argument("--iteration", required=True, help="bare integer, e.g. 36 -> tag it/36")
+    p_si.add_argument("--epic", required=True, help="the closing epic's issue number")
+    p_si.add_argument("--who", default=None)
+    p_si.add_argument("--test-mode", action="store_true",
+                      help="full validation, zero writes — no tag, no Release, no trail")
     args = ap.parse_args(argv)
 
     if args.cmd == "validate":
@@ -477,6 +612,21 @@ def main(argv: list[str] | None = None) -> int:
             return _fail("commit_unresolvable", f"git fetch origin failed: {err.strip()}")
         return _release(args.repo, args.version, "origin/main", args.who, "ship",
                         args.test_mode, args.manual_unaffected)
+    if args.cmd == "validate-it":
+        commit = _resolve_commit(args.commit)
+        if not commit:
+            return _fail("commit_unresolvable", f"{args.commit!r} does not resolve")
+        rc, evidence, evaluated = validate_it(args.repo, commit, args.epic)
+        if rc == 0:
+            print(f"ok: {' '.join(evaluated)} ({evidence})")
+        return rc
+    if args.cmd == "ship-it":
+        rc, _, err = _run(["git", "fetch", "origin"], cwd=str(REPO_ROOT),
+                          timeout=WORKTREE_TIMEOUT)
+        if rc != 0:
+            return _fail("commit_unresolvable", f"git fetch origin failed: {err.strip()}")
+        return _release_it(args.repo, args.iteration, "origin/main", args.epic, args.who,
+                           args.test_mode)
     # backfill
     commit = BACKFILL.get(args.version) or args.commit
     if not commit:
