@@ -382,6 +382,22 @@ def test_render_kpi_note_distinguishes_no_linked_issue_from_a_failed_issue_read(
     assert r3["gap_reason"] == "1 merged PR(s) named no linked issue, 1 linked-issue read(s) failed"
 
 
+def test_cycle_time_hours_distinguishes_a_failed_pr_read_from_no_linked_issue():
+    """B1, #475 fold review round 3 (the reviewer's own finding): when the `pr view` call ITSELF
+    raises, the old code fell through to `link_status: no_linked_issue` — stating "this PR named no
+    linked issue" about a read that never even happened. `pr_read_failed` is its own third status,
+    with its own reason text and its own mixed-case wording."""
+    events_pr_failed = [{"created": None, "ready_at": None, "merged": "2026-09-01T00:00:00Z",
+                         "link_status": "pr_read_failed"}]
+    r = kpi.cycle_time_hours(events_pr_failed)
+    assert r["gap_reason"] == "the PR read failed for every merged PR this window"
+
+    events_no_link = [{"created": None, "ready_at": None, "merged": "2026-09-02T00:00:00Z",
+                       "link_status": "no_linked_issue"}]
+    r2 = kpi.cycle_time_hours(events_pr_failed + events_no_link)
+    assert r2["gap_reason"] == "1 merged PR read(s) failed, 1 merged PR(s) named no linked issue"
+
+
 def test_note_path_names_one_note_per_month_in_the_operations_home():
     assert kpi.note_path("04 projects/acme/operations", "2026-09") == \
         "04 projects/acme/operations/kpi-2026-09.md"
@@ -657,6 +673,33 @@ def test_gather_report_inputs_distinguishes_no_link_from_a_failed_issue_read(mon
     assert by_merge["2026-09-10T00:00:00Z"]["created"] is None
     assert by_merge["2026-09-11T00:00:00Z"]["link_status"] == "read_failed"
     assert by_merge["2026-09-11T00:00:00Z"]["created"] is None
+
+
+def test_gather_report_inputs_marks_pr_read_failed_when_pr_view_itself_raises(monkeypatch):
+    """B1, #475 fold review round 3 (the reviewer's own minimal fix, verbatim): when the `pr view`
+    call itself raises, `data = {}` -> `refs = []` used to fall through to `link_status:
+    no_linked_issue`, stating "no linked issue" about a read that never happened at all. It must be
+    its own status, `pr_read_failed`, never conflated with the PR genuinely naming no linked issue."""
+    def fake_gh(argv):
+        if argv[:2] == ["pr", "list"]:
+            return [{"number": 7, "mergedAt": "2026-09-10T00:00:00Z"}]
+        if argv[:2] == ["pr", "view"]:
+            raise RuntimeError("gh pr view failed (stub)")
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (False, "unreachable"))
+    inputs = kpi.gather_report_inputs(gh=fake_gh, repo="acme/widgets", org="yellow-robots", project=1,
+                                      component_root="/nonexistent", period="2026-09",
+                                      now="2026-09-15T00:00:00Z")
+    event = inputs["cycle_events"][0]
+    assert event["link_status"] == "pr_read_failed"
+    assert event["created"] is None
+
+    report = kpi.compute_report(inputs, period="2026-09")
+    assert report["cycle_time"]["gap_reason"] == "the PR read failed for every merged PR this window"
 
 
 def test_gather_report_inputs_commit_subjects_is_none_when_code_root_is_not_declared(tmp_path, monkeypatch):

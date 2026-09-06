@@ -114,10 +114,11 @@ def cycle_time_hours(events: list[dict]) -> dict:
     status-change history without the audit-log API — an event missing it degrades this ONE figure,
     never the whole metric, and is never guessed at).
 
-    `gap_reason` (B1, #475 fold review round 2): `None` once at least one event resolved a
-    `created` — otherwise names WHY none did, distinguishing "no merged PR named a linked issue"
-    from "a linked issue's own read failed" (`link_status`, `gather_report_inputs`'s own field) —
-    never one blanket claim that could misstate which actually happened this window."""
+    `gap_reason` (B1, #475 fold review round 2; extended round 3): `None` once at least one event
+    resolved a `created` — otherwise names WHY none did, distinguishing THREE different facts
+    (`link_status`, `gather_report_inputs`'s own field) that must never blur into one bare `None`:
+    the `pr view` call itself failing (`pr_read_failed`), a PR naming no linked issue at all
+    (`no_linked_issue`), and a PR naming one whose own read then failed (`read_failed`)."""
     total = [_hours_between(e["created"], e["merged"]) for e in events if e.get("created") and e.get("merged")]
     queue = [_hours_between(e["created"], e["ready_at"]) for e in events if e.get("created") and e.get("ready_at")]
     gap_reason = None
@@ -125,12 +126,21 @@ def cycle_time_hours(events: list[dict]) -> dict:
         if not events:
             gap_reason = "no PR merged this window"
         else:
+            pr_failed = sum(1 for e in events if e.get("link_status") == "pr_read_failed")
             no_link = sum(1 for e in events if e.get("link_status") == "no_linked_issue")
-            failed = sum(1 for e in events if e.get("link_status") == "read_failed")
-            if no_link and failed:
-                gap_reason = (f"{no_link} merged PR(s) named no linked issue, "
-                              f"{failed} linked-issue read(s) failed")
-            elif failed:
+            issue_failed = sum(1 for e in events if e.get("link_status") == "read_failed")
+            parts = []
+            if pr_failed:
+                parts.append(f"{pr_failed} merged PR read(s) failed")
+            if no_link:
+                parts.append(f"{no_link} merged PR(s) named no linked issue")
+            if issue_failed:
+                parts.append(f"{issue_failed} linked-issue read(s) failed")
+            if len(parts) > 1:
+                gap_reason = ", ".join(parts)
+            elif pr_failed:
+                gap_reason = "the PR read failed for every merged PR this window"
+            elif issue_failed:
                 gap_reason = "the linked issue's own read failed for every merged PR this window"
             elif no_link:
                 gap_reason = "no merged PR named a linked issue this window"
@@ -587,6 +597,7 @@ def gather_report_inputs(*, gh, repo, org, project, component_root, code_root=No
         prs = []
     for pr in prs:
         merge_dates.append(pr["mergedAt"])
+        pr_view_failed = False
         try:
             # B1 (#475 fold review round 2): `closingIssuesReferences` rides the SAME call as
             # `body,comments` — but it is a NARROW projection (verified live against a real PR,
@@ -598,6 +609,7 @@ def gather_report_inputs(*, gh, repo, org, project, component_root, code_root=No
                                "--json", "body,comments,closingIssuesReferences"]))
         except Exception:
             data = {}
+            pr_view_failed = True
         texts = sources.pr_trail_texts_from_json(data) if data else []
         pr_trails.append(texts)
         ok, usage = sources.pr_usage_from_texts(texts) if texts else (False, "")
@@ -606,20 +618,26 @@ def gather_report_inputs(*, gh, repo, org, project, component_root, code_root=No
         # The linked issue's own `createdAt` is a SEPARATE read the pr-view projection can never
         # answer — the REST issue resource (`gh api repos/<owner>/<repo>/issues/<n>`, the mandate's
         # own `gh api` wording; REST's own snake_case `created_at`, never GraphQL's `createdAt`).
-        # `link_status` distinguishes "this PR named no linked issue at all" from "it named one but
-        # that read failed" — two different facts the note must never blur into one bare `None`.
+        # `link_status` distinguishes three different facts the note must never blur into one bare
+        # `None`: the `pr view` call itself failing (`pr_read_failed` — the reviewer's own fold
+        # review round 3 finding: the old code fell through to "no linked issue" here, which
+        # states a read that never happened as an absence), this PR naming no linked issue at all
+        # (`no_linked_issue`), and it naming one whose OWN read then failed (`read_failed`).
         refs = (data or {}).get("closingIssuesReferences") or []
         created = None
-        link_status = "no_linked_issue"
-        if refs and isinstance(refs[0], dict) and refs[0].get("number"):
-            link_status = "read_failed"
-            try:
-                issue_data = _as_json(gh(["api", f"repos/{repo}/issues/{refs[0]['number']}"]))
-                created = (issue_data or {}).get("created_at")
-                if created:
-                    link_status = "linked"
-            except Exception:
-                pass
+        if pr_view_failed:
+            link_status = "pr_read_failed"
+        else:
+            link_status = "no_linked_issue"
+            if refs and isinstance(refs[0], dict) and refs[0].get("number"):
+                link_status = "read_failed"
+                try:
+                    issue_data = _as_json(gh(["api", f"repos/{repo}/issues/{refs[0]['number']}"]))
+                    created = (issue_data or {}).get("created_at")
+                    if created:
+                        link_status = "linked"
+                except Exception:
+                    pass
         cycle_events.append({"created": created, "ready_at": None, "merged": pr["mergedAt"],
                              "link_status": link_status})
 
