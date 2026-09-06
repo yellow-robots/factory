@@ -42,7 +42,7 @@ emitted_by = ["machinery"]   # typed actor classes (rule S's column)
 emitter = "tools/merge_shadow.py (the merge evaluator's durable decision record: MERGED / BLOCKED)"
 readers = ["tools/merge_shadow.py (re-evaluation reads the prior record; the shadow-complete window locates records via RECORD_MARKER_TOKENS :61 / _last_merge_record :252)", "humans on the PR trail"]
 surfaces = ["pr-trail"]
-notes = "The armed output gate's record; never overturned by a re-evaluation (issue #70)."
+notes = "The armed output gate's record; a re-evaluation never edits or removes it — since issue #510 it may be superseded by a newer record on the same trail (MERGED after a green recovery, or another BLOCKED), the newer record's note naming this one."
 
 [[record]]
 name = "YR-MERGE-SHADOW"
