@@ -62,7 +62,8 @@ exit 0
 # subcommand name only, so the SAME timeline file orders it against the claude/check_supersession
 # stubs' own entries) and into STUB_RR_ARGV_LOG (the full argv, for assertions on what this runner
 # handed it). `fetch` must print JSON to stdout (close-runner.sh reads it back for the epic body).
-# `already-shipped` exits 0 (shipped) iff STUB_ALREADY_SHIPPED is set.
+# `already-shipped` exits 0 (shipped) / 2 (STUB_ALREADY_SHIPPED_MALFORMED — NN1's fail-closed
+# case) / 1 (not shipped, the default).
 ROUND_RECORD_PY_STUB = '''#!/usr/bin/env python3
 import json, os, sys
 
@@ -81,6 +82,9 @@ if cmd == "fetch":
     print(json.dumps({"epic_texts": ["the epic's own technical-rfc body"], "child_texts": {}, "pr_refs": []}))
     sys.exit(0)
 if cmd == "already-shipped":
+    if os.environ.get("STUB_ALREADY_SHIPPED_MALFORMED"):
+        print("round_record: already-shipped refused — fetch.json is malformed", file=sys.stderr)
+        sys.exit(2)
     sys.exit(0 if os.environ.get("STUB_ALREADY_SHIPPED") else 1)
 if cmd == "ship-walk":
     sys.exit(1 if os.environ.get("STUB_SHIP_WALK_FAIL") else 0)
@@ -190,6 +194,22 @@ def test_already_shipped_skips_close_walk_sweep_and_ship_walk_but_still_runs_rou
     assert "already-shipped" in result.stderr
     calls = [c[0] for c in _rr_calls(tmp_path)]
     assert "ship-walk" not in calls
+
+
+# ---- NN1: a malformed fetch.json (already-shipped exit 2) is a THIRD disposition — fail CLOSED, ---------
+#      never folded into "not shipped" (which would run a fresh close-walk + vault patch) -----------------
+
+def test_already_shipped_exit_2_refuses_fail_closed_never_falls_through_as_not_shipped(tmp_path):
+    component_root = tmp_path / "vault-mirror" / "04 projects" / "acme"
+    (component_root / "architecture").mkdir(parents=True)
+    result = _run(tmp_path, component_root=component_root,
+                  extra_env={"STUB_ALREADY_SHIPPED_MALFORMED": "1"})
+    assert result.returncode == 1, f"stderr={result.stderr}"
+    assert "refuse" in result.stderr
+    assert _timeline(tmp_path) == ["FETCH", "ALREADY_SHIPPED"]   # never reaches close-walk
+    calls = [c[0] for c in _rr_calls(tmp_path)]
+    assert "ship-walk" not in calls
+    assert "round-record" not in calls   # the whole run stops, not just the walk
 
 
 # ---- the happy path: close-walk, supersession sweep, ship-walk, round-record, crossover, in order ------

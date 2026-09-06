@@ -35,10 +35,14 @@ post, or `--test-mode` print-only — the `tools/ledger.py crossover` CLI's own 
 Gotcha (the mandate's own words, `tools/epic_gate.py`'s `_close_hold_body` `:601` is the
 precedent): a machinery-emitted close record must never spell a MANDATED FIELD at column 0 inside a
 body that carries another marker. Each of the three renderers below produces its OWN body, carrying
-exactly ONE marker, with field values that are always short counts/strings — never a quoted excerpt
-of another record's raw marker text — so this can never arise by construction; `tests/test_round_
-record.py` pins it directly (no render function's body ever satisfies another record's presence
-check).
+exactly ONE marker; every EXTERNALLY supplied string a renderer interpolates (a sweep status, a
+`who`/`scope`, the `deployed` field) runs through `_sanitize_interpolated` first — collapsing any
+embedded newline (NB1, #473 fold review round 2: an unsanitized multi-line value could otherwise
+open a fresh line at column 0 that satisfies a DIFFERENT record's own presence check, from inside
+what should be a single-marker body) — so this can never arise by construction, structurally, not
+by caller discipline; `tests/test_round_record.py` pins it directly, including a hostile multi-line
+value for every external field (no render function's body ever satisfies another record's presence
+check, sanitized or not).
 """
 from __future__ import annotations
 
@@ -52,11 +56,10 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import check_trail   # noqa: E402
-import design_gate   # noqa: E402 — sibling import: reuses design_gate._matching_theme, the one rule
 import drift         # noqa: E402 — sibling import: reuses drift.parse_deploy_records, the one grammar
 import records       # noqa: E402
 import sources       # noqa: E402
-import strategy      # noqa: E402
+import strategy      # noqa: E402 — also reuses strategy.matching_theme, the one theme-matching rule
 import textutil      # noqa: E402
 import vault_api     # noqa: E402
 
@@ -173,24 +176,49 @@ def ship_walk_already_posted(epic_texts: list, reg=None) -> bool:
     )
 
 
+def _sanitize_interpolated(value, *, max_len=200) -> str:
+    """Collapses ALL whitespace (embedded newlines included) to single spaces and caps length —
+    applied by EVERY renderer below to EVERY externally supplied string it interpolates (NB1, #473
+    fold review round 2): a value carrying a literal newline could otherwise render a body that
+    satisfies ANOTHER record's own presence check — `mode=prefix`'s column-0 anchor cares only
+    about a LINE's own start, so an embedded `\\nYR-ROUND-RECORD: ...` inside, say, a hostile
+    `supersession_sweep` status would anchor there exactly as if it opened its own comment. Exactly
+    the class `epic_gate._close_hold_body`'s own column-0 discipline exists to prevent, and
+    criterion 3 forbids. Structural, never caller-trusted: a renderer sanitizes its OWN inputs, so
+    "can never arise by construction" (this module's own docstring) stays true regardless of what a
+    caller — or a future caller — passes in."""
+    return " ".join(str(value).split())[:max_len]
+
+
 def round_record_body(*, refusals, records_demanded, detector_findings, escalations, deployed,
-                      reg=None) -> str:
+                      truncated=False, reg=None) -> str:
     reg = reg or records.load()
     marker = records.get(reg, "YR-ROUND-RECORD")["marker"]
+    lines = [
+        f"{marker} the round's observable counts",
+        f"refusals: {refusals}",
+        f"records-demanded: {records_demanded}",
+        f"detector-findings: {detector_findings}",
+        f"escalations: {escalations}",
+        f"deployed: {_sanitize_interpolated(deployed)}",
+    ]
+    if truncated:
+        # I5 (partial): a fetched page hit its own GraphQL cap — the counts above may undercount a
+        # round whose comments/PRs ran past it. Stated on the record itself, never silently.
+        lines.append("note: fetch page(s) hit the query's own cap — some comments/PRs beyond it "
+                     "were not counted, so these counts may undercount the real round")
     return (
-        f"{marker} the round's observable counts\n"
-        f"refusals: {refusals}\n"
-        f"records-demanded: {records_demanded}\n"
-        f"detector-findings: {detector_findings}\n"
-        f"escalations: {escalations}\n"
-        f"deployed: {deployed}\n\n"
+        "\n".join(lines) + "\n\n"
         "Computed from the trails alone (it-36 slice H, #473) — never the build host's ledger: "
         "refusals (the runner's Needs-info/Blocked comments on the child trails), records-demanded "
         "(YR-EPIC-GATE/YR-CLOSE-HOLD raises on the epic trail), detector-findings (the close lane's "
         "own trail-shape check over the round's own trails), escalations (YR-ESCALATION records "
-        f"across the round), and deployed (the latest YR-DEPLOY record on "
-        f"{drift.DEPLOY_TRAIL_REPO}#{drift.DEPLOY_TRAIL_ISSUE}). The pricing judgment against "
-        "attended attention stays the human's."
+        f"across the round), and deployed (the latest `YR-DEPLOY` record(s) on "
+        f"{drift.DEPLOY_TRAIL_REPO}#{drift.DEPLOY_TRAIL_ISSUE}, PER SURFACE — NN4: every surface but "
+        "`dispatch` reads the latest record's own commit; `dispatch` reads the latest record that "
+        "actually claims `restart: yes` instead, since a resident process a `restart: no` deploy "
+        "legitimately leaves on its prior commit). The pricing judgment against attended attention "
+        "stays the human's."
     )
 
 
@@ -222,7 +250,8 @@ def crossover_from_pr_usages(pr_usages: dict, budget_usd, *, linked_count: int) 
     return {"cost_usd": total, "pr_count": priced_count, "linked_count": linked_count, "verdict": verdict}
 
 
-def crossover_body(*, cost_usd, pr_count, linked_count, budget_usd, verdict, who, reg=None) -> str:
+def crossover_body(*, cost_usd, pr_count, linked_count, budget_usd, verdict, who, truncated=False,
+                   reg=None) -> str:
     reg = reg or records.load()
     marker = records.get(reg, "YR-CROSSOVER")["marker"]
     # I7: the budget rides AS DECLARED — no invented period unit (no canon names one).
@@ -233,11 +262,16 @@ def crossover_body(*, cost_usd, pr_count, linked_count, budget_usd, verdict, who
                   f"({unpriced} carried no dev-runner usage comment)")
     else:
         pr_text = f"across {pr_count} merged PR(s)"
+    cost_line = f"cost: ${cost_usd:.2f} {pr_text} (theme budget {budget_text})"
+    if truncated:
+        # I5 (partial): the linked-PR page hit its own GraphQL cap — this cost may be missing PRs
+        # past it. Stated on the record itself, never silently.
+        cost_line += " — note: fetch page truncated, some linked PRs beyond the query's own cap may be missing"
     return (
         f"{marker}\n"
-        f"cost: ${cost_usd:.2f} {pr_text} (theme budget {budget_text})\n"
+        f"{cost_line}\n"
         f"verdict: {verdict}\n"
-        f"who: {who}\n\n"
+        f"who: {_sanitize_interpolated(who)}\n\n"
         "The crossover test's typed verdict (it-36 slice H, #473): cost is this epic's own "
         "merged-PR usage (tools/sources.py pr_usage, summed over its priceable linked PRs); verdict "
         "compares that cost against the strategy doc's own theme budget_usd, naming any linked PR "
@@ -248,9 +282,10 @@ def crossover_body(*, cost_usd, pr_count, linked_count, budget_usd, verdict, who
 
 def matching_theme_budget(parsed_strategy: dict, repo: str):
     """The first theme (declared order) whose `repos` names `repo` -> its `budget_usd`, or `None`
-    when no theme targets this repo — delegates to `tools/design_gate.py`'s own `_matching_theme`
-    (I7: the ONE theme-matching rule, cited here rather than re-derived)."""
-    theme = design_gate._matching_theme(parsed_strategy, repo)
+    when no theme targets this repo — delegates to `tools/strategy.py`'s own public
+    `matching_theme` (I7/NN2: the ONE theme-matching rule, a public seam next to the schema it
+    reads, never a private reach into another module)."""
+    theme = strategy.matching_theme(parsed_strategy, repo)
     return theme.get("budget_usd") if theme else None
 
 
@@ -338,15 +373,17 @@ def ship_walk_body(*, who, scope, supersession_sweep=None, reg=None) -> str:
     over the walked component, as a short status string (e.g. `"clean (exit 0)"` or `"3 finding(s)
     — see run log"`) — folded into the record's own prose so "the grounding list was walked" is
     backed by a run of the existing deterministic sweep, never asserted on prose alone. `None` when
-    the caller had no component to sweep (an entirely superseded-only walk names nothing to check)."""
+    the caller had no component to sweep (an entirely superseded-only walk names nothing to check).
+    `who`/`scope`/`supersession_sweep` are every EXTERNALLY supplied string this renderer takes —
+    each runs through `_sanitize_interpolated` (NB1) before it ever reaches the body."""
     reg = reg or records.load()
     marker = records.get(reg, "YR-SHIP-WALK")["marker"]
     sweep_sentence = (f" The component's supersession sweep (`check_supersession.py --sweep`) ran: "
-                      f"{supersession_sweep}." if supersession_sweep else "")
+                      f"{_sanitize_interpolated(supersession_sweep)}." if supersession_sweep else "")
     return (
         f"{marker} walked at close\n"
-        f"who: {who}\n"
-        f"scope: {scope}\n\n"
+        f"who: {_sanitize_interpolated(who)}\n"
+        f"scope: {_sanitize_interpolated(scope)}\n\n"
         "The grounding list was walked: the living reference's section updated in place through the "
         "vault client (a heading-targeted PATCH, never a whole-body overwrite), and any superseded "
         f"research stamped — each write verified by its own read-back.{sweep_sentence} "
@@ -360,14 +397,16 @@ query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
       body
-      comments(first: 100) { nodes { body } }
+      comments(first: 100) { pageInfo { hasNextPage } nodes { body } }
       subIssues(first: 100) {
+        pageInfo { hasNextPage }
         nodes {
           number
           body
           repository { nameWithOwner }
-          comments(first: 100) { nodes { body } }
+          comments(first: 100) { pageInfo { hasNextPage } nodes { body } }
           closedByPullRequestsReferences(first: 10) {
+            pageInfo { hasNextPage }
             nodes { number merged repository { nameWithOwner } }
           }
         }
@@ -376,17 +415,23 @@ query($owner: String!, $name: String!, $number: Int!) {
   }
 }
 """
-# I5: none of the three connections above (an epic's own comments, a child's own comments, a
-# child's own linked-PR list) paginate past their `first:` cap — a real epic/child/PR-linkage set
-# past 100/100/10 reads as though it stopped there, silently. Stated plainly rather than fixed: a
-# GraphQL connection nested three deep needs a per-parent cursor walk to paginate correctly (a
-# bigger lift than this fold's own scope), and every one of these caps is generous for a single
-# round's own trail in practice. `_cli_fetch` does not detect or report a truncated page.
+# I5 (partial): none of the three connections above (an epic's own comments, a child's own
+# comments, a child's own linked-PR list) WALK past their `first:` cap — a real epic/child/PR-
+# linkage set past 100/100/10 still reads only that first page (a per-parent cursor walk three
+# connections deep is a bigger lift than this fold's own scope). What changed: each connection's
+# own `pageInfo.hasNextPage` is now READ (never walked) and folded into one overall `truncated`
+# flag in fetch.json's own output — `_cli_round_record`/`_cli_crossover` thread it into the
+# record's own body, so a truncated page is a STATED fact on the record, never a silently-wrong
+# count.
 
 
 def _gh(argv):
-    proc = subprocess.run([os.environ.get("GH_BIN", "gh"), *argv], capture_output=True, text=True,
-                          timeout=GH_TIMEOUT)
+    try:
+        proc = subprocess.run([os.environ.get("GH_BIN", "gh"), *argv], capture_output=True,
+                              text=True, timeout=GH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # N3 (partial): a stated refusal, never an uncaught exception racing past this seam.
+        raise RuntimeError(f"gh {' '.join(argv)} timed out after {GH_TIMEOUT}s")
     if proc.returncode != 0:
         raise RuntimeError(f"gh {' '.join(argv)} failed ({proc.returncode}): {proc.stderr.strip()}")
     return proc.stdout
@@ -410,36 +455,55 @@ def _cli_fetch(argv):
                         "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"number={args.epic}"]))
     data = data.get("data", data) if isinstance(data, dict) else data
     issue = ((data.get("repository") or {}).get("issue")) or {}
+    epic_comments = (issue.get("comments") or {})
     epic_texts = [issue.get("body") or ""] + [
-        c.get("body") or "" for c in ((issue.get("comments") or {}).get("nodes") or [])]
-    children = (issue.get("subIssues") or {}).get("nodes") or []
+        c.get("body") or "" for c in (epic_comments.get("nodes") or [])]
+    sub_issues = (issue.get("subIssues") or {})
+    children = sub_issues.get("nodes") or []
+    # I5 (partial): one overall truncation flag — true iff ANY of the connections below hit its cap.
+    truncated = bool((epic_comments.get("pageInfo") or {}).get("hasNextPage"))
+    truncated = truncated or bool((sub_issues.get("pageInfo") or {}).get("hasNextPage"))
     child_texts = {}
     pr_refs = []
     for c in children:
         child_repo = (c.get("repository") or {}).get("nameWithOwner") or args.repo
         key = f"{child_repo}#{c.get('number')}"
+        c_comments = (c.get("comments") or {})
         child_texts[key] = [c.get("body") or ""] + [
-            cc.get("body") or "" for cc in ((c.get("comments") or {}).get("nodes") or [])]
-        for pr in ((c.get("closedByPullRequestsReferences") or {}).get("nodes") or []):
+            cc.get("body") or "" for cc in (c_comments.get("nodes") or [])]
+        truncated = truncated or bool((c_comments.get("pageInfo") or {}).get("hasNextPage"))
+        c_prs = (c.get("closedByPullRequestsReferences") or {})
+        truncated = truncated or bool((c_prs.get("pageInfo") or {}).get("hasNextPage"))
+        for pr in (c_prs.get("nodes") or []):
             # I6: an OPEN linked PR (closes-by-reference without being merged — e.g. a superseding
             # PR, or one still in flight when this closed) is never priced as a merged one.
             if not pr.get("merged"):
                 continue
             pr_repo = (pr.get("repository") or {}).get("nameWithOwner") or child_repo
             pr_refs.append({"repo": pr_repo, "number": pr.get("number")})
-    print(json.dumps({"epic_texts": epic_texts, "child_texts": child_texts, "pr_refs": pr_refs}))
+    print(json.dumps({"epic_texts": epic_texts, "child_texts": child_texts, "pr_refs": pr_refs,
+                      "truncated": truncated}))
     return 0
 
 
 def _cli_already_shipped(argv):
     """I3's idempotence guard, as a CLI check `close-runner.sh` runs BEFORE the close-walk stage:
     exit 0 iff `YR-SHIP-WALK` already rides the epic trail (nothing left to walk or patch this
-    tick), exit 1 otherwise."""
-    ap = argparse.ArgumentParser(description="exit 0 iff YR-SHIP-WALK already rides the epic trail")
+    tick), exit 1 when it does not. NN1: a malformed/incomplete `fetch.json` (missing `epic_texts`,
+    unparseable JSON, unreadable file) is a THIRD, DISTINCT outcome — exit 2 — never silently folded
+    into "not shipped": that would let a fetch failure fall through to a FRESH close-walk + vault
+    patch instead of stopping the run. `close-runner.sh` treats exit 2 as fail-closed STOP."""
+    ap = argparse.ArgumentParser(description="exit 0 shipped / 1 not shipped / 2 fetch.json malformed (refuse)")
     ap.add_argument("--fetch-json", required=True)
     args = ap.parse_args(argv)
-    fetched = json.loads(pathlib.Path(args.fetch_json).read_text(encoding="utf-8"))
-    return 0 if ship_walk_already_posted(fetched["epic_texts"]) else 1
+    try:
+        fetched = json.loads(pathlib.Path(args.fetch_json).read_text(encoding="utf-8"))
+        epic_texts = fetched["epic_texts"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as e:
+        print(f"round_record: already-shipped refused — {args.fetch_json} is malformed: {e}",
+              file=sys.stderr)
+        return 2
+    return 0 if ship_walk_already_posted(epic_texts) else 1
 
 
 def _cli_round_record(argv):
@@ -463,7 +527,7 @@ def _cli_round_record(argv):
         records_demanded=count_records_demanded(fetched["epic_texts"], reg),
         detector_findings=count_detector_findings(reg, fetched["epic_texts"], fetched["child_texts"]),
         escalations=count_escalations(fetched["epic_texts"] + all_child_texts, reg),
-        deployed=deployed, reg=reg)
+        deployed=deployed, truncated=bool(fetched.get("truncated")), reg=reg)
     if args.test_mode:
         print("TEST-MODE: no trail write — the record only")
         print(body)
@@ -501,7 +565,7 @@ def _cli_crossover(argv):
     result = crossover_from_pr_usages(pr_usages, budget_usd, linked_count=linked_count)
     body = crossover_body(cost_usd=result["cost_usd"], pr_count=result["pr_count"],
                           linked_count=result["linked_count"], budget_usd=budget_usd,
-                          verdict=result["verdict"], who=args.who)
+                          verdict=result["verdict"], who=args.who, truncated=bool(fetched.get("truncated")))
     if args.test_mode:
         print("TEST-MODE: no trail write — the record only")
         print(body)

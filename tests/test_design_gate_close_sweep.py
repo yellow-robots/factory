@@ -233,3 +233,71 @@ def test_default_close_active_and_spawn_close_use_a_real_pidfile(tmp_path, monke
         assert dg._default_close_active(REPO, 100) is True
     finally:
         _kill_close_pidfile(dg, REPO, 100)
+
+
+# ---- I11: _default_discover_close_hold — --limit 200, --match comments, and a Feature/Epic Type ---------
+#      check before any candidate is ever returned (and so, before any spawn) -----------------------------
+
+class FakeGhSearch:
+    """Injectable `gh` for `_default_discover_close_hold`: `search_results` is the canned
+    `gh search issues --json number` payload; `issue_types` maps issue number -> Issue Type name
+    (a number absent from this map has NO `issueType`, matching an untyped issue's own real JSON
+    shape). Records every argv for the argv-shape assertions."""
+
+    def __init__(self, *, search_results, issue_types=None, raise_on_view=None):
+        self.search_results = list(search_results)
+        self.issue_types = dict(issue_types or {})
+        self.raise_on_view = set(raise_on_view or ())
+        self.calls = []
+
+    def __call__(self, argv):
+        argv = list(argv)
+        self.calls.append(argv)
+        if argv[:2] == ["search", "issues"]:
+            return self.search_results
+        if argv[:2] == ["issue", "view"]:
+            number = int(argv[2])
+            if number in self.raise_on_view:
+                raise RuntimeError(f"gh issue view {number} failed")
+            name = self.issue_types.get(number)
+            return {"issueType": ({"name": name} if name else None)}
+        raise AssertionError(f"FakeGhSearch: unexpected argv {argv}")
+
+
+def test_discover_close_hold_searches_with_match_comments_and_limit_200():
+    gh = FakeGhSearch(search_results=[])
+    design_gate._default_discover_close_hold(gh, REPO)
+    search_call = gh.calls[0]
+    assert search_call[:2] == ["search", "issues"]
+    assert "--match" in search_call and search_call[search_call.index("--match") + 1] == "comments"
+    assert "--limit" in search_call and search_call[search_call.index("--limit") + 1] == "200"
+    assert "--state" in search_call and search_call[search_call.index("--state") + 1] == "open"
+
+
+def test_discover_close_hold_keeps_only_feature_and_epic_typed_candidates():
+    gh = FakeGhSearch(
+        search_results=[{"number": 100}, {"number": 101}, {"number": 102}, {"number": 103}],
+        issue_types={100: "Feature", 101: "Epic", 102: "Task"},   # 103 left untyped (no issueType)
+    )
+    found = design_gate._default_discover_close_hold(gh, REPO)
+    assert found == [{"repo": REPO, "number": 100}, {"repo": REPO, "number": 101}]
+
+
+def test_discover_close_hold_type_check_is_case_insensitive():
+    gh = FakeGhSearch(search_results=[{"number": 100}], issue_types={100: "feature"})
+    assert design_gate._default_discover_close_hold(gh, REPO) == [{"repo": REPO, "number": 100}]
+
+
+def test_discover_close_hold_a_probe_failure_skips_only_that_candidate():
+    gh = FakeGhSearch(
+        search_results=[{"number": 100}, {"number": 101}],
+        issue_types={101: "Feature"},
+        raise_on_view={100},
+    )
+    found = design_gate._default_discover_close_hold(gh, REPO)
+    assert found == [{"repo": REPO, "number": 101}]
+
+
+def test_discover_close_hold_returns_nothing_when_search_is_empty():
+    gh = FakeGhSearch(search_results=[])
+    assert design_gate._default_discover_close_hold(gh, REPO) == []

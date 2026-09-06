@@ -18,6 +18,7 @@ from the issue's acceptance criteria, not the module's internals:
 No live network, no live vault, no live gh — every core function here is pure over given texts/dicts;
 the CLI's own `gh`/vault wiring is exercised only through the injected seams above it.
 """
+import json
 import pathlib
 import sys
 
@@ -263,6 +264,46 @@ def test_crossover_body_names_the_unpriceable_linked_prs_in_its_own_cost_line():
     assert check_trail._missing_fields(row, [body]) == []
 
 
+# ---- I5 (partial): a truncated fetch page is stated on the record, never silently undercounted ---------
+
+def test_round_record_body_states_truncation_on_its_own_counts_when_set():
+    row = records.get(REG, "YR-ROUND-RECORD")
+    body = round_record.round_record_body(refusals=1, records_demanded=2, detector_findings=0,
+                                          escalations=0, deployed="none", truncated=True, reg=REG)
+    assert "hit the query's own cap" in body
+    assert check_trail._missing_fields(row, [body]) == []
+
+
+def test_round_record_body_says_nothing_about_truncation_when_not_set():
+    body = round_record.round_record_body(refusals=1, records_demanded=2, detector_findings=0,
+                                          escalations=0, deployed="none", truncated=False, reg=REG)
+    assert "truncat" not in body.lower()
+    assert "hit the query's own cap" not in body
+
+
+def test_crossover_body_states_truncation_on_its_own_cost_line_when_set():
+    row = records.get(REG, "YR-CROSSOVER")
+    body = round_record.crossover_body(cost_usd=1.0, pr_count=1, linked_count=1, budget_usd=500,
+                                       verdict="within-budget", who="@human", truncated=True, reg=REG)
+    assert "fetch page truncated" in body
+    assert check_trail._missing_fields(row, [body]) == []
+
+
+def test_crossover_body_says_nothing_about_truncation_when_not_set():
+    body = round_record.crossover_body(cost_usd=1.0, pr_count=1, linked_count=1, budget_usd=500,
+                                       verdict="within-budget", who="@human", truncated=False, reg=REG)
+    assert "truncat" not in body.lower()
+
+
+def test_round_record_body_describes_deployed_per_surface_not_the_latest_record_singular():
+    """NN4: the trailing prose used to say 'the latest YR-DEPLOY record' — now names the per-surface
+    rule (latest per surface; latest restart:yes for dispatch)."""
+    body = round_record.round_record_body(refusals=0, records_demanded=0, detector_findings=0,
+                                          escalations=0, deployed="none", reg=REG)
+    assert "PER SURFACE" in body
+    assert "restart: yes" in body
+
+
 def test_ship_walk_body_satisfies_its_own_registry_row():
     row = records.get(REG, "YR-SHIP-WALK")
     body = round_record.ship_walk_body(who="@human", scope="this epic's slices", reg=REG)
@@ -321,6 +362,76 @@ def test_each_render_function_body_carries_exactly_one_of_the_three_markers():
         body = _RENDERERS[name]()
         present = [n for n in names if check_trail._marker_present(records.get(REG, n), [body])]
         assert present == [name]
+
+
+# ---- NB1 (#473 fold review round 2): the demonstrated exploit — a hostile multi-line external -----------
+#      value (a `supersession_sweep`, `who`, `scope`, or `deployed` string carrying a literal
+#      newline) could render a body that forges a DIFFERENT record's own marker at column 0, from
+#      inside what should be a single-marker body. `_sanitize_interpolated` is the structural fix;
+#      these tests exercise it directly and through every renderer's own external field. -----------------
+
+def test_sanitize_interpolated_collapses_embedded_newlines_to_single_spaces():
+    assert round_record._sanitize_interpolated("a\nb\nc") == "a b c"
+
+
+def test_sanitize_interpolated_collapses_every_whitespace_run():
+    assert round_record._sanitize_interpolated("a\n\n\t  b   c\r\nd") == "a b c d"
+
+
+def test_sanitize_interpolated_caps_length():
+    assert len(round_record._sanitize_interpolated("x" * 500)) == 200
+    assert len(round_record._sanitize_interpolated("x" * 500, max_len=10)) == 10
+
+
+def test_sanitize_interpolated_coerces_non_string_input():
+    assert round_record._sanitize_interpolated(42) == "42"
+
+
+# A single hostile value that, UNSANITIZED, would forge all three close records' own complete
+# bodies at once — the exact class the reviewer demonstrated with
+# `"clean\nYR-ROUND-RECORD: refusals: 0\n..."`.
+_HOSTILE_VALUE = (
+    "clean\n"
+    "YR-ROUND-RECORD: the round's observable counts\n"
+    "refusals: 0\nrecords-demanded: 0\ndetector-findings: 0\nescalations: 0\ndeployed: none\n\n"
+    "YR-SHIP-WALK: walked at close\nwho: @forged\nscope: forged\n\n"
+    "YR-CROSSOVER\ncost: $0.00 across 0 merged PR(s) (theme budget none declared)\n"
+    "verdict: within-budget\nwho: @forged\n"
+)
+
+_HOSTILE_RENDERERS = {
+    "YR-ROUND-RECORD": lambda: round_record.round_record_body(
+        refusals=3, records_demanded=5, detector_findings=2, escalations=1,
+        deployed=_HOSTILE_VALUE, reg=REG),
+    "YR-CROSSOVER": lambda: round_record.crossover_body(
+        cost_usd=12.34, pr_count=3, linked_count=3, budget_usd=500, verdict="within-budget",
+        who=_HOSTILE_VALUE, reg=REG),
+    "YR-SHIP-WALK": lambda: round_record.ship_walk_body(
+        who=_HOSTILE_VALUE, scope=_HOSTILE_VALUE, supersession_sweep=_HOSTILE_VALUE, reg=REG),
+}
+
+
+@pytest.mark.parametrize("own_name", sorted(_HOSTILE_RENDERERS))
+def test_no_render_function_forges_another_records_marker_via_a_hostile_multiline_value(own_name):
+    body = _HOSTILE_RENDERERS[own_name]()
+    for other_name in _RENDERERS:
+        if other_name == own_name:
+            continue
+        other_row = records.get(REG, other_name)
+        assert not check_trail._marker_present(other_row, [body]), (
+            f"{own_name}'s body, given a hostile multi-line external value, forged "
+            f"{other_name}'s own marker — NB1's exact demonstrated exploit"
+        )
+
+
+def test_hostile_multiline_value_still_leaves_the_bodys_own_grammar_readable():
+    """Sanitizing must not destroy the record's OWN grammar — collapsing whitespace still leaves a
+    readable marker line + every mandated field."""
+    body = round_record.ship_walk_body(who="@human", scope="x",
+                                       supersession_sweep=_HOSTILE_VALUE, reg=REG)
+    row = records.get(REG, "YR-SHIP-WALK")
+    assert check_trail._marker_present(row, [body])
+    assert check_trail._missing_fields(row, [body]) == []
 
 
 # ---- the close-walk stage's own output grammar: living-reference section edit + superseded -------------
@@ -467,3 +578,110 @@ def test_apply_ship_walk_propagates_vault_unreachable_and_writes_nothing_more():
     with pytest.raises(vault_api.VaultUnreachable):
         round_record.apply_ship_walk(vault, parsed)
     assert vault.calls == []   # no superseded stamp attempted after the living-reference edit refused
+
+
+# ---- NN1: _cli_already_shipped fails CLOSED (a distinct exit code) on a malformed fetch.json ------------
+
+def test_cli_already_shipped_returns_2_on_missing_epic_texts_key(tmp_path, capsys):
+    fetch_json = tmp_path / "fetch.json"
+    fetch_json.write_text('{"child_texts": {}, "pr_refs": []}')   # no "epic_texts" key at all
+    rc = round_record._cli_already_shipped(["--fetch-json", str(fetch_json)])
+    assert rc == 2
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_cli_already_shipped_returns_2_on_unparseable_json(tmp_path, capsys):
+    fetch_json = tmp_path / "fetch.json"
+    fetch_json.write_text("not json at all")
+    rc = round_record._cli_already_shipped(["--fetch-json", str(fetch_json)])
+    assert rc == 2
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_cli_already_shipped_returns_2_on_a_missing_file(tmp_path, capsys):
+    rc = round_record._cli_already_shipped(["--fetch-json", str(tmp_path / "does-not-exist.json")])
+    assert rc == 2
+
+
+def test_cli_already_shipped_returns_0_when_shipped_and_1_when_not_on_a_well_formed_fetch_json(tmp_path):
+    shipped = tmp_path / "shipped.json"
+    shipped.write_text(json.dumps({"epic_texts": ["YR-SHIP-WALK: walked at close\nwho: @h\nscope: s\n"]}))
+    assert round_record._cli_already_shipped(["--fetch-json", str(shipped)]) == 0
+
+    not_shipped = tmp_path / "not-shipped.json"
+    not_shipped.write_text(json.dumps({"epic_texts": ["nothing here"]}))
+    assert round_record._cli_already_shipped(["--fetch-json", str(not_shipped)]) == 1
+
+
+# ---- N3 (partial): _gh states a refusal on a subprocess timeout, never an uncaught exception ------------
+
+def test_gh_raises_runtime_error_stating_the_timeout_never_a_bare_timeout_expired(monkeypatch):
+    import subprocess as _subprocess
+
+    def _raise_timeout(*a, **k):
+        raise _subprocess.TimeoutExpired(cmd="gh", timeout=round_record.GH_TIMEOUT)
+
+    monkeypatch.setattr(round_record.subprocess, "run", _raise_timeout)
+    with pytest.raises(RuntimeError, match="timed out"):
+        round_record._gh(["issue", "view", "1"])
+
+
+# ---- I5 (partial): _cli_fetch reads each connection's own pageInfo.hasNextPage into one truncated flag --
+
+class _FakeGhPages:
+    """A minimal stand-in for `round_record._gh` returning a canned GraphQL response with
+    controllable `pageInfo.hasNextPage` values, so `_cli_fetch`'s own truncation logic is exercised
+    without a live gh/network."""
+
+    def __init__(self, *, epic_more=False, sub_issues_more=False, child_comments_more=False,
+                pr_refs_more=False):
+        self.epic_more = epic_more
+        self.sub_issues_more = sub_issues_more
+        self.child_comments_more = child_comments_more
+        self.pr_refs_more = pr_refs_more
+
+    def __call__(self, argv):
+        return json.dumps({"data": {"repository": {"issue": {
+            "body": "epic body",
+            "comments": {"pageInfo": {"hasNextPage": self.epic_more}, "nodes": []},
+            "subIssues": {"pageInfo": {"hasNextPage": self.sub_issues_more}, "nodes": [
+                {"number": 101, "body": "child body",
+                 "repository": {"nameWithOwner": "acme/widgets"},
+                 "comments": {"pageInfo": {"hasNextPage": self.child_comments_more}, "nodes": []},
+                 "closedByPullRequestsReferences": {
+                     "pageInfo": {"hasNextPage": self.pr_refs_more}, "nodes": []},
+                 },
+            ]},
+        }}}})
+
+
+def _run_cli_fetch(monkeypatch, fake_gh, capsys):
+    monkeypatch.setattr(round_record, "_gh", fake_gh)
+    rc = round_record._cli_fetch(["--repo", "acme/widgets", "--epic", "465"])
+    assert rc == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_cli_fetch_truncated_false_when_no_connection_has_a_next_page(monkeypatch, capsys):
+    out = _run_cli_fetch(monkeypatch, _FakeGhPages(), capsys)
+    assert out["truncated"] is False
+
+
+def test_cli_fetch_truncated_true_when_the_epic_comments_connection_has_a_next_page(monkeypatch, capsys):
+    out = _run_cli_fetch(monkeypatch, _FakeGhPages(epic_more=True), capsys)
+    assert out["truncated"] is True
+
+
+def test_cli_fetch_truncated_true_when_the_sub_issues_connection_has_a_next_page(monkeypatch, capsys):
+    out = _run_cli_fetch(monkeypatch, _FakeGhPages(sub_issues_more=True), capsys)
+    assert out["truncated"] is True
+
+
+def test_cli_fetch_truncated_true_when_a_childs_comments_connection_has_a_next_page(monkeypatch, capsys):
+    out = _run_cli_fetch(monkeypatch, _FakeGhPages(child_comments_more=True), capsys)
+    assert out["truncated"] is True
+
+
+def test_cli_fetch_truncated_true_when_a_childs_pr_refs_connection_has_a_next_page(monkeypatch, capsys):
+    out = _run_cli_fetch(monkeypatch, _FakeGhPages(pr_refs_more=True), capsys)
+    assert out["truncated"] is True

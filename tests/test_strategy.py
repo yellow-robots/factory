@@ -223,3 +223,26 @@ def test_cli_unreadable_file_exits_nonzero(tmp_path):
     result = _run(str(missing))
     assert result.returncode != 0
     assert "unreadable" in result.stdout
+
+
+# --- matching_theme (NN2, #473 fold review round 2): the one theme-matching rule, moved here from
+#     tools/design_gate.py's own private _matching_theme so every reader (the design sweep, tools/
+#     round_record.py's crossover) shares a public seam next to the schema it reads --------------------
+
+def test_matching_theme_finds_the_first_theme_naming_the_repo():
+    parsed = {"themes": [
+        {"id": "t1", "repos": ["acme/other"], "budget_usd": 100},
+        {"id": "t2", "repos": ["acme/widgets"], "budget_usd": 500},
+    ]}
+    theme = strategy.matching_theme(parsed, "acme/widgets")
+    assert theme["id"] == "t2"
+
+
+def test_matching_theme_none_when_no_theme_targets_the_repo():
+    parsed = {"themes": [{"id": "t1", "repos": ["acme/other"], "budget_usd": 100}]}
+    assert strategy.matching_theme(parsed, "acme/widgets") is None
+
+
+def test_matching_theme_none_with_no_themes_at_all():
+    assert strategy.matching_theme({"themes": []}, "acme/widgets") is None
+    assert strategy.matching_theme({}, "acme/widgets") is None

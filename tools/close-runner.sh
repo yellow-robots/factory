@@ -95,8 +95,18 @@ python3 "$ROUND_RECORD_PY" fetch --repo "$REPO" --epic "$EPIC" > "$RUN_DIR/fetch
 # I3: idempotence — if YR-SHIP-WALK already rides the epic trail, a re-run (e.g. after a failed
 # round-record/crossover on a prior tick) must never re-run the close-walk stage or re-patch the
 # vault a second time. round-record/crossover below still run unconditionally.
-if python3 "$ROUND_RECORD_PY" already-shipped --fetch-json "$RUN_DIR/fetch.json"; then
+# NN1: already-shipped is a THREE-way disposition (0 shipped / 1 not shipped / 2 fetch.json
+# malformed) — a bare `if ...; then ... else ...` folds 1 AND 2 into the SAME "else" branch, which
+# would let a malformed fetch.json fall through as "not shipped" and run a FRESH close-walk + vault
+# patch instead of stopping. The exit code is captured explicitly and switched on all three values;
+# anything but 0/1 refuses fail-closed.
+ALREADY_SHIPPED_RC=0
+python3 "$ROUND_RECORD_PY" already-shipped --fetch-json "$RUN_DIR/fetch.json" || ALREADY_SHIPPED_RC=$?
+if [ "$ALREADY_SHIPPED_RC" -eq 0 ]; then
   log "already-shipped: YR-SHIP-WALK already on the trail — skipping the close-walk stage and the vault patch"
+elif [ "$ALREADY_SHIPPED_RC" -ge 2 ]; then
+  log "refuse: already-shipped check failed (exit $ALREADY_SHIPPED_RC) — $RUN_DIR/fetch.json may be malformed; stopping fail-closed, no records posted this tick"
+  exit 1
 else
   CLOSE_WALK_SYS="You are the PM agent's close-walk stage (it-36 slice H) — the ship-walk over the grounding list (skills/factory/references/architect.md moment 3). Read the epic's own technical-rfc body and the component's CURRENT living reference (the one note under its architecture/ home with 'type: note', kept current). Decide the ONE section that needs updating in light of what this round shipped, and any research this round makes superseded. Output EXACTLY this shape and nothing else: a ===LIVING-REFERENCE=== block naming 'path: <vault-relative path to the living reference>' then 'heading: <exact heading TEXT, nested headings joined by ::>' — the heading text ONLY, never a leading '#' or '##' (the real vault API addresses a heading by its bare text, e.g. 'Build hosts', never '## Build hosts') — then the section's full REPLACEMENT content between ===CONTENT=== and ===END-CONTENT===, closed by ===END-LIVING-REFERENCE===; then a ===SUPERSEDED=== block with zero or more 'PATH: TARGET' lines (TARGET is the superseding doc's vault-relative path, or the literal word none), closed by ===END-SUPERSEDED===. If nothing in the living reference needs updating, omit the ===LIVING-REFERENCE=== block entirely rather than inventing a change; if nothing is superseded, the ===SUPERSEDED=== block may be empty or omitted. No commentary, no preamble, no text outside those blocks."
 
@@ -123,8 +133,18 @@ else
   # sweep — advisory (never blocks: a legacy finding is reported honestly in the record, not
   # treated as a gate). VAULT_ROOT/SCOPE resolve through tools/design_gate.py's own helpers so this
   # never re-derives the vault-relative path rule.
-  VAULT_ROOT_VAL="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import design_gate; print(design_gate.VAULT_ROOT)' "$SELF_DIR")"
-  SCOPE_VAL="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import design_gate; print(design_gate.vault_rel_path(sys.argv[2]))' "$SELF_DIR" "$COMPONENT_ROOT")"
+  # NN3: these two substitutions run AFTER the paid close-walk stage — under `set -e` an unguarded
+  # `VAR="$(cmd)"` failure would abort the whole script with bash's own generic message, losing
+  # both the diagnosis and the LLM spend already sunk into close-walk.log. Each is captured
+  # explicitly and refused with a named reason instead.
+  if ! VAULT_ROOT_VAL="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import design_gate; print(design_gate.VAULT_ROOT)' "$SELF_DIR" 2>"$RUN_DIR/vault-root.err")"; then
+    log "refuse: could not derive the vault scope for $REPO: $(cat "$RUN_DIR/vault-root.err" 2>/dev/null)"
+    exit 1
+  fi
+  if ! SCOPE_VAL="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import design_gate; print(design_gate.vault_rel_path(sys.argv[2]))' "$SELF_DIR" "$COMPONENT_ROOT" 2>"$RUN_DIR/scope.err")"; then
+    log "refuse: could not derive the vault scope for $REPO: $(cat "$RUN_DIR/scope.err" 2>/dev/null)"
+    exit 1
+  fi
   log "supersession sweep: check_supersession.py --sweep --scope $SCOPE_VAL"
   if python3 "$CHECK_SUPERSESSION_PY" --sweep --scope "$SCOPE_VAL" --vault-root "$VAULT_ROOT_VAL" \
       > "$RUN_DIR/supersession-sweep.log" 2>&1; then

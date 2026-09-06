@@ -149,14 +149,9 @@ def _has_escalation_posted(comment_bodies, repo):
     )
 
 
-# --- theme matching (tools/strategy.py) -----------------------------------------------------------------
-def _matching_theme(parsed_strategy, repo):
-    """The first theme (declared order) whose `repos` names this repository, or None — "in-direction"
-    for this slice's purposes is exactly "some theme targets this repo at all"."""
-    for theme in parsed_strategy.get("themes") or []:
-        if repo in (theme.get("repos") or []):
-            return theme
-    return None
+# --- theme matching: tools/strategy.py's own public matching_theme() (NN2, #473 fold review round 2
+#     — moved there from a private _matching_theme so tools/round_record.py's own crossover reaches
+#     a public seam, never a private one) --------------------------------------------------------
 
 
 # --- cost estimate: the mean of the repo's recent runner-PR usage, x the seed's own effort factor -------
@@ -360,7 +355,7 @@ def _process_repo(gh, entry, now, owner_login, ledger_spent_usd, pr_scan_limit,
     parsed_strategy = strategy_res["value"]
     seeds = seeds_res["value"]
 
-    theme = _matching_theme(parsed_strategy, repo)
+    theme = strategy.matching_theme(parsed_strategy, repo)
     if theme is None:
         _idle(gh, repo, triage_issue, "no strategy theme targets this repository")
         actions.append({"repo": repo, "action": "idle", "reason": "no-theme"})
@@ -567,17 +562,40 @@ def sweep_close(*, gh=None, epics, close_active=None, spawn_close=None):
     return actions
 
 
+_CLOSE_HOLD_SEARCH_LIMIT = 200
+
+
 def _default_discover_close_hold(gh, repo):
     """`main()`'s own real discovery (never the tested core above): a full-text search over `repo`'s
-    OPEN issues carrying the `YR-CLOSE-HOLD` sentinel anywhere on their trail — the SAME set
-    `tools/epic_gate.py`'s own sweep already comments on (a held epic stays `Status=Ready`,
-    `Reason=Needs-info`; searching by content means this module never has to duplicate the board's
-    own field-reading plumbing to find it). Returns bare `{"repo", "number"}` dicts — `main()` is the
-    one that attaches `component_root`/`strategy_doc` from the config entry, since a search result
-    carries no config of its own."""
-    out = gh(["search", "issues", "--repo", repo, "YR-CLOSE-HOLD", "--state", "open", "--json", "number"])
+    OPEN issues carrying the `YR-CLOSE-HOLD` sentinel — the SAME set `tools/epic_gate.py`'s own
+    sweep already comments on (a held epic stays `Status=Ready`, `Reason=Needs-info`; searching by
+    content means this module never has to duplicate the board's own field-reading plumbing to find
+    it). `--match comments` (I11): `YR-CLOSE-HOLD` is ALWAYS a machinery-posted COMMENT
+    (`epic_gate.py`'s own `_close_hold_body`), never issue body prose — an unrestricted full-text
+    search would also match an issue merely DISCUSSING the marker in its own body (this very slice's
+    own #473 does). `--limit 200` (I11): `gh search issues`'s own default page (30) could silently
+    under-cover a busy board; 200 is a generous, explicit cap, never an unstated default. A Type
+    check (I11) follows: only a candidate whose Issue Type is Feature or Epic (case-insensitively —
+    `tools/epic_gate.py`'s own `sweep_epics` vocabulary) is returned; a probe that fails for one
+    candidate skips just that candidate (never the whole repo's discovery) — fail-closed as
+    "does not spawn", not a raised exception. Returns bare `{"repo", "number"}` dicts — `main()` is
+    the one that attaches `component_root`/`strategy_doc` from the config entry, since a search
+    result carries no config of its own."""
+    out = gh(["search", "issues", "--repo", repo, "YR-CLOSE-HOLD", "--state", "open",
+             "--match", "comments", "--limit", str(_CLOSE_HOLD_SEARCH_LIMIT), "--json", "number"])
     data = _as_json(out)
-    return [{"repo": repo, "number": item["number"]} for item in (data or []) if isinstance(item, dict)]
+    numbers = [item["number"] for item in (data or []) if isinstance(item, dict) and "number" in item]
+    result = []
+    for number in numbers:
+        try:
+            detail = _as_json(gh(["issue", "view", str(number), "--repo", repo, "--json", "issueType"]))
+        except Exception:  # noqa: BLE001 — a probe failure skips just this candidate, fail-closed
+            continue
+        issue_type = (((detail or {}).get("issueType") or {}).get("name") or "").lower()
+        if issue_type not in ("feature", "epic"):
+            continue
+        result.append({"repo": repo, "number": number})
+    return result
 
 
 # --- the triage-license evaluator (it-36 slice D declared the guard; the tool owns the trail-walk
