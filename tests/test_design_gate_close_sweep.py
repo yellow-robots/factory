@@ -298,6 +298,21 @@ def test_discover_close_hold_a_probe_failure_skips_only_that_candidate():
     assert found == [{"repo": REPO, "number": 101}]
 
 
+def test_discover_close_hold_a_probe_failure_is_named_on_stderr_never_silent(capsys):
+    """#473 fold review round 3: a probe failure must never empty discovery invisibly — the
+    candidate and the error land on stderr, so a SYSTEMATIC failure (a renamed field, a narrowed
+    token scope) is visible, not a silently-shrinking result."""
+    gh = FakeGhSearch(
+        search_results=[{"number": 100}],
+        issue_types={},
+        raise_on_view={100},
+    )
+    design_gate._default_discover_close_hold(gh, REPO)
+    err = capsys.readouterr().err
+    assert REPO in err
+    assert "100" in err
+
+
 def test_discover_close_hold_returns_nothing_when_search_is_empty():
     gh = FakeGhSearch(search_results=[])
     assert design_gate._default_discover_close_hold(gh, REPO) == []

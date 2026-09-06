@@ -589,7 +589,11 @@ def _default_discover_close_hold(gh, repo):
     for number in numbers:
         try:
             detail = _as_json(gh(["issue", "view", str(number), "--repo", repo, "--json", "issueType"]))
-        except Exception:  # noqa: BLE001 — a probe failure skips just this candidate, fail-closed
+        except Exception as e:  # noqa: BLE001 — a probe failure skips just this candidate, fail-closed
+            # Named on stderr, never silent (#473 fold review round 3): a systematic probe failure
+            # (a renamed field, a narrowed token scope) would otherwise empty this repo's discovery
+            # invisibly, one skipped candidate at a time, with nothing anywhere naming why.
+            print(f"design_gate: close-hold Type probe failed for {repo}#{number}: {e}", file=sys.stderr)
             continue
         issue_type = (((detail or {}).get("issueType") or {}).get("name") or "").lower()
         if issue_type not in ("feature", "epic"):

@@ -35,14 +35,17 @@ post, or `--test-mode` print-only — the `tools/ledger.py crossover` CLI's own 
 Gotcha (the mandate's own words, `tools/epic_gate.py`'s `_close_hold_body` `:601` is the
 precedent): a machinery-emitted close record must never spell a MANDATED FIELD at column 0 inside a
 body that carries another marker. Each of the three renderers below produces its OWN body, carrying
-exactly ONE marker; every EXTERNALLY supplied string a renderer interpolates (a sweep status, a
-`who`/`scope`, the `deployed` field) runs through `_sanitize_interpolated` first — collapsing any
-embedded newline (NB1, #473 fold review round 2: an unsanitized multi-line value could otherwise
-open a fresh line at column 0 that satisfies a DIFFERENT record's own presence check, from inside
-what should be a single-marker body) — so this can never arise by construction, structurally, not
-by caller discipline; `tests/test_round_record.py` pins it directly, including a hostile multi-line
-value for every external field (no render function's body ever satisfies another record's presence
-check, sanitized or not).
+exactly ONE marker; EVERY value a renderer interpolates — a sweep status, `who`/`scope`, a
+`verdict`, the round's own five fields (`refusals`/`records-demanded`/`detector-findings`/
+`escalations`/`deployed`), whatever its usual type — runs through `_sanitize_interpolated` first,
+universally, never selectively by "this one is always an int in practice": collapsing any embedded
+newline (NB1, #473 fold review round 2: an unsanitized multi-line value could otherwise open a
+fresh line at column 0 that satisfies a DIFFERENT record's own presence check, from inside what
+should be a single-marker body — round 3 closed the gap left on `verdict` and the round's own
+counts, the SAME class the reviewer forged a second time) — so this can never arise by
+construction, structurally, not by caller discipline; `tests/test_round_record.py` pins it
+directly, including a hostile multi-line value for EVERY interpolated parameter of every renderer
+(no render function's body ever satisfies another record's presence check, sanitized or not).
 """
 from __future__ import annotations
 
@@ -194,12 +197,16 @@ def round_record_body(*, refusals, records_demanded, detector_findings, escalati
                       truncated=False, reg=None) -> str:
     reg = reg or records.load()
     marker = records.get(reg, "YR-ROUND-RECORD")["marker"]
+    # Every one of the record's own five fields is sanitized (#473 fold review round 3) — refusals/
+    # records-demanded/detector-findings/escalations are ints in every real caller, but this
+    # renderer trusts no caller's type discipline: the guard is universal, not "safe because the
+    # current callers happen to pass ints".
     lines = [
         f"{marker} the round's observable counts",
-        f"refusals: {refusals}",
-        f"records-demanded: {records_demanded}",
-        f"detector-findings: {detector_findings}",
-        f"escalations: {escalations}",
+        f"refusals: {_sanitize_interpolated(refusals)}",
+        f"records-demanded: {_sanitize_interpolated(records_demanded)}",
+        f"detector-findings: {_sanitize_interpolated(detector_findings)}",
+        f"escalations: {_sanitize_interpolated(escalations)}",
         f"deployed: {_sanitize_interpolated(deployed)}",
     ]
     if truncated:
@@ -214,7 +221,7 @@ def round_record_body(*, refusals, records_demanded, detector_findings, escalati
         "(YR-EPIC-GATE/YR-CLOSE-HOLD raises on the epic trail), detector-findings (the close lane's "
         "own trail-shape check over the round's own trails), escalations (YR-ESCALATION records "
         f"across the round), and deployed (the latest `YR-DEPLOY` record(s) on "
-        f"{drift.DEPLOY_TRAIL_REPO}#{drift.DEPLOY_TRAIL_ISSUE}, PER SURFACE — NN4: every surface but "
+        f"{drift.DEPLOY_TRAIL_REPO}#{drift.DEPLOY_TRAIL_ISSUE}, PER SURFACE: every surface but "
         "`dispatch` reads the latest record's own commit; `dispatch` reads the latest record that "
         "actually claims `restart: yes` instead, since a resident process a `restart: no` deploy "
         "legitimately leaves on its prior commit). The pricing judgment against attended attention "
@@ -270,7 +277,7 @@ def crossover_body(*, cost_usd, pr_count, linked_count, budget_usd, verdict, who
     return (
         f"{marker}\n"
         f"{cost_line}\n"
-        f"verdict: {verdict}\n"
+        f"verdict: {_sanitize_interpolated(verdict)}\n"
         f"who: {_sanitize_interpolated(who)}\n\n"
         "The crossover test's typed verdict (it-36 slice H, #473): cost is this epic's own "
         "merged-PR usage (tools/sources.py pr_usage, summed over its priceable linked PRs); verdict "

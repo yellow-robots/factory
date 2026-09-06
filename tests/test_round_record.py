@@ -399,37 +399,70 @@ _HOSTILE_VALUE = (
     "verdict: within-budget\nwho: @forged\n"
 )
 
-_HOSTILE_RENDERERS = {
-    "YR-ROUND-RECORD": lambda: round_record.round_record_body(
-        refusals=3, records_demanded=5, detector_findings=2, escalations=1,
-        deployed=_HOSTILE_VALUE, reg=REG),
-    "YR-CROSSOVER": lambda: round_record.crossover_body(
-        cost_usd=12.34, pr_count=3, linked_count=3, budget_usd=500, verdict="within-budget",
-        who=_HOSTILE_VALUE, reg=REG),
-    "YR-SHIP-WALK": lambda: round_record.ship_walk_body(
-        who=_HOSTILE_VALUE, scope=_HOSTILE_VALUE, supersession_sweep=_HOSTILE_VALUE, reg=REG),
-}
+
+def _round_record_case(**overrides):
+    base = dict(refusals=3, records_demanded=5, detector_findings=2, escalations=1, deployed="none")
+    base.update(overrides)
+    return round_record.round_record_body(reg=REG, **base)
 
 
-@pytest.mark.parametrize("own_name", sorted(_HOSTILE_RENDERERS))
-def test_no_render_function_forges_another_records_marker_via_a_hostile_multiline_value(own_name):
-    body = _HOSTILE_RENDERERS[own_name]()
+def _crossover_case(**overrides):
+    base = dict(cost_usd=12.34, pr_count=3, linked_count=3, budget_usd=500,
+               verdict="within-budget", who="@human")
+    base.update(overrides)
+    return round_record.crossover_body(reg=REG, **base)
+
+
+def _ship_walk_case(**overrides):
+    base = dict(who="@human", scope="this epic's slices", supersession_sweep="clean (exit 0)")
+    base.update(overrides)
+    return round_record.ship_walk_body(reg=REG, **base)
+
+
+# #473 fold review round 3: round 2's own pin only exercised ONE representative field per renderer
+# (`deployed`, `who`, and all three of ship_walk_body's fields at once) — the reviewer forged a
+# SECOND record through `crossover_body`'s own `verdict`, which round 2 never covered at all. This
+# now names EVERY interpolated parameter of every renderer individually, so a future renderer field
+# added without wiring it through `_sanitize_interpolated` fails exactly this pin, not a human
+# re-reading the diff.
+_HOSTILE_CASES = [
+    ("YR-ROUND-RECORD", "refusals", lambda: _round_record_case(refusals=_HOSTILE_VALUE)),
+    ("YR-ROUND-RECORD", "records_demanded", lambda: _round_record_case(records_demanded=_HOSTILE_VALUE)),
+    ("YR-ROUND-RECORD", "detector_findings", lambda: _round_record_case(detector_findings=_HOSTILE_VALUE)),
+    ("YR-ROUND-RECORD", "escalations", lambda: _round_record_case(escalations=_HOSTILE_VALUE)),
+    ("YR-ROUND-RECORD", "deployed", lambda: _round_record_case(deployed=_HOSTILE_VALUE)),
+    ("YR-CROSSOVER", "verdict", lambda: _crossover_case(verdict=_HOSTILE_VALUE)),
+    ("YR-CROSSOVER", "who", lambda: _crossover_case(who=_HOSTILE_VALUE)),
+    ("YR-SHIP-WALK", "who", lambda: _ship_walk_case(who=_HOSTILE_VALUE)),
+    ("YR-SHIP-WALK", "scope", lambda: _ship_walk_case(scope=_HOSTILE_VALUE)),
+    ("YR-SHIP-WALK", "supersession_sweep", lambda: _ship_walk_case(supersession_sweep=_HOSTILE_VALUE)),
+]
+
+
+@pytest.mark.parametrize("own_name,field_name,render", _HOSTILE_CASES,
+                        ids=[f"{c[0]}:{c[1]}" for c in _HOSTILE_CASES])
+def test_no_render_function_forges_another_records_marker_via_a_hostile_value_in_any_field(
+        own_name, field_name, render):
+    body = render()
     for other_name in _RENDERERS:
         if other_name == own_name:
             continue
         other_row = records.get(REG, other_name)
         assert not check_trail._marker_present(other_row, [body]), (
-            f"{own_name}'s body, given a hostile multi-line external value, forged "
-            f"{other_name}'s own marker — NB1's exact demonstrated exploit"
+            f"{own_name}'s body, given a hostile value in its own {field_name!r} field, forged "
+            f"{other_name}'s own marker — NB1's exact demonstrated exploit, re-opened via a field "
+            "round 2's own pin never covered"
         )
 
 
-def test_hostile_multiline_value_still_leaves_the_bodys_own_grammar_readable():
+@pytest.mark.parametrize("own_name,field_name,render", _HOSTILE_CASES,
+                        ids=[f"{c[0]}:{c[1]}" for c in _HOSTILE_CASES])
+def test_hostile_value_in_any_field_still_leaves_the_bodys_own_grammar_readable(
+        own_name, field_name, render):
     """Sanitizing must not destroy the record's OWN grammar — collapsing whitespace still leaves a
-    readable marker line + every mandated field."""
-    body = round_record.ship_walk_body(who="@human", scope="x",
-                                       supersession_sweep=_HOSTILE_VALUE, reg=REG)
-    row = records.get(REG, "YR-SHIP-WALK")
+    readable marker line + every mandated field, whichever field carried the hostile value."""
+    body = render()
+    row = records.get(REG, own_name)
     assert check_trail._marker_present(row, [body])
     assert check_trail._missing_fields(row, [body]) == []
 

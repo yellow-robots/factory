@@ -141,16 +141,24 @@ def _run(tmp_path, *, component_root=None, strategy_doc=None, extra_env=None):
     _exec(cs_py, CHECK_SUPERSESSION_PY_STUB)
     dev_runner_home = tmp_path / "drhome"
 
-    env = {
-        **{k: v for k, v in __import__("os").environ.items()},
+    import os as _os
+
+    # I4 (#473 fold review, tightened round 3): a `STUB_*` variable already exported in the
+    # CALLING shell (measured: `STUB_ALREADY_SHIPPED=1 pytest ...` broke 9 tests, since every stub
+    # this suite drives keys its own behavior off that exact prefix — dispatch is a LIVE forwarder
+    # of it too) must never leak into a subprocess this test controls. Every `STUB_` key is dropped
+    # from the copied environ FIRST, then this test's own controlled `STUB_*` values (below, and
+    # each case's own `extra_env`) are the ONLY ones that can ever reach the runner.
+    env = {k: v for k, v in _os.environ.items() if not k.startswith("STUB_")}
+    env.update({
         "CLAUDE_BIN": str(binp / "claude"),
         "DEV_RUNNER_HOME": str(dev_runner_home),
         "ROUND_RECORD_PY": str(rr_py),
         "CHECK_SUPERSESSION_PY": str(cs_py),
         "STUB_TIMELINE": str(tmp_path / "timeline"),
         "STUB_RR_ARGV_LOG": str(tmp_path / "rr_argv_log"),
-    }
-    # I4: pop the calling shell's own values for everything this runner reads, rather than let a
+    })
+    # pop the calling shell's own values for everything else this runner reads, rather than let a
     # real dev machine's env leak into the test (moot for the old CLOSE_* env vars post-B3, since
     # they are argv now — still done for the rest).
     for key in ("CLOSE_COMPONENT_ROOT", "CLOSE_STRATEGY_DOC", "DESIGN_MODEL", "EFFORT",
