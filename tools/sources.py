@@ -73,6 +73,17 @@ def issue_trail_timed(repo: str, issue: str) -> tuple[bool, list] | tuple[bool, 
     return True, rows
 
 
+def pr_trail_texts_from_json(data: dict) -> list[str]:
+    """The pure half of `pr_trail`: an already-fetched `body,comments` JSON object -> the body plus
+    every comment body, as a list of texts. Shared with `pr_usage`/`pr_usage_from_texts` (and any
+    caller that fetches this same JSON through an injected `gh`, e.g. tools/design_gate.py's own
+    FakeGh-testable sweep) so the one parse lives here, never cloned."""
+    texts = [data.get("body") or ""]
+    for c in data.get("comments") or []:
+        texts.append(c.get("body") or "" if isinstance(c, dict) else str(c))
+    return texts
+
+
 def pr_trail(repo: str, pr: str) -> tuple[bool, list[str]] | tuple[bool, str]:
     ok, out = _run(["gh", "pr", "view", str(pr), "--repo", repo, "--json", "body,comments"])
     if not ok:
@@ -81,10 +92,85 @@ def pr_trail(repo: str, pr: str) -> tuple[bool, list[str]] | tuple[bool, str]:
         data = json.loads(out or "{}")
     except (json.JSONDecodeError, ValueError) as e:
         return False, f"pr-trail unparseable: {e}"
-    texts = [data.get("body") or ""]
+    return True, pr_trail_texts_from_json(data)
+
+
+def triage_rows_from_json(data: dict) -> list[tuple[str, str]]:
+    """The pure half of `triage_surface`: an already-fetched `body,comments` JSON object -> `(author
+    login, text)` pairs — the issue body first (author `""`; GitHub exposes no comparable author
+    query for the body itself, so it can never satisfy an owner-only reader) then each comment, in
+    the trail's own chronological order. Shared with `tools/design_gate.py`'s FakeGh-testable sweep,
+    which fetches the same JSON through its own injected `gh` rather than this module's subprocess."""
+    rows = [("", data.get("body") or "")]
     for c in data.get("comments") or []:
-        texts.append(c.get("body") or "" if isinstance(c, dict) else str(c))
-    return True, texts
+        if isinstance(c, dict):
+            login = ((c.get("author") or {}).get("login")) or ""
+            rows.append((login, c.get("body") or ""))
+        else:
+            rows.append(("", str(c)))
+    return rows
+
+
+def triage_surface(repo: str, issue: str) -> tuple[bool, list[tuple[str, str]]] | tuple[bool, str]:
+    """`issue_trail`'s contract (repo+issue -> trail texts) widened to also carry each comment's
+    author login: a `YR-TRIAGE` disposition (records.toml) is trusted only when it rides a comment
+    whose author is `YR_OWNER_LOGIN` — the design sweep's own read, human-only by the record's own
+    grammar."""
+    ok, out = _run(["gh", "issue", "view", str(issue), "--repo", repo, "--json", "body,comments"])
+    if not ok:
+        return False, out
+    try:
+        data = json.loads(out or "{}")
+    except (json.JSONDecodeError, ValueError) as e:
+        return False, f"triage-surface unparseable: {e}"
+    return True, triage_rows_from_json(data)
+
+
+def pr_usage_from_texts(texts: list[str]) -> tuple[bool, dict] | tuple[bool, str]:
+    """The pure half of `pr_usage`: an already-fetched PR trail (`pr_trail_texts_from_json`'s own
+    shape) -> the `### dev-runner usage` comment's fenced ```json summary block (tools/stage_usage.py
+    `render_summary_comment`, :119-144), re-priced into a per-stage weighted total and the true-dollar
+    shadow cost — the same weights/pricing tools/ledger.py's own `build_ledger_row` uses (census
+    weights, price is $/Mtok, /1_000_000 for true dollars). The LAST such comment in the trail wins
+    (a re-run posts a fresh one; the newest is authoritative). False when no comment carries the
+    block, or its JSON is unparseable."""
+    import registry
+    import stage_usage
+    for body in reversed(texts):
+        i = body.find("```json") if "### dev-runner usage" in body else -1
+        if i < 0:
+            continue
+        rest = body[i + len("```json"):]
+        j = rest.find("```")
+        if j < 0:
+            continue
+        try:
+            summary = json.loads(rest[:j])
+        except (json.JSONDecodeError, ValueError):
+            continue
+        reg = registry.load()
+        stages = summary.get("stages") or []
+        cost_usd = 0.0
+        for s in stages:
+            weighted = round(sum(int(s.get(k) or 0) * w
+                                 for k, w in stage_usage.WEIGHTED_TOTAL_WEIGHTS.items()))
+            price = registry.price_for_id(reg, s.get("model"))
+            if price is not None:
+                cost_usd += weighted * price
+        cost_usd /= 1_000_000
+        return True, {"stages": stages, "weighted_total": summary.get("weighted_total"),
+                      "cost_usd": cost_usd}
+    return False, "no dev-runner usage comment found"
+
+
+def pr_usage(repo: str, pr: str) -> tuple[bool, dict] | tuple[bool, str]:
+    """`pr_usage_from_texts` over a freshly-fetched PR trail — the design sweep's cost-per-PR input
+    (the seed pack's cost estimate: the mean of a repo's recent runner PRs' `cost_usd`, times the
+    seed's own effort factor)."""
+    ok, texts = pr_trail(repo, pr)
+    if not ok:
+        return False, texts
+    return pr_usage_from_texts(texts)
 
 
 def board_item(item_id: str) -> tuple[bool, dict] | tuple[bool, str]:

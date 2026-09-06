@@ -18,6 +18,13 @@ GitHub I/O — so dispatch here only flocks + spawns, same seam as build_task. U
 log, every sweep spawn appends to the SAME `sweep.log` under DEV_RUNNER_HOME/runs/ — one file, not one
 per poll tick — so sweep decisions stay traceable without accreting a file per invocation.
 
+`run_design_sweep()` is the same shape again, for the PM instance's own design sweep (it-36 slice E,
+#470): it fires `tools/design_gate.py` under its own NON-BLOCKING flock on its own SEPARATE lock
+(`DESIGN_SWEEP_LOCK`), DETACHED, logging to `design-sweep.log`. POST /design-sweep wraps it — a route
+this dispatch instance answers regardless of `--instance`, exactly like /build and /sweep; only the
+PM instance's own systemd unit (`deploy/pm-dispatch.service`) is actually pointed at by n8n's
+design-sweep schedule.
+
 Config (env): DISPATCH_TOKEN (bearer, required to start the HTTP server), DISPATCH_BIND (default
 127.0.0.1), DISPATCH_PORT (default 8770), DEV_RUNNER (default dev-runner.sh next to this file),
 DISPATCH_LOCK (default ~/.cache/dev-runner/dispatch.lock — its directory is the **lock home**: where every
@@ -72,6 +79,11 @@ DEV_RUNNER_HOME = os.environ.get("DEV_RUNNER_HOME", str(pathlib.Path.home() / ".
 LOCK = os.environ.get("DISPATCH_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "dispatch.lock"))
 EPIC_SWEEPER = os.environ.get("EPIC_SWEEPER", str(SELF.parent / "epic_gate.py"))
 SWEEP_LOCK = os.environ.get("SWEEP_LOCK", str(pathlib.Path.home() / ".cache" / "dev-runner" / "epic-sweep.lock"))
+# the design sweep (it-36 slice E, #470): the PM instance's own sweeper + lock, on `run_sweep`'s exact
+# shape (own flock, own log) — a design sweep never blocks or is blocked by an epic sweep or a build.
+DESIGN_SWEEPER = os.environ.get("DESIGN_SWEEPER", str(SELF.parent / "design_gate.py"))
+DESIGN_SWEEP_LOCK = os.environ.get("DESIGN_SWEEP_LOCK",
+                                    str(pathlib.Path.home() / ".cache" / "dev-runner" / "design-sweep.lock"))
 RUNS_DIR = os.environ.get("RUNS_DIR", str(pathlib.Path(DEV_RUNNER_HOME) / "runs"))
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
@@ -277,6 +289,19 @@ def run_sweep(*, sweeper=None, lock=None, spawn=None, runs_dir=None):
     return {"ok": True, "dispatched": True}
 
 
+def run_design_sweep(*, sweeper=None, lock=None, spawn=None, runs_dir=None):
+    """`run_sweep`'s exact shape (it-36 slice E, #470), for the PM instance's own design sweep: fire
+    `tools/design_gate.py` under its own non-blocking flock, detached, and return immediately. Its own
+    lock (`DESIGN_SWEEP_LOCK`) — separate from both the build locks and the epic-sweep lock — so a
+    design sweep never blocks or is blocked by either; its own log (`design-sweep.log`, appended by
+    every spawn, the epic sweep's `sweep.log` precedent) rather than one file per tick. `runs_dir` is
+    injectable, mirroring `build_task`/`run_sweep`, so tests never write the real runs directory."""
+    cmd = ["flock", "-n", lock or DESIGN_SWEEP_LOCK, sweeper or DESIGN_SWEEPER]
+    log_path = pathlib.Path(runs_dir or RUNS_DIR) / "design-sweep.log"
+    (spawn or _SPAWN)(cmd, log_path)
+    return {"ok": True, "dispatched": True}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj).encode()
@@ -292,7 +317,7 @@ class Handler(BaseHTTPRequestHandler):
         if not token or not hmac.compare_digest(auth, f"Bearer {token}"):   # constant-time
             return self._send(401, {"ok": False, "error": "unauthorized"})
         path = self.path.rstrip("/")
-        if path not in ("/build", "/sweep"):
+        if path not in ("/build", "/sweep", "/design-sweep"):
             return self._send(404, {"ok": False, "error": "not found"})
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -301,6 +326,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"ok": False, "error": "bad json"})
         if path == "/sweep":
             res = run_sweep()
+        elif path == "/design-sweep":
+            res = run_design_sweep()
         else:
             res = build_task(data.get("issue"), data.get("repo"))
         self._send(202 if res["ok"] else 400, res)

@@ -269,10 +269,17 @@ def load_gate_durations(run_dir):
 
 def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
                       build_model, review_model, check_repair_model, review_repair_model,
-                      outcome_type, outcome_decision, ts_start, ts_end, wall_seconds):
+                      outcome_type, outcome_decision, ts_start, ts_end, wall_seconds,
+                      kind="build", stage=""):
     """The `yr-ledger-row/1` object for ONE runner invocation. Never raises on a missing/empty run_dir (a
     Needs-info bounce runs before the run dir is created; a hard-killed run may never have written a
-    single usage artifact) — an absent artifact just means an empty stage array, not an error."""
+    single usage artifact) — an absent artifact just means an empty stage array, not an error.
+
+    `kind`/`stage` (it-36 slice E, #470): the PM's own design runner (`tools/design-runner.sh`) appends
+    one row per `claude -p` stage (product/adversarial/fold) as it completes, rather than one row per
+    whole invocation — `kind="design"` distinguishes those rows from a dev-runner build row (the
+    default, `kind="build"`), and `stage` names which one this particular row is for. Both are additive,
+    top-level fields; an existing reader that ignores unknown keys is unaffected."""
     run_dir_path = pathlib.Path(run_dir)
 
     usage_records = stage_usage.load_usage_records(run_dir)
@@ -309,6 +316,8 @@ def build_ledger_row(*, run_id, task, repo, branch, base_sha, run_dir,
 
     return {
         "schema": ROW_SCHEMA,
+        "kind": kind,
+        "stage": stage or None,
         "run_id": run_id,
         "task": task,
         "repo": repo,
@@ -529,7 +538,7 @@ def _cli_append(args):
         check_repair_model=args.check_repair_model, review_repair_model=args.review_repair_model,
         outcome_type=args.outcome_type,
         outcome_decision=args.outcome_decision, ts_start=args.ts_start, ts_end=args.ts_end,
-        wall_seconds=args.wall_seconds,
+        wall_seconds=args.wall_seconds, kind=args.kind, stage=args.stage,
     )
     append_row(args.ledger_dir, row)
     return 0
@@ -630,6 +639,12 @@ def main(argv=None):
     p_app.add_argument("--ts-start", required=True)
     p_app.add_argument("--ts-end", required=True)
     p_app.add_argument("--wall-seconds", type=int, required=True)
+    p_app.add_argument("--kind", default="build",
+                        help="row kind (default 'build'; the PM's design runner passes 'design', "
+                             "it-36 slice E)")
+    p_app.add_argument("--stage", default="",
+                        help="which stage this row is for (the design runner's per-stage rows: "
+                             "product|adversarial|fold); empty for a whole-invocation build row")
     p_app.set_defaults(func=_cli_append)
 
     p_ref = sub.add_parser("refusal", help="append one fail-soft yr-ledger-refusal/1 row (it-31 slice 9: gate() refusals reach the ledger; never blocks, never changes the caller's exit)")

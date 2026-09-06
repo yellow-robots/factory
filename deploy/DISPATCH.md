@@ -186,12 +186,20 @@ systemctl --user status pm-dispatch
 ```
 
 `deploy/n8n-design-sweep.json` is the same schedule -> POST shape as `deploy/n8n-epic-sweep.json`,
-wired to the PM instance's own URL and token — **import it, but keep it inactive.**
-`POST /design-sweep` is not yet a route `tools/dispatch.py` answers: this slice licenses the
-machinery in the registry and the process model (the records, the `machinery` actor on the
-activation/epic-flip transitions, the allowlist, the two GitHub App mutation bindings) and stands
-up the PM instance's shape for review; the route itself and `tools/design_gate.py` (the
-triage-license/independence evaluators the model already names) are a later slice's build.
+wired to the PM instance's own URL and token — **import it, but keep it inactive** until the watched
+switch-on below.
+
+`POST /design-sweep` (it-36 slice E, #470) fires `tools/design_gate.py` under its own lock
+(`DESIGN_SWEEP_LOCK`, default `~/.cache/dev-runner/design-sweep.lock`) — separate from both the
+build locks and the epic-sweep lock, so a design sweep never blocks or is blocked by either. It reads
+its repo list (each repo's triage issue, vault component root, strategy doc, and optional governing
+epic) from a small JSON config (`--config`, default `$DEV_RUNNER_HOME/pm-repos.json` or
+`YR_PM_CONFIG`) — item P's own human provisioning; the tool reads it, never invents it. Smoke test
+and watched switch-on follow the same discipline as `/sweep` above: run it manually against a
+throwaway seed/triage issue, watch a pack post and a `go` disposition spawn `tools/design-runner.sh`,
+then activate the schedule. `tools/design_gate.py evaluate`/`independence` (the triage-license and
+independence evaluators the process model already names on the activation/epic-flip transitions) are
+a later slice's build (F) — this slice's own sweep never activates a design doc or writes the vault.
 
 **Open reachability question, named here for the slice that adds the route:** the PM instance's
 `DISPATCH_BIND=127.0.0.1` is deliberate (it is the one instance the vault key reaches) but n8n

@@ -216,8 +216,11 @@ query($q: String!) {
 
 # --- default `gh` runner (the only real external; injected/overridden in tests) -----------------------
 def _gh(argv):
-    """Run `gh <argv...>`; return stdout text. Raises on a non-zero exit so a broken read/write is loud."""
-    proc = subprocess.run(["gh", *argv], capture_output=True, text=True)
+    """Run `$GH_BIN <argv...>` (default `gh`) — the same override seam `tools/dev-runner.sh`/
+    `tools/sources.py` honor (it-36 slice E, #470), so pointing `GH_BIN` at the App-token wrapper
+    (`tools/gh-app`) covers this sweep's writes too. Return stdout text; raises on a non-zero exit so a
+    broken read/write is loud."""
+    proc = subprocess.run([os.environ.get("GH_BIN", "gh"), *argv], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"gh {' '.join(argv)} failed ({proc.returncode}): {proc.stderr.strip()}")
     return proc.stdout

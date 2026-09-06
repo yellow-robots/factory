@@ -361,6 +361,72 @@ def test_epic_sweeper_default_is_executable():
     assert os.access(dispatch.EPIC_SWEEPER, os.X_OK)
 
 
+# ---- run_design_sweep core (it-36 slice E, #470): `run_sweep`'s exact shape, its own separate lock ----
+
+def test_run_design_sweep_spawns_flocked_sweeper():
+    calls = []
+    r = dispatch.run_design_sweep(sweeper="/x/design_gate.py", lock="/tmp/design-sweep.lock",
+                                   spawn=lambda *a: calls.append(a[0]))
+    assert r["ok"] and r["dispatched"]
+    assert calls == [["flock", "-n", "/tmp/design-sweep.lock", "/x/design_gate.py"]]
+
+
+def test_run_design_sweep_takes_no_issue_or_repo_args():
+    calls = []
+    r = dispatch.run_design_sweep(spawn=lambda *a: calls.append(a[0]))
+    assert r["ok"] and r["dispatched"]
+    assert len(calls) == 1 and len(calls[0]) == 4   # flock, -n, <lock>, <sweeper> — nothing else appended
+
+
+def test_run_design_sweep_spawn_receives_a_log_path_under_runs_dir(tmp_path):
+    calls = []
+    runs_dir = tmp_path / "runs"
+    r = dispatch.run_design_sweep(sweeper="/x/design_gate.py", lock="/tmp/design-sweep.lock",
+                                   spawn=lambda cmd, log_path: calls.append((cmd, log_path)),
+                                   runs_dir=str(runs_dir))
+    assert r["ok"] and r["dispatched"]
+    assert len(calls) == 1
+    cmd, log_path = calls[0]
+    assert cmd == ["flock", "-n", "/tmp/design-sweep.lock", "/x/design_gate.py"]
+    assert pathlib.Path(log_path).name == "design-sweep.log"
+    assert pathlib.Path(log_path).parent == runs_dir
+
+
+def test_run_design_sweep_log_path_is_the_same_single_file_across_invocations(tmp_path):
+    calls = []
+    runs_dir = tmp_path / "runs"
+    for _ in range(4):
+        r = dispatch.run_design_sweep(sweeper="/x/design_gate.py", lock="/tmp/design-sweep.lock",
+                                       spawn=lambda cmd, log_path: calls.append(log_path),
+                                       runs_dir=str(runs_dir))
+        assert r["ok"]
+    assert len(calls) == 4
+    assert len({str(p) for p in calls}) == 1, f"expected one stable log path, got {sorted(set(map(str, calls)))}"
+
+
+def test_design_sweep_lock_distinct_from_both_build_and_epic_sweep_locks():
+    # its own lock — separate from BOTH the build locks and the epic-sweep lock — so a design sweep
+    # never blocks or is blocked by either.
+    assert dispatch.DESIGN_SWEEP_LOCK != dispatch.LOCK
+    assert dispatch.DESIGN_SWEEP_LOCK != dispatch.SWEEP_LOCK
+
+    build_calls, epic_calls, design_calls = [], [], []
+    dispatch.build_task("7", "o/r", runner="/x/run.sh", spawn=lambda *a: build_calls.append(a[0]))
+    dispatch.run_sweep(sweeper="/x/epic_gate.py", spawn=lambda *a: epic_calls.append(a[0]))
+    dispatch.run_design_sweep(sweeper="/x/design_gate.py", spawn=lambda *a: design_calls.append(a[0]))
+    build_lock_path = build_calls[0][4]
+    epic_lock_path = epic_calls[0][2]
+    design_lock_path = design_calls[0][2]
+    assert len({build_lock_path, epic_lock_path, design_lock_path}) == 3
+    assert design_lock_path == dispatch.DESIGN_SWEEP_LOCK
+
+
+def test_design_sweeper_default_is_executable():
+    # the same `flock` + direct-exec shape as the epic sweeper (test_epic_sweeper_default_is_executable
+    # above): a missing exec bit means every /design-sweep 202s then dies with exit 126.
+    assert os.access(dispatch.DESIGN_SWEEPER, os.X_OK)
+
+
 # ---- HTTP adapter ----
 
 @contextlib.contextmanager
@@ -475,6 +541,49 @@ def test_http_sweep_uses_lock_distinct_from_build_lock():
 
 
 def test_http_unknown_path_404_still_enforced_with_sweep_route_present():
+    with _server() as (url, calls):
+        assert _post(url + "/nope", {}, token="secret")[0] == 404
+        assert calls == []
+
+
+# ---- /design-sweep HTTP adapter (it-36 slice E, #470) ----
+# `/design-sweep` is answered regardless of `--instance` (exactly like /build and /sweep) — only the
+# systemd unit's own schedule decides which instance actually POSTs here in production.
+
+def test_http_design_sweep_requires_token():
+    with _server() as (url, calls):
+        assert _post(url + "/design-sweep", {})[0] == 401
+        assert _post(url + "/design-sweep", {}, token="wrong")[0] == 401
+        assert calls == []                                          # never reached run_design_sweep
+
+
+def test_http_design_sweep_happy_202_spawns_once():
+    with _server() as (url, calls):
+        code, body = _post(url + "/design-sweep", {}, token="secret")
+        assert code == 202 and body["ok"] and body["dispatched"]
+        assert len(calls) == 1 and calls[0][:2] == ["flock", "-n"]
+
+
+def test_http_design_sweep_no_body_required():
+    with _server() as (url, calls):
+        req = urllib.request.Request(url + "/design-sweep", data=b"", method="POST")
+        req.add_header("Authorization", "Bearer secret")
+        with urllib.request.urlopen(req) as resp:
+            code = resp.status
+        assert code == 202 and len(calls) == 1
+
+
+def test_http_design_sweep_uses_a_lock_distinct_from_build_and_epic_sweep_locks():
+    with _server() as (url, calls):
+        _post(url + "/build", {"issue": 5, "repo": "o/r"}, token="secret")
+        _post(url + "/sweep", {}, token="secret")
+        _post(url + "/design-sweep", {}, token="secret")
+        assert len(calls) == 3
+        build_lock, sweep_lock, design_lock = calls[0][2], calls[1][2], calls[2][2]
+        assert len({build_lock, sweep_lock, design_lock}) == 3
+
+
+def test_http_unknown_path_404_still_enforced_with_design_sweep_route_present():
     with _server() as (url, calls):
         assert _post(url + "/nope", {}, token="secret")[0] == 404
         assert calls == []
