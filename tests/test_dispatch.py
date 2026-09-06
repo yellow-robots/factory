@@ -10,6 +10,19 @@ sys.path.insert(0, str(ROOT / "tools"))
 import dispatch  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _restore_dispatch_instance(monkeypatch):
+    """Order-independence pin (it-36 slice D, #469, review round 3): `dispatch.main()` assigns
+    module-level `dispatch._INSTANCE` directly (never through monkeypatch), so a test that calls
+    `main(["--instance", "pm"])` leaks that value into whichever test runs next — reproduced by
+    the reviewer running `test_main_accepts_each_valid_instance_value` immediately before
+    `test_spawn_env_excludes_vault_api_key_on_the_build_instance` (an order xdist/random-order CI
+    can produce, collection order alone does not). Recording the value here and letting
+    `monkeypatch` restore it after EVERY test in this file — regardless of whether that test used
+    monkeypatch itself to change it — closes this structurally rather than per-test."""
+    monkeypatch.setattr(dispatch, "_INSTANCE", dispatch._INSTANCE)
+
+
 def _capture_cmd(**kwargs):
     """Call `build_task`, capturing the composed argv it would have spawned (never actually run). The
     lock home is created up front — the real `_spawn_detached` seam does this itself; bypassing it here
