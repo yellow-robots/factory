@@ -1882,8 +1882,26 @@ if stage_done 05-commit; then
 else
   BASE_SHA="$("$GIT_BIN" -C "$WT" rev-parse HEAD)"
 fi
-HEAD_SHA="$("$GIT_BIN" -C "$WT" write-tree)"
-"$GIT_BIN" -C "$WT" diff --cached > "$RUN_DIR/diff.patch"
+# The bundle EXCLUDES the changelog fragment (changelog_dir, issue #474) from BOTH the readable
+# patch text and head_sha's own tree hash: the fragment is the runner's OWN deterministic,
+# mechanical artifact (Goal + a Source line naming this issue) — never implementer-authored code,
+# so there is nothing in it for the reviewer to assess for correctness. Folding it into either would
+# make the bundle's decision-time hash vary with the ISSUE NUMBER alone (the fragment's filename and
+# Source line are the only pieces of it that do) even when the task's own content is byte-identical
+# — exactly the canonical-serialization property tests/test_dev_runner_review_bundle.py's
+# reproducibility test holds the bundle to. `write-tree` alone has no pathspec-exclude, so head_sha
+# is computed over a SCRATCH COPY of the real index with the fragment's entries removed — a real,
+# resolvable tree object in the SAME object database, just never touching the real staged index the
+# eventual commit reads from. The fragment still ships in the real commit (git diff --cached,
+# unfiltered, at the commit step below) and fragment_present's own decision-time check reads that
+# real commit's diff directly — neither is affected by this exclusion, which touches only the
+# bundle's own captured snapshot.
+BUNDLE_SCRATCH_INDEX="$(mktemp "$RUN_TMPDIR/bundle-index.XXXXXX")"
+cp "$("$GIT_BIN" -C "$WT" rev-parse --git-path index)" "$BUNDLE_SCRATCH_INDEX"
+GIT_INDEX_FILE="$BUNDLE_SCRATCH_INDEX" "$GIT_BIN" -C "$WT" rm --cached -r --ignore-unmatch -q -- "$CHANGELOG_DIR" >/dev/null
+HEAD_SHA="$(GIT_INDEX_FILE="$BUNDLE_SCRATCH_INDEX" "$GIT_BIN" -C "$WT" write-tree)"
+rm -f "$BUNDLE_SCRATCH_INDEX"
+"$GIT_BIN" -C "$WT" diff --cached -- . ":(exclude)${CHANGELOG_DIR%/}/**" > "$RUN_DIR/diff.patch"
 printf '%s\n' "$AC" > "$RUN_DIR/acceptance-criteria.txt"
 BUNDLE="$RUN_DIR/review-bundle.json"
 python3 "$SELF_DIR/review_bundle.py" init --bundle "$BUNDLE" \
