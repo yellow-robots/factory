@@ -447,17 +447,19 @@ def test_cli_requires_record_and_source_arguments():
 # The candidate replay driver (slice C, issue #164) -- claude -p through the same cold-stage seam
 # ============================================================================
 
-def _extract_dev_runner_literal(pattern):
+def _extract_dev_runner_literal(pattern, source=None):
     """One named literal out of tools/dev-runner.sh's own source, so the expected value in these tests
     is read from the real implement stage rather than retyped -- a drift between the two shows up as a
-    test failure, not a silent divergence."""
-    text = (ROOT / "tools" / "dev-runner.sh").read_text()
+    test failure, not a silent divergence. `source` defaults to dev-runner.sh; STAGE_CHARTER now lives
+    in tools/stage_lib.sh (it-36 slice C's byte-identical extraction)."""
+    text = (source or (ROOT / "tools" / "dev-runner.sh")).read_text()
     m = re.search(pattern, text)
-    assert m, f"could not find pattern {pattern!r} in tools/dev-runner.sh"
+    assert m, f"could not find pattern {pattern!r} in {source or 'tools/dev-runner.sh'}"
     return m.group(1)
 
 
-DEV_RUNNER_STAGE_CHARTER = _extract_dev_runner_literal(r'STAGE_CHARTER="(.*)"\n')
+DEV_RUNNER_STAGE_CHARTER = _extract_dev_runner_literal(
+    r'STAGE_CHARTER="(.*)"\n', source=ROOT / "tools" / "stage_lib.sh")
 DEV_RUNNER_IMPL_SYS = _extract_dev_runner_literal(r'IMPL_SYS="(.*)"\n')
 DEV_RUNNER_TASK_PREFIX = _extract_dev_runner_literal(
     r"printf '(Implement the task below against its acceptance criteria\. Make the minimal, clean change\.\\n\\n)%s'"

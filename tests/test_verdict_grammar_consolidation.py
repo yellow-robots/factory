@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 from tools.review_bundle import append_round  # noqa: E402
 
 DEV_RUNNER_SH = ROOT / "tools" / "dev-runner.sh"
+STAGE_LIB_SH = ROOT / "tools" / "stage_lib.sh"
 REVIEW_BUNDLE_PY = ROOT / "tools" / "review_bundle.py"
 
 # The raw pipeline text the pin slice's own docstring uses to describe both runner sites before
@@ -34,6 +35,10 @@ _RAW_PIPELINE_INVOCATION = re.compile(r"grep\s+-E\s+['\"]\^VERDICT:")
 
 def _dev_runner_source():
     return DEV_RUNNER_SH.read_text()
+
+
+def _stage_lib_source():
+    return STAGE_LIB_SH.read_text()
 
 
 def _review_bundle_source():
@@ -54,8 +59,11 @@ def test_dev_runner_sh_review_gate_and_terminal_approval_call_a_shared_symbol():
 
     # Locate the single raw pipeline invocation (capped at exactly one by the declared rule `verdict-extraction-pipeline` in qa/cardinality.toml, since #365)
     # and the name of the function it's defined inside of, e.g. `verdict_line(){ grep -E ... }`.
+    # it-36 slice C moved verdict_line() out of dev-runner.sh into the sourced stage_lib.sh
+    # (byte-identical extraction) — the definition is looked up there now; the two call sites
+    # below (shadow_terminal_approval, review_stage) stayed behind in the runner.
     def_match = re.search(
-        r"(?m)^(\w+)\(\)\s*\{[^\n]*" + _RAW_PIPELINE_INVOCATION.pattern, src
+        r"(?m)^(\w+)\(\)\s*\{[^\n]*" + _RAW_PIPELINE_INVOCATION.pattern, _stage_lib_source()
     )
     assert def_match, "could not locate a one-line helper function wrapping the VERDICT pipeline"
     helper_name = def_match.group(1)

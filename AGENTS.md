@@ -104,6 +104,7 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
 | Path | What |
 |---|---|
 | `tools/dev-runner.sh` | the staged build pipeline |
+| `tools/stage_lib.sh` | the `claude -p` stage harness (`run_stage`, quota hold/pool credential selection, transcript archive + usage capture, refusal/blocked-reason classification, `verdict_line`, `resolve_role`), sourced by `dev-runner.sh` after `SELF_DIR` — one library, byte-identical behaviour (it-36 slice C) |
 | `tools/board_plumbing.py` | the one home for the board's plumbing: its project/field/option identifiers, its single field write, and its single per-issue project-item read + selection rule (consumed by the runner, the epic gate and the three operator scripts) |
 | `tools/merge_shadow.py` | merge-decision evaluator + shadow-completion |
 | `tools/dispatch.py` | n8n's build-trigger endpoint (RFC 0004) |
