@@ -429,9 +429,16 @@ print((d.get("mergeCommit") or {}).get("oid","") or "")' 2>/dev/null || true)"
 # DoR gate, no claim, no worktree, no LLM stage. Two shapes, by whether the PR already carries a prior
 # YR-MERGE(-SHADOW) record (issue #70 vs issue #239):
 #   a prior record exists — reuse ITS originating run's persisted inputs (review verdict, bundle hash,
-#     resolved roles/ranks), recompute the four base conditions LIVE, and post a record that only ever
-#     supersedes in shadow mode — NEVER a merge/rebase/board write, an armed repo included (the posted
-#     record is the only write). The note names the record it supersedes, so history reads truthfully.
+#     resolved roles/ranks), recompute the four base conditions LIVE, and post a record whose note names
+#     the one it supersedes, so history reads truthfully (the superseded record stays on the trail,
+#     never edited or removed). Since issue #510 (the owner's ruling, 2026-09-06: a green recovery
+#     merges; the human's intervention is for a recovery that fails) this shape is judged under the
+#     SAME arming / sentinel / shadow-completion gates as the record-less shape below and produces the
+#     SAME record class — armed, shadow-complete, sentinel-clear and every condition passing, it
+#     completes the squash-merge and posts YR-MERGE: MERGED; anything else posts the block or the
+#     shadow supersession. A prior `unrecoverable` block is no exception: the live head is what is
+#     judged (the runner's own rebase was content-identical) — the build is never resumed, only the
+#     terminal decision is re-run.
 #   no prior record — the record-less state has no owner otherwise (a green, approved PR whose terminal
 #     step never ran/recorded — the seed's live incident). There is no run_id to key off, so the
 #     originating run is located by matching this PR's base commit against this issue's local run
@@ -458,8 +465,9 @@ else: print(v)"
 # The record-less lookup (issue #239): with no prior record there is no run_id to key off, so locate the
 # originating run by matching THIS PR's base commit against this issue's local run bundles instead — a
 # real build's review-bundle.json names the commit it branched from (diff.base_sha); that's directly
-# comparable to a PR head's own parent commit (the same `head_oid^` re-evaluate already resolves for a
-# prior-record PR, single-commit-PR invariant included). The bundle's OWN diff.head_sha is a tree hash
+# comparable to the PR's merge base with the base branch (the same `merge-base` re-evaluate resolves
+# for a prior-record PR — since issue #510 a branch may carry more than one commit, and the merge base
+# equals the bundle's cut point for any unrebased branch). The bundle's OWN diff.head_sha is a tree hash
 # from before the commit was made, not the commit oid, so it is never a candidate for this match. Prefers
 # the most recently modified match. Prints the run dir path, or nothing when no local build matches this
 # base at all (a genuinely unbuilt/unlocatable PR — that stays a refusal, same fail-closed spirit as a
@@ -526,8 +534,17 @@ re_evaluate(){
   [ "$fetched_tip" = "$head_oid" ] \
     || reeval_refuse "PR #$pr's branch has moved: the fetched tip of $head_ref ($fetched_tip) disagrees with the PR's live head from the API ($head_oid) — refusing to judge a stale view"
 
-  BASE_SHA="$("$GIT_BIN" -C "$BASE_REPO" rev-parse "${head_oid}^" 2>/dev/null || true)"
-  [ -n "$BASE_SHA" ] || reeval_refuse "could not resolve the parent of the PR's current head ($head_oid) — is it a single-commit PR?"
+  # The PR's base is its merge base with the base branch (issue #510) — never the head's parent, which
+  # is the base only while the branch carries exactly one commit (the runner's own squash) and reads an
+  # attended repair pushed as a second commit on a fresh tip as freshness-stale (it-33's PR #489,
+  # it-32's PR #502). A merge base equal to the head means the head is already contained in the base
+  # branch — the very shape the malformed-record refusal below guards — so it refuses here, by name.
+  local base_tip
+  base_tip="$("$GIT_BIN" -C "$BASE_REPO" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || true)"
+  [ -n "$base_tip" ] || reeval_refuse "could not resolve origin/$BASE_BRANCH's fetched tip — cannot re-evaluate"
+  BASE_SHA="$("$GIT_BIN" -C "$BASE_REPO" merge-base "$base_tip" "$head_oid" 2>/dev/null || true)"
+  [ -n "$BASE_SHA" ] || reeval_refuse "could not resolve the merge base of origin/$BASE_BRANCH ($base_tip) and the PR's current head ($head_oid) — no common history to judge against"
+  [ "$BASE_SHA" != "$head_oid" ] || reeval_refuse "PR #$pr is malformed_record: its head ($head_oid) is already contained in $BASE_BRANCH — the merge base equals the head, so there is no change to judge"
 
   if [ "$found" = "true" ]; then
     # ---- a prior record exists: reuse ITS originating run, always a shadow supersession (issue #70;
@@ -606,21 +623,12 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
   shadow_terminal_approval
   shadow_rank_gate
 
-  if [ "$found" = "true" ]; then
-    # a prior record's re-evaluation NEVER arms: auto_merge is still READ (informational, into the
-    # posted record's own auto_merge field) but never gates or selects the mode — this path always
-    # posts shadow, whatever it reads.
-    AUTO_MERGE=""; read_auto_merge || true
-    emit_and_post "$RUN_DIR/merge-shadow-reeval.md" --mode shadow --note "$note" \
-      || reeval_refuse "environmental failure posting the re-evaluation record — retry later, no record posted"
-    log "re-evaluation posted for PR #$pr (issue #$ISSUE, run $(basename "$orig_dir")) — ${MERGE_MARKER:-<none>}"
-    echo "$PR_URL"
-    return
-  fi
-
-  # ---- no prior record: AUTO_MERGE now DIRECTLY selects the record class — the SAME arming/sentinel/
-  # shadow-completion gates the live pipeline's terminal_step applies, via the very same hoisted helpers
-  # (issue #239). Freshness is never rebase-remediated here (no worktree) — it is one more direct block.
+  # ---- both shapes (issue #239's record-less, and since issue #510 the prior-record shape too):
+  # AUTO_MERGE DIRECTLY selects the record class — the SAME arming/sentinel/shadow-completion gates the
+  # live pipeline's terminal_step applies, via the very same hoisted helpers. Freshness is never
+  # rebase-remediated here (no worktree) — it is one more direct block. A prior record is never edited
+  # or removed: the record posted below names it as the one superseded (the `note`), and the trail
+  # keeps both — the block as the legible history, the newer record as the decision.
   read_auto_merge || reeval_refuse "environmental failure reading auto_merge for $REPO — retry later, no record posted"
 
   if [ "$AUTO_MERGE" != true ]; then

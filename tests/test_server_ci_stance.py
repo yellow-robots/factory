@@ -384,9 +384,34 @@ def test_reevaluate_record_less_armed_declared_none_refuses_fail_closed(tmp_path
     assert tdr._reeval_body(run_dir) is None                # never the shadow-path file on this path
 
 
+def test_reevaluate_prior_record_armed_declared_none_refuses_fail_closed(tmp_path):
+    """Issue #510 shape, armed: a prior record no longer exempts the re-evaluation from the armed path,
+    so the SAME conflicting-pair wall fires — a durable BLOCKED — server_ci_none_armed record naming the
+    superseded record, never a merge."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build_declaring(
+        tmp_path, number=27, title="Reeval prior-record armed declared none",
+        manifest='auto_merge = true\nserver_ci = "none"\n')
+    run_id = run_dir.name
+    comments = [tdr._rec_comment("BLOCKED", run_id=run_id, failed_condition="ci_green", mode="armed")]
+    env2 = tdr._reeval_env(tmp_path, env1, pr_number=206, head_ref=branch, head_oid=head_oid,
+                           comments=comments, prs=tam._complete_prs())
+    r = tdr._run_reeval(27, 206, env2)
+    assert r.returncode == 0, r.stderr
+    assert not tdr._merged_stub(tmp_path)
+    body = tdr._reeval_record_body(run_dir)
+    assert body is not None
+    first = body.splitlines()[0]
+    assert first.startswith(f"YR-MERGE: BLOCKED {EMDASH} server_ci_none_armed")
+    assert f"supersedes BLOCKED {EMDASH} ci_green" in first
+    rec = td._shadow_block(body)
+    assert rec["server_ci"] == "none" and rec["auto_merge"] is True
+    assert tdr._reeval_body(run_dir) is None
+
+
 def test_reevaluate_prior_record_declared_none_names_stance_in_shadow_supersession(tmp_path):
-    """Issue #70 shape (a prior record exists — always a shadow supersession, an armed repo included):
-    the shared declaration read still applies, naming the stance in the superseding record."""
+    """Issue #70 shape on a NON-armed repo (a prior record exists — the shadow supersession, unchanged by
+    #510 where the repo is not armed): the shared declaration read still applies, naming the stance in
+    the superseding record."""
     work, origin, env1, run_dir, branch, head_oid = _first_build_declaring(
         tmp_path, number=26, title="Reeval prior-record declared none", manifest='server_ci = "none"\n')
     run_id = run_dir.name

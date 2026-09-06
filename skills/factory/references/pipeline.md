@@ -267,11 +267,19 @@ concept of "a build is currently running." That makes the human side of the chor
   `freshness` / `terminal_approval` / `rank_gate`) against the PR's *current* head — no DoR gate, no
   claim, no worktree, no LLM stage — reusing the originating run's review verdict, bundle hash, and
   resolved build/review roles/ranks from `$DEV_RUNNER_HOME/runs/<issue>-<id>/` (located via the
-  `run_id` on the PR's last merge record). It posts a fresh shadow record whose note names the record
-  it supersedes, so history reads truthfully; it never merges, rebases, claims, or writes board state,
-  even on an armed repo with shadow already complete — the posted record is the only write. A
-  closed/merged PR, a PR that doesn't belong to the named issue, or an originating run whose artifacts
-  are missing all refuse fail-closed, before any write.
+  `run_id` on the PR's last merge record). It posts a record whose note names the one it supersedes,
+  so history reads truthfully — the superseded record stays on the trail, never edited or removed.
+  Since issue #510 (the owner's ruling of 2026-09-06: *a green recovery merges; the human's
+  intervention is for a recovery that fails*) this shape is judged under the same arming, sentinel
+  and shadow-completion gates as the record-less shape below and produces the same record class: on
+  an armed, shadow-complete, sentinel-clear repo with every condition passing it squash-merges and
+  posts `YR-MERGE: MERGED` (native close → Done follows, as for the live path); a failing condition
+  posts `YR-MERGE: BLOCKED — <condition>`; a non-armed repo, or one still shadow-incomplete, gets the
+  shadow supersession and is never merged. It never rebases, claims, or writes board state itself.
+  The PR's base is its merge base with the base branch, so a branch carrying an attended repair as a
+  second commit on a fresh tip is not misjudged as stale (a head already contained in the base branch
+  refuses as `malformed_record`). A closed/merged PR, a PR that doesn't belong to the named issue, or
+  an originating run whose artifacts are missing all refuse fail-closed, before any write.
 - **A CI-green, review-approved PR with NO prior merge record is processable too (issue #239), not
   refused.** This is the shape of a build whose terminal step never ran or never recorded (a crash, an
   environmental failure right at the post — the factory's own 2026-07-09 incident): the PR is otherwise
@@ -301,11 +309,13 @@ concept of "a build is currently running." That makes the human side of the chor
   down by the time this is reached). Rather than the usual silent no-record exit, the runner posts a
   fact-stating `YR-MERGE: BLOCKED — unrecoverable` record and flags `Reason=Blocked`, naming the rewrite
   and instructing the human to close the PR, delete the branch, and set the issue back to `Ready` for a
-  clean rebuild — the one case where no named recovery lane can honestly accept the state. A later shadow
-  `--re-evaluate` run can still supersede this record with a `YR-MERGE-SHADOW: WOULD-MERGE` (issue #70's
-  shadow-only shape, same as any other prior record) — that supersession is a routing decision about which
-  record is newest, not a retraction of the unrecoverable finding, and does not make the original state
-  resumable.
+  clean rebuild — or, since issue #510, to run `--re-evaluate` on it. What `unrecoverable` states is
+  that no lane resumes the *build* (the environmental-hold resume never engages, and the record-less
+  base-commit match cannot locate the run), and that stays true; the prior-record shape of
+  `--re-evaluate` reuses the originating run by `run_id` and judges the PR's *live* head like any other
+  prior record — the runner's own rebase was content-identical, so the live head is the reviewed
+  content — and, armed, shadow-complete, sentinel-clear and every condition passing, completes the
+  merge, the supersession naming the unrecoverable record, which stays on the trail.
 
 ## The duplication mandate, and why it is myopic on purpose
 

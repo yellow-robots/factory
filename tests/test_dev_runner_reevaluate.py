@@ -6,9 +6,14 @@ Derived from the issues' acceptance criteria (the spec), NOT the implementation 
 * `dev-runner.sh <issue#> --repo <owner/name> --re-evaluate <pr#>` re-runs the terminal merge decision
   (the four deterministic conditions + the record post) against the PR's CURRENT head — no DoR gate, no
   claim, no worktree, no LLM stage. Two shapes, by whether a prior YR-MERGE(-SHADOW) record exists:
-    - a prior record exists (issue #70): reuse ITS originating run's persisted inputs (review verdict,
-      bundle hash, resolved roles/ranks); the posted record is ALWAYS a shadow supersession — never a
-      merge/rebase/board write, an armed repo included. Its note names the superseded decision/reason.
+    - a prior record exists (issue #70, completed by issue #510): reuse ITS originating run's persisted
+      inputs (review verdict, bundle hash, resolved roles/ranks); the posted record's note names the
+      superseded decision/reason and the superseded record stays on the trail. Since #510 (the owner's
+      ruling: a green recovery merges; the human's intervention is for a recovery that fails) this
+      shape is judged under the SAME arming/sentinel/shadow-completion gates as the record-less shape
+      and produces the SAME record class — an armed, shadow-complete, sentinel-clear, all-pass
+      re-evaluation squash-merges and posts YR-MERGE: MERGED; a prior `unrecoverable` block is no
+      exception (the live head is what is judged; the build itself is never resumed).
     - NO prior record (issue #239): the absence of a record is no longer a refusal — it is processed to
       a durable decision record under the standard conditions (green, fresh, approved, rank, shadow
       phase, sentinel, arming), the SAME way the end-of-build terminal step would: an armed, shadow-
@@ -21,7 +26,9 @@ Derived from the issues' acceptance criteria (the spec), NOT the implementation 
   genuinely unprocessable states stay refused.
 * It never merges/rebases/claims/writes board state on a non-armed repo, and never weakens the sentinel,
   shadow-completion, or any of the four base conditions — the produced record class is exactly what the
-  repo's arming state already permits.
+  repo's arming state already permits. The PR's base is its merge base with the base branch (#510), so
+  a branch carrying more than one commit on a fresh tip is not misjudged as stale, and a head already
+  contained in the base branch refuses as malformed_record.
 * Pipeline reference documents the shadow merge choreography.
 
 Reuses the stubbed-runner fixtures from test_dev_runner.py (git repo, issue/item JSON) — a REAL first
@@ -458,18 +465,16 @@ def test_reevaluate_record_less_pr_armed_failed_condition_blocks_no_merge(tmp_pa
     assert rec["sentinel"] == "ok" and rec["shadow_complete"] is True
 
 
-# ================= issue #240: a prior unrecoverable BLOCKED record is never treated as resumable ======
+# ================= issue #240 as ruled by issue #510: a prior unrecoverable block is judged on its live head ==
 
-def test_reevaluate_prior_unrecoverable_block_never_merges_only_supersedes_as_shadow(tmp_path):
-    """Bullet 2 (issue #240): no record may claim resumability that every named lane refuses. A PR
-    carrying a prior `YR-MERGE: BLOCKED — unrecoverable` record (the fact-stating record the terminal step
-    now posts once freshness remediation has already force-pushed the branch before a later step failed
-    environmentally) must never be silently resumed into a merge by ANY named lane — including
-    --re-evaluate. Here the repo is armed, shadow-complete, sentinel-clear, and every base condition on
-    the CURRENT head would otherwise pass — yet because a prior record already exists, --re-evaluate's
-    found-a-prior-record shape (issue #70) is ALWAYS a shadow supersession, never a merge/rebase/board
-    write. The unrecoverable state can be looked at again, but no lane ever resumes it — only a rebuild
-    (closing the PR, deleting the branch, re-Ready) actually clears it."""
+def test_reevaluate_prior_unrecoverable_block_armed_all_pass_completes_the_merge(tmp_path):
+    """Issue #510 (the owner's ruling: "complete it too"): a PR carrying a prior `YR-MERGE: BLOCKED —
+    unrecoverable` record (the fact-stating record the terminal step posts once freshness remediation
+    has already force-pushed the branch before a later step failed environmentally) is judged like any
+    other prior record — the runner's own rebase was content-identical, so the live head is the reviewed
+    content. Armed, shadow-complete, sentinel-clear, every condition passing: the lane squash-merges and
+    posts YR-MERGE: MERGED whose note names the unrecoverable record; the build itself is never resumed
+    (only the terminal decision re-runs), and the superseded record stays on the trail."""
     work, origin, env1, run_dir, branch, head_oid = _first_build(
         tmp_path, number=29, title="Re-evaluate a prior unrecoverable block")
     run_id = run_dir.name
@@ -479,16 +484,39 @@ def test_reevaluate_prior_unrecoverable_block_never_merges_only_supersedes_as_sh
                        extra={"MERGE_AUTO_MERGE": "true"})
     r = _run_reeval(29, 209, env2)
     assert r.returncode == 0, r.stderr
-    assert not _merged_stub(tmp_path)                    # never merges, even armed + shadow-complete + all-pass
-    assert "MERGE " not in _reeval_gh_calls(tmp_path)
-    body = _reeval_body(run_dir)
-    assert body is not None, "the prior unrecoverable record must be superseded, not silently dropped"
+    assert _merged_stub(tmp_path), "an armed, shadow-complete, all-pass re-evaluation completes the merge"
+    body = _reeval_record_body(run_dir)
+    assert body is not None, "the durable armed record must be written"
     first = body.splitlines()[0]
-    assert first.startswith("YR-MERGE-SHADOW: WOULD-MERGE")   # shadow supersession only, never an armed merge
+    assert first.startswith("YR-MERGE: MERGED")
     assert f"supersedes BLOCKED {EMDASH} unrecoverable" in first   # names the superseded unrecoverable block
     rec = td._shadow_block(body)
-    assert rec["mode"] == "shadow" and rec["decision"] == "WOULD-MERGE"
-    assert _reeval_record_body(run_dir) is None          # the armed merge-record path never fires on this shape
+    assert rec["mode"] == "armed" and rec["decision"] == "MERGED" and rec["run_id"] == run_id
+    assert rec["merge_commit"] == "f" * 40
+    assert _reeval_body(run_dir) is None                 # never the shadow-path file on this path
+
+
+def test_reevaluate_prior_unrecoverable_block_armed_red_condition_blocks_no_merge(tmp_path):
+    """The same shape with CI red: the lane blocks on the live condition (an armed BLOCKED — ci_green
+    record naming the superseded unrecoverable block), never a merge — the ruling completes a GREEN
+    recovery, and a failing one is where the human's intervention belongs."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=30, title="Re-evaluate a prior unrecoverable block, CI red")
+    run_id = run_dir.name
+    comments = [_rec_comment("BLOCKED", run_id=run_id, failed_condition="unrecoverable", mode="armed")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=210, head_ref=branch, head_oid=head_oid, comments=comments,
+                       checks=(td.CR_OK, td.CR_FAIL), prs=tam._complete_prs(), merge_commit_oid="f" * 40,
+                       extra={"MERGE_AUTO_MERGE": "true"})
+    r = _run_reeval(30, 210, env2)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)
+    body = _reeval_record_body(run_dir)
+    assert body is not None
+    first = body.splitlines()[0]
+    assert first.startswith(f"YR-MERGE: BLOCKED {EMDASH} ci_green")
+    assert f"supersedes BLOCKED {EMDASH} unrecoverable" in first
+    rec = td._shadow_block(body)
+    assert rec["mode"] == "armed" and rec["decision"] == "BLOCKED" and rec["failed_condition"] == "ci_green"
 
 
 # ================= refusals: closed / merged / mismatched issue / no or bad prior record / missing =====
@@ -621,19 +649,23 @@ def test_reevaluate_refuses_when_pr_cannot_be_fetched_at_all(tmp_path):
 def test_reevaluate_refuses_record_less_pr_with_no_matching_local_build(tmp_path):
     """A record-less PR whose base commit matches NO local run bundle at all (a genuinely
     unbuilt/unlocatable PR) stays a refusal — the fail-closed spirit the missing-run_id refusal already
-    had for the prior-record shape."""
+    had for the prior-record shape. Since #510 the base is the merge base with main, so the unlocatable
+    shape is a branch cut from a main commit no run was built from: main moves, the branch is re-cut from
+    the new tip with one unbuilt commit, and its merge base (the new tip) is no run's recorded base."""
     work, origin, env1, run_dir, branch, head_oid = _first_build(
         tmp_path, number=28, title="Record-less unlocatable reeval")
-    # advance the branch with an extra commit ON TOP of the real build commit: the PR's head^ then
-    # resolves to the build's OWN head sha, which is not any run's recorded base_sha (that's the seed).
-    td._git(["checkout", "-b", "extra", f"origin/{branch}"], work)
+    td._git(["checkout", "-q", "main"], work)
+    (work / "moved.txt").write_text("main moved\n")
+    td._git(["add", "-A"], work); td._git(["commit", "-q", "-m", "main moves past the seed"], work)
+    td._git(["push", "-q", "origin", "main"], work)
+    td._git(["checkout", "-q", "-b", "recut"], work)
     (work / "extra_file.txt").write_text("extra\n")
     td._git(["add", "-A"], work)
-    td._git(["commit", "-q", "-m", "an extra unbuilt commit"], work)
-    td._git(["push", "-q", "origin", f"HEAD:{branch}"], work)
+    td._git(["commit", "-q", "-m", "an unbuilt commit on a re-cut branch"], work)
+    td._git(["push", "-q", "-f", "origin", f"HEAD:{branch}"], work)
     new_head = subprocess.run(["git", "-C", str(work), "rev-parse", "HEAD"],
                               capture_output=True, text=True, check=True).stdout.strip()
-    td._git(["checkout", "main"], work)
+    td._git(["checkout", "-q", "main"], work)
     env2 = _reeval_env(tmp_path, env1, pr_number=208, head_ref=branch, head_oid=new_head, comments=[])
     r = _run_reeval(28, 208, env2)
     assert r.returncode == 3
@@ -642,22 +674,48 @@ def test_reevaluate_refuses_record_less_pr_with_no_matching_local_build(tmp_path
     _no_writes(tmp_path, run_dir)
 
 
+def test_reevaluate_record_less_two_commit_branch_is_located_by_its_merge_base(tmp_path):
+    """#510: the pre-#510 unlocatable shape — an extra commit ON TOP of the real build commit — is now
+    located: the merge base with main is the seed the run's bundle recorded, so the record-less PR is
+    evaluated live instead of refused (the it-33 PR #489 repair shape, record-less variant)."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=48, title="Record-less two-commit branch, located")
+    main_tip = _origin_main(work)
+    new_head = _push_second_commit(work, branch, "repair\n")
+    env2 = _reeval_env(tmp_path, env1, pr_number=417, head_ref=branch, head_oid=new_head, comments=[])
+    r = _run_reeval(48, 417, env2)
+    assert r.returncode == 0, r.stderr
+    body = _reeval_body(run_dir)
+    assert body is not None
+    first = body.splitlines()[0]
+    assert first.startswith("YR-MERGE-SHADOW: WOULD-MERGE"), first
+    assert "no prior merge decision record" in first
+    rec = td._shadow_block(body)
+    assert rec["base_sha"] == main_tip and rec["head_sha"] == new_head
+
+
 # ================= never merges / rebases / claims / writes board state, even armed + would-be-complete =
 
-def test_reevaluate_never_arms_or_merges_even_with_auto_merge_true(tmp_path):
-    """auto_merge=true must not flip the posted record to armed/MERGED — re-evaluation always posts a
-    shadow record and never calls the merge API, rebases, or touches board state."""
+def test_reevaluate_prior_record_armed_shadow_incomplete_stays_shadow_no_merge(tmp_path):
+    """auto_merge=true with a prior record but the shadow phase incomplete (no prior PRs at all here):
+    arming is not honoured — the lane posts the shadow supersession with the 'armed, shadow-incomplete
+    k/N' note and never calls the merge API, rebases, or touches board state (#510 keeps the
+    record-less shape's stop; shadow incompleteness is never a BLOCKED reason)."""
     work, origin, env1, run_dir, branch, head_oid = _first_build(tmp_path, number=16, title="Armed reeval")
     comments = [_rec_comment("WOULD-BLOCK", run_id=run_dir.name, failed_condition="freshness")]
+    prs = [tam._pr(20, "WOULD-MERGE", oid="a" * 40), tam._pr(21, "MERGED", oid="b" * 40, merge_commit="b" * 40)]
     env2 = _reeval_env(tmp_path, env1, pr_number=101, head_ref=branch, head_oid=head_oid, comments=comments,
-                       extra={"MERGE_AUTO_MERGE": "true"})
+                       prs=prs, extra={"MERGE_AUTO_MERGE": "true"})
     r = _run_reeval(16, 101, env2)
     assert r.returncode == 0, r.stderr
     body = _reeval_body(run_dir)
     assert body is not None
-    assert body.splitlines()[0].startswith("YR-MERGE-SHADOW")   # never the armed YR-MERGE marker
+    first = body.splitlines()[0]
+    assert first.startswith("YR-MERGE-SHADOW: WOULD-MERGE")     # shadow-incomplete: never the armed marker
+    assert "armed, shadow-incomplete 2/5" in first
     rec = td._shadow_block(body)
-    assert rec["mode"] == "shadow"
+    assert rec["mode"] == "shadow" and rec["shadow_complete"] is False and rec["shadow_progress"] == "2/5"
+    assert _reeval_record_body(run_dir) is None
     assert "MERGE " not in _reeval_gh_calls(tmp_path)            # the merge API was never called
     assert all(not l.startswith("EDIT") for l in _reeval_timeline(tmp_path))  # no board writes
     tip = subprocess.run(["git", "-C", str(origin), "rev-parse", f"refs/heads/{branch}"],
@@ -709,3 +767,211 @@ def test_pipeline_md_documents_shadow_merge_choreography():
         "pipeline.md missing the serial-merge choreography rule"
     assert "reset" in low, "pipeline.md missing the merged-over WOULD-BLOCK = rolling-window reset rule"
     assert "rebase" in low, "pipeline.md missing the content-identical-rebase recovery step"
+    # issue #510: the choreography states the ruling and no longer claims the with-record stop-short
+    assert "a green recovery merges" in low, "pipeline.md missing #510's rule"
+    assert "never merges, rebases, claims, or writes board state" not in low, \
+        "pipeline.md still claims the with-record re-evaluation never merges (pre-#510)"
+
+
+# ================= issue #510: the recovery lane completes an armed merge when green ====================
+# The owner's ruling (2026-09-06): "The recovery lane should provide a way to merge if the checks are
+# green... The actual value of forcing human intervention is when the recovery lane fails to recover."
+# A prior-record re-evaluation is judged under the SAME arming/sentinel/shadow-completion gates as the
+# record-less shape and produces the SAME record class; the superseded record stays on the trail. The
+# PR's base is its merge base with the base branch, never the head's parent.
+
+def _push_second_commit(work, branch, text):
+    """An attended repair pushed as a SECOND commit on the runner's branch (it-33's PR #489 shape):
+    returns the new branch tip. `work` is left back on main."""
+    td._git(["fetch", "-q", "origin", branch], work)
+    td._git(["checkout", "-q", "--detach", f"origin/{branch}"], work)
+    (work / "REPAIR.md").write_text(text)
+    td._git(["add", "-A"], work); td._git(["commit", "-q", "-m", "attended repair, second commit"], work)
+    td._git(["push", "-q", "origin", f"HEAD:refs/heads/{branch}"], work)
+    tip = subprocess.run(["git", "-C", str(work), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    td._git(["checkout", "-q", "main"], work)
+    return tip
+
+
+def _move_main(work, text):
+    """Main moves (an unrelated merge landed): returns the new main tip."""
+    td._git(["checkout", "-q", "main"], work)
+    (work / "OTHER.md").write_text(text)
+    td._git(["add", "-A"], work); td._git(["commit", "-q", "-m", "an unrelated merge on main"], work)
+    td._git(["push", "-q", "origin", "main"], work)
+    return subprocess.run(["git", "-C", str(work), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _origin_main(work):
+    td._git(["fetch", "-q", "origin", "main"], work)
+    return subprocess.run(["git", "-C", str(work), "rev-parse", "origin/main"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_reevaluate_prior_record_armed_shadow_complete_all_pass_completes_the_merge(tmp_path):
+    """#510 criterion 1: a prior BLOCKED — ci_green record (a suite race on an unchanged head, the it-32
+    slice 3 shape), now green: armed, shadow-complete, sentinel clear, every condition passing — the lane
+    squash-merges and posts YR-MERGE: MERGED whose note names the superseded record, reusing the
+    originating run's verdict and ranks. The prior record is never edited: the trail keeps both."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=41, title="Prior block, green recovery, armed")
+    run_id = run_dir.name
+    comments = [_rec_comment("BLOCKED", run_id=run_id, failed_condition="ci_green", mode="armed")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=410, head_ref=branch, head_oid=head_oid, comments=comments,
+                       prs=tam._complete_prs(), merge_commit_oid="f" * 40,
+                       extra={"MERGE_AUTO_MERGE": "true"})
+    r = _run_reeval(41, 410, env2)
+    assert r.returncode == 0, r.stderr
+    assert _merged_stub(tmp_path), "a green recovery on an armed, shadow-complete repo completes the merge"
+    body = _reeval_record_body(run_dir)
+    assert body is not None, "no durable armed re-evaluation record was written"
+    first = body.splitlines()[0]
+    assert first.startswith("YR-MERGE: MERGED")
+    assert f"re-evaluation of run {run_id} {EMDASH} supersedes BLOCKED {EMDASH} ci_green" in first
+    rec = td._shadow_block(body)
+    assert rec["schema"] == "yr-merge-record/1"
+    assert rec["decision"] == "MERGED" and rec["mode"] == "armed" and rec["machinery_ok"] is True
+    assert rec["run_id"] == run_id                                   # the ORIGINATING run's id, reused verbatim
+    assert rec["review_verdict"] == "VERDICT: APPROVE"               # reused from the original review.md
+    assert rec["build"]["rank"] == 30 and rec["review"]["rank"] == 40
+    assert rec["merge_commit"] == "f" * 40
+    assert rec["shadow_complete"] is True and rec["sentinel"] == "ok" and rec["auto_merge"] is True
+    assert _reeval_body(run_dir) is None                             # never the shadow-path file on this path
+    assert _reeval_prcomments(tmp_path).count("YR-MERGE: MERGED") == 1   # posted exactly once
+    assert all(not l.startswith("EDIT") for l in _reeval_timeline(tmp_path))   # no board write by the lane
+
+
+def test_reevaluate_prior_record_armed_failed_condition_blocks_no_merge(tmp_path):
+    """#510 criterion 2: armed, shadow-complete, sentinel clear, but CI is still red — an armed
+    YR-MERGE: BLOCKED — ci_green record naming the superseded record, and NO merge: a failing recovery
+    is exactly where the human's intervention belongs."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=42, title="Prior block, recovery still red, armed")
+    run_id = run_dir.name
+    comments = [_rec_comment("BLOCKED", run_id=run_id, failed_condition="ci_green", mode="armed")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=411, head_ref=branch, head_oid=head_oid, comments=comments,
+                       checks=(td.CR_OK, td.CR_FAIL), prs=tam._complete_prs(), merge_commit_oid="f" * 40,
+                       extra={"MERGE_AUTO_MERGE": "true"})
+    r = _run_reeval(42, 411, env2)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)
+    body = _reeval_record_body(run_dir)
+    assert body is not None
+    first = body.splitlines()[0]
+    assert first.startswith(f"YR-MERGE: BLOCKED {EMDASH} ci_green")
+    assert f"supersedes BLOCKED {EMDASH} ci_green" in first
+    rec = td._shadow_block(body)
+    assert rec["mode"] == "armed" and rec["decision"] == "BLOCKED" and rec["failed_condition"] == "ci_green"
+    assert rec["sentinel"] == "ok" and rec["shadow_complete"] is True
+    assert _reeval_body(run_dir) is None
+
+
+def test_reevaluate_prior_record_armed_sentinel_thrown_blocks_no_merge(tmp_path):
+    """#510 criterion 2: the host sentinel is thrown — the merge is refused globally, an armed
+    YR-MERGE: BLOCKED — sentinel record is posted, no merge; the prior-record shape gets no exemption."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=43, title="Prior block, sentinel thrown, armed")
+    run_id = run_dir.name
+    drhome = tmp_path / "drhome"; drhome.mkdir(parents=True, exist_ok=True)
+    (drhome / "merge-killswitch").write_text("stop\n")
+    comments = [_rec_comment("BLOCKED", run_id=run_id, failed_condition="ci_green", mode="armed")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=412, head_ref=branch, head_oid=head_oid, comments=comments,
+                       prs=tam._complete_prs(), merge_commit_oid="f" * 40,
+                       extra={"MERGE_AUTO_MERGE": "true"})
+    r = _run_reeval(43, 412, env2)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)
+    body = _reeval_record_body(run_dir)
+    assert body is not None
+    assert body.splitlines()[0].startswith(f"YR-MERGE: BLOCKED {EMDASH} sentinel")
+    rec = td._shadow_block(body)
+    assert rec["mode"] == "armed" and rec["failed_condition"] == "sentinel" and rec["sentinel"] == "thrown"
+
+
+def test_reevaluate_prior_record_non_armed_shadow_complete_stays_shadow_no_merge(tmp_path):
+    """#510 criterion 3: a non-armed repo is unchanged — even shadow-complete and all-pass, a prior-record
+    re-evaluation posts the shadow supersession and never merges (arming, not shadow completion, gates
+    the mode)."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=44, title="Prior block, non-armed, shadow complete")
+    run_id = run_dir.name
+    comments = [_rec_comment("WOULD-BLOCK", run_id=run_id, failed_condition="ci_green")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=413, head_ref=branch, head_oid=head_oid, comments=comments,
+                       prs=tam._complete_prs(), merge_commit_oid="f" * 40)
+    r = _run_reeval(44, 413, env2)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)
+    body = _reeval_body(run_dir)
+    assert body is not None
+    first = body.splitlines()[0]
+    assert first.startswith("YR-MERGE-SHADOW: WOULD-MERGE")
+    assert f"supersedes WOULD-BLOCK {EMDASH} ci_green" in first
+    rec = td._shadow_block(body)
+    assert rec["mode"] == "shadow" and rec["auto_merge"] is False
+    assert _reeval_record_body(run_dir) is None
+
+
+def test_reevaluate_two_commit_branch_on_current_tip_is_fresh(tmp_path):
+    """#510 criterion 4: an attended repair pushed as a SECOND commit on the runner's branch, main
+    unmoved — the base is the merge base (main's tip), so freshness passes and the record's base_sha is
+    the tip, not the runner's slice commit; the prior record's recorded base stays an ancestor."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=45, title="Two-commit branch, fresh")
+    run_id = run_dir.name
+    main_tip = _origin_main(work)
+    new_tip = _push_second_commit(work, branch, "repair\n")
+    assert new_tip != head_oid
+    comments = [_rec_comment("WOULD-BLOCK", run_id=run_id, failed_condition="ci_green",
+                             base_sha=main_tip, head_sha=head_oid)]
+    env2 = _reeval_env(tmp_path, env1, pr_number=414, head_ref=branch, head_oid=new_tip, comments=comments)
+    r = _run_reeval(45, 414, env2)
+    assert r.returncode == 0, r.stderr
+    body = _reeval_body(run_dir)
+    assert body is not None
+    first = body.splitlines()[0]
+    assert first.startswith("YR-MERGE-SHADOW: WOULD-MERGE"), first    # fresh — never a false freshness block
+    rec = td._shadow_block(body)
+    assert rec["base_sha"] == main_tip and rec["main_tip_sha"] == main_tip and rec["head_sha"] == new_tip
+
+
+def test_reevaluate_stale_base_is_merge_base_not_tip(tmp_path):
+    """#510 criterion 4, the genuinely stale case with the REAL origin tip moved (not a canned sha): main
+    gained an unrelated commit after the branch was cut — the merge base is the old cut point, main's tip
+    is newer, so freshness fails; a stale green never merges."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=46, title="Stale base via a moved main")
+    run_id = run_dir.name
+    old_tip = _origin_main(work)
+    new_main = _move_main(work, "other\n")
+    assert new_main != old_tip
+    comments = [_rec_comment("WOULD-BLOCK", run_id=run_id, failed_condition="ci_green")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=415, head_ref=branch, head_oid=head_oid, comments=comments,
+                       prs=tam._complete_prs(), merge_commit_oid="f" * 40,
+                       extra={"MERGE_AUTO_MERGE": "true"})
+    r = _run_reeval(46, 415, env2)
+    assert r.returncode == 0, r.stderr
+    assert not _merged_stub(tmp_path)
+    body = _reeval_record_body(run_dir)
+    assert body is not None
+    assert body.splitlines()[0].startswith(f"YR-MERGE: BLOCKED {EMDASH} freshness")
+    rec = td._shadow_block(body)
+    assert rec["base_sha"] == old_tip and rec["main_tip_sha"] == new_main
+
+
+def test_reevaluate_refuses_when_head_is_already_contained_in_base(tmp_path):
+    """#510 criterion 4: a head already contained in the base branch (main fast-forwarded onto it) has a
+    merge base equal to the head — the malformed shape — and refuses by name, with no writes."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=47, title="Head contained in base")
+    td._git(["fetch", "-q", "origin", branch], work)
+    td._git(["checkout", "-q", "main"], work)
+    td._git(["merge", "-q", "--ff-only", f"origin/{branch}"], work)
+    td._git(["push", "-q", "origin", "main"], work)
+    comments = [_rec_comment("WOULD-BLOCK", run_id=run_dir.name, failed_condition="ci_green")]
+    env2 = _reeval_env(tmp_path, env1, pr_number=416, head_ref=branch, head_oid=head_oid, comments=comments)
+    r = _run_reeval(47, 416, env2)
+    assert r.returncode == 3
+    assert "RE-EVALUATE REFUSED" in r.stderr and "malformed_record" in r.stderr and head_oid in r.stderr
+    _no_writes(tmp_path, run_dir)
