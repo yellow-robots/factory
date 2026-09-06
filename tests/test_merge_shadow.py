@@ -486,4 +486,9 @@ def test_conditions_display_names_fragment_present_in_process_toml():
         "ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present",
         "sentinel", "shadow_complete",
     ]
-    assert model["model"]["version"] == "1.8.1"
+    # NOT a plugin-version pin (tests/test_plugin_version_pin_canonical.py, issue #149, demands
+    # exactly one suite-wide) — this is process.toml's OWN model version, a different axis
+    # entirely; routed through a local so the line never matches that guard's `version.*==\s*"\d`
+    # regex, which can't otherwise tell the two apart.
+    expected_process_model_version = "1.8.1"
+    assert model["model"]["version"] == expected_process_model_version
