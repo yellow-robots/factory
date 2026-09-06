@@ -229,9 +229,8 @@ wait_group_or_refuse(){   # $1 = pgid
 
 # ---- a claude -p stage in the worktree (cold process; the runner owns git + the gates) ----
 run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTools (default: full edit set),
-              # $5=model id (default: build), $6=ANTHROPIC_BASE_URL override for THIS subprocess only (default: unset;
-              # the shadow review seat, issue #165, is the one caller that passes it — every other call is untouched)
-  local model="${5:-$BUILD_ID}" base_url="${6:-}" cred rc=0 fmt_overridden=0 pid
+              # $5=model id (default: build)
+  local model="${5:-$BUILD_ID}" cred rc=0 fmt_overridden=0 pid
   LAST_STAGE_GROUP_REFUSED=0   # reset every call (issue #247) — stage_fail_msg reads this, not the rc value,
                                 # so a genuine future 124 from the CLI itself is never misread as a refusal
   local sys_prompt; sys_prompt="$(printf '%s\n\n%s' "$1" "$STAGE_CHARTER")"
@@ -269,11 +268,7 @@ run_stage(){  # $1=role system-prompt, $2=task prompt, $3=log file, $4=allowedTo
   # new process group, so `exec setsid` succeeds in-place (no extra fork): `$!` IS the CLI's pid, and
   # that pid IS the new group's pgid. The task prompt is piped in via `printf '%s'` (no here-string) so
   # no trailing newline is added — byte-identical to what argv used to carry.
-  if [ -n "$cred" ] && [ -n "$base_url" ]; then
-    printf '%s' "$2" | ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" ANTHROPIC_BASE_URL="$base_url" exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
-  elif [ -n "$base_url" ]; then
-    printf '%s' "$2" | ( cd "$WT" && ANTHROPIC_BASE_URL="$base_url" exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
-  elif [ -n "$cred" ]; then
+  if [ -n "$cred" ]; then
     printf '%s' "$2" | ( cd "$WT" && CLAUDE_CONFIG_DIR="$cred" exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
   else
     printf '%s' "$2" | ( cd "$WT" && exec setsid "$CLAUDE_BIN" "${args[@]}" ) >"$3" 2>&1 &
