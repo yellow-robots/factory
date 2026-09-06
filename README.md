@@ -7,8 +7,10 @@ This is **infrastructure**, deliberately separate from the product repos it buil
 `website`, `gilda`). Each product repo is self-contained and declares *how* to build itself; the factory
 supplies *the pipeline*.
 
-**New here?** Read **[AGENTS.md](AGENTS.md)** — how the factory works and the SDLC it runs. The *why*, in
-depth, is in [`docs/rfcs/`](docs/rfcs/).
+**New here?** Read **[AGENTS.md](AGENTS.md)** — how the factory works and the SDLC it runs. A human
+operator running the factory day to day should read **[docs/manual.md](docs/manual.md)** instead — the
+verbs, the workflow types, and the trail records, each by citation. The *why*, in depth, is in
+[`docs/rfcs/`](docs/rfcs/).
 
 ## What's here
 
@@ -77,5 +79,6 @@ none of it is a service this repo serves to the outside.
 
 Extracted from `yellow-robots` and made **repo-agnostic**: the runner discovers its workspace relative to
 itself (`YR_WORKSPACE`, default `factory/../..`), resolves each target repo as `$YR_WORKSPACE/<name>`, and
-reads that repo's build config from a per-repo `.yr/factory.toml` (`check_cmd` / `model` / `base_ref`;
-explicit env overrides it).
+reads that repo's build config from a per-repo `.yr/factory.toml` — every key `tools/dev-runner.sh` reads
+from that manifest is documented in [AGENTS.md](AGENTS.md) → *Conventions*, the runner's own read sites
+being the count, never a list here; explicit env overrides it.
