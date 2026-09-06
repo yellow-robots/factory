@@ -20,6 +20,9 @@ import records  # noqa: E402
 import textutil  # noqa: E402
 
 DEV_RUNNER = (REPO / "tools" / "dev-runner.sh").read_text(encoding="utf-8")
+# it-36 slice C moved the `claude -p` stage harness (including stage_blocked_reason, whose case-arm
+# literal is pinned below) out of dev-runner.sh into this sourced library, byte-identical.
+STAGE_LIB = (REPO / "tools" / "stage_lib.sh").read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -175,7 +178,7 @@ def test_stage_escape_case_arm_agrees(reg):
     r = records.get(reg, "STAGE-BLOCKED")
     # The case-arm literal derives from the ROW, so a registry edit breaks this pin through the row:
     # "STAGE-BLOCKED: "?*)  — prefix with a mandatory single following char.
-    assert f'"{r["marker"]}"?*)' in DEV_RUNNER
+    assert f'"{r["marker"]}"?*)' in STAGE_LIB
     assert r["mode"] == "stage-escape"
 
 

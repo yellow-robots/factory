@@ -11,6 +11,10 @@ import json, os, re, signal, stat, subprocess, pathlib, sys, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "dev-runner.sh"
+# it-36 slice C: STAGE_CHARTER moved out of RUNNER into this sourced library (byte-identical extraction)
+# — _shell_var's default source stays RUNNER for every other variable; only the STAGE_CHARTER lookups
+# below are re-pointed here.
+STAGE_LIB = ROOT / "tools" / "stage_lib.sh"
 
 # the shared stage-aware claude fake (classifier included) — the single legal stage-recognition
 # path; see tests/harness/contract.md for the harness contract this module documents.
@@ -2072,9 +2076,11 @@ def test_default_quota_signatures_cover_the_epic_proposed_list():
     """Guard: the shipped default QUOTA_SIGNATURES covers the epic-proposed signatures (usage limit,
     rate limit, quota, overloaded, 429) — the live-CLI verification (manual, noted in the PR) pins
     against exactly this list, so a default drifting away from it would silently narrow coverage."""
-    src = RUNNER.read_text()
+    # it-36 slice C moved QUOTA_SIGNATURES out of RUNNER into the sourced STAGE_LIB (byte-identical
+    # extraction) — read it from its new home.
+    src = STAGE_LIB.read_text()
     m = re.search(r'QUOTA_SIGNATURES="\$\{QUOTA_SIGNATURES:-([^}]*)\}"', src)
-    assert m, "QUOTA_SIGNATURES default assignment not found in dev-runner.sh"
+    assert m, "QUOTA_SIGNATURES default assignment not found in tools/stage_lib.sh"
     default = m.group(1)
     for sig in ("usage limit", "rate limit", "quota", "overloaded", "429"):
         assert sig in default, f"default QUOTA_SIGNATURES missing '{sig}': {default!r}"
@@ -2654,14 +2660,15 @@ def test_self_build_reads_behind_count_without_double_fetch_or_error(tmp_path):
 ROUTED_LITERALS = ["TESTER", "REVIEWER", "tests FAIL", "REQUESTED CHANGES"]
 
 
-def _shell_var(name):
+def _shell_var(name, source=RUNNER):
     """The literal value assigned to a single-line shell string variable in the runner source (e.g.
     `STAGE_CHARTER="..."`). Used, per the task's own rebuild note, to reconstruct the expected appended
     system prompt (`role + "\\n\\n" + charter`) straight from the shell variables and compare it
-    byte-for-byte against what each stage actually sent to `claude` — not a paraphrase of it."""
-    src = RUNNER.read_text()
+    byte-for-byte against what each stage actually sent to `claude` — not a paraphrase of it. `source`
+    defaults to RUNNER; STAGE_CHARTER now lives in STAGE_LIB (it-36 slice C's byte-identical move)."""
+    src = source.read_text()
     m = re.search(rf'(?m)^{name}="(.*)"$', src)
-    assert m, f"could not find a single-line shell assignment for {name} in {RUNNER}"
+    assert m, f"could not find a single-line shell assignment for {name} in {source}"
     return m.group(1)
 
 
@@ -2734,7 +2741,7 @@ def test_stage_charter_itself_is_free_of_stub_routing_literals():
     """Acceptance: the charter is kept free of the four stub routing literals (their uppercase routed
     forms — the stub's matching is case-sensitive) — checked directly against the charter text alone,
     independent of any particular run."""
-    charter = _shell_var("STAGE_CHARTER")
+    charter = _shell_var("STAGE_CHARTER", source=STAGE_LIB)
     for literal in ROUTED_LITERALS:
         assert literal not in charter, f"stage charter must not contain the routed literal {literal!r}"
 
@@ -2828,7 +2835,7 @@ def test_stage_charter_append_is_byte_exact_role_then_blank_line_then_charter(tm
     the charter. Reconstruct `role + "\\n\\n" + charter` from the shell variables themselves and compare
     it byte-for-byte against what each stage actually sent to `claude` (the prior build's regression:
     a stray trailing newline/whitespace on the role prompt broke exactly this comparison)."""
-    charter = _shell_var("STAGE_CHARTER")
+    charter = _shell_var("STAGE_CHARTER", source=STAGE_LIB)
     impl_sys = _shell_var("IMPL_SYS")
     test_sys = _shell_var("TEST_SYS")
     review_sys = _shell_var("REVIEW_SYS")

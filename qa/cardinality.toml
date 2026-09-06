@@ -23,7 +23,7 @@
 [[rule]]
 id = "verdict-extraction-pipeline"
 pattern = '''\b(e?grep|awk|sed|rg|ack)\b[^\n]*\^VERDICT:'''
-paths = ["tools/dev-runner.sh"]
+paths = ["tools/stage_lib.sh"]
 max = 1
 reason = "The raw VERDICT-extraction pipeline is written once, in verdict_line(). A second independently-typed copy at the other call site is the drift issue #151 removed: two readers of one grammar drift apart, and the review gate and terminal_approval must never disagree about what an approval is."
 birth = "#151"

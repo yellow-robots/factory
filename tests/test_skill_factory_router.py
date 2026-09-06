@@ -299,9 +299,11 @@ def test_pipeline_md_has_stage_conduct_section():
 
 def test_pipeline_md_stage_conduct_does_not_copy_charter_verbatim():
     """The stage-conduct section must cite the charter, not restate its sentences verbatim."""
-    dev_runner = (ROOT / "tools" / "dev-runner.sh").read_text(encoding="utf-8")
-    match = re.search(r'STAGE_CHARTER="(.*)"\n', dev_runner)
-    assert match, "could not locate STAGE_CHARTER in tools/dev-runner.sh"
+    # it-36 slice C: STAGE_CHARTER moved out of dev-runner.sh into the sourced stage_lib.sh
+    # (byte-identical extraction) — read it from its new home.
+    stage_lib = (ROOT / "tools" / "stage_lib.sh").read_text(encoding="utf-8")
+    match = re.search(r'STAGE_CHARTER="(.*)"\n', stage_lib)
+    assert match, "could not locate STAGE_CHARTER in tools/stage_lib.sh"
     charter_text = match.group(1)
 
     # Pull a couple of the charter's own distinguishing sentences and confirm pipeline.md

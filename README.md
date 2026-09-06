@@ -19,6 +19,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/drift.py` | the one drift alarm, two moments (attended session start, each sweep): names every readable surface trailing `origin/main` and every surface it cannot read from that host — advisory, never a gate |
 | `tools/deploy.sh` | the scripted attended deploy act: quiescence probe, `git pull --ff-only`, conditional `dispatch` restart, post-deploy checks, one `YR-DEPLOY` record — no automatic trigger |
 | `tools/dev-runner.sh` | the staged pipeline: gate → implement → independent test → check → independent review → PR (RFC 0002) — builder ≠ verifier, by construction |
+| `tools/stage_lib.sh` | the `claude -p` stage harness, sourced by `dev-runner.sh` |
 | `tools/bg_scan.py` | scans an archived stage transcript for an unresolved background-task conversion |
 | `tools/merge_shadow.py` | the merge-decision evaluator + shadow-completion |
 | `tools/board_plumbing.py` | the one home for the board's identifiers, its single field write, and its single per-issue project-item read + selection rule |
