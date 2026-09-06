@@ -44,6 +44,28 @@ State lives on native GitHub primitives, never labels: `Backlog → Ready → In
 
 Remaining transitions and the board are RFC 0003's detail.
 
+### Workflow types — who decides, and what each walks
+
+*The type of a piece of work is decided at the moment its first artifact is created — the mining
+session for a seed, the drafting session on the direct lane, the owner for attended work and debt
+rounds; the session proposes the type on that artifact, and the deciding actor is the PM once it-36
+ships, the owner until then.*
+
+The seven types below name their machinery; they do not restate it. Each *machine-checked* cell names
+only `id`s of `process.toml` transition rows, or — where the check is a gate's refusal rather than a
+transition — the refusal's `records.toml` row name; the *prose* cell names the residue no machine
+disposes.
+
+| type | path | actors in order | steps (mandatory / optional) | gates and holders | machine-checked | prose |
+|---|---|---|---|---|---|---|
+| **full ladder (legacy)** | spec → feature-rfc → technical-rfc → task | owner (frame) · authoring session · cold reviewer · architect · owner (`active`) · crossing session · cold reviewer · epic gate · runner stages · evaluator · closing session | mandatory: cold review, fit check, `active`, technical-rfc review, DoR, the four cold stages, ship-walk / optional: feature-rfc (legacy) | spec-ready (owner), approve-RFC (owner, legacy), Ready (epic gate), merge (evaluator, or owner for an unarmed repo) | `design-doc.draft->active`, `task.backlog->ready.epic-flip`, `task.backlog->ready.epic-child`, `task.ready->in-progress.claim`, `task.in-progress->in-review.pr-open`, `pr.approved->merged.evaluator`, `task.in-review->done.native`, `task.ready->done.epic-close` | the type choice, the reviews' content, the ship-walk |
+| **spec + technical-rfc (norm)** | spec → technical-rfc → task | owner (frame) · authoring session · cold reviewer · architect · owner (`active`) · crossing session · cold reviewer · epic gate · runner stages · evaluator · closing session | mandatory: cold review, fit check, `active`, technical-rfc review, DoR, the four cold stages, ship-walk / optional: none | spec-ready (owner), Ready (epic gate), merge (evaluator, or owner for an unarmed repo) | `design-doc.draft->active`, `task.backlog->ready.epic-flip`, `task.backlog->ready.epic-child`, `task.ready->in-progress.claim`, `task.in-progress->in-review.pr-open`, `pr.approved->merged.evaluator`, `task.in-review->done.native`, `task.ready->done.epic-close` | the type choice, the reviews' content, the ship-walk |
+| **the floor** | spec → task(s) | owner · authoring session · cold reviewer · architect · owner · filing session · owner (promote) · runner · evaluator | mandatory: cold review, fit check, `active`, DoR, the four cold stages, ship-walk / optional: technical-rfc (when a task earns it) | spec-ready (owner), Ready (owner, per-task promote), merge (evaluator, or owner for an unarmed repo) | `design-doc.draft->active`, `task.backlog->ready.standalone`, `task.ready->in-progress.claim`, `task.in-progress->in-review.pr-open`, `pr.approved->merged.evaluator`, `task.in-review->done.native` | the type choice |
+| **direct seed-to-task lane** | seed → drafted task → independent adversarial review on the trail → architect fit check → file with the task-delivered stamp → human promote | drafting session · independent reviewer · architect · owner (promote) · runner · evaluator | mandatory: adversarial review, fit check, task-delivered stamp, DoR, the four cold stages, ship-walk / optional: none | Ready (owner, per-task promote), merge (evaluator, or owner for an unarmed repo) | `task.backlog->ready.standalone` (its guard demands the gates record) | the review's and fit check's content, the type choice |
+| **attended host and ops** | owner instruction → attended session → the runbook's executed record | owner · attended session | mandatory: the runbook's executed record / optional: none — no ticket, no PR | none — owner instruction is the authority; no ticket, no PR | `sentinel.clear->thrown.throw`, `sentinel.thrown->clear.clear`, `arming.disarmed->armed.arm`, `arming.armed->disarmed.unarm`, `shared-ref.push.instructed` where they apply | everything else |
+| **attended gate evolution** | `YR-GATE-TOUCHING` line → epic gate refuses promotion → attended build → independent review → owner's merge click | owner · epic gate (refusal) · attended session · independent reviewer · owner (merge click) | mandatory: `YR-GATE-TOUCHING` line, attended build, independent review, owner's merge click / optional: none | epic gate (refuses a gate-touching child's promotion), merge (owner's click) | no transition — the gate's refusal is a record, `YR-EPIC-GATE: gate-touching` (`records.toml:171`), which fires for a Task-typed child carrying the line (`tools/epic_gate.py:1109`); an untyped child draws `not-a-task` first (`:1090`) | the build, the review, the click |
+| **the debt round** | census → debt-round spec → debt epic → prune guard → close-hold → round-close duties, per `skills/factory/references/debt-rounds.md` | owner (census) · authoring session · owner (`active`) · epic gate · runner stages · evaluator · closing session | mandatory: census, debt-round spec, prune guard, close-hold, round-close duties / optional: none | spec-ready (owner), Ready (epic gate), close-hold (epic gate), merge (evaluator, or owner for an unarmed repo) | `design-doc.draft->active`, `task.backlog->ready.epic-flip`, `task.ready->done.epic-close` | the census's judgment |
+
 ---
 
 ## How a change is built
