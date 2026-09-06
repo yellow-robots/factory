@@ -275,6 +275,11 @@ def test_bundle_hash_reproducible_across_independent_runs_with_identical_inputs(
     base._git(["clone", "-q", "--bare", str(origin), str(tmp_path / "origin2.git")], tmp_path)
     base._git(["clone", "-q", str(tmp_path / "origin2.git"), str(tmp_path / "work2")], tmp_path)
     work2 = tmp_path / "work2"
+    # A clone never inherits `work`'s LOCAL git config (user.email/user.name) — only what's tracked
+    # in the repo itself. A host with no global git identity (a CI runner, unlike this developer's
+    # own machine) then fails the runner's own commit inside work2 with "empty ident name", which no
+    # targeted test run here catches unless it's run under that same bare identity.
+    base._apply_test_identity(work2)
     binp = tmp_path / "bin"; base._stubs(binp)
 
     env1 = base._real(tmp_path, base._env(tmp_path, binp, number=11, title="Reproducible"), work)
