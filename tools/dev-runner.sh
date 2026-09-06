@@ -547,8 +547,8 @@ re_evaluate(){
   [ "$BASE_SHA" != "$head_oid" ] || reeval_refuse "PR #$pr is malformed_record: its head ($head_oid) is already contained in $BASE_BRANCH — the merge base equals the head, so there is no change to judge"
 
   if [ "$found" = "true" ]; then
-    # ---- a prior record exists: reuse ITS originating run, always a shadow supersession (issue #70;
-    # unchanged — never a merge/rebase/board write, an armed repo included).
+    # ---- a prior record exists: reuse ITS originating run (issue #70); the decision is made at the
+    # shared tail below, under the same gates as the record-less shape (issue #510).
     [ "$(_json_field "$origrec" malformed)" != "true" ] || reeval_refuse "PR #$pr's last merge record is malformed — refusing to guess the originating run"
 
     # A record that PARSED cleanly can still carry the observed incident shape (issue #319): its
@@ -2003,7 +2003,8 @@ fi
 # a LATER environmental failure in that same remediation can no longer be silently resumed, because
 # --re-evaluate's record-less base-commit match (issue #239) would never locate this run again. That one
 # case posts a fact-stating YR-MERGE: BLOCKED — unrecoverable record instead of a silent exit, naming the
-# rewrite and routing to a manual close+rebuild — never a machinery error, never a streak reset.
+# rewrite and routing to --re-evaluate (the prior-record shape judges the live head by run_id, issue
+# #510) or a manual close+rebuild — never a machinery error, never a streak reset.
 # shadow_ci / shadow_freshness / shadow_terminal_approval / shadow_rank_gate / read_auto_merge /
 # emit_and_post / compute_shadow_complete / do_squash_merge — conditions (1)-(4), auto_merge, shadow
 # completion, the record post, and the merge call — are defined earlier (hoisted right after BASE_REPO
@@ -2067,10 +2068,11 @@ armed_block(){   # $1 = block reason (condition id), $2 = human-facing detail
 # new base (REBASE_REWROTE_REMOTE=1), NO later environmental failure in this run — whether inside
 # rebase_onto_tip's own re-green wait or in the squash-merge call further down — can be silently resumed:
 # --re-evaluate's record-less base-commit match (issue #239) can never locate this run again, since the
-# recorded base_sha no longer matches head^ on the PR. Posts a fact-stating BLOCKED record naming the
-# rewrite and routing to a manual rebuild. Returns 0 (record posted) or 2 (posting itself failed environmentally).
+# recorded base_sha no longer matches the PR's merge base. Posts a fact-stating BLOCKED record naming the
+# rewrite and routing to --re-evaluate's prior-record shape (issue #510) or a manual rebuild. Returns 0
+# (record posted) or 2 (posting itself failed environmentally).
 unrecoverable_remote_rewrite_block(){
-  armed_block unrecoverable "the freshness-remediation rebase already force-pushed $PR_URL onto a new base before a later step failed environmentally — the PR's remote head no longer matches any local build's recorded base commit, so no named recovery lane (re-evaluation's base-commit match, the already-torn-down environmental-hold resume, or a plain re-Ready re-dispatch, which would collide with the existing branch) can locate or resume this run. Close this PR, delete branch $BRANCH, and set #$ISSUE back to Ready to rebuild from scratch."
+  armed_block unrecoverable "the freshness-remediation rebase already force-pushed $PR_URL onto a new base before a later step failed environmentally — the PR's remote head no longer matches any local build's recorded base commit, so no lane resumes this BUILD: the record-less re-evaluation match cannot locate the run, the environmental-hold resume is already torn down, and a plain re-Ready re-dispatch would collide with this branch. Run \`--re-evaluate <pr#>\` on it (issue #510: the prior-record shape judges the live head by this record's run_id and completes a green recovery), or close this PR, delete branch $BRANCH and set #$ISSUE back to Ready to rebuild from scratch."
 }
 
 # The terminal decision. Returns 2 on an environmental failure (resumable — no record, no merge, no

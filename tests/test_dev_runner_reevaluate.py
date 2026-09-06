@@ -1,5 +1,6 @@
-"""Acceptance tests for issue #70 and issue #239 — dev-runner: --re-evaluate, re-run the terminal merge
-decision for an existing PR, INCLUDING a PR that carries no prior merge-decision record at all.
+"""Acceptance tests for issue #70, issue #239 and issue #510 — dev-runner: --re-evaluate, re-run the
+terminal merge decision for an existing PR, INCLUDING a PR that carries no prior merge-decision record
+at all, and (since #510) completing the merge on an armed repo whichever shape the PR has.
 
 Derived from the issues' acceptance criteria (the spec), NOT the implementation internals:
 
@@ -694,10 +695,11 @@ def test_reevaluate_record_less_two_commit_branch_is_located_by_its_merge_base(t
     assert rec["base_sha"] == main_tip and rec["head_sha"] == new_head
 
 
-# ================= never merges / rebases / claims / writes board state, even armed + would-be-complete =
+# ================= armed but shadow-incomplete: the shadow supersession, never a merge (#510 keeps it) ==
 
 def test_reevaluate_prior_record_armed_shadow_incomplete_stays_shadow_no_merge(tmp_path):
-    """auto_merge=true with a prior record but the shadow phase incomplete (no prior PRs at all here):
+    """auto_merge=true with a prior record but the shadow phase incomplete (two canned landed successes
+    where three are needed):
     arming is not honoured — the lane posts the shadow supersession with the 'armed, shadow-incomplete
     k/N' note and never calls the merge API, rebases, or touches board state (#510 keeps the
     record-less shape's stop; shadow incompleteness is never a BLOCKED reason)."""
@@ -975,3 +977,32 @@ def test_reevaluate_refuses_when_head_is_already_contained_in_base(tmp_path):
     assert r.returncode == 3
     assert "RE-EVALUATE REFUSED" in r.stderr and "malformed_record" in r.stderr and head_oid in r.stderr
     _no_writes(tmp_path, run_dir)
+
+
+def test_reevaluate_prior_record_armed_two_commit_branch_green_completes_the_merge(tmp_path):
+    """The motivating shape end to end (it-33's PR #489, it-32's PR #502): a runner PR blocked by a
+    suite race, an attended repair pushed as a SECOND commit on the branch, main unmoved, CI green —
+    armed and shadow-complete, the lane completes the merge with the record's base_sha = main's tip
+    (the merge base), never a false freshness block and never the squash workaround."""
+    work, origin, env1, run_dir, branch, head_oid = _first_build(
+        tmp_path, number=49, title="Two-commit branch, green, armed")
+    run_id = run_dir.name
+    main_tip = _origin_main(work)
+    new_tip = _push_second_commit(work, branch, "repair\n")
+    comments = [_rec_comment("BLOCKED", run_id=run_id, failed_condition="ci_green", mode="armed",
+                             base_sha=main_tip, head_sha=head_oid)]
+    env2 = _reeval_env(tmp_path, env1, pr_number=418, head_ref=branch, head_oid=new_tip, comments=comments,
+                       prs=tam._complete_prs(), merge_commit_oid="f" * 40,
+                       extra={"MERGE_AUTO_MERGE": "true"})
+    r = _run_reeval(49, 418, env2)
+    assert r.returncode == 0, r.stderr
+    assert _merged_stub(tmp_path), "a green two-commit recovery on an armed, shadow-complete repo merges"
+    body = _reeval_record_body(run_dir)
+    assert body is not None
+    first = body.splitlines()[0]
+    assert first.startswith("YR-MERGE: MERGED")
+    assert f"supersedes BLOCKED {EMDASH} ci_green" in first
+    rec = td._shadow_block(body)
+    assert rec["decision"] == "MERGED" and rec["mode"] == "armed" and rec["run_id"] == run_id
+    assert rec["base_sha"] == main_tip and rec["main_tip_sha"] == main_tip and rec["head_sha"] == new_tip
+    assert _reeval_body(run_dir) is None

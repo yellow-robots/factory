@@ -315,7 +315,11 @@ concept of "a build is currently running." That makes the human side of the chor
   `--re-evaluate` reuses the originating run by `run_id` and judges the PR's *live* head like any other
   prior record — the runner's own rebase was content-identical, so the live head is the reviewed
   content — and, armed, shadow-complete, sentinel-clear and every condition passing, completes the
-  merge, the supersession naming the unrecoverable record, which stays on the trail.
+  merge, the supersession naming the unrecoverable record, which stays on the trail. That the live
+  head carries the reviewed content is the operator's warrant, not the lane's check: the lane reuses
+  the originating review verdict and verifies only that the prior record's base is an ancestor of the
+  head (the content-identical rebase this choreography prescribes keeps the verdict applicable; a
+  head that carries new content needs a fresh review round, not a re-evaluation).
 
 ## The duplication mandate, and why it is myopic on purpose
 

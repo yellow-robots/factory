@@ -404,10 +404,11 @@ def test_armed_rebase_conflict_blocks_for_human(tmp_path):
 # ================= issue #240: an environmental failure AFTER freshness remediation has already =========
 # force-pushed the branch can no longer be silently resumed the way every other terminal-step
 # environmental failure is -- the PR's remote head no longer matches any local run's recorded base
-# commit, so no named recovery lane (re-evaluation's base-commit match, the environmental-hold resume, a
-# plain re-Ready re-dispatch) can locate or resume it. The runner must instead leave a fact-stating
-# YR-MERGE: BLOCKED record that names the unrecoverable condition and routes to a rebuild -- never a
-# silent no-record exit, and never a record that claims this state is resumable.
+# commit, so no lane can locate or resume the BUILD (re-evaluation's record-less base-commit match, the
+# environmental-hold resume, a plain re-Ready re-dispatch). The runner must instead leave a fact-stating
+# YR-MERGE: BLOCKED record that names the unrecoverable condition and routes to --re-evaluate's
+# prior-record shape (issue #510: it judges the live head by run_id and completes a green recovery) or a
+# rebuild -- never a silent no-record exit, and never a record that claims the build is resumable.
 
 # A GIT_BIN wrapper that fails exactly once on the freshness-remediation's OWN force-with-lease push
 # (simulating a network drop / lease race at that exact point) and passes every other git invocation
