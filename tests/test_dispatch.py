@@ -479,6 +479,26 @@ def _wait_for(predicate, timeout=5, interval=0.05):
     return predicate()
 
 
+def _lock_released(path):
+    """True once no process holds the flock on `path` — probed the way the next `flock -n` spawn
+    will: a chained `flock -n` spawn on one lock must wait for the RELEASE, never for a side effect
+    of the holder (the sweeper's flock parent releases only at exit, after its last tick; under
+    xdist load the gap between the two is ordinary and the next spawn silently skips)."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return True
+    finally:
+        os.close(fd)
+
+
 def _script(path, body):
     path.write_text(f"#!/bin/bash\n{body}\n")
     path.chmod(0o755)
@@ -589,11 +609,16 @@ def test_run_sweep_appends_across_invocations_file_count_stays_at_one(tmp_path):
     sweeper = _script(tmp_path / "sweeper.sh",
                        f'echo "tick" >> {shlex.quote(str(counter))}\necho "tick-marker"\n')
     runs_dir = tmp_path / "runs"
+    lock = tmp_path / "sweep.lock"
     for i in range(3):
-        r = dispatch.run_sweep(sweeper=str(sweeper), lock=str(tmp_path / "sweep.lock"), runs_dir=str(runs_dir))
+        r = dispatch.run_sweep(sweeper=str(sweeper), lock=str(lock), runs_dir=str(runs_dir))
         assert r["ok"]
         assert _wait_for(lambda i=i: counter.exists() and counter.read_text().count("tick") == i + 1), \
             f"invocation {i} never completed"
+        # the next `flock -n` depends on the lock's RELEASE (the holder's exit), not on its tick —
+        # waiting on the tick alone raced the release under xdist load (PR #480, PR #502)
+        assert _wait_for(lambda: _lock_released(str(lock))), \
+            f"invocation {i} never released the sweep lock"
     files = list(runs_dir.iterdir())
     assert len(files) == 1, f"sweep log file count must stay bounded on the poll cadence, found {files}"
     assert files[0].read_text().count("tick-marker") == 3   # each invocation's output landed, none overwritten
