@@ -157,8 +157,9 @@ the census, never as a signal that the arm found nothing.
    instances found: a row listing five consumers with no ruling on whether five is right hasn't done
    this arm's job — the ruling is what a later guard checks against, so the decision survives the round
    that made it. The concern behind it is the same kind of judgment [`architect.md`](architect.md)
-   names, but that reference binds the architect role to three moments and states it is never a fourth
-   stage — so the name stays the arm's own, never that role's.
+   names, but that reference binds the architect role to four named moments in the pipeline it already
+   touches (spec-ready, the architecture review, the crossing, the ship-walk) — none of them this arm
+   — so the name stays the arm's own, never that role's.
 3. **Tests.** A standing arm: `tests/` is the largest surface in the repo, so it is swept every round
    rather than once. Reported apart from production (wall 9). It gates nothing — the sweep is a meter,
    not a check.

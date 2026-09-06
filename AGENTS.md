@@ -12,18 +12,22 @@ is the product brain and RFC mirror — tasks are self-contained, no Obsidian ne
 
 ```
 product/RFC discussion (vault)  →  file a Task (Issue Form = Definition of Ready)
-   →  human sets Status = Ready   ← human at design-active; epic children auto-promote
+   →  human sets Status = Ready   ← the human's triage record licenses it; epic children auto-promote
    →  n8n poll (every few minutes) finds Ready  →  POST host endpoint  →  dev-runner
    →  implement → test → check → review → PR  (all autonomous, see below)
    →  merge  ← factory-executed for an armed repo under fail-closed conditions; a human otherwise
    →  native close → Status = Done
 ```
 
-The human **input** gate sits at the design artifacts: a human decides *what gets built* by setting a
-product-spec (or a legacy feature-rfc) `active`. Below that standing approval, flipping a governed epic to Ready,
-promoting its next slice, and closing a finished epic are **mechanical**, fail-closed to the human on any
-doubt (an invalid or missing record raises `Needs-info` rather than guessing). The cord-pull —
-un-Readying an epic — remains the human's veto; a standalone task with no governing design keeps the
+The human **input** gate is the **triage record**: nothing activates outside it (it-36). A human
+disposes each ranked seed on the component's triage surface — `go` / `park` / `reject`, under their own
+identity — and only a `go` licenses anything downstream; a design artifact (a product-spec, or a legacy
+feature-rfc) still needs that **standing approval** before it reaches `active`, whether a human sets it
+directly or, under the license, the PM's own machinery does. Under a `go`, the PM carries the design to
+`active` and, further downstream, flips a governed epic to Ready, promotes its next slice, and closes a
+finished epic — all **mechanical**, fail-closed to the human on any doubt (an invalid or missing record raises
+`Needs-info` rather than guessing). The cord-pull — un-Readying an epic, or reversing the triage
+disposition itself — remains the human's veto; a standalone task with no governing design keeps the
 original per-task human promotion. The **output** gate — **merge the PR** — is **factory-executed for an
 armed repo under fail-closed conditions** (`auto_merge = true`, sentinel clear): squash-merged with a
 durable `YR-MERGE: MERGED` record, else `YR-MERGE: BLOCKED` and a stop for the human. The gate model as
@@ -39,7 +43,7 @@ State lives on native GitHub primitives, never labels: `Backlog → Ready → In
 
 | Transition | Who | When |
 |---|---|---|
-| → Ready | **human** (standalone) / **epic-gate** (epic child) | standalone: DoR met, human decides; epic child: standing approval auto-promotes the next slice |
+| → Ready | **human** (standalone) / **epic-gate** (epic child) / **machinery** (the epic's own flip, it-36) | standalone: DoR met, human decides; epic child: standing approval auto-promotes the next slice; epic flip: an attended session, or, under a `go` triage record, `tools/promote.sh`'s `epic-flip.machinery` arm |
 | → Done | native automation | PR merged (factory-executed for an armed repo, human otherwise) |
 
 Remaining transitions and the board are RFC 0003's detail.
@@ -277,12 +281,24 @@ merge decision. Depth: `skills/factory/references/pipeline.md` / `gates.md`, RFC
   invocation: site, elapsed seconds, disposition), which `append` folds into the row as a top-level
   `gates` list. `per-model`/`report` are read-only aggregations over those rows (depth:
   `skills/factory/references/pipeline.md` → "The ledger").
-- **Attended operator sessions** run under the human's standing grants (settled 2026-07-03, dogfooded
-  through it-6→10): cold design reviews with per-finding dispositions; the crossing's technical-rfc and
-  decomposition review as its gate; epic Ready flips under a design's standing approval and standalone
-  flips on explicit instruction — always record-before-flip on the trail. Never: set a design `active`,
-  arm a repo, or hand-merge a PR (an armed repo merges via the evaluator; everything else is the
-  human's click). Grants are per-agent and the human's to extend.
+- **Attended operator sessions** are now the residual class, once a component is PM-governed (it-36:
+  **the PM is the actor of the upper lane** — under a `go` triage record it drafts, reviews, activates,
+  crosses, and — at close — ships a design end to end, under its own App identity, with no attended
+  session opening or steering the round). What's left for an attended session: host, ops, and auth
+  work; a PR the runner did not open; gate-touching slices (the pipeline builds under fixed gates); and
+  anything on the closed escalation list (a new external dependency, a data migration, spend over a
+  theme's or the loop's budget, out-of-direction work) — each parks with a record until the owner's
+  approving review. Where an attended session still runs, it does so under the human's standing grants
+  (settled 2026-07-03, dogfooded through it-6→10):
+  cold design reviews with per-finding dispositions; the crossing's technical-rfc and decomposition
+  review as its gate; epic Ready flips under a design's standing approval and standalone flips on
+  explicit instruction — always record-before-flip on the trail. Never: set a design `active` outside a
+  triage record, arm a repo, or hand-merge a PR (an armed repo merges via the evaluator; everything
+  else is the human's click). **The attended PR's fragment duty:** the merge evaluator's
+  `fragment_present` condition (issue #474) is satisfied automatically by the runner's own implement
+  stage; a PR an attended session opens carries no such stage, so the session adds its own changelog
+  fragment under the manifest's `changelog_dir` by hand, or the merge blocks on it. Grants are per-agent
+  and the human's to extend.
 - **Auth is human work** — orgs/repos/tokens/scopes, never an agent.
 - **Bench evidence** (epic yellow-robots/factory#161; depth:
   [`skills/factory/references/pipeline.md`](skills/factory/references/pipeline.md) → "The bench"). Two

@@ -14,6 +14,13 @@ slice, and closing a finished epic are mechanical under a standing approval,
 fail-closed to the human on doubt; a standalone task with no governing
 design keeps per-task human promotion; the cord-pull (un-Readying an epic)
 remains the human veto; and the merge gate / other invariants are unchanged.
+
+it-36 slice K (yellow-robots/factory#476, spec callout (g)) moves the invariant's own granularity
+one level deeper on the same three surfaces: the design-artifact-`active` framing becomes *nothing
+activates outside a triage record* — a human's `go`/`park`/`reject` `YR-TRIAGE` disposition, which
+now licenses either a human OR the PM's own machinery to carry a design to `active`. The three
+surfaces still travel together, checked for the SAME load-bearing terms (not identical prose); the
+terms themselves are what moved.
 """
 
 import json
@@ -74,12 +81,16 @@ def _skill_description():
 
 
 def _input_gate_bullet():
-    """Pull the 'human owns the input gate' bullet out of SKILL.md's Invariants section."""
+    """Pull the 'human owns the input gate' bullet out of SKILL.md's Invariants section.
+
+    it-36 reworded the bullet's own title from '...gate.' to '...gate — a triage record.' (the
+    invariant's new granularity — nothing activates outside a triage record), so the match is on
+    the load-bearing prefix only, never the exact old closing punctuation."""
     text = _skill_text()
     match = re.search(
-        r"^-\s+\*\*The human owns the \*input\* gate\.\*\*.*$", text, re.MULTILINE
+        r"^-\s+\*\*The human owns the \*input\* gate.*$", text, re.MULTILINE
     )
-    assert match, "SKILL.md is missing the 'The human owns the *input* gate.' invariant bullet"
+    assert match, "SKILL.md is missing the 'The human owns the *input* gate' invariant bullet"
     return match.group(0)
 
 
@@ -221,10 +232,13 @@ def test_diagram_annotation_no_longer_claims_the_only_human_gated_signal():
 
 
 def test_diagram_annotation_matches_design_active_granularity():
+    """it-36 moves the annotation's own granularity from design-`active` to the triage record —
+    the input-gate paragraph below it made the same move, together (see the granularity
+    cross-check tests below)."""
     annotation = _diagram_ready_annotation()
-    assert re.search(r"design.?active", annotation, re.IGNORECASE), (
-        "AGENTS.md pipeline-diagram annotation does not tie human authority to design-`active`, "
-        "so it no longer matches the granularity of the input-gate paragraph below it"
+    assert re.search(r"triage record", annotation, re.IGNORECASE), (
+        "AGENTS.md pipeline-diagram annotation does not tie human authority to the triage "
+        "record, so it no longer matches the granularity of the input-gate paragraph below it"
     )
     assert re.search(r"epic", annotation, re.IGNORECASE), (
         "AGENTS.md pipeline-diagram annotation does not mention epics"
@@ -292,6 +306,7 @@ def test_closing_md_promote_section_matches_skill_md_granularity():
     section = _closing_promote_section()
     bullet = _input_gate_bullet()
     shared_terms = [
+        r"triage record",
         r"design artifact",
         r"`active`",
         r"mechanical",

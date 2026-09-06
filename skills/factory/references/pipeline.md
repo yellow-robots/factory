@@ -423,6 +423,48 @@ Pipeline: **corpus → sealed replay → deterministic grading → report.**
 under the repo's own check command — not independent proof of correctness, and not graded against the
 original PR's approach.
 
+## The design sweep and runner (it-36)
+
+The upper pipeline gets its own runner, a second `tools/dispatch.py` instance (`--instance pm`,
+`deploy/pm-dispatch.service`) that fires `tools/design_gate.py`'s two sweep passes on their own
+schedule and lock, separate from the build/epic-sweep locks — see `deploy/DISPATCH.md` for the
+two-instance deploy shape and [`pm.md`](pm.md) for the human's own half of the ritual.
+
+- **`POST /design-sweep` → `sweep_designs`.** One pass per configured repo: idle loudly when the vault
+  interface is unreadable, when no strategy theme targets the repo, or when the theme's
+  `loop_budget_usd_per_week` is exhausted (a `YR-ESCALATION`, posted once); read the triage trail
+  (`tools/rank.py` + `tools/strategy.py` feed the pack, `latest_triage_dispositions` reads it back);
+  post a `YR-TRIAGE-PACK` for every undecided ranked seed; stop an in-flight design on a `park`/`reject`
+  reversal or a withdrawn governing epic; spawn `tools/design-runner.sh`'s `product` stage for the
+  single top-ranked licensed seed with no design already running for that repo — one design in flight
+  per repository (distinct from the epic-gate's one-slice-per-epic).
+- **`tools/design-runner.sh`** — `sweep_designs`'s own spawn (its stages are `AGENTS.md`'s own
+  repo-map row, cited there, never restated here). Of the four stage runners this section names, only
+  this one and `sweep_close`'s own spawn (`close-runner.sh`, below) are wired to a sweep today; the two
+  hops between them — `design-review-runner.sh` and `cross-runner.sh` — are **not**.
+- **`tools/design-review-runner.sh`** (stages: `AGENTS.md`'s own repo-map row) — run once drafting
+  exits, so it naturally carries its own run id for the independence check. `sweep_designs` never
+  spawns this — an attended operator (or a future sweep) invokes it.
+- **`tools/cross-runner.sh` + `tools/cross.py`** (the crossing; stages and the filing act: `AGENTS.md`'s
+  own repo-map rows) — an escalated slice files untyped instead, park-and-wait. `tools/design_gate.py`'s
+  sweep has no `cross` spawn point either (named honestly in `cross-runner.sh`'s own header) — an
+  attended operator (or a future sweep) invokes it once a design is drafted, reviewed, and activated.
+- **`tools/promote.sh`'s machinery arm**, gated on `YR_MACHINERY` and the App identity: the epic flip
+  through `task.backlog->ready.epic-flip.machinery`, licensed by the epic's own `YR-TRIAGE` `go`.
+- **`sweep_close` → `tools/close-runner.sh`**: when an epic carries `YR-CLOSE-HOLD` and its mandated
+  close records are still missing, spawns the close stage once per epic; depth: [`closing.md`](closing.md)
+  → *The round's close is machinery*.
+- **The machinery's own identity:** every native-surface act above runs under the GitHub App, never
+  the owner's login — `GH_BIN` pointed at `tools/gh-app` (the on-demand installation-token wrapper) is
+  the whole switch; every vault write runs through `tools/vault_api.py`'s REST client, never MCP (a
+  cold process has no MCP registration) and never a filesystem mutation.
+- **Model roles:** `models.toml` registers `pm`/`arch_review` (both `opus`, the strongest class) beside
+  `build`/`review`, but no runner resolves them today — `design-runner.sh`, `design-review-runner.sh`,
+  `cross-runner.sh`, and `close-runner.sh` all call `resolve_role review`, the SAME role the lower
+  pipeline's reviewer resolves. The registry's own convention still holds in effect (the upper lane
+  runs on the strongest class, since `review` already defaults there) — `pm`/`arch_review` are a
+  declared distinction not yet wired to any caller.
+
 ## The changelog and stakeholder notification
 
 `tools/changelog.py` and `tools/notify.py` (it-36 slice I, #474) are **attended-invoked today** —

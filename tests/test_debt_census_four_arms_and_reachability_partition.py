@@ -338,7 +338,7 @@ def test_debt_census_system_shape_section_is_marked_whole_tree_exempt():
 
 
 # ---------------------------------------------------------------------------
-# Constraint — never call the arm an "architect arm"; architect.md untouched
+# Constraint — never call the arm an "architect arm"; architect.md named, not owned
 # ---------------------------------------------------------------------------
 
 def test_arm_is_never_called_an_architect_arm_in_touched_files():
@@ -355,18 +355,22 @@ def test_debt_rounds_names_architect_reference_without_renaming_its_role():
         "debt-rounds.md system-shape arm does not cite architect.md for the kind of judgment "
         "behind it"
     )
-    assert "never a fourth stage" in section or "never a fourth" in section, (
-        "debt-rounds.md does not restate that architect.md binds the architect role to three "
-        "moments and never a fourth stage"
+    assert "none of them this arm" in section, (
+        "debt-rounds.md does not restate that architect.md binds the architect role to its own "
+        "named moments, none of them this arm"
     )
 
 
-def test_architect_reference_file_is_not_modified_by_this_slice():
+def test_architect_reference_file_names_its_bound_moments():
+    """it-36 slice K legitimately re-opens architect.md (a fourth bound moment, the architecture
+    review, gates activation) — superseding this test's original 'architect.md untouched' premise.
+    What survives is the reference still naming its own bound-moment count plainly, whatever it is,
+    so debt-rounds.md's citation above never drifts silently out of sync with it."""
     assert ARCHITECT.exists(), "skills/factory/references/architect.md is expected to exist"
-    text = ARCHITECT.read_text(encoding="utf-8")
-    assert "three moments" in text.lower() or "three named moments" in text.lower(), (
-        "skills/factory/references/architect.md no longer names the architect role's three "
-        "moments — this slice must not touch that file"
+    text = ARCHITECT.read_text(encoding="utf-8").lower()
+    assert "four moments" in text or "four named moments" in text, (
+        "skills/factory/references/architect.md no longer names the architect role's four "
+        "bound moments (it-36 adds the architecture review as the fourth)"
     )
 
 
