@@ -21,9 +21,19 @@ Two layers, like every other machinery tool in this tree (`tools/round_record.py
 
 Attended-invoked today, like `tools/changelog.py` (slice I, #474)'s own RULING: no cron/sweep wires
 this automatically in this slice ("Runner-built: not gate-touching" — the acceptance criterion's own
-words) — a human or a future scheduled act runs `kpi.py report ...` "on request", and the strategy-
-doc-hash check inside this run is what decides whether `YR-STRATEGY` also posts, not a second,
-externally-triggered code path.
+words) — a human runs `kpi.py report ...` "on request" today, and the strategy-doc-hash check inside
+THIS run is what decides whether `YR-STRATEGY` also posts. The design sweep's own automatic trigger
+(run the report the moment the strategy doc's hash changes, never waiting on a human's "on request")
+is deliberately not wired here — the sweep trigger is #520's, filed at this slice's #475 fold review
+(cold review round 1) rather than folded into this build.
+
+`--code-root` (B2, #475 fold review round 1) is a SEPARATE, optional local checkout from
+`--component-root`: `component_root` is the vault-mirror path everywhere else in this tree
+(`tools/design_gate.py`'s own `next_iteration_slug`/`resolve_activation_paths`, this file's own
+`--help`) — reading `git log` there for revert detection would read the VAULT's own commit history,
+never the product's. `code_root`, when given, is the local checkout of the component's OWN code repo;
+absent, revert detection is fail-closed (`None`, never a silently-empty 0/0), and the note states the
+surface was never declared rather than printing a number nobody read.
 """
 from __future__ import annotations
 
@@ -39,6 +49,7 @@ import sys
 from statistics import mean
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import drift             # noqa: E402 — the shared YR-DEPLOY well-formedness parser (I4, #475 fold review)
 import rank             # noqa: E402
 import records          # noqa: E402
 import round_record     # noqa: E402 — NEEDS_INFO_PREFIX / BLOCKED_PREFIX, the runner's own bounce prose
@@ -140,10 +151,18 @@ def repair_rate(pr_usages: list[dict]) -> dict:
 REVERT_PREFIX = "Revert "
 
 
-def revert_rate(commit_subjects: list[str]) -> dict:
-    """`commit_subjects`: one commit subject line per commit in the window (`git log --format=%s`).
+def revert_rate(commit_subjects: list[str] | None) -> dict:
+    """`commit_subjects`: one commit subject line per commit in the window (`git log --format=%s`,
+    read from `--code-root`, NEVER the vault-mirror `component_root` — B2, #475 fold review round 1).
     GitHub's own revert-commit convention (`Revert "<original subject>"`) is the one grammar read —
-    never a heuristic over diff content."""
+    never a heuristic over diff content.
+
+    `None` (not `[]`) means the surface was never declared at all — `--code-root` absent this run —
+    and stays a THREE-None triple, distinct from a declared-but-empty window (`[]`, a real read that
+    just found zero commits): conflating the two would let a note print "0/0" and read as a fact
+    about the code when nobody ever looked."""
+    if commit_subjects is None:
+        return {"reverts": None, "total": None, "rate": None}
     total = len(commit_subjects)
     reverts = sum(1 for s in commit_subjects if s.startswith(REVERT_PREFIX))
     return {"reverts": reverts, "total": total, "rate": round(reverts / total, 3) if total else None}
@@ -198,12 +217,22 @@ def inflow_outflow(seeds: list[dict], *, start: str, end: str) -> dict:
     return {"inflow": inflow, "outflow": outflow}
 
 
-def product_factory_ratio(seeds: list[dict], *, factory_repo: str = FACTORY_REPO) -> dict:
+def product_factory_ratio(seeds: list[dict], *, parsed_strategy: dict | None = None,
+                          factory_repo: str = FACTORY_REPO) -> dict:
     """Of every seed that has SHIPPED through the task-delivered arm (a non-empty `crossed_to:
     owner/repo#N`), how many delivered against this component's own product surface versus against
-    the factory itself (`crossed_to`'s repo == `factory_repo`) — cumulative to date (a delivered-seed
-    sample is typically too thin to scope to one month alone). A seed with no `crossed_to` (still
-    open, or superseded/rejected some other way) carries no delivery repo and is excluded."""
+    the factory — cumulative to date (a delivered-seed sample is typically too thin to scope to one
+    month alone). A seed with no `crossed_to` (still open, or superseded/rejected some other way)
+    carries no delivery repo and is excluded.
+
+    Classification (I5, #475 fold review round 1 — "theme from the strategy doc", the issue's own
+    Context line): when `parsed_strategy` is given (this run's own read of the strategy doc),
+    `strategy.matching_theme` — the declared public seam a theme's own `repos` line already states
+    in-direction through — is the ONLY classifier: a repo some theme names is product, a repo NO
+    theme names is factory, whatever it is called — no repo is exempted merely by not being spelled
+    `factory_repo`. The literal `factory_repo` string comparison is the fallback ONLY when no parsed
+    strategy is available at all (the doc unreadable or malformed this run) — the pre-#475-fold-
+    review rule, kept for that one degraded case, never the primary rule."""
     product = 0
     factory = 0
     for s in seeds:
@@ -211,7 +240,12 @@ def product_factory_ratio(seeds: list[dict], *, factory_repo: str = FACTORY_REPO
         if not crossed_to:
             continue
         repo = crossed_to.split("#", 1)[0]
-        if repo == factory_repo:
+        if parsed_strategy is not None:
+            if strategy.matching_theme(parsed_strategy, repo):
+                product += 1
+            else:
+                factory += 1
+        elif repo == factory_repo:
             factory += 1
         else:
             product += 1
@@ -241,26 +275,29 @@ def deploy_lag_hours(merge_dates: list[str], deploy_dates: list[str]) -> dict:
     return {"mean_hours": _mean(lags), "count": len(lags), "pending": pending}
 
 
-def deploy_records_timed(rows: list[tuple[str, str]], reg=None) -> list[str]:
+def deploy_records_timed(rows: list[tuple[str, str]]) -> list[str]:
     """`rows`: `(iso-timestamp, text)` pairs (`sources.issue_trail_timed`'s own shape, read over the
-    deploy trail issue) -> the timestamp of every well-formed `YR-DEPLOY` record among them, in trail
-    order. The marker itself is read from the registry (`records.toml`), never hardcoded — the same
-    discipline `tools/drift.py`'s own `parse_deploy_records` keeps for the record's FIELDS."""
-    reg = reg or records.load()
-    marker = records.get(reg, "YR-DEPLOY")["marker"]
+    deploy trail issue) -> the timestamp of every WELL-FORMED `YR-DEPLOY` record among them, in trail
+    order. Well-formedness is judged through `tools/drift.py`'s own `parse_deploy_records` (I4, #475
+    fold review round 1 — the shared authority `tools/round_record.py` also reads `YR-DEPLOY`
+    through), one text at a time so each qualifying text keeps its own timestamp — never a second,
+    looser marker-only match that would count a comment merely MENTIONING the marker without the
+    complete surface/commit fields a real record carries."""
     out = []
     for ts, text in rows:
-        lines = text.splitlines()
-        if any(textutil.marker_line_matches(l, marker, mode=textutil.MARKER_PREFIX) for l in lines):
+        if drift.parse_deploy_records([text]):
             out.append(ts)
     return out
 
 
 # --- the combined report ----------------------------------------------------------------------------
 
-def compute_report(inputs: dict, *, period: str) -> dict:
+def compute_report(inputs: dict, *, period: str, parsed_strategy: dict | None = None) -> dict:
     """`inputs`: every already-fetched surface this report reads (see `gather_report_inputs`'s own
-    keys) -> the full metric report, one key per acceptance-criterion metric."""
+    keys) -> the full metric report, one key per acceptance-criterion metric. `parsed_strategy`
+    (I5, #475 fold review round 1) is this run's own read of the strategy doc, threaded through to
+    `product_factory_ratio`'s own theme-membership classifier — `None` (the default) falls back to
+    that function's own literal `factory_repo` comparison, unchanged from before this round."""
     start, end = month_bounds(period)
     return {
         "period": period,
@@ -272,7 +309,7 @@ def compute_report(inputs: dict, *, period: str) -> dict:
         "spend_usd": total_spend_usd(inputs["pr_usages"]),
         "backlog_age": backlog_age_days(inputs["board_rows"], now=inputs.get("now") or end),
         "inflow_outflow": inflow_outflow(inputs["ideas_seeds"], start=start, end=end),
-        "product_factory_ratio": product_factory_ratio(inputs["ideas_seeds"]),
+        "product_factory_ratio": product_factory_ratio(inputs["ideas_seeds"], parsed_strategy=parsed_strategy),
         "deploy_lag": deploy_lag_hours(inputs["merge_dates"], inputs["deploy_dates"]),
     }
 
@@ -309,25 +346,43 @@ def against_targets(report: dict, kpi_targets: dict) -> dict:
 
 # --- rendering the note ------------------------------------------------------------------------------
 
-def render_kpi_note(report: dict, *, targets: dict) -> str:
-    def line(label, actual, unit=""):
+def render_kpi_note(report: dict, *, targets: dict, now: str | None = None) -> str:
+    """The note's own frontmatter (N3, #475 fold review round 1): `type: note` + this write-round's
+    own `status`/`created`/`updated` — documentation-model.md's base set every doc carries. Without
+    it the vault's own stamping plugin has nothing well-formed to modify (AGENTS.md: "writes nothing
+    at all when the frontmatter cannot be parsed") — a frontmatter-less note would never get a real
+    `created`/`updated` at all, silently, no error anywhere."""
+    now = now or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def line(label, actual, unit="", *, reason=None):
         t = targets.get(label)
         shown_unit = unit if actual is not None else ""
         target_str = f" (target: {t['target']}{unit})" if t else ""
-        return f"- **{label}**: {actual}{shown_unit}{target_str}"
+        reason_str = f" — {reason}" if actual is None and reason else ""
+        return f"- **{label}**: {actual}{shown_unit}{target_str}{reason_str}"
 
     v, c, b, rp, rv, ba, io, pf, dl = (
         report["velocity"], report["cycle_time"], report["blocked"], report["repair"],
         report["revert"], report["backlog_age"], report["inflow_outflow"],
         report["product_factory_ratio"], report["deploy_lag"],
     )
+    frontmatter = f"---\ntype: note\nstatus: active\ncreated: {now}\nupdated: {now}\n---\n"
     lines = [f"# KPI — {report['period']}", ""]
-    lines.append(line("velocity_per_week", v["per_week"], "/week") + f" ({v['merged']} merged)")
-    lines.append(line("cycle_time_hours", c["mean_total_hours"], "h") +
+    # N1 (#475 fold review round 1): velocity narrows to runner-authored PRs (`--search "Produced by
+    # dev-runner in:body"`, merged_runner_prs's own filter) — say so, never let a bare "merged" count
+    # read as every merge this window.
+    lines.append(line("velocity_per_week", v["per_week"], "/week") +
+                f" ({v['merged']} runner PRs merged; attended PRs excluded)")
+    cycle_reason = "no merged PR resolved a linked issue's own createdAt this window" \
+        if c["mean_total_hours"] is None else None
+    lines.append(line("cycle_time_hours", c["mean_total_hours"], "h", reason=cycle_reason) +
                 (f" (queue: {c['mean_queue_hours']}h)" if c["mean_queue_hours"] is not None else ""))
     lines.append(line("blocked_rate", b["rate"]) + f" ({b['blocked']}/{b['total']})")
     lines.append(line("repair_rate", rp["rate"]) + f" ({rp['repaired']}/{rp['total']})")
-    lines.append(line("revert_rate", rv["rate"]) + f" ({rv['reverts']}/{rv['total']})")
+    revert_reason = "--code-root not declared this run — revert detection skipped (never a vault-mirror read)" \
+        if rv["total"] is None else None
+    lines.append(line("revert_rate", rv["rate"], reason=revert_reason) +
+                (f" ({rv['reverts']}/{rv['total']})" if rv["total"] is not None else ""))
     lines.append(line("spend_usd", report["spend_usd"], " USD"))
     lines.append(line("backlog_age_days", ba["mean_days"], "d") + f" ({ba['count']} items)")
     lines.append(line("inflow", io["inflow"]))
@@ -335,7 +390,7 @@ def render_kpi_note(report: dict, *, targets: dict) -> str:
     lines.append(line("product_factory_ratio", pf["ratio"]) + f" (product={pf['product']} factory={pf['factory']})")
     lines.append(line("deploy_lag_hours", dl["mean_hours"], "h") + f" ({dl['pending']} pending)")
     lines.append("")
-    return "\n".join(lines) + "\n"
+    return frontmatter + "\n".join(lines) + "\n"
 
 
 def note_path(operations_home: str, period: str) -> str:
@@ -387,18 +442,27 @@ def kpi_already_posted(comment_bodies: list[str], period: str, reg=None) -> bool
     return False
 
 
-def strategy_doc_changed(doc_text: str, state_path: pathlib.Path) -> bool:
-    """True iff `doc_text`'s own sha256 differs from the last-observed digest stored at
-    `state_path` (a local, per-repo state file under `DEV_RUNNER_HOME` — `tools/design_gate.py`'s
-    own pidfile precedent, applied to a content digest instead of a PID). Updates the stored digest
-    as a side effect whenever it differs — the next run's own comparison point."""
+def strategy_doc_changed(doc_text: str, state_path: pathlib.Path) -> tuple[bool, str]:
+    """`(changed, digest)` — `changed` iff `doc_text`'s own sha256 differs from the last-observed
+    digest stored at `state_path` (a local, per-repo state file under `DEV_RUNNER_HOME` —
+    `tools/design_gate.py`'s own pidfile precedent, applied to a content digest instead of a PID).
+
+    READ-ONLY (I6, #475 fold review round 1): never writes `state_path` itself — the old shape
+    persisted the new digest as a side effect of this SAME call that decided `YR-STRATEGY` should
+    post, so a transient `gh` failure on the comment that followed still left the digest updated,
+    and the doc's own change was lost forever (the next run would see "unchanged", never re-try).
+    The caller persists `digest` via `_persist_strategy_hash` ONLY once the comment has actually
+    landed."""
     digest = hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
     prior = state_path.read_text().strip() if state_path.exists() else None
-    if digest == prior:
-        return False
+    return digest != prior, digest
+
+
+def _persist_strategy_hash(state_path: pathlib.Path, digest: str) -> None:
+    """The write half of `strategy_doc_changed` (I6) — called only after the `YR-STRATEGY` comment
+    this digest justified has actually posted."""
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(digest)
-    return True
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9-]")
@@ -475,13 +539,19 @@ def board_items(gh, org, project, repo, page_cap=100):
     return rows
 
 
-def gather_report_inputs(*, gh, repo, org, project, component_root, period=None, now=None):
+def gather_report_inputs(*, gh, repo, org, project, component_root, code_root=None, period=None, now=None):
     """The real reads assembled into `compute_report`'s own `inputs` shape (`gh`, `git`, and a local
     read of the vault-mirror checkout's own ideas folder — `tools/design_resolver.py`'s own
     precedent: a READ crosses the local mirror directly, never the REST client; only a WRITE does).
     Every failed read degrades to an empty list for that surface (a report with a hole in one
     metric, never a crash that loses every other metric) — the caller (`main`) is responsible for
-    saying so."""
+    saying so.
+
+    `component_root` is the vault-mirror checkout (`ideas/`) — never a source of `git log`. `code_root`
+    (B2, #475 fold review round 1) is the SEPARATE, optional local checkout of the component's OWN
+    code repo that revert detection actually reads; absent, `commit_subjects` is `None` (not `[]`) —
+    the surface was never declared, fail-closed, never a silently-empty read someone could mistake
+    for "zero reverts this month"."""
     now = now or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     period = period or current_period()
     start, end = month_bounds(period)
@@ -494,21 +564,31 @@ def gather_report_inputs(*, gh, repo, org, project, component_root, period=None,
     for pr in prs:
         merge_dates.append(pr["mergedAt"])
         try:
-            data = _as_json(gh(["pr", "view", str(pr["number"]), "--repo", repo, "--json", "body,comments"]))
-            texts = sources.pr_trail_texts_from_json(data)
+            # B1 (#475 fold review round 1): `closingIssuesReferences` rides the SAME call as
+            # `body,comments` — the linked issue's own `createdAt` is cycle time's "created" bound
+            # (created -> merged); `ready_at` stays None, documented at `cycle_time_hours` itself
+            # (no per-field ProjectV2 status-change history without the audit-log API).
+            data = _as_json(gh(["pr", "view", str(pr["number"]), "--repo", repo,
+                               "--json", "body,comments,closingIssuesReferences"]))
         except Exception:
-            texts = []
+            data = {}
+        texts = sources.pr_trail_texts_from_json(data) if data else []
         pr_trails.append(texts)
         ok, usage = sources.pr_usage_from_texts(texts) if texts else (False, "")
         pr_usages.append(usage if ok else {"stages": [], "cost_usd": 0.0})
-        cycle_events.append({"created": None, "ready_at": None, "merged": pr["mergedAt"]})
+        refs = (data or {}).get("closingIssuesReferences") or []
+        created = refs[0].get("createdAt") if refs and isinstance(refs[0], dict) else None
+        cycle_events.append({"created": created, "ready_at": None, "merged": pr["mergedAt"]})
 
-    try:
-        log = subprocess.run(["git", "-C", component_root, "log", f"--since={start}", f"--until={end}",
-                             "--format=%s"], capture_output=True, text=True, timeout=GH_TIMEOUT)
-        commit_subjects = log.stdout.splitlines() if log.returncode == 0 else []
-    except (OSError, subprocess.TimeoutExpired):
-        commit_subjects = []
+    if code_root:
+        try:
+            log = subprocess.run(["git", "-C", code_root, "log", f"--since={start}", f"--until={end}",
+                                 "--format=%s"], capture_output=True, text=True, timeout=GH_TIMEOUT)
+            commit_subjects = log.stdout.splitlines() if log.returncode == 0 else []
+        except (OSError, subprocess.TimeoutExpired):
+            commit_subjects = []
+    else:
+        commit_subjects = None
 
     try:
         board_rows = board_items(gh, org, project, repo)
@@ -537,42 +617,73 @@ def _comment(gh, repo, issue, body):
     gh(["issue", "comment", str(issue), "--repo", repo, "--body", body])
 
 
-def run_report(*, gh, vault, repo, issue, org, project, component_root, strategy_doc,
+def run_report(*, gh, vault, repo, issue, org, project, component_root, code_root=None, strategy_doc,
                operations_home, who, period=None):
-    """The whole act: gather, compute, write the note, post `YR-KPI` (idempotent per period), and —
-    when the strategy doc's own hash moved since the last run — post `YR-STRATEGY` too. Returns a
-    small report of what happened (never raises past a `VaultUnreachable` from the write itself,
-    the same fail-loud contract every vault write in this tree keeps)."""
+    """The whole act: gather, compute, write the note, post `YR-KPI` (idempotent per period, fail-
+    CLOSED when the idempotence check itself can't be verified — N5 below), and — when the strategy
+    doc's own hash moved since the last run — post `YR-STRATEGY` too. Returns a small report of what
+    happened; never raises past `VaultUnreachable` from the note write itself (I6, #475 fold review
+    round 1 — a `gh` `RuntimeError` from either comment post is caught here and turned into a stated
+    `*_post_failed` result field, never an uncaught crash past this function)."""
     period = period or current_period()
     inputs = gather_report_inputs(gh=gh, repo=repo, org=org, project=project,
-                                  component_root=component_root, period=period)
-    report = compute_report(inputs, period=period)
+                                  component_root=component_root, code_root=code_root, period=period)
 
+    # I5 (#475 fold review round 1): the strategy doc is read and parsed BEFORE compute_report, so
+    # product_factory_ratio can classify by theme membership rather than the bare factory_repo
+    # literal.
     ok, doc_text = sources.vault_doc(pathlib.Path(strategy_doc))
+    parsed_strategy = None
     kpi_targets = {}
     strategy_changed = False
+    strategy_digest = None
     if ok:
         try:
-            kpi_targets = strategy.parse_strategy(doc_text).get("kpi_targets") or {}
+            parsed_strategy = strategy.parse_strategy(doc_text)
+            kpi_targets = parsed_strategy.get("kpi_targets") or {}
         except strategy.StrategyError:
+            parsed_strategy = None
             kpi_targets = {}
-        strategy_changed = strategy_doc_changed(doc_text, strategy_hash_path(repo))
+        strategy_changed, strategy_digest = strategy_doc_changed(doc_text, strategy_hash_path(repo))
 
+    report = compute_report(inputs, period=period, parsed_strategy=parsed_strategy)
     targets = against_targets(report, kpi_targets)
-    note = render_kpi_note(report, targets=targets)
+    note = render_kpi_note(report, targets=targets, now=inputs.get("now"))
     kpi_line = render_yr_kpi_line(who=who, period=period)
     vault.write(note_path(operations_home, period), note + "\n" + kpi_line)
 
-    result = {"period": period, "wrote_note": True, "posted_kpi": False, "posted_strategy": False}
+    result = {"period": period, "wrote_note": True, "posted_kpi": False, "posted_strategy": False,
+             "kpi_post_failed": False, "strategy_post_failed": False}
+
+    # N5 (#475 fold review round 1): an unreadable trail used to fail OPEN (`already = False`),
+    # risking a DUPLICATE YR-KPI post whenever the trail happened to already carry one — fail
+    # CLOSED instead: refuse to post at all when idempotence can't be verified, naming why.
     ok_trail, texts = sources.issue_trail(repo, str(issue))
-    already = kpi_already_posted(texts, period) if ok_trail else False
-    if not already:
-        _comment(gh, repo, issue, kpi_line)
-        result["posted_kpi"] = True
+    if not ok_trail:
+        result["kpi_post_failed"] = True
+        print(f"kpi.py: {repo}#{issue}'s own trail is unreadable ({texts}) — refusing to post "
+              "YR-KPI (cannot verify idempotence this run)", file=sys.stderr)
+    else:
+        already = kpi_already_posted(texts, period)
+        if not already:
+            try:
+                _comment(gh, repo, issue, kpi_line)
+                result["posted_kpi"] = True
+            except RuntimeError as e:
+                result["kpi_post_failed"] = True
+                print(f"kpi.py: failed to post YR-KPI for {period}: {e}", file=sys.stderr)
+
     if strategy_changed:
-        _comment(gh, repo, issue,
-                render_yr_strategy_comment(who=who, doc=strategy_doc, doc_text=doc_text))
-        result["posted_strategy"] = True
+        try:
+            _comment(gh, repo, issue,
+                    render_yr_strategy_comment(who=who, doc=strategy_doc, doc_text=doc_text))
+            result["posted_strategy"] = True
+            # I6: the digest persists ONLY once the comment it justifies has actually landed — a
+            # failed post below leaves the prior digest in place, so the NEXT run still sees "changed".
+            _persist_strategy_hash(strategy_hash_path(repo), strategy_digest)
+        except RuntimeError as e:
+            result["strategy_post_failed"] = True
+            print(f"kpi.py: failed to post YR-STRATEGY for {strategy_doc}: {e}", file=sys.stderr)
     return result
 
 
@@ -586,6 +697,11 @@ def main(argv=None):
     p_r.add_argument("--org", default=os.environ.get("YR_ORG", "yellow-robots"))
     p_r.add_argument("--project", required=True, help="the board's project number")
     p_r.add_argument("--component-root", required=True, help="the vault-mirror component root (ideas/)")
+    p_r.add_argument("--code-root", default=None,
+                     help="local checkout of the component's OWN code repo (git log revert "
+                          "detection) — SEPARATE from --component-root, the vault mirror; absent, "
+                          "revert detection is skipped, fail-closed, never derived from the manifest "
+                          "or $YR_WORKSPACE (B2, #475 fold review round 1)")
     p_r.add_argument("--strategy-doc", required=True, help="local path to the strategy note")
     p_r.add_argument("--operations-home", required=True, help="vault-relative operations home path")
     p_r.add_argument("--who", default=os.environ.get("YR_GH_APP_SLUG", "machinery"))
@@ -601,16 +717,19 @@ def main(argv=None):
         period = args.period or current_period()
         inputs = gather_report_inputs(gh=_gh, repo=args.repo, org=args.org,
                                       project=args.project, component_root=args.component_root,
-                                      period=period)
-        report = compute_report(inputs, period=period)
+                                      code_root=args.code_root, period=period)
         ok, doc_text = sources.vault_doc(pathlib.Path(args.strategy_doc))
+        parsed_strategy = None
         kpi_targets = {}
         if ok:
             try:
-                kpi_targets = strategy.parse_strategy(doc_text).get("kpi_targets") or {}
+                parsed_strategy = strategy.parse_strategy(doc_text)
+                kpi_targets = parsed_strategy.get("kpi_targets") or {}
             except strategy.StrategyError:
+                parsed_strategy = None
                 kpi_targets = {}
-        note = render_kpi_note(report, targets=against_targets(report, kpi_targets))
+        report = compute_report(inputs, period=period, parsed_strategy=parsed_strategy)
+        note = render_kpi_note(report, targets=against_targets(report, kpi_targets), now=inputs.get("now"))
         print("TEST-MODE: no vault write, no comment posted — the plan only")
         print(note)
         return 0
@@ -618,8 +737,8 @@ def main(argv=None):
     vault = vault_api.VaultClient()
     result = run_report(gh=_gh, vault=vault, repo=args.repo, issue=args.issue, org=args.org,
                         project=args.project, component_root=args.component_root,
-                        strategy_doc=args.strategy_doc, operations_home=args.operations_home,
-                        who=args.who, period=args.period)
+                        code_root=args.code_root, strategy_doc=args.strategy_doc,
+                        operations_home=args.operations_home, who=args.who, period=args.period)
     print(json.dumps(result))
     return 0
 

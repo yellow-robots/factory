@@ -118,32 +118,17 @@ def test_board_query_declares_paging_machinery():
 
 
 # Paging (#475) needs a cursor-aware `api graphql` shape GH_STUB_TOOLS's own STUB_NODES arm doesn't
-# carry (a bare nodes list, no pageInfo/cursor concept) — derived from the shared fake via .replace()
-# per tests/harness/contract.md (locate the arm to splice a new one beside, never retype the
-# classifier/dispatch shape): a STUB_PAGES arm is spliced in ahead of the STUB_NODES arm inside the
-# shared `api graphql` dispatch, so this stays the same object's dispatch shell plus one extra mode.
-_STUB_NODES_ARM = '    if "STUB_NODES" in os.environ:\n'
-_STUB_PAGES_ARM = '''    if "STUB_PAGES" in os.environ:
-        pages = json.loads(os.environ["STUB_PAGES"])
-        cursor = None
-        for i, a in enumerate(argv):
-            if a == "-F" and argv[i + 1].startswith("cursor="):
-                cursor = argv[i + 1].split("=", 1)[1]
-        idx = int(cursor) if cursor else 0
-        nodes, has_next = pages[idx]
-        page = {"nodes": nodes,
-                "pageInfo": {"hasNextPage": has_next, "endCursor": str(idx + 1) if has_next else None}}
-        print(json.dumps({"data": {"organization": {"projectV2": {"items": page}}}}))
-        sys.exit(0)
-'''
-assert gh_fake.GH_STUB_TOOLS.count(_STUB_NODES_ARM) == 1, "GH_STUB_TOOLS's STUB_NODES arm text drifted"
-GH_STUB_PAGED = gh_fake.GH_STUB_TOOLS.replace(_STUB_NODES_ARM, _STUB_PAGES_ARM + _STUB_NODES_ARM, 1)
+# carry (a bare nodes list, no pageInfo/cursor concept) — GH_STUB_TOOLS itself now carries a
+# STUB_PAGES arm for exactly this (N6, #475 fold review round 1 — promoted into the shared home,
+# tests/harness/gh_fake.py, rather than kept as a test_board.py-local derived variant, since
+# contract.md's own routing table documents the canonical faces, not per-suite derivations). The
+# SAME `GH_STUB` object this file already imports serves both shapes.
 
 
 def _run_paged(tmp, pages):
     binp = tmp / "bin"
     binp.mkdir(exist_ok=True)
-    _exec(binp / "gh", GH_STUB_PAGED)
+    _exec(binp / "gh", GH_STUB)
     env = {**os.environ, "GH_BIN": str(binp / "gh"), "STUB_PAGES": json.dumps(pages)}
     return subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, env=env)
 

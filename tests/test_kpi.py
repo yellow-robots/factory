@@ -176,6 +176,13 @@ def test_revert_rate_never_matches_a_mid_line_mention_of_revert():
     assert kpi.revert_rate(subjects)["reverts"] == 0
 
 
+def test_revert_rate_is_a_three_none_triple_when_the_surface_was_never_declared():
+    """B2, #475 fold review round 1: `None` in (`--code-root` absent) -> a three-`None` triple,
+    distinct from `[]` in (code root declared, genuinely zero commits this window) — conflating the
+    two would let the note print "0/0" as though someone actually looked."""
+    assert kpi.revert_rate(None) == {"reverts": None, "total": None, "rate": None}
+
+
 # ============ spend: pr_usage's own cost_usd, summed ============
 
 def test_total_spend_usd_sums_cost_usd_treating_missing_as_zero():
@@ -238,6 +245,32 @@ def test_product_factory_ratio_is_infinite_with_product_only_and_no_factory_deli
     assert r["ratio"] == float("inf")
 
 
+def test_product_factory_ratio_classifies_by_strategy_theme_membership_when_available():
+    """I5, #475 fold review round 1: with a parsed strategy, `strategy.matching_theme` is the ONLY
+    classifier — a repo no theme names is factory, whatever it's called, not just literally
+    "yellow-robots/factory" (the pre-fold-review rule, now the fallback only)."""
+    parsed_strategy = {"themes": [{"id": "theme-a", "repos": ["acme/product"]}]}
+    seeds = [
+        _seed(crossed_to="acme/product#1"),    # a theme names it -> product
+        _seed(crossed_to="acme/unlisted#2"),   # NO theme names it -> factory, despite not being
+                                                # literally "yellow-robots/factory"
+    ]
+    r = kpi.product_factory_ratio(seeds, parsed_strategy=parsed_strategy)
+    assert r == {"product": 1, "factory": 1, "ratio": 1.0}
+
+
+def test_product_factory_ratio_falls_back_to_the_factory_repo_constant_without_a_parsed_strategy():
+    """The SAME seeds classified the OLD way (I5's stated fallback) when no parsed strategy is
+    available at all: `acme/unlisted` is product (not literally the factory), the literal factory
+    repo is factory."""
+    seeds = [
+        _seed(crossed_to="acme/unlisted#2"),
+        _seed(crossed_to="yellow-robots/factory#3"),
+    ]
+    r = kpi.product_factory_ratio(seeds, parsed_strategy=None, factory_repo="yellow-robots/factory")
+    assert r == {"product": 1, "factory": 1, "ratio": 1.0}
+
+
 # ============ deploy lag: the YR-DEPLOY trail ============
 
 def test_deploy_lag_hours_measures_time_to_the_next_deploy_at_or_after_merge():
@@ -255,6 +288,18 @@ def test_deploy_lag_hours_marks_a_merge_with_no_later_deploy_as_pending_never_dr
     r = kpi.deploy_lag_hours(merges, deploys)
     assert r["count"] == 1
     assert r["pending"] == 1
+
+
+def test_deploy_records_timed_counts_only_well_formed_records():
+    """I4, #475 fold review round 1: well-formedness is judged through tools/drift.py's own shared
+    `parse_deploy_records` (surface + commit required) — a comment merely MENTIONING the marker
+    without those fields is never counted as a real record."""
+    rows = [
+        ("2026-09-01T00:00:00Z", "YR-DEPLOY: no fields here\n"),
+        ("2026-09-02T00:00:00Z",
+         "YR-DEPLOY:\nsurface: dev-runner\ncommit: 1111111111111111111111111111111111111111\nwho: x\n"),
+    ]
+    assert kpi.deploy_records_timed(rows) == ["2026-09-02T00:00:00Z"]
 
 
 # ============ the combined report + against-targets ============
@@ -281,6 +326,39 @@ def test_render_kpi_note_shows_the_period_header_and_actual_vs_target():
     assert "# KPI — 2026-09" in note
     assert "target: 3" in note
     assert "target: 100" in note
+
+
+def test_render_kpi_note_carries_frontmatter_so_the_vault_plugin_can_stamp_it():
+    """N3, #475 fold review round 1: `type: note` + this write-round's own `status`/`created`/
+    `updated` — documentation-model.md's base set every doc carries. Without it the vault's own
+    stamping plugin has nothing well-formed to modify at all (AGENTS.md: "writes nothing at all when
+    the frontmatter cannot be parsed")."""
+    report = kpi.compute_report(_full_inputs(), period="2026-09")
+    note = kpi.render_kpi_note(report, targets={}, now="2026-09-15T00:00:00Z")
+    assert note.startswith("---\n")
+    assert "type: note\n" in note
+    assert "status: active\n" in note
+    assert "created: 2026-09-15T00:00:00Z\n" in note
+    assert "updated: 2026-09-15T00:00:00Z\n" in note
+
+
+def test_render_kpi_note_labels_velocity_as_runner_prs_only():
+    """N1, #475 fold review round 1: velocity narrows to runner-authored merges (`merged_runner_prs`'s
+    own `--search "Produced by dev-runner in:body"` filter) — say so in the note's own line, never
+    let a bare "merged" count read as every merge this window."""
+    report = kpi.compute_report(_full_inputs(), period="2026-09")
+    note = kpi.render_kpi_note(report, targets={})
+    assert "runner PRs merged" in note and "attended PRs excluded" in note
+
+
+def test_render_kpi_note_states_when_cycle_time_and_revert_were_never_read():
+    """B1/B2, #475 fold review round 1: a None actual with no reason reads as a blank fact; the
+    note must SAY why nothing computed rather than print a bare "None"."""
+    inputs = _full_inputs(cycle_events=[], commit_subjects=None)
+    report = kpi.compute_report(inputs, period="2026-09")
+    note = kpi.render_kpi_note(report, targets={})
+    assert "cycle_time_hours**: None — no merged PR resolved a linked issue's own createdAt" in note
+    assert "revert_rate**: None — --code-root not declared" in note
 
 
 def test_note_path_names_one_note_per_month_in_the_operations_home():
@@ -342,10 +420,35 @@ def test_yr_strategy_comment_falls_back_to_the_line_alone_when_the_doc_has_no_fe
 
 
 def test_strategy_doc_changed_is_true_on_first_observation_and_false_once_stable(tmp_path):
+    """I6, #475 fold review round 1: `strategy_doc_changed` returns `(changed, digest)` and is
+    READ-ONLY — the caller persists via `_persist_strategy_hash` itself, separately."""
     state_path = tmp_path / "hash.txt"
-    assert kpi.strategy_doc_changed("doc v1", state_path) is True
-    assert kpi.strategy_doc_changed("doc v1", state_path) is False, "no change since the last observation"
-    assert kpi.strategy_doc_changed("doc v2", state_path) is True
+    changed1, digest1 = kpi.strategy_doc_changed("doc v1", state_path)
+    assert changed1 is True
+    kpi._persist_strategy_hash(state_path, digest1)
+
+    changed2, _ = kpi.strategy_doc_changed("doc v1", state_path)
+    assert changed2 is False, "no change since the last observation"
+
+    changed3, digest3 = kpi.strategy_doc_changed("doc v2", state_path)
+    assert changed3 is True
+    kpi._persist_strategy_hash(state_path, digest3)
+    changed4, _ = kpi.strategy_doc_changed("doc v2", state_path)
+    assert changed4 is False
+
+
+def test_strategy_doc_changed_never_persists_by_itself(tmp_path):
+    """I6, #475 fold review round 1: the OLD shape persisted the new digest as a side effect of the
+    same call that decided YR-STRATEGY should post — a transient gh failure on the comment that
+    followed still left the digest updated, silently losing the doc's own change forever. Read-only
+    now: a repeated call with the SAME text keeps reporting `changed=True` until something else
+    calls `_persist_strategy_hash`."""
+    state_path = tmp_path / "hash.txt"
+    changed1, _ = kpi.strategy_doc_changed("doc v1", state_path)
+    assert changed1 is True
+    assert not state_path.exists(), "the read alone must never write the state file"
+    changed_again, _ = kpi.strategy_doc_changed("doc v1", state_path)
+    assert changed_again is True, "still True — nothing has persisted yet"
 
 
 # ============ the board's own python reader: createdAt + paging beyond 100 ============
@@ -389,10 +492,17 @@ def test_board_items_filters_closed_and_other_repo_rows():
 # ============ gather_report_inputs: fixture PR-usage comments, board JSON, timelines ============
 
 def test_gather_report_inputs_reads_every_native_surface(tmp_path, monkeypatch):
+    # component_root: the VAULT MIRROR — ideas/ only, git-initialized with its OWN, DIFFERENT commit
+    # (B2, #475 fold review round 1: proving revert detection never reads this history).
     component_root = tmp_path / "component"
     _init_component_repo(component_root)
-    _commit(component_root, "add feature A", "2026-09-05T00:00:00+00:00")
-    _commit(component_root, 'Revert "add feature A"', "2026-09-06T00:00:00+00:00")
+    _commit(component_root, "vault: capture seed-b", "2026-09-04T00:00:00+00:00")
+
+    # code_root: the SEPARATE product code checkout — the ONLY thing revert detection may read.
+    code_root = tmp_path / "code"
+    _init_component_repo(code_root)
+    _commit(code_root, "add feature A", "2026-09-05T00:00:00+00:00")
+    _commit(code_root, 'Revert "add feature A"', "2026-09-06T00:00:00+00:00")
 
     ideas = component_root / "ideas"
     ideas.mkdir()
@@ -411,7 +521,9 @@ def test_gather_report_inputs_reads_every_native_surface(tmp_path, monkeypatch):
         if argv[:2] == ["pr", "list"]:
             return [{"number": 7, "mergedAt": "2026-09-10T00:00:00Z"}]
         if argv[:2] == ["pr", "view"]:
-            return {"body": "", "comments": [{"body": usage_comment}]}
+            # B1, #475 fold review round 1: closingIssuesReferences rides the SAME call.
+            return {"body": "", "comments": [{"body": usage_comment}],
+                    "closingIssuesReferences": [{"number": 3, "createdAt": "2026-09-01T00:00:00Z"}]}
         if argv[:2] == ["api", "graphql"]:
             return {"data": {"organization": {"projectV2": {"items": {
                 "nodes": [_board_node(1, repo="acme/widgets")],
@@ -419,24 +531,52 @@ def test_gather_report_inputs_reads_every_native_surface(tmp_path, monkeypatch):
         raise AssertionError(f"unexpected gh call: {argv}")
 
     monkeypatch.setattr(kpi.sources, "issue_trail_timed",
-                        lambda repo, issue: (True, [("2026-09-11T00:00:00Z", "YR-DEPLOY: who=x rel=y\n")]))
+                        lambda repo, issue: (True, [
+                            ("2026-09-11T00:00:00Z",
+                             "YR-DEPLOY:\nsurface: dev-runner\n"
+                             "commit: 1111111111111111111111111111111111111111\nwho: x\n"),
+                        ]))
 
     inputs = kpi.gather_report_inputs(gh=fake_gh, repo="acme/widgets", org="yellow-robots", project=1,
-                                      component_root=str(component_root), period="2026-09",
-                                      now="2026-09-15T00:00:00Z")
+                                      component_root=str(component_root), code_root=str(code_root),
+                                      period="2026-09", now="2026-09-15T00:00:00Z")
 
     assert inputs["merge_dates"] == ["2026-09-10T00:00:00Z"]
     assert len(inputs["pr_usages"]) == 1 and inputs["pr_usages"][0]["cost_usd"] > 0
-    assert inputs["commit_subjects"] == ['Revert "add feature A"', "add feature A"]
+    assert inputs["cycle_events"] == [
+        {"created": "2026-09-01T00:00:00Z", "ready_at": None, "merged": "2026-09-10T00:00:00Z"}]
+    assert inputs["commit_subjects"] == ['Revert "add feature A"', "add feature A"], \
+        "revert detection must read ONLY code_root — the vault mirror's own commit never appears"
     assert len(inputs["board_rows"]) == 1 and inputs["board_rows"][0]["createdAt"]
     assert {s["path"] for s in inputs["ideas_seeds"]} == {"ideas/seed-a.md", "ideas/seed-b.md"}
     assert inputs["deploy_dates"] == ["2026-09-11T00:00:00Z"]
 
     report = kpi.compute_report(inputs, period="2026-09")
+    assert report["cycle_time"]["mean_total_hours"] is not None
     assert report["revert"] == {"reverts": 1, "total": 2, "rate": 0.5}
     assert report["inflow_outflow"] == {"inflow": 1, "outflow": 1}
     assert report["product_factory_ratio"] == {"product": 1, "factory": 0, "ratio": float("inf")}
     assert report["spend_usd"] > 0
+
+
+def test_gather_report_inputs_commit_subjects_is_none_when_code_root_is_not_declared(tmp_path, monkeypatch):
+    """B2, #475 fold review round 1: `--code-root` absent -> `commit_subjects` is `None` (fail-
+    closed), never a silently-empty `[]` that reads as "declared, zero reverts"."""
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (False, "unreachable"))
+
+    def fake_gh(argv):
+        if argv[:2] == ["pr", "list"]:
+            return []
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    inputs = kpi.gather_report_inputs(gh=fake_gh, repo="acme/widgets", org="yellow-robots", project=1,
+                                      component_root=str(tmp_path / "component"), period="2026-09",
+                                      now="2026-09-15T00:00:00Z")
+    assert inputs["commit_subjects"] is None
+    assert kpi.revert_rate(inputs["commit_subjects"]) == {"reverts": None, "total": None, "rate": None}
 
 
 def test_gather_report_inputs_degrades_a_failed_surface_to_empty_never_a_crash(tmp_path, monkeypatch):
@@ -498,7 +638,8 @@ def test_run_report_writes_the_note_posts_yr_kpi_and_is_idempotent_per_period(tm
             operations_home="04 projects/acme/operations", who="machinery", period="2026-09")
 
     result = _run()
-    assert result == {"period": "2026-09", "wrote_note": True, "posted_kpi": True, "posted_strategy": True}
+    assert result == {"period": "2026-09", "wrote_note": True, "posted_kpi": True, "posted_strategy": True,
+                      "kpi_post_failed": False, "strategy_post_failed": False}
     assert len(vault.writes) == 1
     path, content = vault.writes[0]
     assert path == "04 projects/acme/operations/kpi-2026-09.md"
@@ -522,3 +663,83 @@ def test_run_report_writes_the_note_posts_yr_kpi_and_is_idempotent_per_period(tm
     result3 = _run()
     assert result3["posted_strategy"] is True
     assert result3["posted_kpi"] is False
+
+
+def test_run_report_refuses_to_post_yr_kpi_when_the_trail_is_unreadable(tmp_path, monkeypatch):
+    """N5, #475 fold review round 1: the OLD shape failed OPEN (`already = False` whenever the
+    trail read failed), risking a DUPLICATE YR-KPI post. Fail CLOSED instead — refuse to post at
+    all when idempotence can't be verified, naming why, never a silent duplicate risk."""
+    monkeypatch.setattr(kpi, "DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (True, []))
+    monkeypatch.setattr(kpi.sources, "issue_trail", lambda repo, issue: (False, "trail unreachable"))
+
+    posted = []
+
+    def fake_gh(argv):
+        if argv[:2] == ["pr", "list"]:
+            return []
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        if argv[:2] == ["issue", "comment"]:
+            posted.append(argv[argv.index("--body") + 1])
+            return ""
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    strategy_doc = tmp_path / "strategy.md"
+    strategy_doc.write_text("# no fence here")
+    component_root = tmp_path / "component"
+    component_root.mkdir()
+    vault = FakeVault()
+
+    result = kpi.run_report(
+        gh=fake_gh, vault=vault, repo="acme/widgets", issue="55", org="yellow-robots", project=1,
+        component_root=str(component_root), strategy_doc=str(strategy_doc),
+        operations_home="04 projects/acme/operations", who="machinery", period="2026-09")
+
+    assert result["posted_kpi"] is False
+    assert result["kpi_post_failed"] is True
+    assert not any("YR-KPI" in p for p in posted), "an unreadable trail must never risk a duplicate post"
+    assert result["wrote_note"] is True, "the note itself still writes — only the post is refused"
+
+
+def test_run_report_never_persists_the_strategy_digest_when_the_post_fails(tmp_path, monkeypatch):
+    """I6, #475 fold review round 1: a failed YR-STRATEGY comment must leave the prior digest in
+    place, so the NEXT run still sees the doc as changed and tries again — never silently losing
+    the announcement to a transient gh failure."""
+    monkeypatch.setattr(kpi, "DEV_RUNNER_HOME", str(tmp_path / "drhome"))
+    monkeypatch.setattr(kpi.sources, "issue_trail_timed", lambda repo, issue: (True, []))
+    monkeypatch.setattr(kpi.sources, "issue_trail", lambda repo, issue: (True, []))
+
+    def flaky_gh(argv):
+        if argv[:2] == ["pr", "list"]:
+            return []
+        if argv[:2] == ["api", "graphql"]:
+            return {"data": {"organization": {"projectV2": {"items": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+        if argv[:2] == ["issue", "comment"]:
+            body = argv[argv.index("--body") + 1]
+            if body.startswith("YR-STRATEGY"):
+                raise RuntimeError("gh issue comment failed (stub)")
+            return ""
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    strategy_doc = tmp_path / "strategy.md"
+    strategy_doc.write_text(STRATEGY_DOC)
+    component_root = tmp_path / "component"
+    component_root.mkdir()
+    vault = FakeVault()
+
+    def _run():
+        return kpi.run_report(
+            gh=flaky_gh, vault=vault, repo="acme/widgets", issue="55", org="yellow-robots", project=1,
+            component_root=str(component_root), strategy_doc=str(strategy_doc),
+            operations_home="04 projects/acme/operations", who="machinery", period="2026-09")
+
+    result1 = _run()
+    assert result1["posted_strategy"] is False
+    assert result1["strategy_post_failed"] is True
+
+    result2 = _run()
+    assert result2["strategy_post_failed"] is True, \
+        "the digest never persisted after the failed post — the doc still reads as changed"

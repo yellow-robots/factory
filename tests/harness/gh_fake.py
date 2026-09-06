@@ -157,6 +157,21 @@ if argv[:2] == ["repo", "view"]:
     sys.exit(0)
 
 if argv[:2] == ["api", "graphql"]:
+    if "STUB_PAGES" in os.environ:
+        # cursor-aware paging (N6, #475 fold review round 1 — promoted from a test_board.py-local
+        # derived variant into this shared home: STUB_NODES's own single canned response has no
+        # pageInfo/cursor concept at all, so board-paging suites need this SEPARATE mode instead).
+        pages = json.loads(os.environ["STUB_PAGES"])
+        cursor = None
+        for i, a in enumerate(argv):
+            if a == "-F" and argv[i + 1].startswith("cursor="):
+                cursor = argv[i + 1].split("=", 1)[1]
+        idx = int(cursor) if cursor else 0
+        nodes, has_next = pages[idx]
+        page = {"nodes": nodes,
+               "pageInfo": {"hasNextPage": has_next, "endCursor": str(idx + 1) if has_next else None}}
+        print(json.dumps({"data": {"organization": {"projectV2": {"items": page}}}}))
+        sys.exit(0)
     if "STUB_NODES" in os.environ:
         nodes = json.loads(os.environ["STUB_NODES"])
         print(json.dumps({"data": {"organization": {"projectV2": {"items": {"nodes": nodes}}}}}))

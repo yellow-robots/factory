@@ -15,12 +15,29 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 
 import compile_slice  # noqa: E402
 import design_gate     # noqa: E402 — same module object compile_slice.triage_banner imports internally
 import sources         # noqa: E402 — same module object compile_slice.triage_banner imports internally
+
+
+@pytest.fixture(autouse=True)
+def _no_real_pm_config(tmp_path, monkeypatch):
+    """I3 (#475 fold review round 1 — a hermeticity finding): `compile_slice.position()` now calls
+    `triage_banner(repo)` unconditionally, and that reads `YR_PM_CONFIG` (or a `DEV_RUNNER_HOME`-
+    derived default) for real unless a test stubs `design_gate.load_pm_config` itself. Left alone,
+    every OTHER test in this module that exercises `position()` for something unrelated would read
+    the HOST's own real PM config (if one happens to exist there) and could issue a live `gh issue
+    view` — swallowed by triage_banner's own best-effort except, so a live network call went
+    unnoticed rather than failing the test loudly. Every test gets a safe, guaranteed-nonexistent
+    `YR_PM_CONFIG` path by default; a test that wants real triage-banner behavior opts back in by
+    monkeypatching `design_gate.load_pm_config` (as the tests below already do) or setting its own
+    `YR_PM_CONFIG` AFTER this fixture runs, which simply overrides it."""
+    monkeypatch.setenv("YR_PM_CONFIG", str(tmp_path / "no-such-pm-repos.json"))
 
 
 def _attended_env(**extra):
@@ -434,7 +451,7 @@ def test_triage_banner_ignores_a_disposition_posted_by_someone_other_than_the_ow
                         ]))
     monkeypatch.setenv("YR_OWNER_LOGIN", "owner1")
 
-    assert compile_slice.triage_banner("acme/widgets") == "triage: 1 seeds await your line on #123"
+    assert compile_slice.triage_banner("acme/widgets") == "triage: 1 seed awaits your line on #123"
 
 
 def test_position_appends_the_triage_banner_when_one_is_present(monkeypatch):

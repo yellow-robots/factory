@@ -30,8 +30,14 @@ while [ $# -gt 0 ]; do
 done
 
 # `createdAt` rides the Issue fragment (it-36 slice J, #475): the backlog-age KPI's own read needs
-# each item's age, and this org-wide query is the one authoritative board-scan shape (BOARD_QUERY,
-# same read tools/epic_gate.py's sweep uses) — never a second, parallel query for the same items.
+# each item's age. Honest count (I1, #475 fold review round 1, correcting this comment's earlier
+# claim): THREE homes carry this same board-scan shape today, not one shared query — this script's
+# own BOARD_QUERY (the TSV, createdAt-bearing and paged, below), tools/epic_gate.py's own literal
+# BOARD_QUERY (the sweep's board read, still unpaged at `first: 100` — #521 owns giving it the same
+# paging this script just gained), and tools/kpi.py's own inline `board_items` query (paged,
+# createdAt-bearing, read directly rather than shelling out here since this script's printed TSV
+# never carried createdAt). Unifying the three onto one shared query builder is future work, not
+# this slice's — correcting the claim is the cheaper, honest fix right now.
 BOARD_QUERY='query($org: String!, $project: Int!, $cursor: String) {
   organization(login: $org) {
     projectV2(number: $project) {
@@ -61,6 +67,10 @@ while :; do
   [ -n "$CURSOR" ] && ARGS+=(-F "cursor=$CURSOR")
   PAGE_OUT="$("$GH_BIN" "${ARGS[@]}" 2>/dev/null)" \
     || die "could not query project #$PROJECT_NUMBER on $YR_ORG (is the gh 'project' scope granted?)"
+  # N4 (#475 fold review round 1): one raw JSON response per line — `printf %s\n` appends the
+  # newline the JSON body itself never carries, so the final python pass below can split
+  # PAGES_FILE back into exactly the pages this loop wrote, concatenating every page's own
+  # `nodes` list — one accumulation, never re-fetched, never parsed incrementally mid-loop.
   printf '%s\n' "$PAGE_OUT" >> "$PAGES_FILE"
   CURSOR="$(printf '%s' "$PAGE_OUT" | python3 -c '
 import json, sys

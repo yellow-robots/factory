@@ -62,14 +62,23 @@ def triage_banner(repo: str) -> str | None:
     config, its config entry is incomplete, or any read fails — most repos have no PM wiring at all,
     and that is silence, not a loud failure (unlike the Board/PR sections above, which failed and
     still name it: those read THIS repo's own git/gh state, so a failure there is this session's own
-    trouble; a repo simply outside the PM's config is not a defect anywhere)."""
+    trouble; a repo simply outside the PM's config is not a defect anywhere).
+
+    I3 (#475 fold review round 1 — a hermeticity finding): `DEV_RUNNER_HOME` is read fresh from the
+    environment HERE, at call time, never through `design_gate.DEV_RUNNER_HOME` — that module-level
+    constant is computed ONCE at `design_gate.py`'s own import, so a per-test `monkeypatch.setenv
+    ("DEV_RUNNER_HOME", ...)` (a conftest fixture's own redirect) has no effect on it once some
+    earlier test has already imported the module. The except clause is narrowed to the failure
+    classes this best-effort read can actually raise (a missing/unreadable file, malformed JSON, a
+    config entry missing an expected key) — never a blanket `Exception` that would also swallow a
+    real bug — and the reason is printed to stderr rather than vanishing silently."""
     try:
         import design_gate
         import rank
         import sources
 
-        config_path = os.environ.get(
-            "YR_PM_CONFIG", str(Path(design_gate.DEV_RUNNER_HOME) / "pm-repos.json"))
+        dev_runner_home = os.environ.get("DEV_RUNNER_HOME", str(Path.home() / ".cache" / "dev-runner"))
+        config_path = os.environ.get("YR_PM_CONFIG", str(Path(dev_runner_home) / "pm-repos.json"))
         entries = design_gate.load_pm_config(config_path)
         entry = next((e for e in entries if e.get("repo") == repo), None)
         if not entry or not entry.get("triage_issue") or not entry.get("component_root"):
@@ -85,8 +94,12 @@ def triage_banner(repo: str) -> str | None:
                     if dispositions.get(Path(s["path"]).stem) is None]
         if not undecided:
             return None
-        return f"triage: {len(undecided)} seeds await your line on #{triage_issue}"
-    except Exception:  # noqa: BLE001 — best-effort, silent: absence is the common, unremarkable case
+        n = len(undecided)
+        noun, verb = ("seed", "awaits") if n == 1 else ("seeds", "await")
+        return f"triage: {n} {noun} {verb} your line on #{triage_issue}"
+    except (OSError, ValueError, KeyError) as e:  # best-effort, loud reason, silent RETURN only
+        print(f"compile_slice.triage_banner: best-effort read failed for {repo!r}: {e}",
+             file=sys.stderr)
         return None
 
 
