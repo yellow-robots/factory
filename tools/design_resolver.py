@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import records  # noqa: E402
 import sources  # noqa: E402
+import textutil  # noqa: E402
 
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)")
 
@@ -55,13 +56,11 @@ def check_body(body: str) -> tuple[int, str]:
         return 1, "design_unresolvable"
     # the status is read from the LEADING frontmatter block only — a column-0 `status:` line in
     # the body never satisfies the guard
-    fm = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n", text, flags=re.S)
-    if not fm:
+    meta, _ = textutil.split_frontmatter(text)
+    status = meta.get("status")
+    if not status:
         return 1, "design_status_unreadable"
-    sm = re.search(r"^status:\s*(\S+)", fm.group(1), flags=re.M)
-    if not sm:
-        return 1, "design_status_unreadable"
-    return (0, "") if sm.group(1) == "active" else (1, "design_not_active")
+    return (0, "") if status == "active" else (1, "design_not_active")
 
 
 def name_of(repo: str, issue: str) -> str:

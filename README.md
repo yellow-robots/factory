@@ -32,6 +32,7 @@ depth, is in [`docs/rfcs/`](docs/rfcs/).
 | `tools/ledger.py` | the usage ledger: transcript archive, per-invocation row, per-model/report reads, fail-soft refusal rows + the typed crossover verdict |
 | `tools/stage_usage.py`, `tools/textutil.py` | the PR usage-summary comment; small shared text helpers |
 | `tools/bench_corpus.py`, `tools/bench_replay.py`, `tools/bench_report.py`, `tools/verdict_diff.py` | the bench corpus, candidate replay, report aggregation, and gating-vs-shadow verdict diff |
+| `tools/rank.py`, `tools/strategy.py` | the Bases rank reader over the ideas folder; the strategy doc's fenced `yr-strategy` TOML block reader |
 | `deploy/` | the dispatch systemd service, the n8n workflow, and switch-on notes (`DISPATCH.md`) |
 | `docs/rfcs/` | implemented technical RFCs — 0001 workflow, 0002 runner, 0003 task state, 0004 dispatch, 0005 upper-pipeline. Unimplemented designs live in the Obsidian brain. |
 | `tests/` | pytest suite (stubbed: no live LLM, no network) |
