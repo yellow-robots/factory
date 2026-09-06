@@ -49,8 +49,10 @@ import time
 # sibling-module imports (never `tools.`-prefixed): this runs as a bare script, `tools/` at
 # sys.path[0] — the same discipline `tools/epic_gate.py` / `tools/design_resolver.py` document.
 import board_plumbing
+import check_trail
 import ledger
 import rank
+import records
 import sources
 import strategy
 import textutil
@@ -453,6 +455,116 @@ def sweep_designs(*, gh=None, repos, now=None, owner_login=None, ledger_spent_us
         actions.extend(_process_repo(gh, entry, now, owner_login, ledger_spent_usd, pr_scan_limit,
                                      design_active, spawn_stage, kill_stage_group))
     return actions
+
+
+# --- the close sweep: spawns tools/close-runner.sh when an epic carries YR-CLOSE-HOLD (it-36 slice
+#     H, #473) — a SEPARATE concern from the triage/design sweep above (epics, not repo+seed pairs;
+#     sharing only the pidfile-tracked spawn SHAPE, `_default_spawn_stage`'s own precedent). The
+#     close arm itself (`tools/epic_gate.py` `:972-1004`) is UNCHANGED: this sweep only makes what
+#     it demands appear, on the epic's own trail, before the next epic-gate tick looks again — it
+#     never comments, never touches Status/Reason, never closes anything itself. ---------------------
+CLOSE_HOLD_MARKER = "YR-CLOSE-HOLD"
+CLOSE_RUNNER = os.environ.get("CLOSE_RUNNER", str(pathlib.Path(__file__).resolve().parent / "close-runner.sh"))
+
+
+def _close_pidfile(repo, epic_number):
+    d = pathlib.Path(DEV_RUNNER_HOME) / "pm"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"close-{_slug(repo)}-{epic_number}.pid"
+
+
+def _default_close_active(repo, epic_number):
+    path = _close_pidfile(repo, epic_number)
+    if not path.is_file():
+        return False
+    try:
+        pid = int(path.read_text().strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def _default_spawn_close(repo, epic_number):
+    """Detached spawn of `tools/close-runner.sh <repo> <epic_number>` — mirrors
+    `_default_spawn_stage`'s own pidfile-tracked, `start_new_session=True` shape, keyed by
+    `(repo, epic_number)` rather than `(repo, seed)`: more than one epic in the SAME repo can finish
+    and hold in the same window, each earning its own close stage, independent of any design draft
+    in flight for that repo."""
+    log_dir = pathlib.Path(DEV_RUNNER_HOME) / "runs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"close-{_slug(repo)}-{epic_number}-{int(time.time() * 1000)}.log"
+    with open(log_path, "ab") as log_f:
+        proc = subprocess.Popen([CLOSE_RUNNER, repo, str(epic_number)], stdin=subprocess.DEVNULL,
+                                stdout=log_f, stderr=subprocess.STDOUT, start_new_session=True)
+    _close_pidfile(repo, epic_number).write_text(str(proc.pid))
+
+
+def _carries_close_hold(texts):
+    return any(
+        any(textutil.marker_line_matches(l, CLOSE_HOLD_MARKER, mode=textutil.MARKER_SENTINEL)
+            for l in text.splitlines())
+        for text in texts
+    )
+
+
+def _already_shipped(reg, texts):
+    """True once the close lane's own mandates (`YR-ROUND-RECORD`, `YR-SHIP-WALK`) already sit on
+    the epic's trail — the SAME detector the close arm itself runs
+    (`tools/check_trail.py check_texts`), so this sweep never re-spawns a close stage for an epic
+    whose records already landed and is simply waiting for the next epic-gate tick to self-close
+    it."""
+    return not check_trail.check_texts(reg, "close", {"issue-trail": texts})
+
+
+def sweep_close(*, gh=None, epics, close_active=None, spawn_close=None):
+    """One pass over `epics` (`[{"repo": .., "number": ..}, ...]` — explicit input, never board-
+    discovered inside this pure core, mirroring `sweep_designs(repos=...)`'s own rule; `main()`
+    supplies the real, discovered list). For each: fetch its trail (issue body + comments — the
+    SAME `body,comments` shape `sources.pr_trail_texts_from_json` already parses, issue and PR
+    alike); if it carries `YR-CLOSE-HOLD` and its own mandated close records are not already on the
+    trail, spawn the close stage UNLESS one is already in flight for this exact epic. Every external
+    is injectable so this is unit-testable with a `FakeGh` and no live network, no live pidfiles, no
+    real subprocess spawn."""
+    gh = gh or _gh
+    close_active = close_active or _default_close_active
+    spawn_close = spawn_close or _default_spawn_close
+    reg = records.load()
+    actions = []
+    for entry in epics:
+        repo, number = entry["repo"], entry["number"]
+        data = _as_json(gh(["issue", "view", str(number), "--repo", repo, "--json", "body,comments"]))
+        texts = sources.pr_trail_texts_from_json(data)
+        if not _carries_close_hold(texts):
+            actions.append({"repo": repo, "number": number, "action": "no-hold"})
+            continue
+        if _already_shipped(reg, texts):
+            actions.append({"repo": repo, "number": number, "action": "already-shipped"})
+            continue
+        if close_active(repo, number):
+            actions.append({"repo": repo, "number": number, "action": "in-flight"})
+            continue
+        spawn_close(repo, number)
+        actions.append({"repo": repo, "number": number, "action": "spawned"})
+    return actions
+
+
+def _default_discover_close_hold(gh, repo):
+    """`main()`'s own real discovery (never the tested core above): a full-text search over `repo`'s
+    OPEN issues carrying the `YR-CLOSE-HOLD` sentinel anywhere on their trail — the SAME set
+    `tools/epic_gate.py`'s own sweep already comments on (a held epic stays `Status=Ready`,
+    `Reason=Needs-info`; searching by content means this module never has to duplicate the board's
+    own field-reading plumbing to find it)."""
+    out = gh(["search", "issues", "--repo", repo, "YR-CLOSE-HOLD", "--state", "open", "--json", "number"])
+    data = _as_json(out)
+    return [{"repo": repo, "number": item["number"]} for item in (data or []) if isinstance(item, dict)]
 
 
 # --- the triage-license evaluator (it-36 slice D declared the guard; the tool owns the trail-walk
@@ -926,6 +1038,18 @@ def main(argv=None):
         return 0
     entries = [_resolve_entry(r) for r in raw_repos]
     actions = sweep_designs(repos=entries)
+
+    # the close sweep (it-36 slice H, #473): discovered per configured repo, real but untested here
+    # (mirrors `_resolve_entry`'s own real-vault-read role) — `sweep_close`'s own core is what
+    # `tests/test_design_gate_close_sweep.py` drives, with a `FakeGh` and no live search.
+    close_epics = []
+    for r in raw_repos:
+        try:
+            close_epics.extend(_default_discover_close_hold(_gh, r["repo"]))
+        except Exception as e:  # noqa: BLE001 — a discovery failure is loud, never fatal to the sweep
+            print(f"design_gate: close-hold discovery failed for {r['repo']}: {e}", file=sys.stderr)
+    actions += sweep_close(epics=close_epics)
+
     print(json.dumps(actions, indent=2))
     return 0
 

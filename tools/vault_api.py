@@ -107,6 +107,74 @@ class VaultClient:
             )
         return got
 
+    def document_map(self, path):
+        """The document map's own JSON representation — the plugin's enriched-GET media type
+        (`Accept: application/vnd.olrapi.note+json`, the pinned contract's own citation for
+        discovering a document's current state; documentation-model.md `:277-278`). The `version`
+        field is the concurrency token `patch_section`'s own `if_match` anchors against — reading it
+        BEFORE a section edit is how a living reference's repeat edits avoid silently overwriting a
+        change made since the last read. Raises `VaultUnreachable` when the call is refused, the body
+        does not parse as JSON, or the response carries no `version` field — a fail-loud refusal,
+        never a guessed token.
+
+        NOTE (for-the-human, architect.md's own convention for an undecidable item): this wire shape
+        is this module's best-faith reading of the pinned contract text, not independently verified
+        against the live `/openapi.yaml` — that document's own stated authority
+        (documentation-model.md `:278`). Confirm the exact media type and field name against the
+        live spec before this runs against the real vault."""
+        self._require_key()
+        url = f"{self.base_url}/vault/{urllib.parse.quote(path.lstrip('/'), safe='/')}"
+        headers = {"Authorization": f"Bearer {self.api_key}",
+                  "Accept": "application/vnd.olrapi.note+json"}
+        status, body = self._fetch("GET", url, headers, None)
+        if status < 200 or status >= 300:
+            raise VaultUnreachable(
+                f"vault_api: GET {path} (document map) refused (HTTP {status}): {body[:200]!r}"
+            )
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise VaultUnreachable(f"vault_api: document map at {path!r} did not parse as JSON: {e}")
+        if not isinstance(data, dict) or "version" not in data:
+            raise VaultUnreachable(f"vault_api: document map at {path!r} carries no 'version' field")
+        return data
+
+    def patch_section(self, path, heading_path, content, *, operation="replace", if_match=None,
+                      create_target_if_missing=True):
+        """A section edit targeted by heading (`Target-Type: heading`; the pinned contract,
+        documentation-model.md `:277-278`) — never a whole-body overwrite, the hazard that
+        contract's own concurrency token exists to prevent for a repeatedly-edited living reference.
+        `heading_path` is the nested heading's full path, outermost first (e.g. `["## Some
+        Section"]` for a top-level heading; `["## Parent", "### Child"]` for a nested one), joined
+        by the plugin's own delimiter (`"::"`) into the `Target` header. `operation` is `append` |
+        `prepend` | `replace` (default: replace the section's own content — `scope=content`,
+        never `markerAndContent`, which would also consume the heading line itself, a destructive
+        difference in a vault with no version history). `if_match` rides as the standard HTTP
+        conditional-request header (`If-Match`) — the document map's own `version`
+        (`document_map()`'s own return); omitted when the caller has no prior document-map read to
+        anchor against. Verified by read-back: the new content must appear in the file afterward, or
+        this raises `VaultUnreachable` — a substring check, since a section edit touches only PART of
+        the document (unlike `write()`'s own whole-body equality check).
+
+        NOTE (for-the-human): same residual caveat as `document_map()` — this wire shape is a
+        best-faith reading of the pinned contract, not independently verified against the live
+        spec."""
+        headers = {"Operation": operation, "Target-Type": "heading",
+                  "Target": "::".join(heading_path),
+                  "Content-Type": "text/markdown; charset=utf-8"}
+        if if_match:
+            headers["If-Match"] = if_match
+        if create_target_if_missing:
+            headers["Create-Target-If-Missing"] = "true"
+        self._call("PATCH", path, headers=headers, data=content.encode("utf-8"))
+        text = self.read(path)
+        if content.strip() not in text:
+            raise VaultUnreachable(
+                f"vault_api: read-back did not confirm the section edit at {path!r} under "
+                f"{'::'.join(heading_path)!r}"
+            )
+        return text
+
     def patch_frontmatter(self, path, key, value):
         """A frontmatter key set (`targetType: frontmatter`, `operation: replace`; the *typed-write*
         rule — the value travels as JSON, never hand-quoted YAML). The payload rides in `value`
