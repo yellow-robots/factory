@@ -54,6 +54,7 @@ import rank
 import sources
 import strategy
 import textutil
+import vault_api
 
 # --- record grammar (records.toml, it-36 slice D, #469 — minted there; read here) ----------------------
 TRIAGE_MARKER = "YR-TRIAGE:"
@@ -66,6 +67,11 @@ EFFORT_FACTOR = {"S": 1, "M": 3, "L": 6}
 
 DEV_RUNNER_HOME = os.environ.get("DEV_RUNNER_HOME", str(pathlib.Path.home() / ".cache" / "dev-runner"))
 DESIGN_RUNNER = os.environ.get("DESIGN_RUNNER", str(pathlib.Path(__file__).resolve().parent / "design-runner.sh"))
+# the local vault-mirror root design_resolver.py already reads through (its own YR_VAULT_ROOT
+# default) — every machinery READ crosses it directly; every WRITE crosses through vault_api.py's
+# REST client instead, addressed relative to this same root (Editing safely: never a filesystem
+# mutation).
+VAULT_ROOT = os.environ.get("YR_VAULT_ROOT", "/srv/obsidian/vaults/obsidian")
 
 
 # --- default `gh` runner (the only real external; injected/overridden in tests) -----------------------
@@ -449,6 +455,304 @@ def sweep_designs(*, gh=None, repos, now=None, owner_login=None, ledger_spent_us
     return actions
 
 
+# --- the triage-license evaluator (it-36 slice D declared the guard; the tool owns the trail-walk
+#     that decides it) --------------------------------------------------------------------------------
+def _load_pm_config(config_path):
+    """The raw repo-config entries (`repo`/`triage_issue`/`epic_issue`), tolerant of a missing or
+    unreadable file — an evaluator that cannot read its own config fails closed (a fail token), never
+    with a traceback."""
+    try:
+        return json.loads(pathlib.Path(config_path).read_text()).get("repos") or []
+    except (OSError, ValueError):
+        return []
+
+
+def _task_sidecar(path):
+    """The drafting task (`owner/repo#seed`) a local run-dir file belongs to, read from the sidecar
+    the runner writes once at drafting time (`<run-dir>/task.txt`) — the runner already knows its own
+    repo/seed; an evaluator invoked later with only `--path` never re-guesses it from the filesystem."""
+    try:
+        return (pathlib.Path(path).resolve().parent / "task.txt").read_text().strip()
+    except OSError:
+        return ""
+
+
+def triage_license(task, *, dispositions):
+    """True (pass) / False (fail) / None (UNKNOWN — no record at all yet) for whether `task`'s own
+    seed (the part of `owner/repo#seed` after the `#`) carries a `go` disposition — the SAME
+    last-record-per-seed rule `latest_triage_dispositions` already applies to the sweep, held here
+    over exactly one seed instead of the whole backlog."""
+    _repo, _, seed = task.partition("#")
+    disposition = dispositions.get(seed)
+    if disposition is None:
+        return None
+    return disposition == "go"
+
+
+def evaluate(*, path=None, issue=None, gh=None, config_path=None, owner_login=None):
+    """The pure(ish) core of `design_gate.py evaluate` (the `design-triage-license` /
+    `epic-triage-license` evaluators, process.toml): resolves which repo/seed a `--path` or `--issue`
+    scope names (the PM's own config, `YR_PM_CONFIG`), reads that repo's triage trail, and judges the
+    SAME `go`-disposition rule the sweep itself obeys. Returns `(rc, token)` — the merge-evaluator
+    contract every evaluator seam in this codebase shares (`tools/design_resolver.py`'s own shape):
+    `rc=0` pass, `rc=1` with `token` naming the failed condition, never a third state from here."""
+    gh = gh or _gh
+    owner_login = owner_login if owner_login is not None else os.environ.get("YR_OWNER_LOGIN", "")
+    config_path = config_path or os.environ.get(
+        "YR_PM_CONFIG", str(pathlib.Path(DEV_RUNNER_HOME) / "pm-repos.json"))
+    entries = _load_pm_config(config_path)
+
+    if path:
+        task = _task_sidecar(path)
+        if not task:
+            return 1, "task_unreadable"
+        repo, _, _seed = task.partition("#")
+    elif issue:
+        entry = next((e for e in entries if str(e.get("epic_issue")) == str(issue)), None)
+        if entry is None:
+            return 1, "repo_unconfigured"
+        repo, task = entry["repo"], f"{entry['repo']}#{issue}"
+    else:
+        return 1, "no_scope"
+
+    entry = next((e for e in entries if e.get("repo") == repo), None)
+    if entry is None:
+        return 1, "repo_unconfigured"
+    try:
+        ok, trail = _fetch_triage_trail(gh, repo, entry["triage_issue"])
+    except Exception:
+        ok, trail = False, []
+    if not ok:
+        return 1, "triage_unreadable"
+
+    dispositions = latest_triage_dispositions(trail, owner_login)
+    result = triage_license(task, dispositions=dispositions)
+    if result is None or result is False:
+        return 1, "triage_licensed"
+    return 0, ""
+
+
+# --- the independence evaluator (it-36 slice D declared the guard; the tool owns the identity
+#     comparison, held over the PM's own ledger — never the doc's authorship lines) --------------------
+def independence(review_run_id, *, ledger_rows):
+    """True (pass) / False (fail) / None (UNKNOWN) for author != verifier: `review_run_id`'s own
+    ledger row names its drafting task; that task's `product`-stage row names the drafting run.
+    Independence holds when the two run ids differ — collides only when the reviewing run reused
+    the very run id that drafted the doc, the pathological case the guard exists to catch."""
+    mine = next((r for r in ledger_rows if r.get("run_id") == review_run_id), None)
+    if mine is None:
+        return None
+    task = mine.get("task")
+    draft_rows = [r for r in ledger_rows if r.get("task") == task and r.get("stage") == "product"]
+    if not draft_rows:
+        return None
+    return review_run_id != draft_rows[0].get("run_id")
+
+
+def _review_run_id_sidecar(path):
+    try:
+        return (pathlib.Path(path).resolve().parent / "review-run-id.txt").read_text().strip()
+    except OSError:
+        return ""
+
+
+def cli_independence(path, *, ledger_dir=None):
+    ledger_dir = ledger_dir or str(pathlib.Path(DEV_RUNNER_HOME) / "ledger")
+    review_run_id = _review_run_id_sidecar(path)
+    if not review_run_id:
+        return 1, "independent"
+    result = independence(review_run_id, ledger_rows=ledger.load_rows(ledger_dir))
+    if result is None or result is False:
+        return 1, "independent"
+    return 0, ""
+
+
+# --- the architect's arch review: verdict grammar + the ADR (it-36 slice F) ----------------------------
+ARCH_VALID_VERDICTS = ("fit", "refit", "block")
+ADR_UPDATE_TRIGGER = "Write at ship"   # the maintenance-contract row this ADR names on admission
+                                       # (documentation-model.md's own admission test)
+
+
+def parse_verdict(text, *, valid=ARCH_VALID_VERDICTS):
+    """The last line-anchored `VERDICT:` line — `tools/review_bundle.py`'s own grammar (case-
+    sensitive, no leading whitespace, last line wins). Raises ValueError naming what is wrong: a
+    malformed stage output is a loud stop here, never a guess at what the model meant."""
+    lines = [ln[len("VERDICT:"):].strip() for ln in text.splitlines() if ln.startswith("VERDICT:")]
+    if not lines:
+        raise ValueError("no line-anchored VERDICT: line found")
+    verdict = lines[-1].lower()
+    if verdict not in valid:
+        raise ValueError(f"VERDICT {verdict!r} is not one of {valid!r}")
+    return verdict
+
+
+def parse_alternatives(text):
+    """Every line-anchored `ALTERNATIVE:` line, in order — the architect's own mandate names at
+    least one argued alternative for the abstraction/pattern/libraries/language/boundary choice."""
+    return [ln[len("ALTERNATIVE:"):].strip() for ln in text.splitlines() if ln.startswith("ALTERNATIVE:")]
+
+
+def parse_arch_output(text):
+    """The arch stage's own grammar: `VERDICT: fit|refit|block` plus >=1 `ALTERNATIVE:` line.
+    Returns `{"verdict", "alternatives", "findings_text"}`; raises ValueError on either being
+    absent/malformed — never a partial, silently-accepted result."""
+    verdict = parse_verdict(text)
+    alternatives = parse_alternatives(text)
+    if not alternatives:
+        raise ValueError("no ALTERNATIVE: line found — the architect names at least one argued "
+                         "alternative")
+    return {"verdict": verdict, "alternatives": alternatives, "findings_text": text.strip()}
+
+
+def render_adr(*, title, verdict, alternatives, findings_text, today=None):
+    """An ADR's full markdown (frontmatter + body): `type: research`, admitted to the architecture
+    home under the *Write at ship* maintenance-contract trigger — documentation-model.md's own
+    admission test (a new cross-cutting doc must name its update trigger to be created at all)."""
+    date = today or _utcnow().strftime("%Y-%m-%d")
+    alt_md = "\n".join(f"- {a}" for a in alternatives)
+    return (
+        "---\n"
+        "type: research\n"
+        "status: active\n"
+        f"created: {date}\n"
+        f"updated: {date}\n"
+        "---\n\n"
+        f"# {title}\n\n"
+        f"**Update trigger:** {ADR_UPDATE_TRIGGER}\n\n"
+        f"**Verdict:** {verdict}\n\n"
+        "## Alternatives considered\n\n"
+        f"{alt_md}\n\n"
+        "## Findings\n\n"
+        f"{findings_text}\n"
+    )
+
+
+def write_arch_adr(vault, *, architecture_home, slug, title, verdict, alternatives, findings_text):
+    """Writes the ADR as a new file (the create row's own shape: one complete payload, never a
+    two-step) under the architecture home; `vault.write()` reads it back through the file to confirm.
+    Returns the ADR's vault-relative path."""
+    content = render_adr(title=title, verdict=verdict, alternatives=alternatives,
+                         findings_text=findings_text)
+    path = f"{architecture_home.rstrip('/')}/{slug}.md"
+    vault.write(path, content)
+    return path
+
+
+# --- activation: the engine decides; this writes only on its say-so (it-36 slice F) ---------------------
+PROCESS_PY = pathlib.Path(__file__).resolve().parent / "process.py"
+ACTIVATION_TRANSITION = "design-doc.draft->active.machinery"
+
+
+def _default_transition_check(path):
+    proc = subprocess.run(
+        ["python3", str(PROCESS_PY), "transition-check", ACTIVATION_TRANSITION, "--path", str(path)],
+        capture_output=True, text=True, timeout=120,
+    )
+    ok = proc.returncode == 0
+    return ok, ("" if ok else (proc.stderr or proc.stdout or "").strip())
+
+
+def activate_draft(*, path, draft_text, vault, vault_path, architecture_home, adr_slug, adr_title,
+                   arch_result, who, accept_date=None, transition_check=None):
+    """The activation act: ask the engine first (`process.py transition-check
+    design-doc.draft->active.machinery --path <path>` — the guards D declares, the triage license and
+    the independence evaluator, are what decide; this never re-implements them) and write only on
+    exit 0. On pass: the ADR (through the vault client, into `architecture_home`), the draft's body
+    plus its `YR-ACCEPT` line (`who` = the App slug), and the `status: active` frontmatter set (the
+    payload in `value`) — every write read back through the file by the vault client itself. An
+    unreachable/refused vault interface raises `VaultUnreachable` — a loud stop, never a retry into a
+    filesystem write."""
+    check = transition_check or _default_transition_check
+    ok, detail = check(path)
+    if not ok:
+        return {"activated": False, "reason": detail or "the transition check refused"}
+
+    adr_path = write_arch_adr(vault, architecture_home=architecture_home, slug=adr_slug,
+                              title=adr_title, verdict=arch_result["verdict"],
+                              alternatives=arch_result["alternatives"],
+                              findings_text=arch_result.get("findings_text", ""))
+
+    date = accept_date or _utcnow().strftime("%Y-%m-%d")
+    accept_line = f"\n\nYR-ACCEPT: who={who} date={date}\n"
+    full_text = draft_text.rstrip("\n") + accept_line
+    vault.write(vault_path, full_text)
+    vault.patch_frontmatter(vault_path, "status", "active")
+
+    return {"activated": True, "adr_path": adr_path}
+
+
+BLOCKED_MARKER = "YR-TRIAGE-PACK-BLOCKED"
+
+
+def render_blocked_pack_body(seed, verdict, alternatives):
+    """The flagged pack line a `block` verdict (after one fold) posts back to the triage issue — the
+    same paste-ready shape `_render_pack_body` uses for an undecided seed, marked BLOCKED instead so
+    the sweep's own reader never mistakes it for a fresh, undecided pack."""
+    alt_md = "\n".join(f"- {a}" for a in alternatives)
+    return (
+        f"{BLOCKED_MARKER}\n"
+        f"  seed: {seed}\n\n"
+        f"**verdict:** {verdict} (after one fold — the architect's mandate did not clear)\n\n"
+        f"**alternatives considered:**\n{alt_md}\n\n"
+        "This draft is NOT activated. A new `go` disposition (or a revised draft) is required "
+        "before it can be re-reviewed."
+    )
+
+
+def flag_block(gh, repo, triage_issue, seed, verdict, alternatives):
+    _comment(gh, repo, triage_issue, render_blocked_pack_body(seed, verdict, alternatives))
+
+
+# --- the activation target: a local component root -> its REST-relative vault paths ---------------------
+def vault_rel_path(local_path, *, vault_root=None):
+    """A local vault-mirror path's REST-relative form (relative to `VAULT_ROOT`/`YR_VAULT_ROOT` —
+    the same root `tools/design_resolver.py` reads locally). Falls back to the path as given when it
+    does not sit under the root at all (an operator-misconfigured root is a loud, visible path in the
+    CLI's own output, never a silent guess)."""
+    root = pathlib.Path(vault_root or VAULT_ROOT).resolve()
+    p = pathlib.Path(local_path).resolve()
+    try:
+        return str(p.relative_to(root))
+    except ValueError:
+        return str(p)
+
+
+def next_iteration_slug(component_root, seed_stem):
+    """The next iteration folder's own ordinal — one past the highest existing `N-*` folder under
+    `component_root/iterations/` (folder ordinals record ranking SLOT, monotonic, never reused —
+    documentation-model.md's own *Iterations are ordered by slot* rule) — paired with the seed's own
+    stem as the iteration's kebab slug."""
+    iterations_dir = pathlib.Path(component_root) / "iterations"
+    max_n = 0
+    if iterations_dir.is_dir():
+        for child in iterations_dir.iterdir():
+            if child.is_dir():
+                m = re.match(r"^(\d+)-", child.name)
+                if m:
+                    max_n = max(max_n, int(m.group(1)))
+    return f"{max_n + 1}-{seed_stem}"
+
+
+def resolve_activation_paths(component_root, seed_stem, *, vault_root=None):
+    """The activation's two REST-relative destinations: the draft's own iteration path
+    (`iterations/<n>-<seed>/01-<seed>.md`) and the component's architecture home (`architecture/`)."""
+    root_rel = vault_rel_path(component_root, vault_root=vault_root)
+    slug = next_iteration_slug(component_root, seed_stem)
+    return {
+        "vault_path": f"{root_rel}/iterations/{slug}/01-{seed_stem}.md",
+        "architecture_home": f"{root_rel}/architecture",
+    }
+
+
+def _cli_resolve_paths(argv):
+    ap = argparse.ArgumentParser(description="resolve a seed's activation-time vault paths")
+    ap.add_argument("--component-root", required=True)
+    ap.add_argument("--seed", required=True)
+    args = ap.parse_args(argv)
+    print(json.dumps(resolve_activation_paths(args.component_root, args.seed)))
+    return 0
+
+
 # --- main(): real repo discovery (item P's own human provisioning) --------------------------------------
 def _resolve_entry(raw):
     entry = {"repo": raw["repo"], "triage_issue": raw["triage_issue"], "epic_issue": raw.get("epic_issue")}
@@ -468,7 +772,108 @@ def _resolve_entry(raw):
     return entry
 
 
+def _cli_evaluate(argv):
+    ap = argparse.ArgumentParser(description="the design/epic triage-license evaluator")
+    ap.add_argument("--path", default="")
+    ap.add_argument("--issue", default="")
+    args = ap.parse_args(argv)
+    rc, token = evaluate(path=args.path or None, issue=args.issue or None)
+    if token:
+        print(token)
+    return rc
+
+
+def _cli_independence(argv):
+    ap = argparse.ArgumentParser(description="the design-doc activation independence evaluator")
+    ap.add_argument("--path", required=True)
+    args = ap.parse_args(argv)
+    rc, token = cli_independence(args.path)
+    if token:
+        print(token)
+    return rc
+
+
+def _cli_activate(argv):
+    ap = argparse.ArgumentParser(description="activate a reviewed design draft (it-36 slice F)")
+    ap.add_argument("--path", required=True, help="the local, folded+fit+arch-reviewed draft file")
+    ap.add_argument("--vault-path", required=True, help="the REST-relative destination in the vault")
+    ap.add_argument("--architecture-home", required=True)
+    ap.add_argument("--adr-slug", required=True)
+    ap.add_argument("--adr-title", required=True)
+    ap.add_argument("--arch-result", required=True, help="path to the arch stage's parsed JSON "
+                    '(from `parse-arch`): {"verdict", "alternatives", "findings_text"}')
+    ap.add_argument("--who", required=True)
+    args = ap.parse_args(argv)
+    draft_text = pathlib.Path(args.path).read_text(encoding="utf-8")
+    arch_result = json.loads(pathlib.Path(args.arch_result).read_text())
+    try:
+        result = activate_draft(path=args.path, draft_text=draft_text, vault=vault_api.VaultClient(),
+                                vault_path=args.vault_path, architecture_home=args.architecture_home,
+                                adr_slug=args.adr_slug, adr_title=args.adr_title,
+                                arch_result=arch_result, who=args.who)
+    except vault_api.VaultUnreachable as e:
+        # a refused/unreachable vault interface is a loud stop, never a silent fallback — reported
+        # plainly, never as a bare traceback, but the process still ends non-zero either way.
+        print(f"design_gate: activation stopped — {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(result))
+    return 0 if result.get("activated") else 1
+
+
+def _cli_parse_arch(argv):
+    ap = argparse.ArgumentParser(description="parse the arch stage's raw output (verdict grammar)")
+    ap.add_argument("--in", dest="in_path", required=True)
+    args = ap.parse_args(argv)
+    try:
+        result = parse_arch_output(pathlib.Path(args.in_path).read_text(encoding="utf-8"))
+    except ValueError as e:
+        print(f"design_gate: arch stage output malformed: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(result))
+    return 0
+
+
+def _cli_parse_fit(argv):
+    ap = argparse.ArgumentParser(description="parse the fit stage's raw output (verdict-only grammar)")
+    ap.add_argument("--in", dest="in_path", required=True)
+    args = ap.parse_args(argv)
+    try:
+        verdict = parse_verdict(pathlib.Path(args.in_path).read_text(encoding="utf-8"))
+    except ValueError as e:
+        print(f"design_gate: fit stage output malformed: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps({"verdict": verdict}))
+    return 0
+
+
+def _cli_flag_block(argv):
+    ap = argparse.ArgumentParser(description="return a blocked draft to the triage issue")
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--triage-issue", required=True)
+    ap.add_argument("--seed", required=True)
+    ap.add_argument("--arch-result", required=True, help="the arch stage's parsed JSON (`parse-arch`)")
+    args = ap.parse_args(argv)
+    result = json.loads(pathlib.Path(args.arch_result).read_text())
+    flag_block(_gh, args.repo, args.triage_issue, args.seed, result["verdict"], result["alternatives"])
+    return 0
+
+
+_SUBCOMMANDS = {
+    "evaluate": _cli_evaluate,
+    "independence": _cli_independence,
+    "activate": _cli_activate,
+    "parse-arch": _cli_parse_arch,
+    "parse-fit": _cli_parse_fit,
+    "flag-block": _cli_flag_block,
+    "resolve-paths": _cli_resolve_paths,
+}
+
+
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in _SUBCOMMANDS:
+        return _SUBCOMMANDS[argv[0]](argv[1:])
+
     ap = argparse.ArgumentParser(description="the design sweep (it-36 slice E, #470)")
     ap.add_argument("--config", default=os.environ.get(
         "YR_PM_CONFIG", str(pathlib.Path(DEV_RUNNER_HOME) / "pm-repos.json")),

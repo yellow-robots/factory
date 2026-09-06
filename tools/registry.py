@@ -70,6 +70,21 @@ def rank_check(build_entry, review_entry):
     return r_rank >= b_rank
 
 
+def _strongest_names(entries):
+    """provider -> the name of that provider's highest-ranked entry. Ties are impossible once
+    `validate()`'s own rank-uniqueness check holds (no two entries in one provider share a rank);
+    an entry with no ranked competitor in its provider IS that provider's strongest by construction."""
+    best = {}
+    for name, entry in entries.items():
+        rank, provider = entry.get("rank"), entry.get("provider")
+        if not isinstance(rank, int) or isinstance(rank, bool) or provider is None:
+            continue
+        cur = best.get(provider)
+        if cur is None or rank > cur[1]:
+            best[provider] = (name, rank)
+    return {provider: name for provider, (name, _) in best.items()}
+
+
 def resolve_name(data, role, task_value=None, manifest_value=None):
     """Resolve a role ('build'/'review') to an entry name. Precedence: per-task override > per-repo
     manifest value > the registry's per-role default."""
@@ -94,7 +109,9 @@ def validate(data):
 
     Checks: every entry has id/provider/rank/quota_pool; no two entries in the same provider share
     a rank; the default build/review pair satisfies rank_check(); every roles.stage_tiers reference
-    names an existing entry and does not exceed the default build entry's rank.
+    names an existing entry and does not exceed the default build entry's rank; `roles.pm` and
+    `roles.arch_review` (it-36 slice F: the PM agent's and the architect's own upper-pipeline work)
+    each name an existing entry that is its provider's strongest-ranked one.
     """
     errors = []
     entries = _entries(data)
@@ -139,6 +156,20 @@ def validate(data):
             errors.append(
                 f"roles.stage_tiers.{tier_name} ('{entry_name}', rank {tier_rank}) "
                 f"exceeds the build rank ({build_rank})"
+            )
+
+    strongest = _strongest_names(entries)
+    for role_name in ("pm", "arch_review"):
+        entry_name = roles.get(role_name)
+        entry = entries.get(entry_name)
+        if entry is None:
+            errors.append(f"roles.{role_name} names missing entry '{entry_name}'")
+            continue
+        provider = entry.get("provider")
+        if strongest.get(provider) != entry_name:
+            errors.append(
+                f"roles.{role_name} ('{entry_name}') is not on the strongest class for provider "
+                f"'{provider}' (strongest: '{strongest.get(provider)}')"
             )
 
     return errors

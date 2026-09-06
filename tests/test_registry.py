@@ -256,7 +256,7 @@ def _base_data():
             "sonnet": {"id": "claude-sonnet-5", "provider": "anthropic", "rank": 30, "quota_pool": "anthropic-main"},
             "opus": {"id": "claude-opus-4-8", "provider": "anthropic", "rank": 40, "quota_pool": "anthropic-main"},
         },
-        "roles": {"build": "sonnet", "review": "opus"},
+        "roles": {"build": "sonnet", "review": "opus", "pm": "opus", "arch_review": "opus"},
     }
 
 
@@ -465,3 +465,96 @@ def test_cli_price_for_id_unknown_model_returns_empty_object():
     result = _run_cli("price-for-id", "--id", "not-a-real-model")
     assert result.returncode == 0
     assert json.loads(result.stdout) == {}
+
+
+# ---------------------------------------------------------------------------
+# issue #471 (it-36 slice F) — models.toml gains `roles.pm` and `roles.arch_review`, the PM agent's
+# own drafting/adversarial stages and the architect's fit/architecture-review stages: upper-pipeline
+# work on the SAME strongest-class convention `roles.review` already uses, never the down-tier
+# `roles.build` default. `validate()` refuses either role naming an entry that is not its provider's
+# highest-ranked one.
+# ---------------------------------------------------------------------------
+
+def test_shipped_registry_declares_pm_and_arch_review_roles():
+    data = load()
+    assert "pm" in data["roles"]
+    assert "arch_review" in data["roles"]
+
+
+def test_shipped_registry_pm_and_arch_review_are_on_the_strongest_class():
+    data = load()
+    entries = data["models"]
+    pm_entry = entries[data["roles"]["pm"]]
+    arch_review_entry = entries[data["roles"]["arch_review"]]
+    review_entry = entries[data["roles"]["review"]]
+    # "the strongest class" == the same rank as the registry's own upper-pipeline `review` default,
+    # within the same provider — never the lower `build` tier.
+    assert pm_entry["provider"] == review_entry["provider"]
+    assert pm_entry["rank"] == review_entry["rank"]
+    assert arch_review_entry["provider"] == review_entry["provider"]
+    assert arch_review_entry["rank"] == review_entry["rank"]
+
+
+def test_validate_fails_when_pm_role_names_a_missing_entry():
+    data = copy.deepcopy(_base_data())
+    data["roles"]["pm"] = "does-not-exist"
+    errors = validate(data)
+    assert any("pm" in e and "does-not-exist" in e for e in errors)
+
+
+def test_validate_fails_when_arch_review_role_names_a_missing_entry():
+    data = copy.deepcopy(_base_data())
+    data["roles"]["arch_review"] = "does-not-exist"
+    errors = validate(data)
+    assert any("arch_review" in e and "does-not-exist" in e for e in errors)
+
+
+def test_validate_fails_when_pm_role_is_not_on_the_strongest_class():
+    # sonnet (rank 30) is weaker than opus (rank 40) in the same provider — pm must sit on the
+    # provider's strongest-ranked entry, not merely any valid one.
+    data = copy.deepcopy(_base_data())
+    data["roles"]["pm"] = "sonnet"
+    errors = validate(data)
+    assert any("pm" in e for e in errors)
+
+
+def test_validate_fails_when_arch_review_role_is_not_on_the_strongest_class():
+    data = copy.deepcopy(_base_data())
+    data["roles"]["arch_review"] = "sonnet"
+    errors = validate(data)
+    assert any("arch_review" in e for e in errors)
+
+
+def test_validate_fails_when_pm_role_is_entirely_absent():
+    # the criterion is "declares pm and arch_review" — an absent role is not silently tolerated.
+    data = copy.deepcopy(_base_data())
+    del data["roles"]["pm"]
+    errors = validate(data)
+    assert any("pm" in e for e in errors)
+
+
+def test_validate_fails_when_arch_review_role_is_entirely_absent():
+    data = copy.deepcopy(_base_data())
+    del data["roles"]["arch_review"]
+    errors = validate(data)
+    assert any("arch_review" in e for e in errors)
+
+
+def test_validate_passes_when_pm_and_arch_review_both_sit_on_the_strongest_class_entry():
+    data = copy.deepcopy(_base_data())
+    data["roles"]["pm"] = "opus"
+    data["roles"]["arch_review"] = "opus"
+    assert validate(data) == []
+
+
+def test_validate_pm_and_arch_review_may_independently_name_any_strongest_class_entry_in_a_multi_provider_registry():
+    # "strongest class" is evaluated PER PROVIDER (rank only orders within one provider) — an entry
+    # that is the strongest in ITS OWN provider must be accepted even if another provider's strongest
+    # entry outranks it numerically.
+    data = copy.deepcopy(_base_data())
+    data["models"]["other-strong"] = {
+        "id": "some-other-strong-model", "provider": "other", "rank": 999, "quota_pool": "other-main",
+    }
+    data["roles"]["pm"] = "other-strong"
+    errors = validate(data)
+    assert not any("pm" in e for e in errors)
