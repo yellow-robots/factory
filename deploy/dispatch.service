@@ -13,13 +13,13 @@ Type=simple
 WorkingDirectory=%h/yellow-robots/factory
 # secret + config live here, NOT in the repo (see dispatch.env.example); chmod 600.
 EnvironmentFile=%h/.config/dev-runner/dispatch.env
-# The instance discriminator (it-36 slice D, #469, I1): pinned here, AFTER the EnvironmentFile
-# line, so it wins (systemd composes Environment=/EnvironmentFile= in file order, later wins) over
-# whatever this unit's own env file happens to carry — a stray DISPATCH_INSTANCE=pm in
-# dispatch.env can never hand tools/dispatch.py's vault key (_PM_ONLY_KEYS) to a build-stage child.
-# The PM unit (deploy/pm-dispatch.service) carries the mirrored pin for its own value.
-Environment=DISPATCH_INSTANCE=build
-ExecStart=%h/yellow-robots/factory/.venv/bin/python %h/yellow-robots/factory/tools/dispatch.py
+# The instance discriminator is an ARGV FLAG, never an env var (it-36 slice D, #469, corrected by
+# review round 2): `man 5 systemd.exec` — "Settings from these [EnvironmentFile=] files override
+# settings made with Environment=" — so a unit-file Environment=DISPATCH_INSTANCE=... pin is INERT
+# against this SAME unit's own env file above and would buy no security property. `--instance
+# build` on ExecStart is the only source tools/dispatch.py's _INSTANCE ever takes; no env-file line,
+# stray or not, can move it.
+ExecStart=%h/yellow-robots/factory/.venv/bin/python %h/yellow-robots/factory/tools/dispatch.py --instance build
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

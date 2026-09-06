@@ -158,13 +158,19 @@ n8n workflow — the build workflow (and `/build`) is unaffected.
 The design-sweep machinery runs as a **second, separate** dispatch instance —
 `deploy/pm-dispatch.service` — never a route bolted onto the build instance above. Same code
 (`tools/dispatch.py`), a different identity: its own bind (`127.0.0.1` — never the docker-bridge
-gateway the build instance exposes), its own port, its own bearer token, and `DISPATCH_INSTANCE=pm`
-pinned in the unit file itself. That instance flag is the one thing that matters for credentials:
-`tools/dispatch.py`'s `_spawn_env` hands the vault key (`YR_VAULT_API_KEY`) to a spawned child
-**only** when `DISPATCH_INSTANCE=pm` — the build instance never carries it to a runner or a sweep,
-and `DISPATCH_INSTANCE` unset reads as `build` by default. The GitHub App identity (`YR_GH_APP_ID`,
-`YR_GH_APP_KEY_PATH`, `YR_GH_APP_INSTALLATION`, `YR_GH_APP_SLUG`, `YR_OWNER_LOGIN`) is not
-vault-gated — either instance may declare it.
+gateway the build instance exposes), its own port, its own bearer token, and its ExecStart's own
+`--instance pm` **argv flag**. That flag is the one thing that matters for credentials, and it is
+an argv flag rather than an env var on purpose: `man 5 systemd.exec` states that settings from a
+unit's `EnvironmentFile=` override that SAME unit's own `Environment=`, so no unit-file line could
+ever be trusted to pin it — a mangled or stray value in the unit's own env file would silently
+win. `--instance` is parsed once in `main()` and stored in `tools/dispatch.py`'s `_INSTANCE`,
+never read from `os.environ`; `_spawn_env` hands the vault key (`YR_VAULT_API_KEY`) to a spawned
+child **only** when `_INSTANCE == "pm"` — the build instance's `--instance build` (its own
+ExecStart, and the default when the flag is omitted) never carries it to a runner or a sweep, and
+the key is not even a member of the general allowlist (`_ENV_ALLOW_KEYS`) on that instance. The
+GitHub App identity (`YR_GH_APP_ID`, `YR_GH_APP_KEY_PATH`, `YR_GH_APP_INSTALLATION`,
+`YR_GH_APP_SLUG`, `YR_OWNER_LOGIN`) is not vault-gated — either instance may declare it in its own
+env file, unconditionally.
 
 ```bash
 mkdir -p ~/.config/dev-runner

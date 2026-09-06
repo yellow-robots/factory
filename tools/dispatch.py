@@ -44,6 +44,7 @@ Every spawn (`_spawn_detached`, build and sweep alike) hands the child an ALLOWL
 `_ENV_ALLOW_KEYS`/`_ENV_ALLOW_PREFIXES`), never dispatch's own `os.environ` wholesale — so `DISPATCH_TOKEN`
 (this service's own bearer secret) can never reach the runner or any stage it spawns (issue #237).
 """
+import argparse
 import hmac
 import json
 import os
@@ -177,34 +178,38 @@ _ENV_ALLOW_KEYS = {
     # unioned in below — adding an identifier is one edit there, never a second list to keep in step.
     "LEDGER_TRANSCRIPT_MAX_AGE_DAYS", "LEDGER_TRANSCRIPT_MAX_GB",
     "YR_ORG", "STRANDED_AFTER_MIN", "DEBT_ROUND_EVERY",
-    # the PM instance's own credential seam (it-36 slice D, #469): the vault brain key and the
-    # GitHub App identity the design-sweep machinery authenticates with. Listed here so both
-    # instances may declare them; _PM_ONLY_KEYS below still gates the vault key to the PM instance
-    # alone — see _spawn_env.
-    "YR_VAULT_API_KEY", "YR_GH_APP_ID", "YR_GH_APP_KEY_PATH", "YR_GH_APP_INSTALLATION",
+    # the PM instance's own GitHub App identity (it-36 slice D, #469): NOT vault-gated — either
+    # instance may declare it (a future build-instance need for the same App identity may too).
+    # The vault key itself is deliberately ABSENT from this unconditional set — see _PM_ONLY_KEYS.
+    "YR_GH_APP_ID", "YR_GH_APP_KEY_PATH", "YR_GH_APP_INSTALLATION",
     "YR_GH_APP_SLUG", "YR_OWNER_LOGIN",
 } | set(board_plumbing.IDENTIFIER_ENV_NAMES)
 _ENV_ALLOW_PREFIXES = ("LC_", "STUB_", "YR_POOL_")
 
-# The instance discriminator (it-36 slice D, #469): DISPATCH_INSTANCE names which dispatch service is
-# running this process — "build" (default, today's dev-runner/epic-sweep service) or "pm" (the new
-# design-sweep service, deploy/pm-dispatch.service). _ENV_ALLOW_KEYS admits the vault key's NAME on
-# either instance (both dispatch.env files may declare it), but only the PM instance ever hands its
-# VALUE to a spawned child — the build instance's spawned runner never sees it, regardless of what its
-# own environment carries (issue #393's invariant, held even as the App keys it now needs alongside it
-# become general allowlist members).
+# The instance discriminator (it-36 slice D, #469; corrected off the env channel by review — `man 5
+# systemd.exec`: "Settings from these [EnvironmentFile=] files override settings made with
+# Environment=", so a unit-file Environment=DISPATCH_INSTANCE=... pin is inert against that SAME
+# unit's own env file and buys no security property). `--instance {build,pm}` is an argv flag,
+# parsed once in `main()` and stored here — never read from `os.environ`, so no env file, stray or
+# not, can ever move it. Default "build" (today's dev-runner/epic-sweep service); "pm" is the new
+# design-sweep service, deploy/pm-dispatch.service.
+_INSTANCE = "build"
+
+# The vault key is deliberately NOT in `_ENV_ALLOW_KEYS`: the structural default-deny is that a
+# build-instance spawn never even LISTS the key, let alone its value (issue #393's invariant).
+# `_spawn_env` unions it in — by name AND value — only when `_INSTANCE == "pm"`.
 _PM_ONLY_KEYS = {"YR_VAULT_API_KEY"}
 
 
 def _spawn_env():
     """The allowlisted environment handed to a spawned runner/sweeper — see `_ENV_ALLOW_KEYS`/
     `_ENV_ALLOW_PREFIXES` above for the membership and why each bucket is there. `_PM_ONLY_KEYS` is
-    a further, instance-gated narrowing on top of the allowlist: the build instance never passes the
-    vault key to a child, the PM instance does (DISPATCH_INSTANCE=pm|build, default build)."""
-    instance = os.environ.get("DISPATCH_INSTANCE", "build")
+    unioned in only when `_INSTANCE == "pm"` (set once in `main()` from `--instance`, never from
+    the environment): the build instance's spawned child never sees the vault key's name or value;
+    the PM instance's does."""
     return {k: v for k, v in os.environ.items()
-            if (k in _ENV_ALLOW_KEYS or k.startswith(_ENV_ALLOW_PREFIXES))
-            and (k not in _PM_ONLY_KEYS or instance == "pm")}
+            if k in _ENV_ALLOW_KEYS or k.startswith(_ENV_ALLOW_PREFIXES)
+            or (_INSTANCE == "pm" and k in _PM_ONLY_KEYS)}
 
 
 def _spawn_detached(cmd, log_path=None, lock_home=None):
@@ -304,23 +309,25 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main():
+def main(argv=None):
+    # The instance discriminator is an argv flag, never an env var (see _INSTANCE's own comment:
+    # a unit's EnvironmentFile= overrides its Environment=, so an env var could never be trusted
+    # here). `choices` refuses a typo loudly by construction — argparse prints the rejected value
+    # and exits non-zero on its own, no custom validation needed, and it never touches a secret.
+    ap = argparse.ArgumentParser(description="YR dispatch endpoint (RFC 0004)")
+    ap.add_argument("--instance", choices=("build", "pm"), default="build",
+                    help="which dispatch identity this process runs as (default: build) — the "
+                         "ONLY source _spawn_env consults for _PM_ONLY_KEYS")
+    args = ap.parse_args(argv)
+    global _INSTANCE
+    _INSTANCE = args.instance
     if not os.environ.get("DISPATCH_TOKEN"):
         print("dispatch: refusing to start without DISPATCH_TOKEN", file=sys.stderr)
         return 2
-    # N2 (it-36 slice D, #469 review): an unrecognised DISPATCH_INSTANCE already fails closed —
-    # `_spawn_env` only ever passes `_PM_ONLY_KEYS` when the value is the exact string "pm" — but
-    # that fallback was previously silent. Name the DECLARED VALUE (never a secret) once at
-    # startup so an operator debugging "why doesn't the vault key reach my PM instance" sees the
-    # typo instead of mysterious silence.
-    _instance = os.environ.get("DISPATCH_INSTANCE", "build")
-    if _instance not in ("build", "pm"):
-        print(f"dispatch: unrecognised DISPATCH_INSTANCE={_instance!r} — treated as 'build' "
-             f"(the vault key never reaches a spawned child unless the value is exactly 'pm')",
-             file=sys.stderr)
     bind = os.environ.get("DISPATCH_BIND", "127.0.0.1")
     port = int(os.environ.get("DISPATCH_PORT", "8770"))
-    print(f"dispatch: listening on {bind}:{port} — {STATEMENT}", file=sys.stderr)
+    print(f"dispatch: listening on {bind}:{port} — instance={_INSTANCE} — {STATEMENT}",
+         file=sys.stderr)
     stmt_path = provenance.dispatch_statement_path(DEV_RUNNER_HOME)
     stmt_path.parent.mkdir(parents=True, exist_ok=True)
     stmt_path.write_text(STATEMENT + "\n", encoding="utf-8")
