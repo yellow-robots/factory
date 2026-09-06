@@ -473,15 +473,17 @@ def test_record_cli_requires_fragment_present(tmp_path):
 
 
 def test_conditions_display_names_fragment_present_in_process_toml():
-    """process.toml's merge evaluator conditions_display (v1.8.1, editorial amendment) appends
-    fragment_present — a DISPLAY list only, the model holds no copy of the semantics."""
+    """process.toml's merge evaluator conditions_display (v1.8.1, editorial amendment) gains
+    fragment_present AT ITS EVALUATION POSITION — right after rank_gate, ahead of the arming-tier
+    sentinel/shadow_complete (N8, cold review of #474: display order mirrors SHADOW_ORDER's own
+    evaluation order) — a DISPLAY list only, the model holds no copy of the semantics."""
     sys.path.insert(0, str(ROOT / "tools"))
     import process
 
     model = process.load()
     ev = model["_evaluators"]["merge"]
     assert ev["conditions_display"] == [
-        "ci_green", "freshness", "terminal_approval", "rank_gate",
-        "sentinel", "shadow_complete", "fragment_present",
+        "ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present",
+        "sentinel", "shadow_complete",
     ]
     assert model["model"]["version"] == "1.8.1"

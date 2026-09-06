@@ -420,16 +420,26 @@ def test_validate_it_refuses_on_red_rollup(monkeypatch):
     assert rc == 1 and evaluated == ["epic_closed", "round_record_present", "server_ci_green"]
 
 
-def test_ship_it_refuses_on_existing_tag(monkeypatch, capsys):
+def _changelog_notes_file(tmp_path, text='Shipped it-36.\n\n```yr-changelog\nschema = "yr-changelog/1"\n```\n'):
+    p = tmp_path / "release-body.md"
+    p.write_text(text)
+    return str(p)
+
+
+def test_ship_it_refuses_on_existing_tag(monkeypatch, capsys, tmp_path):
     fake = _Fake(tag_exists=True)
-    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey"])
+    notes = _changelog_notes_file(tmp_path)
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey",
+                                "--notes-file", notes])
     assert rc == 1 and capsys.readouterr().out.splitlines()[0] == "tag_exists"
     assert fake.wrote() == []
 
 
-def test_ship_it_refuses_on_non_integer_iteration(monkeypatch, capsys):
+def test_ship_it_refuses_on_non_integer_iteration(monkeypatch, capsys, tmp_path):
     fake = _Fake()
-    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "thirty-six", "--epic", "465"])
+    notes = _changelog_notes_file(tmp_path)
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "thirty-six", "--epic", "465",
+                                "--notes-file", notes])
     assert rc == 1 and capsys.readouterr().out.splitlines()[0] == "iteration_malformed"
     assert fake.wrote() == []
 
@@ -444,14 +454,51 @@ def test_ship_it_test_mode_writes_nothing(monkeypatch, capsys):
     assert "TEST-MODE" in out and "it/36" in out
 
 
-def test_ship_it_live_tags_and_releases(monkeypatch):
+def test_ship_it_refuses_without_notes_file_outside_test_mode(monkeypatch, capsys):
+    """B1 (cold review of #474): --notes-file is required outside --test-mode — a bare YR-RELEASE
+    record is never a release's own human-facing notes."""
     fake = _Fake()
     rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey"])
+    assert rc == 1 and capsys.readouterr().out.splitlines()[0] == "notes_file_required"
+    assert fake.wrote() == []
+
+
+def test_ship_it_refuses_on_a_repo_other_than_the_checkouts_own(monkeypatch, capsys, tmp_path):
+    """I5 (cold review of #474): ship-it tags/pushes in THIS checkout — a --repo naming a
+    different repo would tag here while releasing there. Refuses before any write."""
+    fake = _Fake()
+    notes = _changelog_notes_file(tmp_path)
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey",
+                                "--notes-file", notes, "--repo", "someone-else/other-repo"])
+    assert rc == 1 and capsys.readouterr().out.splitlines()[0] == "repo_mismatch"
+    assert fake.wrote() == []
+
+
+def test_ship_it_live_tags_and_releases(monkeypatch, tmp_path):
+    fake = _Fake()
+    notes = _changelog_notes_file(tmp_path)
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey",
+                                "--notes-file", notes])
     assert rc == 0
     wrote = [" ".join(a) for a in fake.wrote()]
     assert any("tag" in w and "it/36" in w for w in wrote)
     assert any("push" in w and "refs/tags/it/36" in w for w in wrote)
     assert any("release create it/36" in w for w in wrote)
+
+
+def test_ship_it_posts_notes_carrying_the_changelog_fence(monkeypatch, capsys, tmp_path, reg):
+    """B1's own test expectation: the posted release notes carry a fence whose word equals
+    yr-changelog/1's registered marker — the changelog body, not a bare YR-RELEASE record."""
+    fence_word = records.get(reg, "yr-changelog/1")["marker"]
+    notes_text = f'Shipped it-36: publication for every task.\n\n```{fence_word}\nschema = "yr-changelog/1"\n```\n'
+    notes = _changelog_notes_file(tmp_path, notes_text)
+    fake = _Fake()
+    rc = _v(monkeypatch, fake, ["ship-it", "--iteration", "36", "--epic", "465", "--who", "@jbrey",
+                                "--test-mode", "--notes-file", notes])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"```{fence_word}" in out
+    assert "Shipped it-36: publication for every task." in out
 
 
 def test_record_body_iteration_mode_satisfies_its_own_grammar(reg):

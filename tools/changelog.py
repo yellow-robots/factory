@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
 """tools/changelog.py — compile an iteration's shipped changelog (it-36 slice I, #474).
 
-At close, an iteration's changelog fragments (one per merged task PR, written under the manifest's
-`changelog_dir` by the implement stage's own act, or by an attended PR's own duty) are compiled
-alongside the technical-rfc and the round record into two things: a `CHANGELOG.md` entry (landed by
-a PR — the same machinery-opened, evaluator-merged PR flow every other change goes through, no new
-pipeline needed) and the release body `tools/release.py ship-it` posts — human notes plus a fenced
-```yr-changelog``` block at schema `yr-changelog/1` (records.toml; minted at it-36 slice D, #469).
+Attended-invoked today (cold review of #474: no automatic wiring exists — a board item tracks it,
+filed separately, not by this tool). An iteration's changelog fragments (one per merged task PR,
+written under the manifest's `changelog_dir` by the implement stage's own act, or by an attended
+PR's own duty) are compiled alongside the technical-rfc and the round record into two things: a
+`CHANGELOG.md` section and the release body `tools/release.py ship-it` posts — human notes plus a
+fenced ```yr-changelog``` block at schema `yr-changelog/1` (records.toml; minted at it-36 slice D,
+#469).
 
-Pure compiler, stdlib only, fixture-driven (like tools/release.py / tools/merge_shadow.py): this
-module does no `gh`/network I/O of its own — a caller (an attended closing session today; a future
-close-runner.sh stage tomorrow) gathers the epic's merged PRs (`gh pr list ... --json number,title,body`)
-into a JSON file and hands it to the CLI. A PR whose fragment is missing (an attended PR that skipped
-the duty, or one predating this slice) is compiled from its OWN TITLE instead — named as such, both in
-the rendered CHANGELOG.md line and in the compiled entry's `from_title_only` flag — never silently
-dropped and never fabricated goal text.
+RULING (cold review of #474, ruling 2): "CHANGELOG.md lands by a machinery-opened, evaluator-merged
+PR" is not how this ships — the merge evaluator's conditions (a review bundle, a run dir, a line-
+anchored `VERDICT:`) have no natural home for a hand-assembled diff opened outside the pipeline, and
+`--re-evaluate` refuses without an originating run to reuse. The honest shape: a closing act FILES A
+READY TASK ("CHANGELOG.md for it-<n>", citing this tool's own compiled output in its body) that the
+NORMAL pipeline (`tools/dev-runner.sh`) then builds like any other task — implement / independent
+test / check / independent review / PR / merge, its own changelog fragment included. This tool stays
+exactly what it is: the compiler that produces the section and the release body. It opens no PR,
+merges nothing, and does no `gh`/network I/O of its own.
+
+A caller (an attended closing session today; a future close-time act tomorrow) gathers the epic's
+merged PRs (`gh pr list ... --json number,title,body`) into a JSON file and hands it to the CLI. A
+PR whose fragment is missing (an attended PR that skipped the duty, or one predating this slice) is
+compiled from its OWN TITLE instead — named as such, both in the rendered CHANGELOG.md line and in
+the compiled entry's `from_title_only` flag — never silently dropped and never fabricated goal text.
 
 The `yr-changelog` fenced block reuses the product's own knowledge-graph event vocabulary (the spec's
 own instruction): `dt`, `prj`, `act`, `evt`, `ent`, `tr`, `cost`, `intent`
 (yellow-robots/schemas/changelog-v1.schema.json) — one `[[event]]` per compiled entry, `evt = "MS"`
 (milestone: a shipped task), `ent` naming the source issue, `intent` carrying the fragment's own Goal
-text (or the PR title, for a title-only entry).
+text (or the PR title, for a title-only entry); `prj` names the TARGET repo (`--prj`, defaulting to
+`--repo`'s own last path segment when given), never a hardcoded value. Every string value in the
+block is escaped via `json.dumps` (TOML basic-string escaping is JSON-compatible) — never a manual
+quote swap, which a backslash or an embedded quote in a fragment's own text would silently corrupt
+into unparseable TOML while `check_trail`'s fence-word-only presence check kept reading it as present.
 """
 from __future__ import annotations
 
@@ -96,7 +109,8 @@ def compile_entries(fragments: dict[str, dict], merged_prs: list[dict]) -> list[
             entry = fallback_from_title(number, title)
         else:
             entry = dict(frag)
-            entry.setdefault("title", title)
+            if not entry.get("title"):   # a headingless fragment: fall back to the PR's own title
+                entry["title"] = title   # (parse_fragment always sets the key, so setdefault is dead)
         entry["pr"] = number
         entries.append(entry)
     return entries
@@ -136,43 +150,49 @@ def prepend_changelog_section(existing: str, section: str) -> str:
 
 
 def render_yr_changelog_block(iteration: str, release: str, entries: list[dict], *,
-                              now: str | None = None) -> str:
+                              prj: str = "factory", now: str | None = None) -> str:
     """The fenced ```yr-changelog``` TOML block, `yr-changelog/1` (records.toml — toml-schema mode:
     presence is the fence word alone, `tools/check_trail.py::_toml_schema_present`). Reuses the
     product's own event vocabulary verbatim (yellow-robots/schemas/changelog-v1.schema.json): `dt`,
-    `prj`, `act`, `evt` ("MS" — milestone), `ent` (the source issue). `tr`/`cost` are that schema's
-    `["string","null"]`/nullable fields, required only for an "SC" (state-change) event — a
-    milestone entry omits both rather than spell a TOML null the format has no literal for; `intent`
-    (the fragment's own Goal text, or the PR title for a title-only entry) is always populated, as
-    the schema asks for every DE/MS-shaped event."""
+    `prj` (the TARGET repo, never hardcoded), `act`, `evt` ("MS" — milestone), `ent` (the source
+    issue). `tr`/`cost` are that schema's `["string","null"]`/nullable fields, required only for an
+    "SC" (state-change) event — a milestone entry omits both rather than spell a TOML null the
+    format has no literal for; `intent` (the fragment's own Goal text, or the PR title for a
+    title-only entry) is always populated, as the schema asks for every DE/MS-shaped event. Every
+    string value is emitted via `json.dumps` — TOML basic-string escaping is JSON-compatible, so
+    this is correct for a `\\` or an embedded `"` in a fragment's own text, unlike a manual `"`->`'`
+    swap (which corrupts, rather than escapes, and can desync from what `check_trail`'s fence-word-
+    only presence check still reports as present)."""
     now = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     lines = [
-        f'schema = "{SCHEMA}"',
-        f'iteration = "{iteration}"',
-        f'release = "{release}"',
+        f"schema = {json.dumps(SCHEMA)}",
+        f"iteration = {json.dumps(iteration)}",
+        f"release = {json.dumps(release)}",
         "",
     ]
     for e in entries:
         goal = (e.get("goal") or "").strip()
-        intent = (goal.splitlines()[0].strip() if goal else (e.get("title") or "")).replace('"', "'")
-        title = (e.get("title") or "").replace('"', "'")
+        title = e.get("title") or ""
+        intent = goal.splitlines()[0].strip() if goal else title
+        ent = f"#{e.get('issue') or e.get('pr')}"
         lines += [
             "[[event]]",
-            f'dt = "{now}"',
-            'prj = "factory"',
-            'act = "tools/changelog.py"',
-            'evt = "MS"',
-            f'ent = "#{e.get("issue") or e.get("pr")}"',
-            f'intent = "{intent or title}"',
+            f"dt = {json.dumps(now)}",
+            f"prj = {json.dumps(prj)}",
+            f"act = {json.dumps('tools/changelog.py')}",
+            f"evt = {json.dumps('MS')}",
+            f"ent = {json.dumps(ent)}",
+            f"intent = {json.dumps(intent or title)}",
             "",
         ]
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_release_body(human_notes: str, iteration: str, release: str, entries: list[dict]) -> str:
+def render_release_body(human_notes: str, iteration: str, release: str, entries: list[dict], *,
+                        prj: str = "factory") -> str:
     """Human notes, then the fenced ```yr-changelog``` block — the shape `tools/release.py`'s
     `ship-it` posts as the GitHub Release body."""
-    block = render_yr_changelog_block(iteration, release, entries)
+    block = render_yr_changelog_block(iteration, release, entries, prj=prj)
     notes = human_notes.strip() or f"{iteration} shipped."
     return f"{notes}\n\n```{FENCE}\n{block}```\n"
 
@@ -193,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     p_c.add_argument("--notes-file", default=None, help="human-written release notes (plain text/markdown)")
     p_c.add_argument("--changelog-md", default="CHANGELOG.md", help="the file to update (default: CHANGELOG.md)")
     p_c.add_argument("--out-release-body", default=None, help="write the release body here")
+    p_c.add_argument("--repo", default=None, help="owner/name — --prj defaults to its last path segment")
+    p_c.add_argument("--prj", default=None,
+                     help="the yr-changelog block's prj field (default: derived from --repo, else 'factory')")
     p_c.add_argument("--test-mode", action="store_true", help="print the plan; write nothing")
     args = ap.parse_args(argv)
 
@@ -202,7 +225,8 @@ def main(argv: list[str] | None = None) -> int:
     entries = compile_entries(fragments, merged_prs)
     section = render_changelog_md(args.iteration, entries)
     notes = Path(args.notes_file).read_text(encoding="utf-8") if args.notes_file else ""
-    release_body = render_release_body(notes, args.iteration, args.release, entries)
+    prj = args.prj or (args.repo.split("/")[-1] if args.repo else "factory")
+    release_body = render_release_body(notes, args.iteration, args.release, entries, prj=prj)
 
     if args.test_mode:
         print("TEST-MODE: no files written — the plan only")

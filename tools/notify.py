@@ -2,12 +2,23 @@
 """tools/notify.py — deliver an iteration's changelog to its registered stakeholders (it-36 slice I,
 #474).
 
+RULING (cold review of #474, ruling 1): this act's own `epic_closed` precondition (mirrored from
+`tools/release.py`'s `it/<n>` family) cannot hold while H's `tools/close-runner.sh` is still running
+— that stage runs BEFORE the epic actually closes (the close arm, `tools/epic_gate.py`, closes it
+only once `YR-SHIP-WALK`/`YR-ROUND-RECORD` already exist on the trail). This tool's host is
+therefore a LATER moment: the design/close sweep (`tools/design_gate.py`), on a pass AFTER the epic
+has self-closed — not yet wired (a future slice's own duty). Until item P (the owner's Telegram
+credential and webhook secret) exists, no `[[stakeholders]]` entry can name a real telegram/webhook
+address anyway, so delivery is gated on that human dependency regardless of wiring.
+
 The manifest's `[[stakeholders]]` table (`name`, `channel` = telegram | webhook | issue-comment |
 github-release, `address`, `events`) names who is told what. `channel` picks the delivery:
   telegram      — an n8n webhook (deploy/n8n-changelog-telegram.json: webhook trigger -> Telegram
                   node, the bot token in n8n's OWN credential store) — signed JSON to `address`.
   webhook       — the same signed JSON, to any system's own URL (`address`).
-  issue-comment — a GitHub issue comment on `address` (an `owner/repo#N` reference).
+  issue-comment — a GitHub issue comment on `address` (an `owner/repo#N` reference, validated at
+                  read time and split into gh's own `<number> --repo <owner/repo>` argv shape —
+                  gh rejects the combined `owner/repo#N` form outright).
   github-release — no separate push: the GitHub Release `tools/release.py ship-it` already created
                   IS the notification for this channel, so delivery is trivially satisfied.
 Every network call runs through the two injectable seams below (`_http_post`, `_gh`) — stubbed
@@ -16,7 +27,8 @@ other a `gh` subprocess. The signed body carries `X-YR-Signature` (HMAC-SHA256 o
 bytes posted, keyed by `YR_NOTIFY_SECRET` from dispatch's PM-only allowlist — see
 `tools/dispatch.py::_PM_ONLY_KEYS`) and a stable `event_id` (one per (release, stakeholder), so a
 retried post is idempotent on the receiving end). The secret is read once from the environment and
-never printed, logged, or embedded in a record.
+never printed, logged, or embedded in a record; a missing secret with a network channel wanting
+delivery is a fail-CLOSED refusal (`secret_missing`), never a silent unsigned/empty-keyed send.
 
 After delivery, `record_body` posts ONE `YR-CHANGELOG` (records.toml; `iteration`, `release`,
 `delivered` fields) naming the delivered set — the record the CLI's `post` subcommand emits on the
@@ -29,6 +41,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -40,6 +53,16 @@ CHANNELS = ("telegram", "webhook", "issue-comment", "github-release")
 _NETWORK_CHANNELS = ("telegram", "webhook")
 GH_TIMEOUT = 20
 HTTP_TIMEOUT = 20
+NOTIFY_SECRET_ENV = "YR_NOTIFY_SECRET"
+_ISSUE_REF_RE = re.compile(r"^([^/\s#]+/[^/\s#]+)#(\d+)$")
+
+
+def _split_issue_ref(address: str) -> tuple[str, str] | None:
+    """`owner/repo#N` -> (`owner/repo`, `N`), or None when `address` doesn't match — the real `gh`
+    CLI rejects the combined form outright (`invalid issue format`), so every issue-comment
+    stakeholder is split into gh's own `<number> --repo <owner/repo>` argv shape at call time."""
+    m = _ISSUE_REF_RE.match(address)
+    return (m.group(1), m.group(2)) if m else None
 
 
 # ── the manifest reader: [[stakeholders]], tri-state on `_read_stage_conduct`'s own shape ────────
@@ -58,6 +81,8 @@ def _bad_stakeholder(entry) -> str | None:
         return f"'channel' must be one of {CHANNELS} (got {channel!r})"
     if not isinstance(address, str) or not address:
         return f"'address' must be a non-empty string (got {address!r})"
+    if channel == "issue-comment" and _split_issue_ref(address) is None:
+        return f"'address' for channel 'issue-comment' must be 'owner/repo#N' (got {address!r})"
     if not isinstance(events, list) or not events or any(not isinstance(e, str) or not e for e in events):
         return f"'events' must be a non-empty array of non-empty strings (got {events!r})"
     return None
@@ -144,7 +169,11 @@ def notify_stakeholder(stakeholder: dict, payload: dict, secret: bytes) -> tuple
         return _http_post(stakeholder["address"], body, headers)
     if channel == "issue-comment":
         text = _render_comment(payload)
-        rc, _, err = _gh(["issue", "comment", stakeholder["address"], "--body", text])
+        ref = _split_issue_ref(stakeholder["address"])
+        if ref is None:  # unreachable given read_stakeholders' own validation; fail-closed anyway
+            return False, f"'address' is not 'owner/repo#N' ({stakeholder['address']!r})"
+        repo, number = ref
+        rc, _, err = _gh(["issue", "comment", number, "--repo", repo, "--body", text])
         return (rc == 0), (err.strip() if rc != 0 else "posted")
     return False, f"unknown channel {channel!r}"  # unreachable given read_stakeholders' own validation
 
@@ -158,10 +187,17 @@ def _render_comment(payload: dict) -> str:
     return "\n".join(lines)
 
 
+def network_stakeholders_want(stakeholders: list[dict], event: str) -> bool:
+    """True iff at least one stakeholder wanting `event` is on a network channel (telegram/webhook)
+    — the gate `secret_missing` checks before ever attempting a send."""
+    return any(wants_event(s, event) and s["channel"] in _NETWORK_CHANNELS for s in stakeholders)
+
+
 def notify_all(stakeholders: list[dict], event: str, payload: dict, secret: bytes) -> list[str]:
     """Deliver to every stakeholder that wants `event`; return the names actually delivered (never
     the whole roster — a stakeholder whose channel failed is NOT in the delivered set, so the
-    posted YR-CHANGELOG's `delivered` field states a fact, not an attempt)."""
+    posted YR-CHANGELOG's `delivered` field states a fact, not an attempt). A failed delivery is
+    never silent: `<name> (<channel>): <detail>` prints to stderr, one line per failure."""
     delivered = []
     release = payload.get("release", "")
     for s in stakeholders:
@@ -169,9 +205,11 @@ def notify_all(stakeholders: list[dict], event: str, payload: dict, secret: byte
             continue
         p = dict(payload)
         p["event_id"] = build_event_id(release, s["name"])
-        ok, _detail = notify_stakeholder(s, p, secret)
+        ok, detail = notify_stakeholder(s, p, secret)
         if ok:
             delivered.append(s["name"])
+        else:
+            print(f"{s['name']} ({s['channel']}): {detail}", file=sys.stderr)
     return delivered
 
 
@@ -222,7 +260,14 @@ def main(argv: list[str] | None = None) -> int:
         print(record_body(args.iteration, args.release, wanted), end="")
         return 0
 
-    secret = os.environ.get("YR_NOTIFY_SECRET", "").encode("utf-8")
+    secret_raw = os.environ.get(NOTIFY_SECRET_ENV, "")
+    if not secret_raw and network_stakeholders_want(stakeholders, args.event):
+        print("secret_missing")
+        print(f"{NOTIFY_SECRET_ENV} is not set, but a stakeholder wanting event {args.event!r} is on "
+              f"a network channel (telegram/webhook) — refusing to send an unsigned/empty-keyed "
+              f"delivery; nothing was sent")
+        return 1
+    secret = secret_raw.encode("utf-8")
     delivered = notify_all(stakeholders, args.event, payload, secret)
     body = record_body(args.iteration, args.release, delivered)
     rc, _, err = _gh(["issue", "comment", args.epic, "--repo", args.repo, "--body", body])

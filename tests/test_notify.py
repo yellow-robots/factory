@@ -7,6 +7,7 @@ channel with fakes and the signature verified". Every network call is stubbed (`
 import hashlib
 import hmac
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -114,6 +115,55 @@ def test_read_stakeholders_malformed_not_a_list():
     assert status == "malformed"
 
 
+# ============ B2 (cold review of #474): issue-comment address is validated at read time ===========
+
+def test_read_stakeholders_malformed_issue_comment_address_missing_hash():
+    manifest = '''
+[[stakeholders]]
+name = "docs"
+channel = "issue-comment"
+address = "yellow-robots/factory"
+events = ["release"]
+'''
+    status, reason = notify.read_stakeholders(manifest)
+    assert status == "malformed" and "owner/repo#N" in reason
+
+
+def test_read_stakeholders_malformed_issue_comment_address_non_numeric_issue():
+    manifest = '''
+[[stakeholders]]
+name = "docs"
+channel = "issue-comment"
+address = "yellow-robots/factory#abc"
+events = ["release"]
+'''
+    status, reason = notify.read_stakeholders(manifest)
+    assert status == "malformed" and "owner/repo#N" in reason
+
+
+def test_read_stakeholders_ok_issue_comment_valid_address():
+    manifest = '''
+[[stakeholders]]
+name = "docs"
+channel = "issue-comment"
+address = "yellow-robots/factory#465"
+events = ["release"]
+'''
+    status, entries = notify.read_stakeholders(manifest)
+    assert status == "ok" and len(entries) == 1
+
+
+def test_split_issue_ref_parses_owner_repo_and_number():
+    assert notify._split_issue_ref("yellow-robots/factory#465") == ("yellow-robots/factory", "465")
+
+
+def test_split_issue_ref_rejects_malformed_forms():
+    assert notify._split_issue_ref("yellow-robots/factory") is None
+    assert notify._split_issue_ref("#465") is None
+    assert notify._split_issue_ref("yellow-robots/factory#") is None
+    assert notify._split_issue_ref("yellow-robots/factory#abc") is None
+
+
 def test_wants_event_matches_named_event_or_all():
     assert notify.wants_event({"events": ["release"]}, "release") is True
     assert notify.wants_event({"events": ["release"]}, "other") is False
@@ -190,6 +240,10 @@ def test_notify_webhook_delivery_failure_is_reported_not_raised(monkeypatch):
 
 
 def test_notify_issue_comment_posts_via_gh(monkeypatch):
+    """B2 (cold review of #474): gh rejects the combined 'owner/repo#N' form outright ('invalid
+    issue format') — the argv must split into gh's own <number> --repo <owner/repo> shape, the
+    same shape main() already uses for the YR-CHANGELOG post itself. Full argv asserted, not a
+    membership check that a wrong shape could also satisfy."""
     calls = []
 
     def fake_gh(argv):
@@ -201,9 +255,9 @@ def test_notify_issue_comment_posts_via_gh(monkeypatch):
                                                             "notes": "shipped", "event_id": "x"}, b"s")
     assert ok is True
     argv = calls[0]
-    assert argv[:2] == ["issue", "comment"]
-    assert ISSUE_COMMENT["address"] in argv
-    assert "--body" in argv
+    text = notify._render_comment({"iteration": "it-36", "release": "it/36", "notes": "shipped",
+                                   "event_id": "x"})
+    assert argv == ["issue", "comment", "1", "--repo", "yellow-robots/factory", "--body", text]
 
 
 def test_gh_seam_respects_gh_bin_env_override(monkeypatch):
@@ -271,6 +325,36 @@ def test_notify_all_assigns_a_distinct_event_id_per_stakeholder(monkeypatch):
     assert len(seen) == 2 and len(set(seen)) == 2
 
 
+def test_notify_all_prints_a_failed_delivery_to_stderr(monkeypatch, capsys):
+    """I4 (cold review of #474): a failed channel is never silent."""
+    monkeypatch.setattr(notify, "_http_post", lambda url, body, headers: (False, "connection refused"))
+    delivered = notify.notify_all([WEBHOOK], "release", {"release": "it/36"}, b"s")
+    assert delivered == []
+    err = capsys.readouterr().err
+    assert "audit (webhook): connection refused" in err
+
+
+def test_notify_all_prints_nothing_to_stderr_on_success(monkeypatch, capsys):
+    monkeypatch.setattr(notify, "_http_post", lambda url, body, headers: (True, "ok"))
+    notify.notify_all([WEBHOOK], "release", {"release": "it/36"}, b"s")
+    assert capsys.readouterr().err == ""
+
+
+# ============ B3 (cold review of #474): a missing secret fails CLOSED, never open ==================
+
+def test_network_stakeholders_want_true_for_telegram_or_webhook():
+    assert notify.network_stakeholders_want([TELEGRAM], "release") is True
+    assert notify.network_stakeholders_want([WEBHOOK], "release") is True
+
+
+def test_network_stakeholders_want_false_for_issue_comment_or_github_release_alone():
+    assert notify.network_stakeholders_want([ISSUE_COMMENT, GITHUB_RELEASE], "release") is False
+
+
+def test_network_stakeholders_want_false_when_no_one_wants_the_event():
+    assert notify.network_stakeholders_want([TELEGRAM], "some-other-event") is False
+
+
 # ============ the record ============
 
 def test_record_body_matches_yr_changelog_grammar():
@@ -333,6 +417,50 @@ events = ["release"]
     assert "stakeholders_invalid" in result.stdout
 
 
+def test_cli_post_refuses_with_secret_missing_when_a_network_stakeholder_wants_delivery(tmp_path, monkeypatch):
+    """B3: an unset YR_NOTIFY_SECRET with a telegram/webhook stakeholder wanting this event fails
+    CLOSED — nothing sent, even outside --test-mode (no real network call is reachable: the CLI
+    refuses before ever attempting one)."""
+    manifest = _manifest(tmp_path, '''
+[[stakeholders]]
+name = "ops"
+channel = "telegram"
+address = "https://n8n.example/hook"
+events = ["release"]
+''')
+    monkeypatch.delenv("YR_NOTIFY_SECRET", raising=False)
+    env = {**os.environ}
+    env.pop("YR_NOTIFY_SECRET", None)
+    result = subprocess.run([
+        sys.executable, str(TOOL), "post",
+        "--manifest", str(manifest), "--iteration", "it-36", "--release", "it/36",
+        "--epic", "465", "--repo", "yellow-robots/factory",
+    ], capture_output=True, text=True, env=env)
+    assert result.returncode == 1
+    assert "secret_missing" in result.stdout
+    assert "YR_NOTIFY_SECRET" in result.stdout
+
+
+def test_cli_post_issue_comment_only_needs_no_secret(tmp_path, monkeypatch):
+    """The secret_missing gate is scoped to NETWORK channels only — an issue-comment-only roster
+    proceeds without YR_NOTIFY_SECRET (test-mode: no real gh call is made either way)."""
+    manifest = _manifest(tmp_path, '''
+[[stakeholders]]
+name = "docs"
+channel = "issue-comment"
+address = "yellow-robots/factory#1"
+events = ["release"]
+''')
+    monkeypatch.delenv("YR_NOTIFY_SECRET", raising=False)
+    result = subprocess.run([
+        sys.executable, str(TOOL), "post",
+        "--manifest", str(manifest), "--iteration", "it-36", "--release", "it/36",
+        "--epic", "465", "--repo", "yellow-robots/factory", "--test-mode",
+    ], capture_output=True, text=True)
+    assert result.returncode == 0
+    assert "secret_missing" not in result.stdout
+
+
 def test_cli_post_never_prints_the_secret(monkeypatch, tmp_path):
     manifest = _manifest(tmp_path)
     monkeypatch.setenv("YR_NOTIFY_SECRET", "supersecretvalue")
@@ -340,6 +468,6 @@ def test_cli_post_never_prints_the_secret(monkeypatch, tmp_path):
         sys.executable, str(TOOL), "post",
         "--manifest", str(manifest), "--iteration", "it-36", "--release", "it/36",
         "--epic", "465", "--repo", "yellow-robots/factory", "--test-mode",
-    ], capture_output=True, text=True, env={**__import__("os").environ, "YR_NOTIFY_SECRET": "supersecretvalue"})
+    ], capture_output=True, text=True, env={**os.environ, "YR_NOTIFY_SECRET": "supersecretvalue"})
     assert "supersecretvalue" not in out.stdout
     assert "supersecretvalue" not in out.stderr

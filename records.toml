@@ -560,10 +560,10 @@ marker = "YR-CHANGELOG:"
 mode = "prefix"
 fields = ["iteration", "release", "delivered"]
 emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "the design sweep's changelog record, typed at an iteration's close"
-readers = ["tools/design_gate.py"]
+emitter = "tools/notify.py (the post subcommand — names the stakeholder set actually delivered to, it-36 slice I, #474)"
+readers = ["humans reading the epic's own trail (no automated reader yet)"]
 surfaces = ["issue-trail"]
-notes = ""
+notes = "No automated reader today (corrected at the cold review of #474, I1 — the prior 'tools/design_gate.py' attribution was stale: that tool never parsed this record); a future close-time reconciliation is the natural one."
 
 [[record]]
 name = "yr-strategy/1"
@@ -580,7 +580,7 @@ name = "yr-changelog/1"
 marker = "yr-changelog"
 mode = "toml-schema"
 emitted_by = ["machinery"]   # typed actor classes (rule S's column)
-emitter = "the design sweep (the fenced ```yr-changelog TOML block riding the YR-CHANGELOG comment)"
-readers = ["tools/design_gate.py"]
-surfaces = ["issue-trail"]
-notes = "The fence word yr-changelog is itself part of the parse grammar, same discipline as yr-strategy/1."
+emitter = "tools/changelog.py (the fenced ```yr-changelog TOML block it compiles into the GitHub Release body tools/release.py ship-it posts, it-36 slice I, #474)"
+readers = ["humans reading the GitHub Release page (no automated reader yet)"]
+surfaces = ["release"]
+notes = "The fence word yr-changelog is itself part of the parse grammar, same discipline as yr-strategy/1. No automated reader today (corrected at the cold review of #474, I1 — the prior 'tools/design_gate.py' attribution was stale). Surface corrected to 'release' (the GitHub Release body, not an issue-trail comment) to match where tools/changelog.py actually renders it."

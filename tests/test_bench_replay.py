@@ -223,6 +223,30 @@ def test_vault_api_key_present_in_env_fails_verify_seal_directly(tmp_path):
     assert any("YR_VAULT_API_KEY" in reason for reason in verdict.reasons)
 
 
+def test_notify_secret_present_in_env_fails_verify_seal_directly(tmp_path):
+    """I3 (cold review of #474): YR_NOTIFY_SECRET (tools/notify.py's HMAC signing key, dispatch.py's
+    other PM-only brain credential alongside YR_VAULT_API_KEY) is scrubbed the same way."""
+    source_repo, record, _diff, pre_sha, _merge_sha = _make_source_repo(tmp_path)
+    workdir = tmp_path / "sealed"
+    bench_replay.seal_workdir(record, workdir, source_repo)
+
+    poisoned_env = {"PATH": os.environ.get("PATH", ""), "YR_NOTIFY_SECRET": "super-secret-notify-key"}
+    verdict = bench_replay.verify_seal(workdir, pre_sha, poisoned_env, source_repo=source_repo)
+
+    assert not verdict.ok
+    assert any("credential" in reason.lower() for reason in verdict.reasons)
+    assert any("YR_NOTIFY_SECRET" in reason for reason in verdict.reasons)
+
+
+def test_credential_env_vars_is_a_superset_of_dispatchs_pm_only_keys():
+    """I3: the sealed-replay scrub list and dispatch's own PM-only allowlist must never drift apart
+    — every factory-issued 'brain' secret dispatch scopes PM-only is also scrubbed here, so a future
+    PM-only key added to one side without the other is caught immediately."""
+    import dispatch
+
+    assert set(dispatch._PM_ONLY_KEYS) <= set(bench_replay.CREDENTIAL_ENV_VARS)
+
+
 def test_sealed_env_scrubs_vault_api_key_from_the_parent_environment(tmp_path, monkeypatch):
     """issue #393: `_sealed_env`'s scrub loop (the tuple's second consumer) must pop YR_VAULT_API_KEY
     just as it pops the GitHub credentials, so a bench child process can never inherit it from the

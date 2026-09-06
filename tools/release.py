@@ -457,10 +457,28 @@ def validate_it(repo: str, commit: str, epic: str) -> tuple[int, str, list[str]]
 
 
 def _release_it(repo: str, iteration: str, commit_ref: str, epic: str, who: str | None,
-                test_mode: bool) -> int:
+                test_mode: bool, notes_file: str | None = None) -> int:
+    # I5 (cold review of #474): this act tags and pushes in THIS checkout (cwd=REPO_ROOT) — a
+    # --repo naming any other repo would tag/push here while releasing there, a stray tag on this
+    # repo plus a release_create_failed (wrong repo, no matching commit) and a tag_exists on retry.
+    # Refuse fail-closed rather than resolve a second checkout: run ship-it from that repo's own.
+    if repo != DEFAULT_REPO:
+        return _fail("repo_mismatch",
+                     f"ship-it tags and validates in this checkout ({REPO_ROOT}), which is "
+                     f"DEFAULT_REPO ({DEFAULT_REPO!r}) — refusing to tag/push here for a different "
+                     f"--repo ({repo!r}); run ship-it from that repo's own checkout instead")
     if not iteration.isdigit():
         return _fail("iteration_malformed",
                      f"{iteration!r} is not a bare integer — it/<n> names an iteration number")
+    # B1 (cold review of #474): the Release's posted notes must carry the changelog body (human
+    # notes + the fenced yr-changelog block tools/changelog.py compiled) — never the bare
+    # YR-RELEASE record alone, criterion 2's own text. Required outside --test-mode; a preview may
+    # run without one.
+    if not test_mode and not notes_file:
+        return _fail("notes_file_required",
+                     "ship-it requires --notes-file (the changelog release body tools/changelog.py "
+                     "compiled) outside --test-mode — a bare YR-RELEASE record with no human notes "
+                     "is never a release's own notes")
     commit = _resolve_commit(commit_ref)
     if not commit:
         return _fail("commit_unresolvable", f"{commit_ref!r} does not resolve")
@@ -476,18 +494,29 @@ def _release_it(repo: str, iteration: str, commit_ref: str, epic: str, who: str 
     if rc != 0:
         return rc
     validation = f"{' '.join(evaluated)} ({evidence})"
-    body = record_body(tag, commit, validation, _who(who), "iteration", manual=IT_MANUAL_NA)
+    # The TAG message stays the record alone (unchanged shape); the RELEASE's posted notes are the
+    # changelog body (when given) followed by the same record — never the record standing in for
+    # human notes it never wrote.
+    tag_body = record_body(tag, commit, validation, _who(who), "iteration", manual=IT_MANUAL_NA)
+    changelog_notes = Path(notes_file).read_text(encoding="utf-8") if notes_file else ""
+    release_notes = f"{changelog_notes}\n\n{tag_body}" if changelog_notes else tag_body
     if test_mode:
         print(f"TEST-MODE: no tag, no Release, no trail — the plan only")
         print(f"would tag:     {tag} at {commit}")
         print(f"would release: {tag} on {repo}")
-        print("--- record body ---")
-        print(body, end="")
+        print("--- tag message ---")
+        print(tag_body, end="")
+        print("--- release notes ---")
+        print(release_notes, end="")
         return 0
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
                                      prefix="yr-release-it-body-") as f:
-        f.write(body)
+        f.write(tag_body)
         body_file = f.name
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                     prefix="yr-release-it-notes-") as f:
+        f.write(release_notes)
+        notes_body_file = f.name
     rc, _, err = _run(["git", "tag", "-a", tag, commit, "-F", body_file], cwd=str(REPO_ROOT))
     if rc != 0:
         return _fail("tag_write_failed", err.strip() or str(rc))
@@ -496,7 +525,7 @@ def _release_it(repo: str, iteration: str, commit_ref: str, epic: str, who: str 
     if rc != 0:
         return _fail("tag_push_failed", err.strip() or str(rc))
     rc, out, err = _run(["gh", "release", "create", tag, "--repo", repo,
-                         "--title", tag, "--notes-file", body_file,
+                         "--title", tag, "--notes-file", notes_body_file,
                          "--verify-tag"], timeout=WORKTREE_TIMEOUT)
     if rc != 0:
         return _fail("release_create_failed", err.strip() or str(rc))
@@ -592,6 +621,9 @@ def main(argv: list[str] | None = None) -> int:
     p_si.add_argument("--iteration", required=True, help="bare integer, e.g. 36 -> tag it/36")
     p_si.add_argument("--epic", required=True, help="the closing epic's issue number")
     p_si.add_argument("--who", default=None)
+    p_si.add_argument("--notes-file", default=None,
+                      help="the changelog release body (tools/changelog.py's compiled output) — "
+                           "required unless --test-mode")
     p_si.add_argument("--test-mode", action="store_true",
                       help="full validation, zero writes — no tag, no Release, no trail")
     args = ap.parse_args(argv)
@@ -626,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         if rc != 0:
             return _fail("commit_unresolvable", f"git fetch origin failed: {err.strip()}")
         return _release_it(args.repo, args.iteration, "origin/main", args.epic, args.who,
-                           args.test_mode)
+                           args.test_mode, notes_file=args.notes_file)
     # backfill
     commit = BACKFILL.get(args.version) or args.commit
     if not commit:

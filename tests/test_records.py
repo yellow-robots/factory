@@ -152,6 +152,22 @@ def test_yr_changelog_registered(reg):
     assert r["surfaces"] == ["issue-trail"]
 
 
+def test_yr_changelog_emitter_names_the_real_tool(reg):
+    """I1 (cold review of #474): the prior 'design sweep'/'tools/design_gate.py' attribution was
+    stale — design_gate.py never parsed or emitted this record. The real emitter is tools/notify.py."""
+    r = records.get(reg, "YR-CHANGELOG")
+    assert "tools/notify.py" in r["emitter"]
+    assert "design_gate.py" not in r["emitter"]
+    assert all("design_gate.py" not in reader for reader in r["readers"])
+
+
+def test_yr_changelog_schema_emitter_names_the_real_tool(reg):
+    r = records.get(reg, "yr-changelog/1")
+    assert "tools/changelog.py" in r["emitter"]
+    assert "design_gate.py" not in r["emitter"]
+    assert all("design_gate.py" not in reader for reader in r["readers"])
+
+
 def test_yr_strategy_schema_is_toml_schema(reg):
     r = records.get(reg, "yr-strategy/1")
     assert r["marker"] == "yr-strategy"

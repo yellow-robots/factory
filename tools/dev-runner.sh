@@ -239,12 +239,30 @@ else:
 # evaluator's fragment_present condition uses — hoisted this early so a --re-evaluate invocation (which
 # exits before the start-of-run manifest block ever runs) still has it in scope.
 CHANGELOG_DIR_DEFAULT="changelog.d/"
-_bad_changelog_dir_value(){   # $1 = candidate string; true (exit 0) = BAD
+# _bad_changelog_dir_value: $1 = candidate string; true (exit 0) = BAD.
+#   I7 (cold review of #474): a non-string declared value (e.g. a TOML array, `changelog_dir =
+#   ["a"]`) stringifies through `_manifest_read scalar`'s bare `str(v)` to `['a']` — no leading '/'
+#   and no '..' path component, so the ORIGINAL two checks alone let it through as a literal
+#   (nonsensical) directory name. A directory-name character class, checked FIRST, rejects it
+#   (and every other shape outside plain path characters) before either of the other two checks
+#   even run — the check_timeout precedent (a content-shape regex on the stringified value, not a
+#   type check upstream, since `_manifest_read scalar` is shared by every other scalar key).
+#   I10: the per-part split below performs UNQUOTED word-splitting on IFS='/' by design, but
+#   without `set -f` it would ALSO glob-expand against real files in the CURRENT directory if any
+#   part contained a shell metacharacter — moot once the character class above rejects every glob
+#   metacharacter (`*?[]`) on its own, but guarded here too, defense in depth, restored on every
+#   return path so the caller's own glob setting is never left mutated.
+_bad_changelog_dir_value(){
   local v="$1" part
   [ -z "$v" ] && return 0
   case "$v" in /*) return 0 ;; esac
+  case "$v" in *[!A-Za-z0-9_./-]*) return 0 ;; esac
+  set -f
   local IFS='/'
-  for part in $v; do [ "$part" = ".." ] && return 0; done
+  for part in $v; do
+    if [ "$part" = ".." ]; then set +f; return 0; fi
+  done
+  set +f
   return 1
 }
 
@@ -298,23 +316,32 @@ read_server_ci(){   # sets SERVER_CI (required|none) + SERVER_CI_SOURCE (manifes
 }
 
 # (0c) changelog_dir (decision time) — read_changelog_dir resolves CHANGELOG_DIR_MERGE from the base
-#      ref's CURRENT tip (MERGE_GIT_DIR), same fetch/read shape as read_server_ci above; the START-OF-RUN
+#      ref's CURRENT tip (MERGE_GIT_DIR), same fetch shape as read_server_ci above; the START-OF-RUN
 #      reader further below (near test_paths/artifact_globs) resolves the SEPARATE CHANGELOG_DIR the
 #      implement stage writes the fragment under — two reads of the same key, decision-time vs
-#      start-of-run, same asymmetry auto_merge/server_ci already have against check_timeout/
-#      check_idle_timeout. Unlike merge_ci_timeout/server_ci, a malformed declared value here is NOT its
-#      own environmental/rejected tri-state: it folds directly into shadow_fragment_present's own FAIL
-#      (CHANGELOG_DIR_MERGE left empty) — a bad changelog_dir has no independent wait/poll semantics
-#      gated behind it, so its failure IS the fragment_present condition's failure, named as such.
-#      Returns 2 only on an environmental git-fetch/show failure (mirrors read_server_ci).
-read_changelog_dir(){   # sets CHANGELOG_DIR_MERGE (empty on a malformed declared value); returns 2 on an environmental read failure.
+#      start-of-run. UNLIKE merge_ci_timeout/server_ci/auto_merge (I6, cold review of #474: those
+#      three decision-time keys treat a `__error__` — a whole-manifest parse failure — as
+#      environmental, `return 2`), changelog_dir picks the MAJORITY disposition test_paths/
+#      artifact_globs/stage_conduct/check_timeout/check_idle_timeout/the bulk scalars already use:
+#      `__error__` folds into `__absent__` (the default), same as the start-of-run reader just
+#      below — ONE disposition for changelog_dir specifically, applied to BOTH of its readers,
+#      never split by read site. This is deliberate, not an oversight: a garbled changelog_dir just
+#      falls back to the well-known default directory (no arming/blocking policy rides on it the
+#      way auto_merge/server_ci/merge_ci_timeout's own values do), and a genuinely broken manifest
+#      is already caught upstream by check_cmd's own required-ness gate at start-of-run regardless.
+#      A malformed (but parseable) declared value still folds into shadow_fragment_present's own
+#      FAIL (CHANGELOG_DIR_MERGE left empty) — a bad changelog_dir has no independent wait/poll
+#      semantics gated behind it, so its failure IS the fragment_present condition's failure, named
+#      as such. Returns 2 only on a genuine fetch/show failure (network/git, not a parse failure).
+read_changelog_dir(){   # sets CHANGELOG_DIR_MERGE (empty on a malformed declared value); returns 2 on an environmental fetch failure.
   local raw parsed
   "$GIT_BIN" -C "$MERGE_GIT_DIR" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
   raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
   if [ -z "$raw" ]; then CHANGELOG_DIR_MERGE="$CHANGELOG_DIR_DEFAULT"; return 0; fi
   parsed="$(printf '%s' "$raw" | _manifest_read scalar changelog_dir 2>/dev/null || echo __error__)"
-  [ "$parsed" = "__error__" ] && return 2
-  if [ "$parsed" = "__absent__" ]; then CHANGELOG_DIR_MERGE="$CHANGELOG_DIR_DEFAULT"; return 0; fi
+  if [ "$parsed" = "__error__" ] || [ "$parsed" = "__absent__" ]; then
+    CHANGELOG_DIR_MERGE="$CHANGELOG_DIR_DEFAULT"; return 0
+  fi
   if _bad_changelog_dir_value "$parsed"; then CHANGELOG_DIR_MERGE=""; return 0; fi
   CHANGELOG_DIR_MERGE="$parsed"
 }

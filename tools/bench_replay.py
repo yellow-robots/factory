@@ -83,13 +83,17 @@ OUTCOME_INVALID_SEAL = "invalid-seal"
 OUTCOME_UNGRADED_ENV = "ungraded-environmental"
 
 # a sealed child process must never see a GitHub credential — the solution must be unreachable by API
-# just as it is by tree (the epic's "the seal must survive its own verification" contract).
+# just as it is by tree (the epic's "the seal must survive its own verification" contract). Every
+# factory-issued "brain" secret dispatch.py itself scopes PM-only (`_PM_ONLY_KEYS`) is scrubbed here
+# too (I3, cold review of #474) — `test_bench_replay.py` pins that this tuple is a SUPERSET of
+# dispatch's own set, so the two never drift apart again.
 CREDENTIAL_ENV_VARS = (
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_ENTERPRISE_TOKEN",
     "GITHUB_ENTERPRISE_TOKEN",
     "YR_VAULT_API_KEY",
+    "YR_NOTIFY_SECRET",
 )
 
 # a check harness that could not even execute (missing/broken toolchain) — same convention as

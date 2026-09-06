@@ -88,9 +88,10 @@ SCHEMA = "yr-merge-record/1"
 RECORD_MARKER_TOKENS = (MARKER_ARMED + ":", MARKER_SHADOW + ":")
 # Order is the contract: the FIRST failed condition names the WOULD-BLOCK reason (shadow mode).
 # fragment_present (issue #474) is APPENDED, never inserted: the rolling shadow-completion window
-# (tools/dev-runner.sh's compute_shadow_complete) reads prior records by their OWN failed_condition
-# value, never by SHADOW_ORDER's positional index, so appending at the end changes no prior record's
-# meaning and adds one more thing a PR can fail on, last in line.
+# (classify_event, below) reads a prior record's own `decision` field (WOULD-MERGE/MERGED/
+# WOULD-BLOCK/BLOCKED), never `failed_condition` and never SHADOW_ORDER's positional index (N1,
+# cold review of #474 — this comment previously said `failed_condition`), so appending at the end
+# changes no prior record's meaning and adds one more thing a PR can fail on, last in line.
 SHADOW_ORDER = ("ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present")
 
 # Shadow-completion window defaults (the epic's pinned N/K).

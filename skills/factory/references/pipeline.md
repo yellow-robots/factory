@@ -423,6 +423,29 @@ Pipeline: **corpus → sealed replay → deterministic grading → report.**
 under the repo's own check command — not independent proof of correctness, and not graded against the
 original PR's approach.
 
+## The changelog and stakeholder notification
+
+`tools/changelog.py` and `tools/notify.py` (it-36 slice I, #474) are **attended-invoked today** —
+neither has an automated host yet (a board item tracks the wiring, filed at the cold review of #474,
+not by either tool). Two rulings shape what "wiring them in" will mean when it lands:
+
+- **`tools/notify.py`'s own precondition can't hold inside H's `close-runner.sh`.** That stage
+  (`close-walk` → `round-record` → `crossover`) runs BEFORE the epic actually closes — the close arm
+  (`tools/epic_gate.py`) only closes it once `YR-SHIP-WALK`/`YR-ROUND-RECORD` already exist on the
+  trail. `notify.py`'s own `it/<n>`-mirrored `epic_closed` expectation is therefore false at that
+  point. Its real host is a LATER moment: a design/close sweep pass (`tools/design_gate.py`) after
+  the epic has self-closed. Until item P (the owner's Telegram credential and webhook secret) exists,
+  no `[[stakeholders]]` entry can name a real telegram/webhook address anyway, so delivery stays
+  gated on that human dependency regardless of wiring.
+- **"`CHANGELOG.md` lands by a machinery-opened, evaluator-merged PR" is not how it ships.** The
+  merge evaluator's conditions (a review bundle, a run dir, a line-anchored `VERDICT:`) have no
+  natural home for a hand-assembled diff opened outside the pipeline, and `--re-evaluate` refuses
+  without an originating run to reuse. The honest shape: a closing act FILES A READY TASK
+  ("`CHANGELOG.md` for it-\<n\>", citing `tools/changelog.py`'s own compiled output in its body) that
+  the NORMAL pipeline (`tools/dev-runner.sh`) then builds like any other task — implement /
+  independent test / check / independent review / PR / merge, its own changelog fragment included.
+  `tools/changelog.py` stays exactly what it is: the compiler. It opens no PR and merges nothing.
+
 ## Judgment points
 
 - **`REQUIRE_ISSUE_TYPE=''`** in the runner environment opts out of the Type=Task check for repos that
