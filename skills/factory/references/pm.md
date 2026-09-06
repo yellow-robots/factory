@@ -100,7 +100,7 @@ detector in this tree. `YR-STRATEGY` (`records.toml`) names its emitter as "the 
 when the strategy doc it tracks changes" — `tools/design_gate.py` carries no hash tracking or emitter
 for it today; like `YR-KPI` below, this is a declared grammar with no emitter yet.
 
-## The KPI report (queued — it-36 slice J, #475, not yet built in this tree)
+## The KPI report
 
 The spec's own acceptance criterion: regenerated whenever the strategy doc changes or the owner asks,
 against the strategy doc's own `kpi_targets` — velocity, cycle time (seed → decision → active →
@@ -109,11 +109,11 @@ product-versus-factory ratio, and deploy lag, each computed from a native surfac
 comments, the board's own `createdAt`/issue-timeline fields, `git log` revert detection, the
 `YR-DEPLOY` trail, the ideas folder's frontmatter) — never the build-host ledger, which is per-host,
 not per-repo. Slice J's own deliverable is `tools/kpi.py`, posting one `YR-KPI` note per month into
-the component's operations home and a `YR-KPI` record on the triage issue; until that slice ships,
-`YR-KPI`'s `records.toml` row is a declared grammar with no emitter yet. Slice J has since shipped: the report exists (`tools/kpi.py`), and the session's own delivered slice
-(`tools/compile_slice.py`'s `position()`) now carries that standing triage line naming how many seeds
-await the owner's own line — only the design sweep's own automatic trigger, running the report the
-moment the strategy doc's hash changes, remains not yet built, tracked as #520.
+the component's operations home and a `YR-KPI` record on the triage issue; `YR-KPI`'s `records.toml`
+row names `tools/kpi.py report` as its emitter. The session's own delivered slice
+(`tools/compile_slice.py`'s `position()`) carries that standing triage line naming how many seeds
+await the owner's own line. The one open item is the design sweep's own automatic trigger — running
+the report the moment the strategy doc's hash changes — tracked as #520.
 
 ## The closed escalation list — default-block
 
