@@ -15,10 +15,17 @@ a reader is meant to type it — must be a tracked file committed executable. Do
 operator command therefore drags its mode along, and the next missing execute bit fails here rather
 than under a human's fingers.
 
-Deliberately NOT asserted: that every shebanged file is executable. 31 of the repo's 44 shebanged
-tracked files are non-executable, and almost all are imported modules (`tools/predicates.py`,
-`tools/sources.py`, `tools/records.py`, …) that merely carry a shebang; demanding +x on those would
-be noise, and the mode of a module nobody invokes is not a fact about anything.
+Deliberately NOT asserted: that every shebanged file is executable. Most shebanged tracked files in
+this repo are committed non-executable, and nearly all of those are imported modules
+(`tools/predicates.py`, `tools/sources.py`, `tools/records.py`, …) that merely carry a shebang;
+demanding +x on those would be noise, and the mode of a module nobody invokes is not a fact about
+anything. (No count is quoted here on purpose: it would rot with the next tool added, and the rule
+below does not depend on it.)
+
+Scope note: the scan is content-blind over every tracked markdown file, so a line that merely *looks*
+like a command in the first position — a `diff --stat` paste, a bare path listing — would be read as
+one. Today no such line exists. If one ever appears, the fix is to exclude that file or reword the
+line, not to weaken the rule.
 """
 import pathlib
 import re
@@ -44,14 +51,26 @@ def _tracked_modes():
     return modes
 
 
-def _documented_commands(modes):
-    """{tool path: [doc:line, …]} over every tracked markdown file."""
+def _offenders(modes, found):
+    """{tool: (mode, sites)} for every documented command whose file is tracked but not committed
+    executable. One home for the predicate, so the guard's own teeth test exercises the real thing
+    rather than a re-implementation of it."""
+    return {tool: (modes[tool], sites) for tool, sites in found.items()
+            if tool in modes and modes[tool] != "100755"}
+
+
+def _documented_commands(modes, root=None):
+    """{tool path: [doc:line, …]} over every tracked markdown file. Modes come from the index and
+    content from the working tree: a tracked file missing from the checkout is skipped rather than
+    raising, and a file's staged content is what a reader of this branch would see. `root` is the
+    tree the paths are read under — injected only by the teeth test, which scans a synthetic doc."""
+    root = ROOT if root is None else root
     found = {}
     for path in modes:
         if not path.endswith(".md"):
             continue
         try:
-            text = (ROOT / path).read_text(encoding="utf-8")
+            text = (root / path).read_text(encoding="utf-8")
         except OSError:                                  # a tracked file absent from the checkout
             continue
         for n, line in enumerate(text.splitlines(), 1):
@@ -75,8 +94,7 @@ def test_every_documented_command_is_committed_executable():
     modes = _tracked_modes()
     found = _documented_commands(modes)
     assert found, "no documented commands found at all — the scan is broken, not the repo"
-    offenders = {tool: (modes[tool], sites) for tool, sites in found.items()
-                 if tool in modes and modes[tool] != "100755"}
+    offenders = _offenders(modes, found)
     assert not offenders, (
         "a doc tells a human to type these commands, but the files are not committed executable "
         f"(mode 100755), so the bare invocation dies with 'Permission denied': {offenders}")
@@ -92,17 +110,24 @@ def test_the_release_act_is_executable():
         f"act, and the canon gives its command in bare form (got {modes.get('tools/release.py')!r})")
 
 
-def test_the_scan_would_catch_a_non_executable_documented_command():
-    """The guard's own teeth: prove the rule fires on a doc line naming a file this repo commits
-    non-executable, so a green run means 'no offenders', never 'the regex matched nothing'."""
+def test_the_scan_would_catch_a_non_executable_documented_command(tmp_path):
+    """The guard's own teeth, through the REAL scan rather than a re-implementation of it: drop a
+    synthetic doc whose command line names a file this repo genuinely commits non-executable, run
+    the same `_documented_commands` + `_offenders` pair the guard above runs, and require a finding.
+    Without this, a green run could mean 'the regex matched nothing' instead of 'no offenders'."""
     modes = _tracked_modes()
     victim = next((p for p, m in sorted(modes.items())
                    if m == "100644" and p.startswith("tools/") and p.endswith(".py")), None)
     assert victim, "expected at least one non-executable tools/*.py module to test the rule against"
-    line = f"{victim} --some-flag"
-    m = COMMAND_LINE.match(line)
-    assert m and m.group(1) == victim, f"the command-position regex failed to match {line!r}"
-    assert modes[victim] != "100755"            # so the assertion in the test above would fire
+
+    doc = tmp_path / "synthetic.md"
+    doc.write_text(f"Run it like this:\n\n```\n{victim} --some-flag\n```\n", encoding="utf-8")
+    found = _documented_commands({doc.name: "100644"}, root=tmp_path)
+    assert victim in found, f"the real scan did not read {victim!r} as a command"
+
+    offenders = _offenders(modes, found)
+    assert victim in offenders and offenders[victim][0] == "100644", (
+        "the offender predicate did not flag a documented command that is not executable")
 
 
 def test_prose_mentions_are_not_read_as_commands():
