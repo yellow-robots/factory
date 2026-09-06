@@ -24,6 +24,13 @@ STAGE_LIB = ROOT / "tools" / "stage_lib.sh"
 # does not drift with whatever HEAD happens to be when it runs.
 BASE_SHA = "9d5233e503db04af5261416aa4aff28d4b66e347"
 
+# run_stage is deliberately absent: it moved here verbatim by #467, then was itself edited by #468
+# (it-36 slice A deleted the shadow review seat's $6 ANTHROPIC_BASE_URL-override branch from it) — so
+# it is no longer byte-identical to its BASE_SHA source, and this test's own verbatim-extraction
+# machinery would fail on it by design. Its harness contract (the CLI invocation shape, the
+# cred/plain branch pair) is pinned by tests/test_dev_runner.py instead; the extraction's other half
+# — that it vanished as a DEFINITION from the runner — is covered separately below, alongside the
+# seat's only remaining trace, `base_url`.
 FUNCTIONS = [
     "verdict_line",
     "_set_role_from_json",
@@ -37,7 +44,6 @@ FUNCTIONS = [
     "capture_stage_usage",
     "reap_pgid",
     "wait_group_or_refuse",
-    "run_stage",
     "stage_fail_msg",
     "stage_blocked_reason",
     "stage_blocked_dispose",
@@ -148,6 +154,22 @@ def test_resolve_role_call_site_stays_in_the_runner(runner_text):
     behind in the runner (it reads runner-local vars BODY_BUILD/MF_MODEL/BUILD_MODEL)."""
     assert re.search(r'(?m)^resolve_role build ', runner_text), \
         "the resolve_role call for the build role must remain in tools/dev-runner.sh"
+
+
+def test_run_stage_lives_only_in_stage_lib_and_carries_no_shadow_seat_trace(lib_text, runner_text):
+    """run_stage() is excluded from the verbatim FUNCTIONS pin above (it-36 slice A edited it after
+    #467's move), so this test covers what that pin would otherwise have covered: the extraction's
+    "vanished from the runner" half still holds for run_stage specifically, and `base_url` — the
+    shadow review seat's only trace in this function ($6, the ANTHROPIC_BASE_URL override) — is gone
+    from both files, not just renamed or shuffled."""
+    assert re.search(r'(?m)^run_stage\(\)\{', lib_text), \
+        "run_stage() must be DEFINED in tools/stage_lib.sh"
+    assert not re.search(r'(?m)^run_stage\(\)\{', runner_text), \
+        "run_stage() must no longer be DEFINED in tools/dev-runner.sh (it moved to stage_lib.sh)"
+    assert "base_url" not in lib_text, \
+        "tools/stage_lib.sh must carry no base_url — the shadow review seat's only trace in run_stage"
+    assert "base_url" not in runner_text, \
+        "tools/dev-runner.sh must carry no base_url — the shadow review seat's only trace in run_stage"
 
 
 def test_stage_lib_is_valid_bash_syntax():

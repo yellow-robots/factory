@@ -18,9 +18,10 @@ Two finding sources, one label per row:
                       The anchor is ``textutil.marker_line_matches(..., mode="prefix")`` on the RAW line
                       — column 0, no ``.strip()`` and no ``\\s*`` tolerance — the same discipline
                       ``tools/epic_gate.py:453``/``:463`` and ``tools/dev-runner.sh:262`` use for their
-                      own markers. It matters because the shadow review seat's PR comment blockquotes its
-                      transcript (``tools/dev-runner.sh:2235``), so a shadow nit arrives indented behind
-                      ``> `` and never sits at column 0 — column-0 anchoring is exactly what keeps shadow
+                      own markers. It matters because a quoted review transcript (e.g. a bench replay's
+                      candidate transcript, reproduced verbatim wherever it is read back) can carry an
+                      embedded ``YR-NIT:`` line, and quoting always indents it behind ``> `` so it never
+                      sits at column 0 — column-0 anchoring is exactly what keeps a quoted transcript's
                       nits out of the harvest.
 
   source: heuristic — when a finding carries NO record, the prose parser recovers repo-relative paths
@@ -85,8 +86,7 @@ _TREE_TEXT_SUFFIXES = {".py", ".sh", ".md", ".toml", ".yml", ".yaml", ".json", "
 # that isn't a real file, so this stays deliberately permissive — it degrades precision, never a run.
 _PROSE_PATH_RE = re.compile(r"(?:[\w.-]+/)+[\w.-]+|[\w-]+\.[A-Za-z][\w]*")
 
-# The PR (or issue) number an `issues/comments` entry belongs to lives in its `issue_url` tail, matching
-# tools/bench_report.py's own reader.
+# The PR (or issue) number an `issues/comments` entry belongs to lives in its `issue_url` tail.
 _ISSUE_URL_RE = re.compile(r"/issues/(\d+)")
 
 
@@ -94,7 +94,7 @@ def parse_nit(raw_line):
     """One record row ({tag, path, line, sentence, source='record'}) from a RAW comment line, or None
     when the line is not a column-0 ``YR-NIT:`` record. The stored ``line`` is provenance only — kept on
     the row, never used to locate anything. Indentation or a blockquote prefix means `startswith` is
-    False, so an indented or `> `-quoted YR-NIT never matches (the shadow-transcript guard)."""
+    False, so an indented or `> `-quoted YR-NIT never matches (the bench-transcript guard)."""
     if not textutil.marker_line_matches(raw_line, NIT_PREFIX, mode="prefix"):
         return None
     payload = raw_line[len(NIT_PREFIX):]
@@ -204,9 +204,9 @@ def prose_findings(body):
     raises: an unparseable body simply yields no rows, so the absent-record path never fails a build.
 
     Blockquoted lines (a `>` prefix) and off-column `YR-NIT:` marker lines are skipped: those are quoted
-    transcript or teaching/example content, not the reviewer's own prose. This extends the column-0 shadow
-    guard to the heuristic path — a shadow nit blockquoted behind `> ` must not leak back in as a
-    heuristic row just because its `path=` token is still readable inside the quote."""
+    transcript or teaching/example content, not the reviewer's own prose. This extends the column-0
+    quoted-transcript guard to the heuristic path — a quoted nit blockquoted behind `> ` must not leak
+    back in as a heuristic row just because its `path=` token is still readable inside the quote."""
     rows = []
     seen = set()
     for line in (body or "").splitlines():
@@ -257,8 +257,9 @@ def findings_from_comment(pr, body):
 # The two positions, both defensible: strictness says a near-miss must fail visibly or reviewers
 # learn sloppy emission still works; the absent-record contract says a finding with no valid record
 # should degrade to `source: heuristic`, never vanish. Note the blockquote half is NOT in dispute —
-# `> `-prefixed markers must stay excluded either way, because the shadow seat blockquotes its whole
-# transcript and recovering those would double-count the corpus.
+# `> `-prefixed markers must stay excluded either way, because a quoted review transcript (e.g. a
+# bench replay's own candidate transcript) blockquotes its whole body and recovering those would
+# double-count the corpus.
 
 
 def _comment_pr(comment):

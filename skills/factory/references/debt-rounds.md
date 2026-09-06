@@ -188,8 +188,9 @@ Two finding sources, **one label per row**. A **record** row is a line beginning
 rule the record grammars above and `tools/epic_gate.py` share. The grammar is defined once, in
 `tools/nit_harvest.py`'s module docstring — `YR-NIT: tag=<blocker|nit> path=<repo-relative path>
 [line=<n>] — <one sentence>` — and cited, never re-defined, from anywhere else. Column-0 anchoring is
-what keeps **shadow** nits out of the harvest: the shadow review seat blockquotes its transcript
-(`tools/dev-runner.sh`), so a shadow nit arrives indented behind `> ` and never sits at column 0. When a
+what keeps a **quoted transcript's** nits out of the harvest: a quoted review transcript (e.g. a bench
+replay's own candidate transcript, reproduced verbatim wherever it is read back) blockquotes its whole
+body, so a quoted nit arrives indented behind `> ` and never sits at column 0. When a
 finding carries **no** record, a **heuristic** row is recovered from prose and labelled as such — a path
 that **degrades precision, never a run**: the absent-record path never raises and never fails a build. A
 stored `line` is **provenance only** — a pointer back to the comment, never an actionable line: the

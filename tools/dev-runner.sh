@@ -53,12 +53,6 @@ EFFORT="${EFFORT:-high}"
 # ranked) OR a raw unregistered id (the ONLY place a non-registry id runs — unranked + loudly warned,
 # never bounced). MODELS_REGISTRY overrides the registry file (default: the factory's own models.toml).
 BUILD_MODEL="${BUILD_MODEL:-}"; REVIEW_MODEL="${REVIEW_MODEL:-}"
-# Shadow review seat (issue #165): a non-gating SECOND verdict on every gating review round, dark by
-# default. BOTH keys must be set — YR_SHADOW_MODEL (the model id to run the shadow reviewer under) and
-# YR_SHADOW_BASE_URL (an ANTHROPIC_BASE_URL override applied to that ONE shadow subprocess only) — or the
-# whole feature is inert: no shadow subprocess, no shadow artifact, no shadow comment. Never wired into
-# the review gate, terminal_approval, or the merge evaluator (see shadow_review_round below).
-YR_SHADOW_MODEL="${YR_SHADOW_MODEL:-}"; YR_SHADOW_BASE_URL="${YR_SHADOW_BASE_URL:-}"
 DEV_RUNNER_HOME="${DEV_RUNNER_HOME:-$HOME/.cache/dev-runner}"
 # DoR Type gate: build only this native Issue Type. Empty disables it (repos without Issue Types).
 # Use the no-colon form so an explicit REQUIRE_ISSUE_TYPE='' stays empty (a true opt-out), not defaulted.
@@ -1107,7 +1101,6 @@ ledger_append(){
     --run-dir "$RUN_DIR" \
     --build-model "${BUILD_ID:-}" --review-model "${REVIEW_ID:-}" \
     --check-repair-model "${CHECK_REPAIR_ID:-}" --review-repair-model "${REVIEW_REPAIR_ID:-}" \
-    --shadow-model "${YR_SHADOW_MODEL:-}" \
     --outcome-type "$1" --outcome-decision "${2:-}" \
     --ts-start "${RUN_START_ISO:-$now_iso}" --ts-end "$now_iso" --wall-seconds "$wall" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then log "ledger: row appended ($1)"; else log "warn: ledger append failed (non-fatal): $out"; fi
@@ -1765,40 +1758,19 @@ python3 "$SELF_DIR/review_bundle.py" init --bundle "$BUNDLE" \
 # no stake, and fail-closed (anything but a clear APPROVE blocks). The verdict is attached to the PR.
 REVIEW_SYS="You are the REVIEWER stage, independent of the implementer and tester. Review the STAGED changes (run: git diff --cached) against the ACCEPTANCE CRITERIA below — for correctness, maintainability, simplicity, and security. Treat a contract RE-IMPLEMENTED within the files this change touches, or their immediate seam, as a finding — a second reader of a manifest key, a second matcher for a record grammar, a second home for an identifier. Do NOT judge duplication beyond that scope: a change is not required to know what the rest of the repo looks like, the round's system-shape arm owns the wider view, and a reviewer hunting clones repo-wide reports noise instead of defects. Emit every finding as a line beginning 'YR-NIT:' at column 0, in addition to your prose, for findings of EITHER tag — the payload is 'tag=<blocker|nit> path=<repo-relative path> [line=<n>] — <one sentence>', and the grammar's single home is tools/nit_harvest.py. Tag each finding 'blocker' or 'nit'. Do NOT modify any files. End your reply with a final line that is exactly 'VERDICT: APPROVE' if there are zero blockers, or 'VERDICT: REQUEST_CHANGES' otherwise."
 
-# ---- shadow review seat (issue #165): a non-gating SECOND verdict on the SAME review bundle every
-# gating round produces. Dark unless BOTH YR_SHADOW_MODEL and YR_SHADOW_BASE_URL are set — then a pure
-# no-op: no subprocess, no artifact, no comment (byte-identical to before this feature existed). Any
-# failure here is best-effort logged and NEVER escalated — this must not touch the review gate below,
-# terminal_approval, or the merge evaluator. Artifact naming mirrors the capture_stage_usage suffix
-# pattern (:683-698 above): round 1 -> shadow-review.md, round 2 -> shadow-review-2.md.
-SHADOW_ROUNDS=()
-shadow_review_round(){
-  [ -n "$YR_SHADOW_MODEL" ] && [ -n "$YR_SHADOW_BASE_URL" ] || return 0
-  local out="$RUN_DIR/shadow-review.md" n=2
-  while [ -e "$out" ]; do out="$RUN_DIR/shadow-review-$n.md"; n=$((n + 1)); done
-  local rc=0
-  run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" \
-    "$out" "Read Bash" "$YR_SHADOW_MODEL" "$YR_SHADOW_BASE_URL" || rc=$?
-  [ "$rc" -ne 0 ] && log "shadow review stage failed (exit $rc; log: $out) — non-gating, build proceeds unchanged"
-  SHADOW_ROUNDS+=("$out")
-  return 0
-}
-
 review_stage(){ "$GIT_BIN" -C "$WT" add -A
                 local rc=0
                 run_stage "$REVIEW_SYS" "$(printf 'Review the staged changes against the acceptance criteria below. The full review bundle (diff with base/head SHAs, acceptance criteria, check output, resolved build/review models) is at: %s\n\n%s' "$BUNDLE" "$SPEC")" "$RUN_DIR/review.md" "Read Bash" "$REVIEW_ID" || rc=$?
-                # bg_scan (issue #306): capture THIS round's own scan result before shadow_review_round
-                # below runs its own run_stage call and overwrites LAST_STAGE_BG_UNRESOLVED/_REASON. NOT
-                # `local` — the caller reads REVIEW_ROUND_BG_UNRESOLVED/_REASON after every review_stage
-                # call (first round AND the post-repair verification round) to name this round's own
-                # cause in whatever message it builds, rather than leaving it stranded in this function's
-                # own `log` line below.
+                # bg_scan (issue #306): capture THIS round's own scan result right away. NOT `local` —
+                # the caller reads REVIEW_ROUND_BG_UNRESOLVED/_REASON after every review_stage call
+                # (first round AND the post-repair verification round) to name this round's own cause in
+                # whatever message it builds, rather than leaving it stranded in this function's own
+                # `log` line below.
                 REVIEW_ROUND_BG_UNRESOLVED="$LAST_STAGE_BG_UNRESOLVED"
                 REVIEW_ROUND_BG_REASON="$LAST_STAGE_BG_REASON"
                 if [ "$rc" -ne 0 ] && [ "$LAST_STAGE_GROUP_REFUSED" -eq 0 ] && is_quota_failure "$RUN_DIR/review.md"; then llm_quota_hold "review" "$RUN_DIR/review.md"; fi
                 python3 "$SELF_DIR/review_bundle.py" record-verdict --bundle "$BUNDLE" --file "$RUN_DIR/review.md" \
                   || fail_blocked "review bundle record-verdict failed"
-                shadow_review_round   # non-gating second opinion (issue #165) — never affects the verdict below
                 # bg_scan: an unresolved conversion in the reviewer's OWN transcript is treated as not a
                 # clean APPROVE — the existing fail-closed verdict path below takes over (a first-round hit
                 # sends this to review-repair; a second-round hit blocks) — logged, but the verdict record
@@ -1962,36 +1934,6 @@ retry_with_backoff push_attempt "push" || pr_stage_hold "push" "$RETRY_ERR"
 PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$BUILD_ID" "$REVIEW_ID")"
 retry_with_backoff pr_create_attempt "pr create" || pr_stage_hold "pr create" "$RETRY_ERR"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
-
-# ---- shadow review comments (issue #165): one inert comment per shadow round recorded above. Never
-# posted at all when the feature is dark (SHADOW_ROUNDS stays empty). The transcript is blockquoted so no
-# line can match the line-anchored gating token (`^VERDICT:`) — the first line names the extracted verdict
-# (same last-line exact-match rule as verdict_line()) under a marker that is never the gating grammar.
-shadow_verdict_token(){   # $1 = a shadow-review file -> its bare verdict token, or NONE if no VERDICT: line landed
-  local line; line="$(verdict_line "$1")"
-  [ -n "$line" ] && printf '%s' "${line#VERDICT: }" || printf 'NONE'
-}
-for shadow_file in "${SHADOW_ROUNDS[@]}"; do
-  shadow_comment="${shadow_file%.md}-comment.md"
-  { printf 'YR-SHADOW-REVIEW: %s\n\n' "$(shadow_verdict_token "$shadow_file")"
-    sed 's/^/> /' "$shadow_file"; } > "$shadow_comment"
-  "$GH_BIN" pr comment "$PR_URL" --body-file "$shadow_comment" >/dev/null 2>&1 || true
-done
-
-# ---- verdict-diff records (issue #166): pairs each gating round (tools/review_bundle.py's `rounds`
-# list — the only per-round store, since review.md itself is overwritten each round) with its OWN
-# shadow round from SHADOW_ROUNDS above, and lands one inert `YR-VERDICT-DIFF` PR comment + one
-# yr-verdict-diff/1 record file per pair. A round with no shadow record is skipped by
-# tools/verdict_diff.py itself — never a synthesized disagreement. Best-effort like the shadow seat
-# above: never touches the gate, terminal_approval, or the merge evaluator, and never blocks the
-# build. Merge outcome is NOT written here (slice F backfills it at aggregation time). A complete
-# no-op when the shadow seat is dark (SHADOW_ROUNDS empty) — no subprocess, no artifact, no comment.
-if [ "${#SHADOW_ROUNDS[@]}" -gt 0 ]; then
-  while IFS= read -r vdiff_comment; do
-    [ -n "$vdiff_comment" ] || continue
-    "$GH_BIN" pr comment "$PR_URL" --body-file "$vdiff_comment" >/dev/null 2>&1 || true
-  done < <(python3 "$SELF_DIR/verdict_diff.py" run --run-dir "$RUN_DIR" --bundle "$BUNDLE" 2>/dev/null || true)
-fi
 
 # staleness warning (issue #58) — the one drift alarm's runner-side instance (tools/drift.py, it-33
 # slice 4, issue #458), PR-comment-shaped: additive alongside the reviewer verdict + usage summary, and

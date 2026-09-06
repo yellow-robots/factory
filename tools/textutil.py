@@ -55,7 +55,7 @@ def marker_line_matches(line: str, marker: str, *, mode: str) -> bool:
       * ``mode="prefix"`` — the line's RAW, unstripped text begins with `marker` at column 0
         (``line.startswith(marker)``), with NO whitespace tolerance: an indented line, a ``> ``-blockquoted
         line, or an inline mention never matches — the anchor guarantees the marker leads its own physical
-        line (the shadow-/bench-transcript guard).
+        line (the bench-transcript guard).
 
     The difference between the two is deliberate and load-bearing; the helper never unifies them. An
     unrecognized `mode` is a programming error, raised rather than guessed.

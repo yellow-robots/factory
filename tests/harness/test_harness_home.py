@@ -8,7 +8,7 @@ Covered criteria:
   * the contract doc is the one authoritative surface for the flag families, the prompt transport, and
     how a stage is recognized;
   * stage classification flows only through the shared fake's classifier — no re-implementation of the
-    case block remains in either consuming suite (tests/test_dev_runner.py, tests/test_shadow_review.py);
+    case block remains in the consuming suite (tests/test_dev_runner.py);
   * the literal-pinning guard moved alongside the classifier and still fails loudly when a runner prompt
     literal is dropped.
 """
@@ -30,10 +30,6 @@ RUNNER = ROOT / "tools" / "dev-runner.sh"
 sys.path.insert(0, str(HARNESS))
 import claude_fake  # noqa: E402
 import test_claude_fake_contract as guard_mod  # noqa: E402
-
-# the four routing literals `tools/dev-runner.sh` bakes into its per-stage prompts, in the order the
-# shared classifier's case block matches them (see tests/harness/contract.md's table).
-ROUTING_LITERALS = ("*REVIEWER*", '*"REQUESTED CHANGES"*', "*TESTER*", '*"tests FAIL"*')
 
 
 # --------------------------------------------------------------------------------------------------
@@ -87,10 +83,6 @@ def _plain_string_assignments(path):
     return out
 
 
-def _is_full_classifier_reimplementation(text):
-    return 'case "$args" in' in text and all(lit in text for lit in ROUTING_LITERALS)
-
-
 def test_dev_runner_claude_stub_is_imported_not_reimplemented():
     """Acceptance: the primary stage-aware stub's case block in tests/test_dev_runner.py is gone — the
     module's own CLAUDE_STUB (the name every other stub in that file, and the whole suite, keys off)
@@ -108,28 +100,6 @@ def test_dev_runner_imports_the_shared_claude_fake():
     src = (TESTS / "test_dev_runner.py").read_text()
     assert "import claude_fake" in src, \
         "tests/test_dev_runner.py must import tests/harness/claude_fake, the classifier's one legal home"
-
-
-def test_shadow_review_does_not_reimplement_the_base_classifier():
-    """Acceptance: the two shadow re-implementations in tests/test_shadow_review.py (CLAUDE_STUB_SHADOW
-    and its JSON twin) are gone — the shadow suite must derive its shadow-aware stub from the shared
-    fake's classifier (e.g. by locating an arm to splice into, the way tests/test_dev_runner.py's
-    LINT_CLAUDE_STUB derives via .replace() rather than retyping), never by hand-typing a fresh copy of
-    the full case block."""
-    assignments = dict(_plain_string_assignments(TESTS / "test_shadow_review.py"))
-    reimplemented = [name for name, text in assignments.items() if _is_full_classifier_reimplementation(text)]
-    assert not reimplemented, (
-        f"tests/test_shadow_review.py hand-types its own full classifier case block in {reimplemented}; "
-        "it must derive from tests/harness/claude_fake.CLAUDE_STUB instead"
-    )
-
-
-def test_shadow_review_consumes_the_shared_claude_fake():
-    src = (TESTS / "test_shadow_review.py").read_text()
-    assert "claude_fake" in src, (
-        "tests/test_shadow_review.py must consume tests/harness/claude_fake (directly or via "
-        "test_dev_runner's import of it), the classifier's one legal home, rather than defining its own"
-    )
 
 
 # --------------------------------------------------------------------------------------------------

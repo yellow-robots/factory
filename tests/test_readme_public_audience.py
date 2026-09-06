@@ -92,7 +92,6 @@ def test_whats_here_names_the_previously_omitted_surfaces():
         "tools/stage_usage.py",
         "tools/bench_corpus.py",
         "tools/bench_replay.py",
-        "tools/verdict_diff.py",
         "qa/",
     ]:
         assert path in section, \

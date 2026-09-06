@@ -97,8 +97,9 @@ def test_the_charter_instructs_a_line_anchored_record():
     assert "YR-NIT:" in body, "the charter does not instruct the YR-NIT record"
     assert "column 0" in body, (
         "the charter does not state the record's anchoring. Column-0 anchoring is load-bearing: "
-        "the shadow seat runs this same prompt and blockquotes its transcript, so anchoring at "
-        "column 0 is what keeps shadow nits out of the harvest"
+        "a quoted review transcript (e.g. a bench replay's own candidate transcript) blockquotes "
+        "its whole body, so anchoring at column 0 is what keeps a quoted transcript's nits out of "
+        "the harvest"
     )
 
 

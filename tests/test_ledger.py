@@ -447,9 +447,6 @@ def test_ledger_resolve_transcript_delegates_to_the_real_stage_usage_module(monk
 #     whose log still holds an unextracted result envelope (an rc != 0 stage), assigned the next free
 #     dedup suffix when its stage name is already taken — never overwriting or double-counting;
 #   * weighted totals use stage_usage.WEIGHTED_TOTAL_WEIGHTS/build_summary unchanged;
-#   * a shadow-review-seat stage (shadow-review*.md, scanned only when shadow_model is set) is recorded
-#     in the per-stage array but excluded from totals.weighted_total, and never causes the row to be
-#     skipped even carrying an unregistered model id;
 #   * repairs are counted by ARTIFACT NAME (repair.log / review-repair.log), never by usage-*-N.json
 #     suffix (a second review round is not itself a "review repair");
 #   * append_row holds a blocking flock so concurrent writers each land exactly one, uninterleaved row.
@@ -467,7 +464,7 @@ def _build_row(run_dir, *, outcome_type="merged", outcome_decision="MERGED", **o
     kw = dict(run_id="5-1234", task="acme/widgets#5", repo="acme/widgets", branch="task/5-x",
               base_sha="a" * 40, run_dir=run_dir, build_model="claude-sonnet-5",
               review_model="claude-opus-4-8", check_repair_model="", review_repair_model="",
-              shadow_model="", outcome_type=outcome_type, outcome_decision=outcome_decision,
+              outcome_type=outcome_type, outcome_decision=outcome_decision,
               ts_start="2026-01-01T00:00:00Z", ts_end="2026-01-01T00:05:00Z", wall_seconds=300)
     kw.update(overrides)
     return ledger.build_ledger_row(**kw)
@@ -594,50 +591,13 @@ def test_build_ledger_row_repairs_zero_when_no_repair_artifacts(tmp_path):
 
 
 def test_build_ledger_row_repairs_never_confused_with_a_suffixed_review_round(tmp_path):
-    """A second review round's own usage-review-2.json (a normal repair cycle, or the shadow seat) must
-    NOT itself be counted as a review repair — only review-repair.log/usage-review-repair.json does."""
+    """A second review round's own usage-review-2.json (a normal repair cycle) must NOT itself be
+    counted as a review repair — only review-repair.log/usage-review-repair.json does."""
     run_dir = tmp_path / "run"
     _usage_file(run_dir, "review", input_tokens=1)
     _usage_file(run_dir, "review-2", input_tokens=1)
     row = _build_row(run_dir)
     assert row["repairs"]["review"] == 0
-
-
-def test_build_ledger_row_shadow_stage_recorded_but_excluded_from_totals(tmp_path):
-    """A shadow-review-seat stage is recorded in the per-stage array (tagged with its own, possibly
-    unregistered, model) but excluded from the run's weighted total — and never causes the row itself
-    to be skipped."""
-    run_dir = tmp_path / "run"
-    _usage_file(run_dir, "implement", input_tokens=100)
-    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
-    row = _build_row(run_dir, shadow_model="some-unregistered-cross-vendor-model")
-    stages = {s["stage"]: s for s in row["stages"]}
-    assert "shadow-review" in stages
-    assert stages["shadow-review"]["model"] == "some-unregistered-cross-vendor-model"
-    assert stages["shadow-review"]["source"] == "envelope"
-    # totals reflect ONLY the non-shadow stage — the shadow stage never folds into the census total.
-    assert row["totals"]["weighted_total"] == stages["implement"]["weighted_total"]
-    assert row["totals"]["input_tokens"] == 100
-
-
-def test_build_ledger_row_shadow_files_ignored_when_the_seat_is_dark(tmp_path):
-    """Dark by default (no shadow_model passed): a stray shadow-review*.md is never even scanned."""
-    run_dir = tmp_path / "run"
-    (run_dir / "shadow-review.md").parent.mkdir(parents=True, exist_ok=True)
-    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
-    row = _build_row(run_dir, shadow_model="")
-    assert row["stages"] == []
-
-
-def test_build_ledger_row_second_shadow_round_dedup_suffixed(tmp_path):
-    run_dir = tmp_path / "run"
-    (run_dir).mkdir(parents=True, exist_ok=True)
-    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
-    (run_dir / "shadow-review-2.md").write_text(_envelope_line(session_id="sh2") + "\n")
-    row = _build_row(run_dir, shadow_model="acme/shadow-model")
-    stages = {s["stage"] for s in row["stages"]}
-    assert stages == {"shadow-review", "shadow-review-2"}
-    assert row["totals"]["weighted_total"] == 0   # both shadow rounds excluded from the census total
 
 
 def test_append_row_creates_ledger_dir_and_writes_one_line(tmp_path):
@@ -760,9 +720,8 @@ def test_cli_append_succeeds_even_when_run_dir_does_not_exist(tmp_path):
 # Derived from the CRITERIA (the spec), not the implementation's internals:
 #   * each stage's `price` is the registry's input_price_per_mtok for that stage's OWN model id — never
 #     the role — null when the id is unregistered (never an error, never skips the stage or the row);
-#   * totals.shadow_cost_usd = sum(weighted_total x price) over non-shadow, priced stages only — an
-#     unpriced or shadow-review-seat stage contributes nothing to the sum, but is never dropped from
-#     `stages` or from the raw-count totals;
+#   * totals.shadow_cost_usd = sum(weighted_total x price) over priced stages only — an unpriced stage
+#     contributes nothing to the sum, but is never dropped from `stages` or from the raw-count totals;
 #   * the price is snapshotted onto the row itself, so shadow_cost_usd is reproducible by summing the
 #     row's own stored per-stage price x weighted_total — a read over the row, not a re-run of the build.
 
@@ -825,29 +784,17 @@ def test_build_ledger_row_shadow_cost_usd_excludes_unpriced_stage_but_keeps_its_
     assert row["totals"]["input_tokens"] == 1000 + 5000
 
 
-def test_build_ledger_row_shadow_cost_usd_excludes_shadow_review_seat_stage(tmp_path):
-    """Shadow-review-seat stages are already excluded from weighted_total (issue #206); #207 must keep
-    them out of shadow_cost_usd too, even when the shadow model happens to carry a registry price."""
-    run_dir = tmp_path / "run"
-    _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=1000)
-    (run_dir / "shadow-review.md").write_text(_envelope_line(session_id="sh1") + "\n")
-    row = _build_row(run_dir, shadow_model="claude-opus-4-8")
-    stages = {s["stage"]: s for s in row["stages"]}
-    assert "shadow-review" in stages
-    assert row["totals"]["shadow_cost_usd"] == stages["implement"]["weighted_total"] * 3.00 / 1_000_000
-
-
 def test_build_ledger_row_shadow_cost_recomputable_purely_from_the_rows_own_stored_fields(tmp_path):
     """"the price snapshot SHALL be stored beside the raw counts so rows re-weight as a read, not a
-    re-run": summing each non-shadow, priced stage's own stored price x weighted_total (/1,000,000 — issue
-    #313, true dollars), straight off the row already on disk, must reproduce totals.shadow_cost_usd
-    exactly — no registry lookup, no re-running the build."""
+    re-run": summing each priced stage's own stored price x weighted_total (/1,000,000 — issue #313,
+    true dollars), straight off the row already on disk, must reproduce totals.shadow_cost_usd exactly
+    — no registry lookup, no re-running the build."""
     run_dir = tmp_path / "run"
     _usage_file(run_dir, "implement", model="claude-sonnet-5", input_tokens=1000, output_tokens=50)
     _usage_file(run_dir, "review", model="claude-opus-4-8", input_tokens=10, output_tokens=5)
     row = _build_row(run_dir)
     recomputed = sum(s["weighted_total"] * s["price"] for s in row["stages"]
-                      if not s["stage"].startswith("shadow-review") and s.get("price") is not None) / 1_000_000
+                      if s.get("price") is not None) / 1_000_000
     assert recomputed == row["totals"]["shadow_cost_usd"]
 
 

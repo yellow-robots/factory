@@ -9,7 +9,7 @@ can inject arbitrary transcript content into the ONE session file every stage in
 prove "this stage's OWN transcript had an unresolved conversion, that one's didn't" without needing a
 live CLI. Derived by locating each arm's own `echo <MARKER> >> "$STUB_TIMELINE"` line in
 claude_fake.CLAUDE_STUB_JSON and splicing one hook line after it (never by re-typing the classifier
-itself — see tests/harness/contract.md and tests/test_shadow_review.py for the derivation precedent).
+itself — see tests/harness/contract.md for the derivation precedent).
 
 Covered:
   * an unresolved conversion in the implement or test stage's OWN transcript fails that stage via the
@@ -24,7 +24,6 @@ Covered:
     shows what the round actually said;
   * a dedup-suffixed second review round scans its OWN archived file — a hit there never leaks
     backward onto round 1's transcript;
-  * the non-gating shadow review round: a hit there is logged but never blocks the build;
   * a missing/heuristically-attributed transcript never gates, even carrying the same marker text.
 """
 import json
@@ -89,16 +88,12 @@ def _write(tmp_path, name, content):
 # between calls), gated on an env var naming a fixture file to copy into the ONE session transcript
 # file every stage's own archive_stage_transcript call resolves to (STUB_SESSION_ID fixed for the
 # whole run — see _bg_setup below). The REVIEWER arm is instead replaced WHOLESALE (it can run up to
-# three times in one pipeline run — gating round 1, the post-repair gating round 2, and the
-# non-gating shadow round — so each call must reset the transcript file to a known-clean baseline
-# when its OWN content var isn't set, or an earlier round's injected content would leak forward into
-# a later round that never asked for it): it distinguishes the shadow round (ANTHROPIC_BASE_URL set
-# on that one subprocess only, the same signal test_shadow_review.py's derivation uses) from the
-# gating round, giving the shadow call its own SHADOWREVIEW timeline marker (never REVIEW) so the two
-# are never conflated by a plain timeline count — and separately distinguishes the gating round's
-# first pass (no `review_repaired` marker yet) from its post-repair second pass.
+# two times in one pipeline run — gating round 1 and the post-repair gating round 2 — so each call
+# must reset the transcript file to a known-clean baseline when its OWN content var isn't set, or an
+# earlier round's injected content would leak forward into a round that never asked for it): it
+# distinguishes the gating round's first pass (no `review_repaired` marker yet) from its post-repair
+# second pass.
 # ---------------------------------------------------------------------------
-_BG_PREAMBLE = 'is_bg_shadow=0\n[ -n "${ANTHROPIC_BASE_URL:-}" ] && is_bg_shadow=1\n'
 
 def _stage_hook(var):
     """Every single-round arm resets the shared transcript file to the known-clean baseline unless
@@ -123,22 +118,15 @@ _BASE_JSON_REVIEWER_ARM = '''  *REVIEWER*)
     fi ;;'''
 
 _BG_JSON_REVIEWER_ARM = '''  *REVIEWER*)
-    if [ "$is_bg_shadow" = 1 ]; then
-      echo SHADOWREVIEW >> "$STUB_TIMELINE"
-      _bgsrc="${STUB_BG_CONTENT_SHADOW_REVIEW:-${STUB_BG_CLEAN_FILE:-}}"
-      [ -n "${STUB_BG_TRANSCRIPT_FILE:-}" ] && [ -n "$_bgsrc" ] && cp "$_bgsrc" "$STUB_BG_TRANSCRIPT_FILE"
-      emit_json "VERDICT: APPROVE" 71 72 73 74 700
+    echo REVIEW >> "$STUB_TIMELINE"
+    if [ -f review_repaired ]; then _bgsrc="${STUB_BG_CONTENT_REVIEW_ROUND2:-${STUB_BG_CLEAN_FILE:-}}"
+    else _bgsrc="${STUB_BG_CONTENT_REVIEW_ROUND1:-${STUB_BG_CLEAN_FILE:-}}"
+    fi
+    [ -n "${STUB_BG_TRANSCRIPT_FILE:-}" ] && [ -n "$_bgsrc" ] && cp "$_bgsrc" "$STUB_BG_TRANSCRIPT_FILE"
+    if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then
+      emit_json "VERDICT: REQUEST_CHANGES" 11 12 13 14 100
     else
-      echo REVIEW >> "$STUB_TIMELINE"
-      if [ -f review_repaired ]; then _bgsrc="${STUB_BG_CONTENT_REVIEW_ROUND2:-${STUB_BG_CLEAN_FILE:-}}"
-      else _bgsrc="${STUB_BG_CONTENT_REVIEW_ROUND1:-${STUB_BG_CLEAN_FILE:-}}"
-      fi
-      [ -n "${STUB_BG_TRANSCRIPT_FILE:-}" ] && [ -n "$_bgsrc" ] && cp "$_bgsrc" "$STUB_BG_TRANSCRIPT_FILE"
-      if [ -n "${STUB_REVIEW_BLOCK:-}" ] && [ ! -f review_repaired ]; then
-        emit_json "VERDICT: REQUEST_CHANGES" 11 12 13 14 100
-      else
-        emit_json "VERDICT: APPROVE" 21 22 23 24 200
-      fi
+      emit_json "VERDICT: APPROVE" 21 22 23 24 200
     fi ;;'''
 
 
@@ -147,12 +135,8 @@ def _splice(src, marker, hook):
     return src.replace(marker, marker + hook, 1)
 
 
-CLAUDE_STUB_JSON_BG = claude_fake.CLAUDE_STUB_JSON.replace(
-    'case "$args" in\n', _BG_PREAMBLE + 'case "$args" in\n', 1,
-)
-assert CLAUDE_STUB_JSON_BG != claude_fake.CLAUDE_STUB_JSON, "preamble splice did not match"
 assert claude_fake.CLAUDE_STUB_JSON.count(_BASE_JSON_REVIEWER_ARM) == 1, "REVIEWER arm text drifted"
-CLAUDE_STUB_JSON_BG = CLAUDE_STUB_JSON_BG.replace(_BASE_JSON_REVIEWER_ARM, _BG_JSON_REVIEWER_ARM, 1)
+CLAUDE_STUB_JSON_BG = claude_fake.CLAUDE_STUB_JSON.replace(_BASE_JSON_REVIEWER_ARM, _BG_JSON_REVIEWER_ARM, 1)
 CLAUDE_STUB_JSON_BG = _splice(CLAUDE_STUB_JSON_BG, 'echo REVIEWFIX >> "$STUB_TIMELINE"\n', _HOOK_REVIEWFIX)
 CLAUDE_STUB_JSON_BG = _splice(CLAUDE_STUB_JSON_BG, 'echo TEST >> "$STUB_TIMELINE"\n', _HOOK_TEST)
 CLAUDE_STUB_JSON_BG = _splice(CLAUDE_STUB_JSON_BG, 'echo REPAIR >> "$STUB_TIMELINE"\n', _HOOK_REPAIR)
@@ -368,26 +352,6 @@ def test_review_repair_unresolved_blocks_even_after_green_recheck_and_reapprove(
     comments = " ".join(base._comments(tl))
     assert "bgtaskreviewfix" in comments
     assert "final.patch" in comments                       # the block names the salvage pointer too
-
-
-# ============ the non-gating shadow review round stays fail-soft ============
-
-def test_shadow_review_round_unresolved_conversion_never_blocks(tmp_path):
-    """The gating round's own transcript stays clean; only the shadow round's own archived transcript
-    carries the unresolved marker — logged, but the build proceeds unchanged (the shadow seat's
-    standing non-gating rule, issue #165)."""
-    env, work, binp = _bg_setup(tmp_path, "Shadow review unresolved bg task")
-    env["YR_SHADOW_MODEL"] = "shadow-test-model"
-    env["YR_SHADOW_BASE_URL"] = "https://shadow.example.test/v1"
-    env["STUB_BG_CONTENT_SHADOW_REVIEW"] = str(_write(tmp_path, "shadow_unresolved.jsonl", transcript_unresolved("bgtaskshadow")))
-    r = base._run(["5", "--repo", "test/repo"], env)
-    assert r.returncode == 0, r.stderr
-    assert "https://stub/pr/1" in r.stdout
-    tl = base._timeline(tmp_path)
-    assert tl.count("REVIEW") == 1 and "REVIEWFIX" not in tl   # the gating round approved cleanly
-    assert "SHADOWREVIEW" in tl                                # the shadow round still ran
-    assert "unresolved background-task conversion" in r.stderr.lower()
-    assert "bgtaskshadow" in r.stderr
 
 
 # ============ missing / heuristically-attributed transcripts never gate ============

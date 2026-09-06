@@ -160,7 +160,7 @@ _ENV_ALLOW_KEYS = {
     # scripts' `os.environ.get(...)` calls (issue #237 review). MERGE_SENTINEL is here because a
     # dropped kill-switch override fails OPEN (the check is `[ -e "$MERGE_SENTINEL" ]` — an unarmed
     # default path reads as clear), so it must never silently fall back to the default.
-    "BUILD_MODEL", "REVIEW_MODEL", "YR_SHADOW_MODEL", "YR_SHADOW_BASE_URL",
+    "BUILD_MODEL", "REVIEW_MODEL",
     "GH_BIN", "CLAUDE_BIN", "GIT_BIN",
     "EFFORT", "REQUIRE_ISSUE_TYPE",
     "BASE_REPO", "BASE_REF", "CHECK_CMD", "MANIFEST_REF",

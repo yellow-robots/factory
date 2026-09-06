@@ -2,10 +2,9 @@
 
 Derived from the Issue #225 acceptance criteria (the spec), NOT from the implementation's
 internals: `.github/workflows/ci.yml`'s checkout step must fetch full history
-(`fetch-depth: 0`) so that history-pinned tests — e.g. the four pinned-range scope checks in
-tests/test_shadow_seat_and_bench_docs.py, which `git diff` a fixed commit range — can resolve on
-the certification run, rather than dying with exit 128 under the shallow (`fetch-depth: 1`)
-default.
+(`fetch-depth: 0`) so that history-pinned tests — any suite that `git diff`s a fixed commit
+range — can resolve on the certification run, rather than dying with exit 128 under the shallow
+(`fetch-depth: 1`) default.
 
 Contract history: #225 introduced full-history checkout to end the main-push standing red, when
 the workflow ran on both `pull_request` and `push: main`. it-25 retired the post-merge `push: main`
@@ -17,8 +16,9 @@ certification runs."
 This module is a file-content pin (same species as the repo's other doc/config pins): it asserts
 the workflow *declares* the setting. No test here shells out to the network.
 
-The four pinned-range tests in test_shadow_seat_and_bench_docs.py are the behavioral acceptance
-for this fix and are left byte-identical; they are not modified or duplicated here.
+The four pinned-range tests that originally motivated this fix (it-36 slice A: retired alongside
+the shadow review seat they exercised) are gone, but the full-history-checkout requirement itself
+is independent of any one consuming suite — it stays needed for any future history-pinned test.
 """
 import pathlib
 import re
