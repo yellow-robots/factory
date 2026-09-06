@@ -76,6 +76,19 @@ def frontmatter_findings(text):
     return list(meta.out_of_subset)
 
 
+def matching_theme(parsed_strategy, repo):
+    """The first theme (declared order) whose `repos` names `repo`, or `None` — "in-direction" is
+    exactly "some theme targets this repo at all". The ONE theme-matching rule over a parsed
+    strategy dict (NN2, #473 fold review round 2): moved here from `tools/design_gate.py`'s own
+    private `_matching_theme` so every reader (the design sweep, `tools/round_record.py`'s own
+    crossover) shares a public seam next to the schema it reads, rather than reaching into another
+    module's underscore-prefixed name."""
+    for theme in parsed_strategy.get("themes") or []:
+        if repo in (theme.get("repos") or []):
+            return theme
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Read a strategy note's fenced yr-strategy TOML block.")
     ap.add_argument("note", help="path to the strategy note (markdown)")

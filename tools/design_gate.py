@@ -49,8 +49,10 @@ import time
 # sibling-module imports (never `tools.`-prefixed): this runs as a bare script, `tools/` at
 # sys.path[0] — the same discipline `tools/epic_gate.py` / `tools/design_resolver.py` document.
 import board_plumbing
+import check_trail
 import ledger
 import rank
+import records
 import sources
 import strategy
 import textutil
@@ -147,14 +149,9 @@ def _has_escalation_posted(comment_bodies, repo):
     )
 
 
-# --- theme matching (tools/strategy.py) -----------------------------------------------------------------
-def _matching_theme(parsed_strategy, repo):
-    """The first theme (declared order) whose `repos` names this repository, or None — "in-direction"
-    for this slice's purposes is exactly "some theme targets this repo at all"."""
-    for theme in parsed_strategy.get("themes") or []:
-        if repo in (theme.get("repos") or []):
-            return theme
-    return None
+# --- theme matching: tools/strategy.py's own public matching_theme() (NN2, #473 fold review round 2
+#     — moved there from a private _matching_theme so tools/round_record.py's own crossover reaches
+#     a public seam, never a private one) --------------------------------------------------------
 
 
 # --- cost estimate: the mean of the repo's recent runner-PR usage, x the seed's own effort factor -------
@@ -358,7 +355,7 @@ def _process_repo(gh, entry, now, owner_login, ledger_spent_usd, pr_scan_limit,
     parsed_strategy = strategy_res["value"]
     seeds = seeds_res["value"]
 
-    theme = _matching_theme(parsed_strategy, repo)
+    theme = strategy.matching_theme(parsed_strategy, repo)
     if theme is None:
         _idle(gh, repo, triage_issue, "no strategy theme targets this repository")
         actions.append({"repo": repo, "action": "idle", "reason": "no-theme"})
@@ -453,6 +450,156 @@ def sweep_designs(*, gh=None, repos, now=None, owner_login=None, ledger_spent_us
         actions.extend(_process_repo(gh, entry, now, owner_login, ledger_spent_usd, pr_scan_limit,
                                      design_active, spawn_stage, kill_stage_group))
     return actions
+
+
+# --- the close sweep: spawns tools/close-runner.sh when an epic carries YR-CLOSE-HOLD (it-36 slice
+#     H, #473) — a SEPARATE concern from the triage/design sweep above (epics, not repo+seed pairs;
+#     sharing only the pidfile-tracked spawn SHAPE, `_default_spawn_stage`'s own precedent). The
+#     close arm itself (`tools/epic_gate.py` `:972-1004`) is UNCHANGED: this sweep only makes what
+#     it demands appear, on the epic's own trail, before the next epic-gate tick looks again — it
+#     never comments, never touches Status/Reason, never closes anything itself. ---------------------
+CLOSE_HOLD_MARKER = "YR-CLOSE-HOLD"
+CLOSE_RUNNER = os.environ.get("CLOSE_RUNNER", str(pathlib.Path(__file__).resolve().parent / "close-runner.sh"))
+
+
+def _close_pidfile(repo, epic_number):
+    d = pathlib.Path(DEV_RUNNER_HOME) / "pm"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"close-{_slug(repo)}-{epic_number}.pid"
+
+
+def _default_close_active(repo, epic_number):
+    path = _close_pidfile(repo, epic_number)
+    if not path.is_file():
+        return False
+    try:
+        pid = int(path.read_text().strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def _default_spawn_close(repo, epic_number, component_root="", strategy_doc=""):
+    """Detached spawn of `tools/close-runner.sh <repo> <epic_number> [<component_root>
+    [<strategy_doc>]]` — mirrors `_default_spawn_stage`'s own pidfile-tracked,
+    `start_new_session=True` shape, keyed by `(repo, epic_number)` rather than `(repo, seed)`: more
+    than one epic in the SAME repo can finish and hold in the same window, each earning its own
+    close stage, independent of any design draft in flight for that repo. `component_root`/
+    `strategy_doc` ride on ARGV (B3's own fix, #472 fold review): the pm-repos.json config entry
+    already declares both per repo (`_resolve_entry` reads them, the SAME fields `rank.ranked_seeds`/
+    `strategy.parse_strategy` already consume) — an env-var seam would be (a) one value shared
+    across every swept repo when each entry declares its own, and (b) stripped by dispatch's own
+    spawn-env allowlist under the PM instance, silently starving every close stage of both paths
+    forever. Positional and OPTIONAL (an absent component_root/strategy_doc still spawns — the
+    runner itself decides what it can and cannot do without them, loudly)."""
+    log_dir = pathlib.Path(DEV_RUNNER_HOME) / "runs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"close-{_slug(repo)}-{epic_number}-{int(time.time() * 1000)}.log"
+    argv = [CLOSE_RUNNER, repo, str(epic_number), component_root or "", strategy_doc or ""]
+    with open(log_path, "ab") as log_f:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                                stdout=log_f, stderr=subprocess.STDOUT, start_new_session=True)
+    _close_pidfile(repo, epic_number).write_text(str(proc.pid))
+
+
+def _carries_close_hold(texts):
+    return any(
+        any(textutil.marker_line_matches(l, CLOSE_HOLD_MARKER, mode=textutil.MARKER_SENTINEL)
+            for l in text.splitlines())
+        for text in texts
+    )
+
+
+def _already_shipped(reg, texts):
+    """True once the close lane's own mandates (`YR-ROUND-RECORD`, `YR-SHIP-WALK`) already sit on
+    the epic's trail — the SAME detector the close arm itself runs
+    (`tools/check_trail.py check_texts`), so this sweep never re-spawns a close stage for an epic
+    whose records already landed and is simply waiting for the next epic-gate tick to self-close
+    it."""
+    return not check_trail.check_texts(reg, "close", {"issue-trail": texts})
+
+
+def sweep_close(*, gh=None, epics, close_active=None, spawn_close=None):
+    """One pass over `epics` (`[{"repo": .., "number": .., "component_root": .., "strategy_doc": ..},
+    ...]` — explicit input, never board-discovered inside this pure core, mirroring
+    `sweep_designs(repos=...)`'s own rule; `main()` supplies the real, discovered list, threading
+    each repo's OWN `component_root`/`strategy_doc` from the SAME pm-repos.json config entry
+    `_resolve_entry` already reads — B3's own fix, #472 fold review). For each: fetch its trail
+    (issue body + comments — the SAME `body,comments` shape `sources.pr_trail_texts_from_json`
+    already parses, issue and PR alike); if it carries `YR-CLOSE-HOLD` and its own mandated close
+    records are not already on the trail, spawn the close stage (with that repo's own
+    `component_root`/`strategy_doc` on argv) UNLESS one is already in flight for this exact epic.
+    Every external is injectable so this is unit-testable with a `FakeGh` and no live network, no
+    live pidfiles, no real subprocess spawn."""
+    gh = gh or _gh
+    close_active = close_active or _default_close_active
+    spawn_close = spawn_close or _default_spawn_close
+    reg = records.load()
+    actions = []
+    for entry in epics:
+        repo, number = entry["repo"], entry["number"]
+        data = _as_json(gh(["issue", "view", str(number), "--repo", repo, "--json", "body,comments"]))
+        texts = sources.pr_trail_texts_from_json(data)
+        if not _carries_close_hold(texts):
+            actions.append({"repo": repo, "number": number, "action": "no-hold"})
+            continue
+        if _already_shipped(reg, texts):
+            actions.append({"repo": repo, "number": number, "action": "already-shipped"})
+            continue
+        if close_active(repo, number):
+            actions.append({"repo": repo, "number": number, "action": "in-flight"})
+            continue
+        spawn_close(repo, number, entry.get("component_root", ""), entry.get("strategy_doc", ""))
+        actions.append({"repo": repo, "number": number, "action": "spawned"})
+    return actions
+
+
+_CLOSE_HOLD_SEARCH_LIMIT = 200
+
+
+def _default_discover_close_hold(gh, repo):
+    """`main()`'s own real discovery (never the tested core above): a full-text search over `repo`'s
+    OPEN issues carrying the `YR-CLOSE-HOLD` sentinel — the SAME set `tools/epic_gate.py`'s own
+    sweep already comments on (a held epic stays `Status=Ready`, `Reason=Needs-info`; searching by
+    content means this module never has to duplicate the board's own field-reading plumbing to find
+    it). `--match comments` (I11): `YR-CLOSE-HOLD` is ALWAYS a machinery-posted COMMENT
+    (`epic_gate.py`'s own `_close_hold_body`), never issue body prose — an unrestricted full-text
+    search would also match an issue merely DISCUSSING the marker in its own body (this very slice's
+    own #473 does). `--limit 200` (I11): `gh search issues`'s own default page (30) could silently
+    under-cover a busy board; 200 is a generous, explicit cap, never an unstated default. A Type
+    check (I11) follows: only a candidate whose Issue Type is Feature or Epic (case-insensitively —
+    `tools/epic_gate.py`'s own `sweep_epics` vocabulary) is returned; a probe that fails for one
+    candidate skips just that candidate (never the whole repo's discovery) — fail-closed as
+    "does not spawn", not a raised exception. Returns bare `{"repo", "number"}` dicts — `main()` is
+    the one that attaches `component_root`/`strategy_doc` from the config entry, since a search
+    result carries no config of its own."""
+    out = gh(["search", "issues", "--repo", repo, "YR-CLOSE-HOLD", "--state", "open",
+             "--match", "comments", "--limit", str(_CLOSE_HOLD_SEARCH_LIMIT), "--json", "number"])
+    data = _as_json(out)
+    numbers = [item["number"] for item in (data or []) if isinstance(item, dict) and "number" in item]
+    result = []
+    for number in numbers:
+        try:
+            detail = _as_json(gh(["issue", "view", str(number), "--repo", repo, "--json", "issueType"]))
+        except Exception as e:  # noqa: BLE001 — a probe failure skips just this candidate, fail-closed
+            # Named on stderr, never silent (#473 fold review round 3): a systematic probe failure
+            # (a renamed field, a narrowed token scope) would otherwise empty this repo's discovery
+            # invisibly, one skipped candidate at a time, with nothing anywhere naming why.
+            print(f"design_gate: close-hold Type probe failed for {repo}#{number}: {e}", file=sys.stderr)
+            continue
+        issue_type = (((detail or {}).get("issueType") or {}).get("name") or "").lower()
+        if issue_type not in ("feature", "epic"):
+            continue
+        result.append({"repo": repo, "number": number})
+    return result
 
 
 # --- the triage-license evaluator (it-36 slice D declared the guard; the tool owns the trail-walk
@@ -926,6 +1073,26 @@ def main(argv=None):
         return 0
     entries = [_resolve_entry(r) for r in raw_repos]
     actions = sweep_designs(repos=entries)
+
+    # the close sweep (it-36 slice H, #473): discovered per configured repo, real but untested here
+    # (mirrors `_resolve_entry`'s own real-vault-read role) — `sweep_close`'s own core is what
+    # `tests/test_design_gate_close_sweep.py` drives, with a `FakeGh` and no live search. Each found
+    # epic gets ITS OWN repo's `component_root`/`strategy_doc` from the SAME config entry
+    # `_resolve_entry` already reads (B3, #472 fold review) — a search result names no config of its
+    # own, so `main()` is the one attaching it.
+    close_epics = []
+    for r in raw_repos:
+        try:
+            found = _default_discover_close_hold(_gh, r["repo"])
+        except Exception as e:  # noqa: BLE001 — a discovery failure is loud, never fatal to the sweep
+            print(f"design_gate: close-hold discovery failed for {r['repo']}: {e}", file=sys.stderr)
+            continue
+        for f in found:
+            f["component_root"] = r.get("component_root", "")
+            f["strategy_doc"] = r.get("strategy_doc", "")
+        close_epics.extend(found)
+    actions += sweep_close(epics=close_epics)
+
     print(json.dumps(actions, indent=2))
     return 0
 
