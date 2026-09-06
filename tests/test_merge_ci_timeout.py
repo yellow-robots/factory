@@ -325,7 +325,8 @@ def _bundle():
 
 
 def _all_pass():
-    return {"ci_green": "pass", "freshness": "pass", "terminal_approval": "pass", "rank_gate": "pass"}
+    return {"ci_green": "pass", "freshness": "pass", "terminal_approval": "pass", "rank_gate": "pass",
+            "fragment_present": "pass"}
 
 
 def test_build_record_carries_ci_timeout_seconds_and_source():
@@ -360,6 +361,7 @@ def test_record_cli_passes_through_ci_timeout_seconds_and_source(tmp_path):
     subprocess.run([
         sys.executable, str(ROOT / "tools" / "merge_shadow.py"), "record",
         "--ci-green", "pass", "--freshness", "pass", "--terminal-approval", "pass", "--rank-gate", "pass",
+        "--fragment-present", "pass",
         "--bundle", str(bundle), "--base-sha", "b" * 40, "--head-sha", "h" * 40,
         "--main-tip-sha", "m" * 40, "--ci-state", "success",
         "--ci-timeout-seconds", "45", "--ci-timeout-source", "manifest",
@@ -379,6 +381,7 @@ def test_record_cli_passes_through_ci_timeout_rejected(tmp_path):
     subprocess.run([
         sys.executable, str(ROOT / "tools" / "merge_shadow.py"), "record",
         "--ci-green", "fail", "--freshness", "pass", "--terminal-approval", "pass", "--rank-gate", "pass",
+        "--fragment-present", "pass",
         "--bundle", str(bundle), "--base-sha", "b" * 40, "--head-sha", "h" * 40,
         "--main-tip-sha", "m" * 40, "--ci-state", "timeout_invalid",
         "--ci-timeout-rejected", "abc", "--ci-timeout-source", "manifest",

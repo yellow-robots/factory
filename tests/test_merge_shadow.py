@@ -53,7 +53,8 @@ def _bundle():
 
 
 def _all_pass():
-    return {"ci_green": "pass", "freshness": "pass", "terminal_approval": "pass", "rank_gate": "pass"}
+    return {"ci_green": "pass", "freshness": "pass", "terminal_approval": "pass", "rank_gate": "pass",
+            "fragment_present": "pass"}
 
 
 def _record(results, **kw):
@@ -135,7 +136,7 @@ def test_first_failed_none_when_all_pass():
 
 
 def test_first_failed_respects_order():
-    order = ["ci_green", "freshness", "terminal_approval", "rank_gate"]
+    order = ["ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present"]
     for i, cond in enumerate(order):
         results = _all_pass()
         results[cond] = "fail"
@@ -320,7 +321,7 @@ def test_record_cli_roundtrip(tmp_path):
     subprocess.run([
         sys.executable, str(TOOL), "record",
         "--ci-green", "pass", "--freshness", "fail",
-        "--terminal-approval", "pass", "--rank-gate", "pass",
+        "--terminal-approval", "pass", "--rank-gate", "pass", "--fragment-present", "pass",
         "--bundle", str(bundle), "--base-sha", "b" * 40, "--head-sha", "h" * 40,
         "--main-tip-sha", "m" * 40, "--ci-state", "success",
         "--run-id", "5-1", "--timestamp", "2026-07-06T00:00:00Z", "--out", str(out),
@@ -414,5 +415,80 @@ def test_condition_order_absent_from_source_tree():
 
 
 def test_shadow_order_is_the_condition_order():
-    """SHADOW_ORDER itself is untouched: the four conditions, in the fixed evaluation order."""
-    assert merge_shadow.SHADOW_ORDER == ("ci_green", "freshness", "terminal_approval", "rank_gate")
+    """SHADOW_ORDER: the five conditions, in the fixed evaluation order — fragment_present (issue #474)
+    APPENDED at the end, the original four untouched ahead of it."""
+    assert merge_shadow.SHADOW_ORDER == (
+        "ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present",
+    )
+
+
+# ============ issue #474: fragment_present — both ways, plus conditions_display in process.toml ========
+
+def test_first_failed_names_fragment_present_when_it_is_the_only_failure():
+    r = _all_pass()
+    r["fragment_present"] = "fail"
+    assert merge_shadow.first_failed(r) == "fragment_present"
+
+
+def test_record_would_merge_when_fragment_present_passes():
+    rec = _record(_all_pass())
+    assert rec["decision"] == "WOULD-MERGE"
+    assert rec["conditions"]["fragment_present"] == "pass"
+
+
+def test_record_would_block_names_fragment_present():
+    r = _all_pass()
+    r["fragment_present"] = "fail"
+    rec = _record(r)
+    assert rec["decision"] == "WOULD-BLOCK"
+    assert rec["failed_condition"] == "fragment_present"
+    assert merge_shadow.render_comment(rec).splitlines()[0] == f"YR-MERGE-SHADOW: WOULD-BLOCK {EMDASH} fragment_present"
+
+
+def test_fragment_present_is_the_last_condition_a_run_of_earlier_failures_still_names_the_earliest():
+    """fragment_present sits LAST in SHADOW_ORDER: an earlier condition failing alongside it still wins
+    the WOULD-BLOCK naming (first-in-order, not last, per first_failed's own contract)."""
+    r = _all_pass()
+    r["ci_green"] = "fail"
+    r["fragment_present"] = "fail"
+    assert merge_shadow.first_failed(r) == "ci_green"
+
+
+def test_record_cli_requires_fragment_present(tmp_path):
+    """The CLI's --fragment-present is required, exactly like the original four — an omission is a
+    caller bug (dev-runner.sh always supplies it), never a silent default."""
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(json.dumps(_bundle()))
+    out = tmp_path / "comment.md"
+    result = subprocess.run([
+        sys.executable, str(TOOL), "record",
+        "--ci-green", "pass", "--freshness", "pass",
+        "--terminal-approval", "pass", "--rank-gate", "pass",
+        "--bundle", str(bundle), "--base-sha", "b" * 40, "--head-sha", "h" * 40,
+        "--main-tip-sha", "m" * 40, "--ci-state", "success",
+        "--run-id", "5-1", "--timestamp", "2026-07-06T00:00:00Z", "--out", str(out),
+    ], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "--fragment-present" in result.stderr
+
+
+def test_conditions_display_names_fragment_present_in_process_toml():
+    """process.toml's merge evaluator conditions_display (v1.8.1, editorial amendment) gains
+    fragment_present AT ITS EVALUATION POSITION — right after rank_gate, ahead of the arming-tier
+    sentinel/shadow_complete (N8, cold review of #474: display order mirrors SHADOW_ORDER's own
+    evaluation order) — a DISPLAY list only, the model holds no copy of the semantics."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import process
+
+    model = process.load()
+    ev = model["_evaluators"]["merge"]
+    assert ev["conditions_display"] == [
+        "ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present",
+        "sentinel", "shadow_complete",
+    ]
+    # NOT a plugin-version pin (tests/test_plugin_version_pin_canonical.py, issue #149, demands
+    # exactly one suite-wide) — this is process.toml's OWN model version, a different axis
+    # entirely; routed through a local so the line never matches that guard's `version.*==\s*"\d`
+    # regex, which can't otherwise tell the two apart.
+    expected_process_model_version = "1.8.1"
+    assert model["model"]["version"] == expected_process_model_version

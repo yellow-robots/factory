@@ -59,19 +59,23 @@ def _readme_status_section():
     return text[start:]
 
 
-def test_runner_key_derivation_finds_fifteen_distinct_keys():
+def test_runner_key_derivation_finds_sixteen_distinct_keys():
     # Locks the derivation to the spec's own count (issue #485: "the runner
-    # reads fifteen"): the bulk tuple's seven (check_cmd, model, base_ref,
-    # review_model, lint_cmd, lint_fix_cmd, lens_cmd) plus the eight scalar/
-    # bool/list sites (merge_ci_timeout, server_ci, auto_merge, test_paths,
-    # artifact_globs, stage_conduct, check_timeout, check_idle_timeout).
+    # reads fifteen"), now sixteen (issue #474, it-36 slice I): the bulk
+    # tuple's seven (check_cmd, model, base_ref, review_model, lint_cmd,
+    # lint_fix_cmd, lens_cmd) plus the nine scalar/bool/list sites
+    # (merge_ci_timeout, server_ci, auto_merge, test_paths, artifact_globs,
+    # stage_conduct, check_timeout, check_idle_timeout, changelog_dir — the
+    # last read via TWO `_manifest_read scalar changelog_dir` call sites,
+    # start-of-run and decision-time, collapsed to one key by the derivation's
+    # own set).
     keys = _runner_manifest_keys()
     assert keys == {
         "check_cmd", "model", "base_ref", "review_model",
         "lint_cmd", "lint_fix_cmd", "lens_cmd",
         "merge_ci_timeout", "server_ci", "auto_merge",
         "test_paths", "artifact_globs", "stage_conduct",
-        "check_timeout", "check_idle_timeout",
+        "check_timeout", "check_idle_timeout", "changelog_dir",
     }, f"derived manifest key set drifted: {sorted(keys)!r}"
 
 

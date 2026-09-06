@@ -209,8 +209,13 @@ _INSTANCE = "build"
 
 # The vault key is deliberately NOT in `_ENV_ALLOW_KEYS`: the structural default-deny is that a
 # build-instance spawn never even LISTS the key, let alone its value (issue #393's invariant).
-# `_spawn_env` unions it in — by name AND value — only when `_INSTANCE == "pm"`.
-_PM_ONLY_KEYS = {"YR_VAULT_API_KEY"}
+# `_spawn_env` unions it in — by name AND value — only when `_INSTANCE == "pm"`. `YR_NOTIFY_SECRET`
+# (it-36 slice I, #474 — `tools/notify.py`'s HMAC signing key) joins it here, same reasoning: a
+# task-typed build a "build"-instance dev-runner spawns never notifies a stakeholder — only the
+# close-time act does, which rides the design/close sweep pipeline (`tools/design_gate.py` ->
+# `tools/close-runner.sh`), itself a PM-instance concern (`deploy/pm-dispatch.service`) — so a
+# build-instance child never even lists this key, let alone its value, exactly like the vault key.
+_PM_ONLY_KEYS = {"YR_VAULT_API_KEY", "YR_NOTIFY_SECRET"}
 
 
 def _spawn_env():

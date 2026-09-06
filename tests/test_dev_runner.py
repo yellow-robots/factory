@@ -183,12 +183,21 @@ def _seed_manifest(work):
     )
 
 
+def _apply_test_identity(repo):
+    """The harness's own fixed committer identity (`user.email`/`user.name`), set in ONE place so
+    any repo path — `_make_repo`'s own `work`, or a later clone of it a test drives independently
+    (e.g. a second `--repo` for the SAME origin, never inheriting `work`'s LOCAL config) — commits
+    successfully wherever it runs, including a CI runner with no global git identity at all."""
+    _git(["config", "user.email", "t@t"], repo)
+    _git(["config", "user.name", "tester"], repo)
+
+
 def _make_repo(tmp):
     origin = tmp / "origin.git"; origin.mkdir()
     _git(["init", "--bare", "-b", "main", "."], origin)
     work = tmp / "work"; work.mkdir()
     _git(["init", "-b", "main", "."], work)
-    _git(["config", "user.email", "t@t"], work); _git(["config", "user.name", "tester"], work)
+    _apply_test_identity(work)
     (work / "README.md").write_text("seed\n")
     _seed_manifest(work)
     _git(["add", "-A"], work); _git(["commit", "-q", "-m", "seed"], work)

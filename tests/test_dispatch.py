@@ -844,6 +844,23 @@ def test_spawn_env_includes_vault_api_key_on_the_pm_instance(monkeypatch):
     assert env.get("YR_VAULT_API_KEY") == "top-secret-vault-key-reaches-the-pm-child"
 
 
+def test_spawn_env_excludes_notify_secret_on_the_build_instance(monkeypatch):
+    # YR_NOTIFY_SECRET (it-36 slice I, #474 — tools/notify.py's HMAC signing key) is PM-only, same
+    # reasoning and same structural default-deny as YR_VAULT_API_KEY above: a task-typed build the
+    # build instance spawns never notifies a stakeholder, so its child never lists the key.
+    assert dispatch._INSTANCE == "build"
+    monkeypatch.setenv("YR_NOTIFY_SECRET", "top-secret-notify-key-should-never-reach-a-stage")
+    env = dispatch._spawn_env()
+    assert "YR_NOTIFY_SECRET" not in env
+
+
+def test_spawn_env_includes_notify_secret_on_the_pm_instance(monkeypatch):
+    monkeypatch.setattr(dispatch, "_INSTANCE", "pm")
+    monkeypatch.setenv("YR_NOTIFY_SECRET", "top-secret-notify-key-reaches-the-pm-child")
+    env = dispatch._spawn_env()
+    assert env.get("YR_NOTIFY_SECRET") == "top-secret-notify-key-reaches-the-pm-child"
+
+
 def test_spawn_env_app_keys_flow_on_either_instance(monkeypatch):
     # the GitHub App identity is NOT vault-gated: both instances may need to authenticate as the
     # App (the build instance for its own PR/issue writes, the PM instance for design-sweep issue

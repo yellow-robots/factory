@@ -230,6 +230,42 @@ else:
 ' "$@"
 }
 
+# changelog_dir (issue #474): the manifest key naming where the implement stage writes this task's
+# changelog fragment (a deterministic Goal+Source note, committed with the change) — the seam rule's
+# fail-closed default, so every repo has one, declared or defaulted, never a silent absence. A single
+# scalar path string (never the array pathlist/strlist channel above — one string, not a list), so its
+# own path-safety check lives here, shared by BOTH the start-of-run reader (the fragment WRITE, below
+# near test_paths/artifact_globs) and the decision-time reader (read_changelog_dir, next) the merge
+# evaluator's fragment_present condition uses — hoisted this early so a --re-evaluate invocation (which
+# exits before the start-of-run manifest block ever runs) still has it in scope.
+CHANGELOG_DIR_DEFAULT="changelog.d/"
+# _bad_changelog_dir_value: $1 = candidate string; true (exit 0) = BAD.
+#   I7 (cold review of #474): a non-string declared value (e.g. a TOML array, `changelog_dir =
+#   ["a"]`) stringifies through `_manifest_read scalar`'s bare `str(v)` to `['a']` — no leading '/'
+#   and no '..' path component, so the ORIGINAL two checks alone let it through as a literal
+#   (nonsensical) directory name. A directory-name character class, checked FIRST, rejects it
+#   (and every other shape outside plain path characters) before either of the other two checks
+#   even run — the check_timeout precedent (a content-shape regex on the stringified value, not a
+#   type check upstream, since `_manifest_read scalar` is shared by every other scalar key).
+#   I10: the per-part split below performs UNQUOTED word-splitting on IFS='/' by design, but
+#   without `set -f` it would ALSO glob-expand against real files in the CURRENT directory if any
+#   part contained a shell metacharacter — moot once the character class above rejects every glob
+#   metacharacter (`*?[]`) on its own, but guarded here too, defense in depth, restored on every
+#   return path so the caller's own glob setting is never left mutated.
+_bad_changelog_dir_value(){
+  local v="$1" part
+  [ -z "$v" ] && return 0
+  case "$v" in /*) return 0 ;; esac
+  case "$v" in *[!A-Za-z0-9_./-]*) return 0 ;; esac
+  set -f
+  local IFS='/'
+  for part in $v; do
+    if [ "$part" = ".." ]; then set +f; return 0; fi
+  done
+  set +f
+  return 1
+}
+
 # (0) ci_timeout — resolves MERGE_CI_TIMEOUT at DECISION time, same precedence/read shape as (5a)
 #     read_auto_merge below: explicit env override > the manifest's `merge_ci_timeout` (read from the
 #     base ref's CURRENT tip, MERGE_GIT_DIR, never a start-of-run copy) > CI_TIMEOUT_DEFAULT. A present
@@ -277,6 +313,37 @@ read_server_ci(){   # sets SERVER_CI (required|none) + SERVER_CI_SOURCE (manifes
     required|none) SERVER_CI="$parsed"; SERVER_CI_SOURCE=manifest ;;
     *) SERVER_CI_REJECTED="$parsed"; SERVER_CI_SOURCE=manifest ;;
   esac
+}
+
+# (0c) changelog_dir (decision time) — read_changelog_dir resolves CHANGELOG_DIR_MERGE from the base
+#      ref's CURRENT tip (MERGE_GIT_DIR), same fetch shape as read_server_ci above; the START-OF-RUN
+#      reader further below (near test_paths/artifact_globs) resolves the SEPARATE CHANGELOG_DIR the
+#      implement stage writes the fragment under — two reads of the same key, decision-time vs
+#      start-of-run. UNLIKE merge_ci_timeout/server_ci/auto_merge (I6, cold review of #474: those
+#      three decision-time keys treat a `__error__` — a whole-manifest parse failure — as
+#      environmental, `return 2`), changelog_dir picks the MAJORITY disposition test_paths/
+#      artifact_globs/stage_conduct/check_timeout/check_idle_timeout/the bulk scalars already use:
+#      `__error__` folds into `__absent__` (the default), same as the start-of-run reader just
+#      below — ONE disposition for changelog_dir specifically, applied to BOTH of its readers,
+#      never split by read site. This is deliberate, not an oversight: a garbled changelog_dir just
+#      falls back to the well-known default directory (no arming/blocking policy rides on it the
+#      way auto_merge/server_ci/merge_ci_timeout's own values do), and a genuinely broken manifest
+#      is already caught upstream by check_cmd's own required-ness gate at start-of-run regardless.
+#      A malformed (but parseable) declared value still folds into shadow_fragment_present's own
+#      FAIL (CHANGELOG_DIR_MERGE left empty) — a bad changelog_dir has no independent wait/poll
+#      semantics gated behind it, so its failure IS the fragment_present condition's failure, named
+#      as such. Returns 2 only on a genuine fetch/show failure (network/git, not a parse failure).
+read_changelog_dir(){   # sets CHANGELOG_DIR_MERGE (empty on a malformed declared value); returns 2 on an environmental fetch failure.
+  local raw parsed
+  "$GIT_BIN" -C "$MERGE_GIT_DIR" fetch -q origin "$BASE_BRANCH" 2>/dev/null || return 2
+  raw="$("$GIT_BIN" -C "$MERGE_GIT_DIR" show "origin/$BASE_BRANCH:.yr/factory.toml" 2>/dev/null || true)"
+  if [ -z "$raw" ]; then CHANGELOG_DIR_MERGE="$CHANGELOG_DIR_DEFAULT"; return 0; fi
+  parsed="$(printf '%s' "$raw" | _manifest_read scalar changelog_dir 2>/dev/null || echo __error__)"
+  if [ "$parsed" = "__error__" ] || [ "$parsed" = "__absent__" ]; then
+    CHANGELOG_DIR_MERGE="$CHANGELOG_DIR_DEFAULT"; return 0
+  fi
+  if _bad_changelog_dir_value "$parsed"; then CHANGELOG_DIR_MERGE=""; return 0; fi
+  CHANGELOG_DIR_MERGE="$parsed"
 }
 
 # (1) ci_green — poll the PR check rollup until nothing is in-flight (bounded); a rollup still empty
@@ -354,6 +421,21 @@ shadow_rank_gate(){
      && [ "$BUILD_PROVIDER" = "$REVIEW_PROVIDER" ] && [ "$REVIEW_RANK" -ge "$BUILD_RANK" ]
   then RANK_RESULT=pass; else RANK_RESULT=fail; fi
 }
+# (4b) fragment_present (issue #474) — appended to SHADOW_ORDER, never inserted: does the PR's OWN diff
+#      (BASE_SHA..PR_HEAD_SHA, in MERGE_GIT_DIR) touch a path under the manifest's changelog_dir (decision
+#      time, read_changelog_dir just above)? A runner-built PR always passes (the implement stage writes
+#      the fragment before the single task commit, below); an attended PR passes once it carries one (the
+#      attended lane's own duty); a PR predating this slice, or an attended PR that skipped the duty, and
+#      a malformed changelog_dir alike FAIL — legibly named on the record, never a silent block. This is
+#      the one base condition a moved main's freshness remediation (rebase_onto_tip) does not re-run: a
+#      rebase replays the SAME diff onto a new base, so a fragment already present survives it unchanged.
+shadow_fragment_present(){   # sets FRAGMENT_RESULT (pass|fail); returns 2 on an environmental read/diff failure.
+  read_changelog_dir || return 2
+  if [ -z "$CHANGELOG_DIR_MERGE" ]; then FRAGMENT_RESULT=fail; return 0; fi
+  local changed
+  changed="$("$GIT_BIN" -C "$MERGE_GIT_DIR" diff --name-only "$BASE_SHA" "$PR_HEAD_SHA" -- "$CHANGELOG_DIR_MERGE" 2>/dev/null)" || return 2
+  if [ -n "$changed" ]; then FRAGMENT_RESULT=pass; else FRAGMENT_RESULT=fail; fi
+}
 # (5a) auto_merge — read at DECISION time from the base ref's CURRENT tip (NEVER the start-of-run parse
 #      at L~96). The decision-time fetch already ran in shadow_freshness, so origin/$BASE_BRANCH is fresh.
 #      A missing manifest/key -> not armed (false), not an error. MERGE_AUTO_MERGE overrides (for tests).
@@ -375,6 +457,7 @@ emit_and_post(){
   python3 "$SELF_DIR/merge_shadow.py" record \
     --ci-green "$CI_RESULT" --freshness "$FRESH_RESULT" \
     --terminal-approval "$APPROVE_RESULT" --rank-gate "$RANK_RESULT" \
+    --fragment-present "$FRAGMENT_RESULT" \
     --bundle "$BUNDLE" --base-sha "$BASE_SHA" --head-sha "$PR_HEAD_SHA" --main-tip-sha "${MAIN_TIP:-}" \
     --rollup-file "$RUN_DIR/check-rollup.json" --ci-state "$CI_STATE" \
     --ci-timeout-seconds "${MERGE_CI_TIMEOUT:-}" --ci-timeout-source "${CI_TIMEOUT_SOURCE:-}" \
@@ -604,6 +687,7 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
   REVIEW_PROVIDER="${_roles[3]:-}"; REVIEW_RANK="${_roles[4]:-}"; REVIEW_RANKED="${_roles[5]:-0}"
 
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
+  FRAGMENT_RESULT=fail; CHANGELOG_DIR_MERGE=""
   CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""; SERVER_CI=""; SERVER_CI_SOURCE=""; SERVER_CI_REJECTED=""
   read_ci_timeout || reeval_refuse "environmental failure reading merge_ci_timeout for $REPO — retry later, no record posted"
   read_server_ci || reeval_refuse "environmental failure reading server_ci for $REPO — retry later, no record posted"
@@ -622,6 +706,7 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
   shadow_freshness || reeval_refuse "environmental failure reading $BASE_BRANCH's current tip — retry later, no record posted"
   shadow_terminal_approval
   shadow_rank_gate
+  shadow_fragment_present || reeval_refuse "environmental failure reading changelog_dir / diffing for PR #$pr — retry later, no record posted"
 
   # ---- both shapes (issue #239's record-less, and since issue #510 the prior-record shape too):
   # AUTO_MERGE DIRECTLY selects the record class — the SAME arming/sentinel/shadow-completion gates the
@@ -676,6 +761,7 @@ r("build"); r("review")' "$BUNDLE" 2>/dev/null)" || reeval_refuse "could not rea
   [ -z "$blk" ] && { [ "$RANK_RESULT" = pass ] || blk=rank_gate; }
   [ -z "$blk" ] && { [ "$CI_RESULT" = pass ] || blk=ci_green; }
   [ -z "$blk" ] && { [ "$FRESH_RESULT" = pass ] || blk=freshness; }
+  [ -z "$blk" ] && { [ "$FRAGMENT_RESULT" = pass ] || blk=fragment_present; }
   if [ -n "$blk" ]; then
     emit_and_post "$RUN_DIR/merge-record-reeval.md" --mode armed --decision BLOCKED --block-reason "$blk" \
       --shadow-complete true --shadow-progress "$SHADOW_PROGRESS" --sentinel ok --note "$note" \
@@ -808,6 +894,25 @@ case "${_sc[0]:-ABSENT}" in
     STAGE_CONDUCT_BLOCK="$(printf 'Per-repo stage conduct (source: .yr/factory.toml, key stage_conduct):\n%s' "$(printf '%s\n' "${_sc_lines[@]}")")"
     ;;
 esac
+# changelog_dir (issue #474, start-of-run reader): where the implement stage writes this task's
+# changelog fragment, resolved once here (like check_timeout/check_idle_timeout) so the fragment write
+# below and the committed diff both see one stable value for the run — the merge evaluator's own
+# fragment_present condition re-reads the key at DECISION time instead (read_changelog_dir, hoisted
+# above), never this start-of-run copy. `_bad_changelog_dir_value` is the shared path-safety check
+# (hoisted above, alongside CHANGELOG_DIR_DEFAULT, so a --re-evaluate invocation has both in scope too).
+MF_CHANGELOGDIR_NEEDS_INFO=""
+_cd_parsed="$(printf '%s' "$MF_RAW" | _manifest_read scalar changelog_dir 2>/dev/null || echo __error__)"
+case "$_cd_parsed" in
+  __error__|__absent__) CHANGELOG_DIR="$CHANGELOG_DIR_DEFAULT"; CHANGELOG_DIR_SOURCE=default ;;
+  *)
+    if _bad_changelog_dir_value "$_cd_parsed"; then
+      MF_CHANGELOGDIR_NEEDS_INFO="manifest key 'changelog_dir' is rejected (value: $_cd_parsed) — changelog_dir must be a non-empty, repo-relative directory string: not absolute (no leading '/'), no '..' path component"
+    else
+      CHANGELOG_DIR="$_cd_parsed"; CHANGELOG_DIR_SOURCE=manifest
+    fi
+    ;;
+esac
+[ -z "$MF_CHANGELOGDIR_NEEDS_INFO" ] && log "changelog_dir: '$CHANGELOG_DIR' (source: $CHANGELOG_DIR_SOURCE)"
 # precedence everywhere: explicit env  >  repo manifest  >  built-in default
 BASE_REF="${BASE_REF:-${MF_BASE_REF:-origin/main}}"; BASE_BRANCH="${BASE_REF#origin/}"
 # One snapshot, both reads (issue #327): whenever the base ref names the SAME ref as MANIFEST_REF (the
@@ -1029,6 +1134,7 @@ NEEDS_INFO="$MF_ONBOARD_MSG"
 [ -n "$MF_CHECKTIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKTIMEOUT_NEEDS_INFO"
 [ -n "$MF_CHECKIDLETIMEOUT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHECKIDLETIMEOUT_NEEDS_INFO"
 [ -n "$MF_STAGECONDUCT_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_STAGECONDUCT_NEEDS_INFO"
+[ -n "$MF_CHANGELOGDIR_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$MF_CHANGELOGDIR_NEEDS_INFO"
 [ -n "$TASK_GATES_NEEDS_INFO" ] && NEEDS_INFO="${NEEDS_INFO:+$NEEDS_INFO; }$TASK_GATES_NEEDS_INFO"
 
 # ---- slug + branch ----
@@ -1318,6 +1424,33 @@ else
     "$GIT_BIN" -C "$WT" add -A
     IMPL_ESCALATION_DIFF="$("$GIT_BIN" -C "$WT" diff --cached 2>/dev/null || true)"
     stage_blocked_dispose implement "$IMPL_BLOCKED_REASON" "$IMPL_ESCALATION_DIFF"
+  fi
+
+  # changelog fragment (issue #474): the RUNNER's own deterministic act, not the LLM's — the same task
+  # always produces the same fragment regardless of model/run. Written under CHANGELOG_DIR (resolved
+  # above, default changelog.d/) BEFORE the IMPL_TREE checkpoint below, so the tester boundary guard
+  # reads it as part of the implementer's own legitimate surface, never a foreign tester write; the
+  # fragment rides the SAME single commit as the rest of the change (the commit/push section, below).
+  # Content: the task's "## Goal" section (falling back to the whole body when no such heading exists)
+  # plus a Source line this act constructs itself — a task has no crossing-filed Source line the way an
+  # epic does (SOURCE-LINE is an epic-body convention), so the fragment names its own origin instead.
+  # GUARD (issue #84's own invariant): only when the implementer actually produced a change — an
+  # unconditional write would make the worktree's diff non-empty even when the implementer wrote
+  # NOTHING, defeating the "no changes produced" hard block below (a fragment describing a change
+  # that never happened is nonsense anyway). `git status --porcelain` sees both a tracked
+  # modification and a new untracked file, before anything here has been staged.
+  if [ -n "$("$GIT_BIN" -C "$WT" status --porcelain)" ]; then
+    CHANGELOG_FRAG_DIR="${CHANGELOG_DIR%/}"
+    mkdir -p "$WT/$CHANGELOG_FRAG_DIR"
+    CHANGELOG_FRAG_GOAL="$(printf '%s' "$BODY" | python3 -c '
+import re, sys
+body = sys.stdin.read()
+m = re.search(r"^#{1,6}\s*Goal\s*$(.*?)(?=^#{1,6}\s|\Z)", body, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+text = (m.group(1) if m else body).strip()
+print(text)
+')"
+    printf '## %s\n\n%s\n\nSource: %s#%s\n' "$TITLE" "$CHANGELOG_FRAG_GOAL" "$REPO" "$ISSUE" \
+      > "$WT/$CHANGELOG_FRAG_DIR/$ISSUE.md"
   fi
 
   # checkpoint: record the worktree tree state after the implementer so the tester boundary guard can
@@ -1939,7 +2072,7 @@ pr_stage_hold(){   # $1 = which write ("push"/"pr create"), $2 = final attempt's
 }
 
 retry_with_backoff push_attempt "push" || pr_stage_hold "push" "$RETRY_ERR"
-PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.' "$ISSUE" "$BUILD_ID" "$REVIEW_ID")"
+PR_BODY="$(printf 'Closes #%s\n\nProduced by **dev-runner** (build: %s, review: %s): implementer + independent **tester** + independent **reviewer** stages — checks green, review approved. Reviewer verdict attached below.\n\nChangelog fragment: `%s/%s.md`' "$ISSUE" "$BUILD_ID" "$REVIEW_ID" "${CHANGELOG_DIR%/}" "$ISSUE")"
 retry_with_backoff pr_create_attempt "pr create" || pr_stage_hold "pr create" "$RETRY_ERR"
 "$GH_BIN" pr comment "$PR_URL" --body-file "$RUN_DIR/review.md" >/dev/null 2>&1 || true   # attach reviewer verdict
 
@@ -2083,6 +2216,7 @@ unrecoverable_remote_rewrite_block(){
 # MERGED=1 on a factory squash-merge; sets ARMED_BLOCKED=1 on an armed block (the unrecoverable case included).
 terminal_step(){
   CI_RESULT=fail; CI_STATE=unknown; FRESH_RESULT=fail; APPROVE_RESULT=fail; RANK_RESULT=fail; MAIN_TIP=""
+  FRAGMENT_RESULT=fail; CHANGELOG_DIR_MERGE=""
   SENTINEL_STATE=ok; SHADOW_DONE=false; SHADOW_PROGRESS=""; MERGE_COMMIT=""; REBASE_REWROTE_REMOTE=0
   CI_TIMEOUT_SOURCE=""; CI_TIMEOUT_REJECTED=""; SERVER_CI=""; SERVER_CI_SOURCE=""; SERVER_CI_REJECTED=""
   read_ci_timeout || return 2                  # decision-time resolve of the bounded CI wait (env>manifest>default)
@@ -2101,6 +2235,7 @@ terminal_step(){
   fi
   shadow_freshness || return 2                 # decision-time fetch of main's tip (env fetch failure -> skip)
   shadow_terminal_approval; shadow_rank_gate
+  shadow_fragment_present || return 2          # decision-time changelog_dir read + diff (env failure -> skip)
   read_auto_merge || return 2                  # decision-time read of auto_merge from the base ref tip
 
   local shadow_body="$RUN_DIR/merge-shadow.md"
@@ -2142,6 +2277,7 @@ terminal_step(){
   [ "$APPROVE_RESULT" = pass ] || blk=terminal_approval
   [ -z "$blk" ] && { [ "$RANK_RESULT" = pass ] || blk=rank_gate; }
   [ -z "$blk" ] && { [ "$CI_RESULT" = pass ] || blk=ci_green; }
+  [ -z "$blk" ] && { [ "$FRAGMENT_RESULT" = pass ] || blk=fragment_present; }
   if [ -n "$blk" ]; then
     local detail="the merge condition '$blk' failed — see the YR-MERGE record on the PR"
     if [ "$blk" = ci_green ]; then
@@ -2150,6 +2286,8 @@ terminal_step(){
         timeout_invalid) detail="the manifest's merge_ci_timeout ('${CI_TIMEOUT_REJECTED}') does not parse as a positive integer — merge_ci_timeout must declare a positive integer number of seconds, and a rejected value never silently falls back to the default (${CI_TIMEOUT_DEFAULT}s) — fix the manifest and re-evaluate" ;;
         server_ci_invalid) detail="the manifest's server_ci ('${SERVER_CI_REJECTED}') is neither 'required' nor 'none' — server_ci must declare one of those two values, and a rejected value never silently falls back to the default (required) — fix the manifest and re-evaluate" ;;
       esac
+    elif [ "$blk" = fragment_present ]; then
+      detail="no changelog fragment was found under changelog_dir ('${CHANGELOG_DIR_MERGE:-<malformed manifest value>}') in this PR's diff (base..head) — the runner's own implement stage always writes one; an attended PR must add one under that directory (the task's Goal plus a Source line naming this issue) and push, then re-run with --re-evaluate"
     fi
     armed_block "$blk" "$detail" || return 2
     return 0

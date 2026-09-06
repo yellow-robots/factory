@@ -265,8 +265,21 @@ def test_bundle_sha256_matches_recomputed_canonical_digest(tmp_path):
 def test_bundle_hash_reproducible_across_independent_runs_with_identical_inputs(tmp_path):
     """Two independent runs against the same base repo state, issue content, and stub behaviour
     produce byte-identical bundle contents and therefore identical decision-time hashes — the point
-    of canonical serialization."""
-    work, _ = base._make_repo(tmp_path)
+    of canonical serialization. Both runs use the SAME issue number (11): since the changelog
+    fragment (issue #474) names its own issue in both its path and its Source line, a DIFFERENT
+    issue number is no longer an "identical input" to the bundle — it is now a genuine, deliberate
+    input the fragment's own text depends on, so this test holds the number fixed and instead varies
+    the run's own identity via two separate clones of the same origin (same object ids, same
+    base_sha; distinct branch namespaces so the two runs don't collide)."""
+    work, origin = base._make_repo(tmp_path)
+    base._git(["clone", "-q", "--bare", str(origin), str(tmp_path / "origin2.git")], tmp_path)
+    base._git(["clone", "-q", str(tmp_path / "origin2.git"), str(tmp_path / "work2")], tmp_path)
+    work2 = tmp_path / "work2"
+    # A clone never inherits `work`'s LOCAL git config (user.email/user.name) — only what's tracked
+    # in the repo itself. A host with no global git identity (a CI runner, unlike this developer's
+    # own machine) then fails the runner's own commit inside work2 with "empty ident name", which no
+    # targeted test run here catches unless it's run under that same bare identity.
+    base._apply_test_identity(work2)
     binp = tmp_path / "bin"; base._stubs(binp)
 
     env1 = base._real(tmp_path, base._env(tmp_path, binp, number=11, title="Reproducible"), work)
@@ -275,12 +288,12 @@ def test_bundle_hash_reproducible_across_independent_runs_with_identical_inputs(
     r1 = base._run(["11", "--repo", "test/repo"], env1)
     assert r1.returncode == 0, r1.stderr
 
-    env2 = base._real(tmp_path, base._env(tmp_path, binp, number=12, title="Reproducible"), work)
+    env2 = base._real(tmp_path, base._env(tmp_path, binp, number=11, title="Reproducible"), work2)
     env2["DEV_RUNNER_HOME"] = str(tmp_path / "drhome2")
     env2["STUB_CLAUDE_CHANGE"] = "1"
-    r2 = base._run(["12", "--repo", "test/repo"], env2)
+    r2 = base._run(["11", "--repo", "test/repo"], env2)
     assert r2.returncode == 0, r2.stderr
 
     b1 = _read_bundle(tmp_path, 11, drhome="drhome1")
-    b2 = _read_bundle(tmp_path, 12, drhome="drhome2")
+    b2 = _read_bundle(tmp_path, 11, drhome="drhome2")
     assert b1["sha256"] == b2["sha256"]

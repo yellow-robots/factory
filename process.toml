@@ -23,7 +23,7 @@
 #     class stays fail-closed per `caller_default`;
 [model]
 contract = "yr-process/1"
-version = "1.8.0"
+version = "1.8.1"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 16000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
@@ -36,6 +36,15 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.8.1"
+date = "2026-09-06"
+kind = "editorial"
+touches = []
+reason = "the merge evaluator's display list catches up to its own tool (it-36 slice I, #474): tools/merge_shadow.py's SHADOW_ORDER gains a fifth base condition, `fragment_present` — APPENDED at the end of the base four, never inserted (the same shadow-completion window reads a prior record's own `failed_condition` string, never a positional index, so appending changes no prior record's meaning) — evaluated by tools/dev-runner.sh's new shadow_fragment_present (does the PR's own diff, base..head, touch a path under the manifest's changelog_dir?). `[[evaluator]] id = \"merge\"`'s `conditions_display` gains it too, AT ITS EVALUATION POSITION — right after `rank_gate`, ahead of the arming-tier `sentinel`/`shadow_complete` — mirroring SHADOW_ORDER's own order (cold review of #474, N8: an earlier draft of this same row appended it after `shadow_complete` instead, a display/evaluation-order mismatch this amendment corrects before it ever shipped) — a DISPLAY list only, per its own note; this model holds no copy of fragment_present's semantics, exactly as it holds none of the other five. No transition, guard, or store changes shape (the `evaluator_pass` guard on `pr.approved->merged.evaluator` already delegates wholesale to the evaluator's own order and fail-closed semantics — its `why` names no individual condition), so `touches` stays empty, the v1.6.1/v1.7.0 editorial precedent. Effective 2026-09-06, the same strict-date reasoning those two rows state: `check_trail.py`'s `--scope-created` comparison is a strict, date-only, EXCLUSIVE less-than, so today's own trails must not be version-scoped as if they predated a same-day change."
+review = "yellow-robots/factory#474"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.8.0"
 date = "2026-09-06"
@@ -779,7 +788,8 @@ scope = "repo"
 [[evaluator]]
 id = "merge"
 argv = ["python3", "tools/merge_shadow.py", "evaluate", "--repo", "{scope.repo}", "--pr", "{scope.pr}"]
-conditions_display = ["ci_green", "freshness", "terminal_approval", "rank_gate", "sentinel", "shadow_complete"]
+conditions_display = ["ci_green", "freshness", "terminal_approval", "rank_gate", "fragment_present",
+                      "sentinel", "shadow_complete"]
 timeout_s = 120
 contract = "exit 0 pass; exit 1 fail with the failed-condition id as stdout's first line; any other code, a timeout or an OSError is UNKNOWN"
 note = """The merge conditions are ITS conditions, in ITS order, with ITS fail-closed semantics.
