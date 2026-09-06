@@ -232,6 +232,136 @@ def test_refusal_exit_code_is_distinct_from_success(tmp_path):
     assert refused.returncode != 0 and refused.returncode != ok.returncode
 
 
+# ============ the machinery arm (it-36 slice G, #472) ============
+#
+# Under YR_MACHINERY, the App identity flips the epic through the SAME funnel shape, but through
+# the machinery-only transition row (`task.backlog->ready.epic-flip.machinery`) — its own extra
+# `epic-triage-license` evaluator guard (`tools/design_gate.py evaluate --issue`), real end to end
+# here (not stubbed out): the epic's own trail carries both the YR-EPIC-APPROVAL record and, in the
+# SAME canned comments (the generic `issue view` stub answers any issue number identically — the
+# triage evaluator's own `gh issue view <triage_issue>` read lands on the very same fixture), the
+# owner's `YR-TRIAGE: seed=<the crossing's own seed stem>` record — the PM config's `seed` field
+# (written by `tools/cross.py` at filing time, alongside `epic_issue`) is what the evaluator now
+# resolves the seed from; the epic issue NUMBER itself is never a valid seed (the cold review of
+# db47805's own B5 finding — this suite's earlier fixture, keyed by `seed=7`, ratified the defect).
+# WHO comes from YR_GH_APP_SLUG; `gh api user` is never called (it answers 403 under an installation
+# token) — asserted directly against the call log.
+
+SEED = "pm-agent"
+MACHINERY_TRIAGE_GO = {"body": f"YR-TRIAGE: seed={SEED} disposition=go who=@the-owner",
+                       "author": {"login": "the-owner"}}
+# the defect B5 caught: a record keyed by the epic issue NUMBER, exactly as an evaluator that
+# (wrongly) treated the issue number as the seed would have demanded — must never license the flip.
+MACHINERY_TRIAGE_GO_KEYED_BY_ISSUE_NUMBER = {
+    "body": "YR-TRIAGE: seed=7 disposition=go who=@the-owner", "author": {"login": "the-owner"}}
+
+
+def _pm_config(tmp, *, repo="test/repo", triage_issue=55, epic_issue=7, seed=SEED):
+    path = tmp / "pm-repos.json"
+    entry = {"repo": repo, "triage_issue": triage_issue, "epic_issue": epic_issue}
+    if seed is not None:
+        entry["seed"] = seed
+    path.write_text(json.dumps({"repos": [entry]}))
+    return path
+
+
+def _machinery_env(tmp_path, binp, *, slug="yr-pm[bot]", triage_go=True, **kw):
+    env = _env(tmp_path, binp, itype="Feature", **kw)
+    env["YR_MACHINERY"] = "1"
+    if slug is not None:
+        env["YR_GH_APP_SLUG"] = slug
+    env["YR_OWNER_LOGIN"] = "the-owner"
+    env["YR_PM_CONFIG"] = str(_pm_config(tmp_path))
+    comments = [APPROVAL_RECORD] + ([MACHINERY_TRIAGE_GO] if triage_go else [])
+    env["STUB_COMMENTS"] = json.dumps(comments)
+    env["STUB_BODY"] = "**Source:** product-spec [[04 projects/x/01-x]] (Obsidian design brain)"
+    return env
+
+
+def test_machinery_arm_happy_path_record_before_flip_who_from_slug(tmp_path):
+    binp = _bin(tmp_path)
+    vault = tmp_path / "vault"
+    doc = vault / "04 projects" / "x" / "01-x.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("---\nstatus: active\n---\nbody\n", encoding="utf-8")
+    env = _machinery_env(tmp_path, binp)
+    env["YR_VAULT_ROOT"] = str(vault)
+    env["STUB_ISSUE_RESPONSE_AFTER_EDIT"] = _response(itype="Feature", status="Ready")
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode == 0, f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    calls = _calls(tmp_path)
+    comment_idx = [i for i, c in enumerate(calls) if c[:2] == ["issue", "comment"]]
+    edit_idx = [i for i, c in enumerate(calls) if c[:2] == ["project", "item-edit"]]
+    assert len(comment_idx) == 1 and len(edit_idx) == 1
+    assert comment_idx[0] < edit_idx[0]                     # record BEFORE flip, by construction
+    body_call = calls[comment_idx[0]]
+    assert any("YR-EPIC-READY" in a for a in body_call)
+    body = body_call[body_call.index("--body") + 1]
+    assert "who: @yr-pm[bot]" in body
+    assert not any(c[:2] == ["api", "user"] for c in calls), \
+        "the machinery arm must never call `gh api user` (403 under an installation token)"
+    assert "yr-pm[bot]" in r.stdout
+
+
+def test_yr_machinery_alone_without_the_app_slug_still_takes_the_attended_arm(tmp_path):
+    """The discriminator is BOTH YR_MACHINERY and the App identity, never YR_MACHINERY alone — this
+    suite's own autouse fixture sets YR_MACHINERY=1 for every test (`tests/conftest.py`), so absent
+    YR_GH_APP_SLUG the existing attended arm must still run unmodified (`gh api user` included),
+    never a refusal."""
+    binp = _bin(tmp_path)
+    vault = tmp_path / "vault"
+    doc = vault / "04 projects" / "x" / "01-x.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("---\nstatus: active\n---\nbody\n", encoding="utf-8")
+    env = _machinery_env(tmp_path, binp, slug=None, triage_go=False)
+    env["YR_VAULT_ROOT"] = str(vault)
+    env["STUB_ISSUE_RESPONSE_AFTER_EDIT"] = _response(itype="Feature", status="Ready")
+    env["STUB_WHO"] = "a-human-operator"
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode == 0, f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    assert any(c[:2] == ["api", "user"] for c in _calls(tmp_path))
+    assert "a-human-operator" in r.stdout
+
+
+def test_machinery_arm_refuses_without_a_triage_go_record_writes_nothing(tmp_path):
+    binp = _bin(tmp_path)
+    env = _machinery_env(tmp_path, binp, triage_go=False)
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
+def test_machinery_arm_refuses_without_the_epic_approval_record_writes_nothing(tmp_path):
+    binp = _bin(tmp_path)
+    env = _machinery_env(tmp_path, binp)
+    env["STUB_COMMENTS"] = json.dumps([MACHINERY_TRIAGE_GO])   # no YR-EPIC-APPROVAL at all
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
+def test_machinery_arm_refuses_a_record_keyed_by_the_epic_issue_number_not_the_seed(tmp_path):
+    """B5 (cold review of db47805): `YR-TRIAGE: seed=<epic issue number>` must never license the
+    flip — only a record keyed by the crossing's own seed stem (the PM config's `seed` field) does."""
+    binp = _bin(tmp_path)
+    env = _machinery_env(tmp_path, binp, triage_go=False)
+    env["STUB_COMMENTS"] = json.dumps([APPROVAL_RECORD, MACHINERY_TRIAGE_GO_KEYED_BY_ISSUE_NUMBER])
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
+def test_machinery_arm_refuses_when_the_config_entry_has_no_seed_at_all(tmp_path):
+    """Before `tools/cross.py` writes `seed` back (an entry created before the crossing filed
+    anything, or a malformed config) — fails closed, never matches an empty-string seed."""
+    binp = _bin(tmp_path)
+    env = _machinery_env(tmp_path, binp)
+    env["YR_PM_CONFIG"] = str(_pm_config(tmp_path, seed=None))
+    r = _run(["7", "--repo", "test/repo"], env)
+    assert r.returncode != 0
+    assert not _writes(_calls(tmp_path))
+
+
 # ============ no LLM anywhere ============
 
 def test_script_never_invokes_an_llm():

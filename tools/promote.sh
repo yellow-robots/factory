@@ -58,6 +58,38 @@ IFS=$'\037' read -r STATE ITYPE ITEM_ID _STATUS _REASON <<<"$LINE"
 [ -n "$ITEM_ID" ]     || refuse "issue #$ISSUE is not on project #$PROJECT_NUMBER's board"
 case "$(printf '%s' "$ITYPE" | tr '[:upper:]' '[:lower:]')" in
   feature)
+    if [ -n "${YR_MACHINERY:-}" ] && [ -n "${YR_GH_APP_SLUG:-}" ]; then
+      # The machinery arm (it-36 slice G, #472): the SAME funnel shape as the attended arm below,
+      # under the App identity — through the machinery-only transition row (its own extra
+      # evaluator_pass guard: the epic's own YR-TRIAGE `go` disposition licenses the flip,
+      # `tools/design_gate.py evaluate --issue`), and WHO from YR_GH_APP_SLUG — never `gh api
+      # user`, which answers 403 under an installation token. Same discipline throughout:
+      # preconditions before any write, the YR-EPIC-READY record BEFORE the flip, the written
+      # state verified after. Gated on BOTH YR_MACHINERY and the App identity (YR_GH_APP_SLUG),
+      # never YR_MACHINERY alone: YR_MACHINERY alone means only "not an attended session" (every
+      # other cold machinery process sets it too, no App identity of its own) — this arm is the
+      # PM's own, addressed by the App identity specifically.
+      python3 "$SELF_DIR/process.py" transition-check "task.backlog->ready.epic-flip.machinery" \
+          --repo "$OWNER/$NAME" --issue "$ISSUE" \
+        || refuse "the machinery epic-flip wall refused (see the rules above): the approval, the open-question rule, the governing design's activation, or the owner's own triage license does not hold for #$ISSUE"
+      # WHO is the App slug, never `gh api user` (403 under an installation token) — the outer `if`
+      # above already guarantees YR_GH_APP_SLUG is non-empty here, so this is a plain assignment,
+      # never a second, unreachable refusal pretending to guard something the branch already checked.
+      WHO="$YR_GH_APP_SLUG"
+      DESIGN="$(python3 "$SELF_DIR/design_resolver.py" name --repo "$OWNER/$NAME" --issue "$ISSUE" 2>/dev/null || true)"
+      [ -n "$DESIGN" ] || refuse "the governing design's name could not be resolved from #$ISSUE's Source line — the record must name its design"
+      BODY="$(printf 'YR-EPIC-READY\ndesign: %s\nwho: @%s\n\nFlipped to **Ready** via `tools/promote.sh`'"'"'s machinery arm (the epic lane'"'"'s funnel, ruling 5, under the App identity): the owner'"'"'s own triage `go` disposition converts the standing approval into autonomous building; the cord-pull stays the human'"'"'s veto. This record lands before the Status flip, by construction.' "$DESIGN" "$WHO")"
+      "$GH_BIN" issue comment "$ISSUE" --repo "$REPO" --body "$BODY" >/dev/null \
+        || die "could not post the epic-flip record for #$ISSUE — refusing to flip Status without the record landing first"
+      _board set-field --id "$ITEM_ID" --status Ready >/dev/null 2>&1 \
+        || die "epic-flip record posted, but the Status=Ready write failed for #$ISSUE — set it by hand or retry"
+      VERIFY="$(_board read-issue "$OWNER" "$NAME" "$ISSUE" 2>/dev/null || true)"
+      IFS=$'\037' read -r _VS _VT _VI VSTATUS _VR <<<"$VERIFY"
+      [ "$VSTATUS" = "Ready" ] \
+        || die "postcondition failed: #$ISSUE reads Status='$VSTATUS' after the flip — verify by hand"
+      echo "promote: epic #$ISSUE -> Ready (machinery; YR-EPIC-READY posted by @$WHO; design: $DESIGN)"
+      exit 0
+    fi
     # Ruling 5 (it-31 slice 4): the epic Ready flip's own funnel — preconditions checked through
     # the engine's transition-check (the standing approval on the trail, no open question riding
     # the epic, the governing design resolves and is active), the YR-EPIC-READY record landing

@@ -467,6 +467,36 @@ def _load_pm_config(config_path):
         return []
 
 
+def update_pm_config_entry(config_path, *, repo, epic_issue=None, seed=None):
+    """The crossing's own write-back (it-36 slice G, #472): `tools/cross.py` calls this right after
+    filing an epic so the epic-triage-license evaluator's `--issue` scope can find it — the epic does
+    not exist until the crossing files it, so no operator can pre-populate `epic_issue` at
+    provisioning time. Merges `epic_issue`/`seed` onto `repo`'s own entry (creating the config file or
+    the entry when absent — item P's provisioning may not have run yet in a test/dev config), leaving
+    every other field (`triage_issue`, any other repo's entry) untouched. Atomic write (`.tmp` +
+    `rename`), `tools/gh-app`'s own credential-cache discipline — never observed half-written."""
+    path = pathlib.Path(config_path)
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    repos = data.setdefault("repos", [])
+    entry = next((e for e in repos if e.get("repo") == repo), None)
+    if entry is None:
+        entry = {"repo": repo}
+        repos.append(entry)
+    if epic_issue is not None:
+        entry["epic_issue"] = epic_issue
+    if seed is not None:
+        entry["seed"] = seed
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
 def _task_sidecar(path):
     """The drafting task (`owner/repo#seed`) a local run-dir file belongs to, read from the sidecar
     the runner writes once at drafting time (`<run-dir>/task.txt`) — the runner already knows its own
@@ -508,10 +538,17 @@ def evaluate(*, path=None, issue=None, gh=None, config_path=None, owner_login=No
             return 1, "task_unreadable"
         repo, _, _seed = task.partition("#")
     elif issue:
+        # the epic-triage-license scope (the crossing's own machinery flip, it-36 slice G, #472):
+        # the epic issue NUMBER is never the seed — `YR-TRIAGE: seed=<ideas file stem>` is written
+        # by the owner before any epic exists at all. The config entry's own `seed` field (written
+        # by `tools/cross.py` at filing time, alongside `epic_issue`, via `update_pm_config_entry`)
+        # is what names the real seed this epic crossed from; an entry with no `epic_issue` match
+        # (the epic hasn't been recorded yet) or no `seed` at all fails closed, never guesses.
         entry = next((e for e in entries if str(e.get("epic_issue")) == str(issue)), None)
         if entry is None:
             return 1, "repo_unconfigured"
-        repo, task = entry["repo"], f"{entry['repo']}#{issue}"
+        repo = entry["repo"]
+        task = f"{repo}#{entry.get('seed') or ''}"
     else:
         return 1, "no_scope"
 
