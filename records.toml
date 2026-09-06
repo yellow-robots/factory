@@ -475,12 +475,12 @@ notes = "The severity valve's record — the valve is measured, never vibed."
 name = "YR-RELEASE"
 marker = "YR-RELEASE"
 mode = "prefix"
-fields = ["version", "commit", "validation", "who"]
+fields = ["version", "commit", "validation", "who", "manual"]
 emitted_by = ["human", "attended-agent"]   # typed actor classes (rule S's column)
 emitter = "tools/release.py (the validation-gated, git-native release act — ship mode at a round's close, backfill mode for the retroactive pair; the same body rides the annotated tag's message)"
 readers = ["tools/sources.py:releases (the release-surface fetcher the walk tooling and the bench read)", "tools/check_trail.py (release lane)", "humans on the repo's Releases page"]
 surfaces = ["release"]
-notes = "Ruling 6's record (it-31 slice 7), minted at the crossing of #432: a version is typed exactly once — the tag anchors the commit, validation names the evidence (the declared version's tree unchanged since its bump commit — it-33 slice 5; model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift)."
+notes = "Ruling 6's record (it-31 slice 7), minted at the crossing of #432: a version is typed exactly once — the tag anchors the commit, validation names the evidence (the declared version's tree unchanged since its bump commit — it-33 slice 5; model loads at the commit; server CI green via the squash-source PR's tree-equal head; no compiled-surface drift). Since it-32 slice 5 the `manual` field states whether docs/manual.md is current with the surfaces it renders by citation (updated · sources unchanged · unaffected — <reason>, the act's `--manual-unaffected`); the release refuses (`manual_current`) when the range since the previous tag changed skills/factory/SKILL.md or AGENTS.md without the manual and no reason was recorded."
 
 [[record]]
 name = "YR-DEPLOY"

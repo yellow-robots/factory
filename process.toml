@@ -23,7 +23,7 @@
 #     class stays fail-closed per `caller_default`;
 [model]
 contract = "yr-process/1"
-version = "1.6.1"
+version = "1.7.0"
 records_registry = "records.toml"
 change_duty = "gate-touching"           # the only legal value; compiled into the slice's footer
 slice_max_bytes = 13000                 # compile_slice.py's shipped bound; raised 12000 -> 13000
@@ -33,6 +33,15 @@ compiled = ["build/walled-acts.md", "build/lanes.toml",
             "build/slice-static.md", "build/conformance.json"]
 
 # ── the human's anchor when reading a gate-touching diff ─────────────────────────────────────
+[[amendment]]
+version = "1.7.0"
+date = "2026-09-06"
+kind = "widen"
+touches = ["plugin.release.validated"]
+reason = "the human's manual gets its ruled update trigger (it-32 callout (m); slice 5, epic #481): tools/release.py's validate() gains a refusing condition, `manual_current` — a range since the previous tag that changed skills/factory/SKILL.md or AGENTS.md without touching docs/manual.md refuses unless the act records the manual unaffected with a reason — and YR-RELEASE gains the `manual` field carrying that judgment (updated · sources unchanged · unaffected — <reason>); `release-validation`'s `conditions_display` and the transition's guard `why` name the condition in the tool's own order. The schema widens, so releases dated before this row are judged by 1.6.1 (ruling 3). Effective on its ship date, 2026-09-06 — NOT ship+1 as v1.6.0 and v1.6.1 chose: `check_trail.py`'s `--scope-created` scoping is trail-level against the CURRENT version's effective date, so a later date would scope every trail created on 2026-09-06 (this round's own merge and epic trails) out of v1.6.0's `commit` mandate, which they were held to. Ship+0 is safe for the one lane this row widens: no Release is dated 2026-09-06 (the shipped three are dated 2026-08-16/18), and the next Release is cut by this tool and carries the field."
+review = "yellow-robots/factory#486"
+who = "@jbrey"
+
 [[amendment]]
 version = "1.6.1"
 date = "2026-09-06"
@@ -787,14 +796,17 @@ crossing invariant delegates to this same seam — one implementation, cited, ne
 [[evaluator]]
 id = "release-validation"
 argv = ["python3", "tools/release.py", "validate", "--repo", "{scope.repo}"]
-conditions_display = ["version_spans_content", "model_loads", "server_ci_green", "no_drift"]
+conditions_display = ["version_spans_content", "manual_current", "model_loads",
+                      "server_ci_green", "no_drift"]
 timeout_s = 240                         # deliberately well under the hook's own 600s ceiling: a
                                         # harness kill is fail-OPEN (the invisible-exit contract),
                                         # so the evaluator must die first — closed, as UNKNOWN
 contract = "exit 0 pass; exit 1 fail with the failed-condition token as stdout's first line; anything else UNKNOWN"
 note = """The release wall's seam (it-31 slice 7, ruling 6; the fourth condition is it-33 slice 5,
-#461): validation is the tool's own — the declared version's tree is unchanged since its bump
-commit (the payload is the whole delivered tree), the model loads at the commit and build/ is
+#461; the fifth, `manual_current`, is it-32 slice 5, #486): validation is the tool's own — the
+declared version's tree is unchanged since its bump commit (the payload is the whole delivered
+tree), the human's manual is current over the range since the previous tag (or the act records
+it unaffected, with a reason), the model loads at the commit and build/ is
 drift-free (judged in a worktree AT the commit, by that commit's own tools), and server CI is
 green there (the squash-source PR's tree-equal head rollup — CI runs on PR heads, never on main's
 squash commits). This model holds no copy: `conditions_display` is a DISPLAY list, the tool owns
@@ -1209,7 +1221,7 @@ because = "a published version reaches every attended session the moment the plu
   [[transition.guard]]
   predicate = "evaluator_pass"
   args = { evaluator = "release-validation" }
-  why = "the release conditions are the tool's own, in its order, with its fail-closed semantics: version_spans_content, model_loads, server_ci_green, no_drift"
+  why = "the release conditions are the tool's own, in its order, with its fail-closed semantics: version_spans_content, manual_current, model_loads, server_ci_green, no_drift"
 
   [[transition.post]]
   predicate = "facet_is"

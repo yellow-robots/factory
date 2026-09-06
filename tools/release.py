@@ -14,6 +14,12 @@ Validation evidence, stated plainly:
     previous tag (full history when none exists) at which plugin.json first declares the version
     — never the previous tag itself. Any tracked path changed between the bump commit and the
     commit under validation refuses; a version whose tree is unchanged since its bump passes.
+  * manual_current — the human's manual (docs/manual.md) is current with the two surfaces it
+    renders by citation (it-32 slice 5, the manual's ruled update trigger): when the range since
+    the previous tag (the whole tracked tree when no earlier tag exists) changed
+    skills/factory/SKILL.md or AGENTS.md without touching docs/manual.md, the act refuses unless
+    invoked with `--manual-unaffected "<reason>"`; the YR-RELEASE record carries `manual:` either
+    way (`updated` · `sources unchanged` · `unaffected — <reason>`).
   * model_loads / no_drift — judged in a detached worktree AT THE COMMIT, by that commit's own
     `tools/process.py` (builds from git refs, never a mutable tree).
   * server_ci_green — CI runs on PR heads, never on main's squash commits, so the evidence chain
@@ -51,7 +57,10 @@ GH_TIMEOUT = 20
 GIT_TIMEOUT = 60
 WORKTREE_TIMEOUT = 120
 
-CONDITIONS = ("version_spans_content", "model_loads", "server_ci_green", "no_drift")
+CONDITIONS = ("version_spans_content", "manual_current", "model_loads", "server_ci_green",
+              "no_drift")
+MANUAL_PATH = "docs/manual.md"                       # the human's manual (it-32 slice 4)
+MANUAL_SOURCES = ("skills/factory/SKILL.md", "AGENTS.md")   # what it renders by citation
 _OK_CONCLUSIONS = {"success", "neutral", "skipped"}
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 _TAG_VERSION_RE = re.compile(rf"^{re.escape(TAG_PREFIX)}(\d+)\.(\d+)\.(\d+)$")
@@ -116,6 +125,23 @@ def _existing_version_tags() -> tuple[bool, list[tuple[str, tuple[int, int, int]
     return True, sorted(seen.items(), key=lambda kv: kv[1]), ""
 
 
+def _previous_tag(version: str) -> tuple[bool, str | None, str]:
+    """The latest existing `skill/vX.Y.Z` tag below `version` — (ok, tag-or-None, detail).
+    ok is False only when the remote was unreadable (fail-closed to the caller, detail
+    says why); a non-semver `version` has no comparable predecessor and yields None, the
+    callers' full-history / whole-tree fallback. The one home for the resolution both
+    range-based conditions (`version_spans_content`, `manual_current`) start from."""
+    ok, tags, detail = _existing_version_tags()
+    if not ok:
+        return False, None, (f"could not read origin's tags: {detail} — an unreadable remote "
+                             f"never passes (fail-closed)")
+    if not _VERSION_RE.match(version):
+        return True, None, ""
+    want = tuple(int(g) for g in version.split("."))
+    below = [name for name, v in tags if v < want]
+    return True, (below[-1] if below else None), ""
+
+
 def _bump_commit(version: str, commit: str) -> tuple[str | None, str]:
     """The anchor for `version_spans_content`: the first first-parent commit in
     `<previous tag>..<commit>` (full history when no earlier tag exists) at which plugin.json
@@ -126,15 +152,9 @@ def _bump_commit(version: str, commit: str) -> tuple[str | None, str]:
     anchor — an unchanged (empty) tree, by construction. A non-semver `version` never raises: it
     can't be compared against existing tags, so it falls back to the full-history walk (no
     previous-tag bound) — a too-early start costs time, never correctness."""
-    ok, tags, detail = _existing_version_tags()
+    ok, prev_tag, detail = _previous_tag(version)
     if not ok:
-        return None, (f"could not read origin's tags: {detail} — an unreadable remote never "
-                      f"passes (fail-closed)")
-    prev_tag = None
-    if _VERSION_RE.match(version):
-        want = tuple(int(g) for g in version.split("."))
-        below = [name for name, v in tags if v < want]
-        prev_tag = below[-1] if below else None
+        return None, detail
     rng = f"{prev_tag}..{commit}" if prev_tag else commit
     rc, out, err = _run(["git", "log", "--first-parent", "--reverse", "--format=%H", rng,
                         "--", ".claude-plugin/plugin.json"], cwd=str(REPO_ROOT))
@@ -165,6 +185,62 @@ def _version_spans_content(version: str, commit: str) -> tuple[str, str]:
             f"{bump[:9]} (where plugin.json first declared {version}) and {commit[:9]} — a "
             f"released version's tree must be unchanged since it was declared")
     return "", f"tree unchanged since the bump commit {bump[:9]}"
+
+
+def _changed_since_previous_tag(version: str, commit: str) -> tuple[list[str] | None, str, str]:
+    """The tracked paths changed in `<previous tag>..<commit>` — every tracked path at `commit`
+    when no earlier tag exists (the whole tree is new). Returns (paths, range, error); paths is
+    None only when the remote or git was unreadable (fail-closed to the caller)."""
+    ok, prev_tag, detail = _previous_tag(version)
+    if not ok:
+        return None, "", detail
+    if prev_tag:
+        rng = f"{prev_tag}..{commit[:9]}"
+        rc, out, err = _run(["git", "diff", "--name-only", f"{prev_tag}..{commit}"],
+                            cwd=str(REPO_ROOT))
+    else:
+        rng = f"the whole tree at {commit[:9]} (no earlier tag)"
+        rc, out, err = _run(["git", "ls-tree", "-r", "--name-only", commit], cwd=str(REPO_ROOT))
+    if rc != 0:
+        return None, rng, f"could not read the paths changed over {rng}: {err.strip() or rc}"
+    return [p for p in out.splitlines() if p.strip()], rng, ""
+
+
+def _manual_current(version: str, commit: str,
+                    unaffected: str | None) -> tuple[str, str, str]:
+    """'' + evidence + the record's `manual` value on pass; 'manual_current' + detail + '' on
+    fail. The manual (MANUAL_PATH) renders MANUAL_SOURCES by citation, so a release whose range
+    changed a source without touching the manual would ship a stale manual — refused, unless the
+    act records the manual unaffected with a reason (`--manual-unaffected`), which the record
+    then carries verbatim. The judgment is diff-based like `version_spans_content` and, like it,
+    runs only when a version is declared. The judgment always runs: the override is honoured
+    only where the act would otherwise refuse, so the record states what was observed
+    (`updated` / `sources unchanged`) whenever that is the fact, an unreadable range refuses
+    even under the override, and a blank reason is a refusal naming the value — never read as
+    a declaration."""
+    override = unaffected.strip() if unaffected is not None else ""
+    if unaffected is not None and not override:
+        return "manual_current", (
+            f"--manual-unaffected was given a blank reason ({unaffected!r}) — the record carries "
+            f"the reason verbatim, so a blank declaration is refused, never read as unaffected"), ""
+    changed, rng, err = _changed_since_previous_tag(version, commit)
+    if changed is None:
+        return "manual_current", err, ""
+    sources = sorted(p for p in changed if p in MANUAL_SOURCES)
+    unused = (f" (--manual-unaffected {override!r} was not needed and is not recorded)"
+              if override else "")
+    if not sources:
+        return "", f"manual sources unchanged over {rng}{unused}", "sources unchanged"
+    if MANUAL_PATH in changed:
+        return "", (f"manual updated over {rng} alongside {', '.join(sources)}{unused}"), "updated"
+    if override:
+        value = f"unaffected — {override}"
+        return "", (f"{', '.join(sources)} changed over {rng} without {MANUAL_PATH}; manual "
+                    f"{value} (recorded by the act)"), value
+    return "manual_current", (
+        f"{', '.join(sources)} changed over {rng} but {MANUAL_PATH} did not — the manual renders "
+        f"those surfaces by citation and would ship stale; update it in the same range, or "
+        f"record it unaffected with --manual-unaffected \"<reason>\""), ""
 
 
 def _ci_green_at(repo: str, commit: str) -> tuple[bool, str]:
@@ -244,39 +320,52 @@ def _judged_at_commit(commit: str) -> tuple[str, str]:
              timeout=WORKTREE_TIMEOUT)
 
 
-def validate(repo: str, commit: str, version: str | None) -> tuple[int, str, list[str]]:
-    """CONDITIONS, in conditions_display order, fail-closed. Returns (rc, evidence, evaluated) —
-    `evaluated` names only the conditions actually judged this call (version_spans_content runs
-    only when a version is given), so a caller never claims a condition it didn't run."""
+def validate(repo: str, commit: str, version: str | None,
+             manual_unaffected: str | None = None) -> tuple[int, str, list[str], str]:
+    """CONDITIONS, in conditions_display order, fail-closed. Returns (rc, evidence, evaluated,
+    manual) — `evaluated` names only the conditions actually judged this call
+    (version_spans_content and manual_current run only when a version is given), so a caller
+    never claims a condition it didn't run; `manual` is the YR-RELEASE record's `manual` value
+    (empty when the condition was not judged)."""
     span_evidence = ""
+    manual_evidence = ""
+    manual = ""
     evaluated: list[str] = []
     if version is not None:
         at = _version_at_commit(commit)
         if at != version:
             return _fail("version_mismatch",
                          f"plugin.json at {commit[:9]} says {at!r}, not {version!r} — the tag "
-                         f"must anchor the commit that shipped the version"), "", evaluated
+                         f"must anchor the commit that shipped the version"), "", evaluated, ""
         evaluated.append("version_spans_content")
         token, detail = _version_spans_content(version, commit)
         if token:
-            return _fail(token, detail), "", evaluated
+            return _fail(token, detail), "", evaluated, ""
         span_evidence = detail
+        evaluated.append("manual_current")
+        token, detail, manual = _manual_current(version, commit, manual_unaffected)
+        if token:
+            return _fail(token, detail), "", evaluated, ""
+        manual_evidence = detail
     evaluated.append("model_loads")
     token, detail = _judged_at_commit(commit)
     if token == "model_loads":
-        return _fail(token, detail), "", evaluated
+        return _fail(token, detail), "", evaluated, ""
     evaluated.append("server_ci_green")
     ok, ci_evidence = _ci_green_at(repo, commit)
     if not ok:
-        return _fail("server_ci_green", ci_evidence), "", evaluated
+        return _fail("server_ci_green", ci_evidence), "", evaluated, ""
     evaluated.append("no_drift")
     if token == "no_drift":
-        return _fail(token, detail), "", evaluated
-    evidence = "; ".join(e for e in (span_evidence, detail, ci_evidence) if e)
-    return 0, evidence, evaluated
+        return _fail(token, detail), "", evaluated, ""
+    evidence = "; ".join(e for e in (span_evidence, manual_evidence, detail, ci_evidence) if e)
+    return 0, evidence, evaluated, manual
 
 
-def record_body(version: str, commit: str, validation: str, who: str, mode: str) -> str:
+def record_body(version: str, commit: str, validation: str, who: str, mode: str, *,
+                manual: str) -> str:
+    """The YR-RELEASE record. `manual` is required, never defaulted: a record emitter with a
+    fail-open default would state a fact no judgment produced once the manual exists."""
     tail = {
         "ship": ("Released via `tools/release.py` (the validation-gated, git-native release act — "
                  "it-31 slice 7, ruling 6): the annotated tag anchors the commit; the validation "
@@ -288,7 +377,8 @@ def record_body(version: str, commit: str, validation: str, who: str, mode: str)
             f"version: {version}\n"
             f"commit: {commit}\n"
             f"validation: {validation}\n"
-            f"who: {who}\n\n{tail}\n")
+            f"who: {who}\n"
+            f"manual: {manual}\n\n{tail}\n")
 
 
 def _who(explicit: str | None) -> str:
@@ -300,7 +390,7 @@ def _who(explicit: str | None) -> str:
 
 
 def _release(repo: str, version: str, commit_ref: str, who: str | None, mode: str,
-             test_mode: bool) -> int:
+             test_mode: bool, manual_unaffected: str | None = None) -> int:
     if not _VERSION_RE.match(version):
         return _fail("version_malformed", f"{version!r} is not X.Y.Z")
     commit = _resolve_commit(commit_ref)
@@ -314,11 +404,11 @@ def _release(repo: str, version: str, commit_ref: str, who: str | None, mode: st
     if out.strip():
         return _fail("tag_exists", f"refs/tags/{tag} already exists on origin — a version is "
                                    f"released once; a re-release is a new version")
-    rc, evidence, evaluated = validate(repo, commit, version)
+    rc, evidence, evaluated, manual = validate(repo, commit, version, manual_unaffected)
     if rc != 0:
         return rc
     validation = f"{' '.join(evaluated)} ({evidence})" if evaluated else evidence
-    body = record_body(version, commit, validation, _who(who), mode)
+    body = record_body(version, commit, validation, _who(who), mode, manual=manual)
     if test_mode:
         print(f"TEST-MODE: no tag, no Release, no trail — the plan only")
         print(f"would tag:     {tag} at {commit}")
@@ -355,6 +445,8 @@ def main(argv: list[str] | None = None) -> int:
     p_v.add_argument("--commit", default="origin/main")
     p_v.add_argument("--version", default=None,
                      help="when given, plugin.json at the commit must agree")
+    p_v.add_argument("--manual-unaffected", default=None, metavar="REASON",
+                     help="record docs/manual.md unaffected by this range, with the reason")
     p_s = sub.add_parser("ship", help="release origin/main's tip as the given version")
     p_b = sub.add_parser("backfill", help="type a shipped version against its pinned commit")
     for p in (p_s, p_b):
@@ -363,6 +455,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--who", default=None)
         p.add_argument("--test-mode", action="store_true",
                        help="full validation, zero writes — no tag, no Release, no trail")
+        p.add_argument("--manual-unaffected", default=None, metavar="REASON",
+                       help="record docs/manual.md unaffected by this range, with the reason")
     p_b.add_argument("--commit", default=None,
                      help="required for a version outside the pinned BACKFILL pair")
     args = ap.parse_args(argv)
@@ -371,7 +465,8 @@ def main(argv: list[str] | None = None) -> int:
         commit = _resolve_commit(args.commit)
         if not commit:
             return _fail("commit_unresolvable", f"{args.commit!r} does not resolve")
-        rc, evidence, evaluated = validate(args.repo, commit, args.version)
+        rc, evidence, evaluated, _ = validate(args.repo, commit, args.version,
+                                              args.manual_unaffected)
         if rc == 0:
             print(f"ok: {' '.join(evaluated)} ({evidence})")
         return rc
@@ -381,14 +476,15 @@ def main(argv: list[str] | None = None) -> int:
         if rc != 0:
             return _fail("commit_unresolvable", f"git fetch origin failed: {err.strip()}")
         return _release(args.repo, args.version, "origin/main", args.who, "ship",
-                        args.test_mode)
+                        args.test_mode, args.manual_unaffected)
     # backfill
     commit = BACKFILL.get(args.version) or args.commit
     if not commit:
         print(f"backfill: {args.version} is not in the pinned pair and no --commit was given "
               f"— name the shipped commit explicitly", file=sys.stderr)
         return 1
-    return _release(args.repo, args.version, commit, args.who, "backfill", args.test_mode)
+    return _release(args.repo, args.version, commit, args.who, "backfill", args.test_mode,
+                    args.manual_unaffected)
 
 
 if __name__ == "__main__":
