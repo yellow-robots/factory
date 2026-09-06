@@ -117,27 +117,27 @@ def test_board_query_declares_paging_machinery():
     assert "pageInfo" in src and "hasNextPage" in src and "endCursor" in src
 
 
-# A dedicated stub (python face, cursor-aware) for the paging behavior alone — GH_STUB_TOOLS's single
-# canned STUB_NODES response has no pageInfo/cursor concept at all, so a second, purpose-built fake is
-# the honest seam here rather than stretching the shared one to a shape it was never asked to carry.
-GH_STUB_PAGED = '''#!/usr/bin/env python3
-import json, os, sys
-
-argv = sys.argv[1:]
-if argv[:2] == ["api", "graphql"]:
-    pages = json.loads(os.environ["STUB_PAGES"])
-    cursor = None
-    for i, a in enumerate(argv):
-        if a == "-F" and argv[i + 1].startswith("cursor="):
-            cursor = argv[i + 1].split("=", 1)[1]
-    idx = int(cursor) if cursor else 0
-    nodes, has_next = pages[idx]
-    page = {"nodes": nodes,
-            "pageInfo": {"hasNextPage": has_next, "endCursor": str(idx + 1) if has_next else None}}
-    print(json.dumps({"data": {"organization": {"projectV2": {"items": page}}}}))
-    sys.exit(0)
-sys.exit(9)
+# Paging (#475) needs a cursor-aware `api graphql` shape GH_STUB_TOOLS's own STUB_NODES arm doesn't
+# carry (a bare nodes list, no pageInfo/cursor concept) — derived from the shared fake via .replace()
+# per tests/harness/contract.md (locate the arm to splice a new one beside, never retype the
+# classifier/dispatch shape): a STUB_PAGES arm is spliced in ahead of the STUB_NODES arm inside the
+# shared `api graphql` dispatch, so this stays the same object's dispatch shell plus one extra mode.
+_STUB_NODES_ARM = '    if "STUB_NODES" in os.environ:\n'
+_STUB_PAGES_ARM = '''    if "STUB_PAGES" in os.environ:
+        pages = json.loads(os.environ["STUB_PAGES"])
+        cursor = None
+        for i, a in enumerate(argv):
+            if a == "-F" and argv[i + 1].startswith("cursor="):
+                cursor = argv[i + 1].split("=", 1)[1]
+        idx = int(cursor) if cursor else 0
+        nodes, has_next = pages[idx]
+        page = {"nodes": nodes,
+                "pageInfo": {"hasNextPage": has_next, "endCursor": str(idx + 1) if has_next else None}}
+        print(json.dumps({"data": {"organization": {"projectV2": {"items": page}}}}))
+        sys.exit(0)
 '''
+assert gh_fake.GH_STUB_TOOLS.count(_STUB_NODES_ARM) == 1, "GH_STUB_TOOLS's STUB_NODES arm text drifted"
+GH_STUB_PAGED = gh_fake.GH_STUB_TOOLS.replace(_STUB_NODES_ARM, _STUB_PAGES_ARM + _STUB_NODES_ARM, 1)
 
 
 def _run_paged(tmp, pages):
