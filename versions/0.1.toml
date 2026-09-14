@@ -1,0 +1,30 @@
+# The factory's own next version. Format: docs/decisions/0002-thinnest-loop.md.
+goal = "Drive hello-robot-world v0.1 (a static site that says hello) through the loop by hand"
+
+[[criteria]]
+text = "`make next` in this repo prints the current version, the next declared version, and the red tests"
+surface = "cli"
+
+[[criteria]]
+text = "`factory identify <repo>` prints a project's name, current version, next version and goal from its contract alone"
+surface = "cli"
+
+[[criteria]]
+text = "`factory provision <repo>` is idempotent: a second run on provisioned infra changes nothing and says so"
+surface = "cli"
+
+[[criteria]]
+text = "`factory verify <repo>` checks each criterion of the next version on its surface and prints pass/fail per criterion"
+surface = "cli"
+
+[[criteria]]
+text = "`factory deploy <repo>` publishes the tagged artifact; the hello site answers on its URL"
+surface = "http"
+
+[[criteria]]
+text = "hello-robot-world carries tag v0.1 and a CHANGELOG.md entry generated from its commits"
+surface = "git"
+
+[[criteria]]
+text = "the outcome line for the run records steps, interventions (hand edits by the attended agent) and wall time"
+surface = "cli"

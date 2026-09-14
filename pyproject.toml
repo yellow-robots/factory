@@ -1,0 +1,29 @@
+[project]
+name = "factory"
+# The version of record is the git tag (`git describe`); this field is a PEP 621 placeholder.
+version = "0.0.0"
+description = "A dev factory: machinery that takes a project from its next declared version to a deployed one."
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "git-cliff>=2.13.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+xfail_strict = true
+markers = [
+    "next: the position — a red test the next session makes green (strict xfail, so a pass forces the marker off)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
