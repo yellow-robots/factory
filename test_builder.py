@@ -627,26 +627,33 @@ class WireTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "wire.jsonl"
 
-    def test_the_wire_records_both_lines_with_the_key_redacted(self):
+    def test_the_wire_records_both_lines_with_the_key_redacted_and_json_bodies_as_json(self):
         def handler(request):
+            if request.url.path == "/plain":
+                return httpx2.Response(200, text="plain answer", headers={"set-cookie": "s=1"})
             return httpx2.Response(200, json={"ok": 1}, headers={"set-cookie": "s=1"})
 
         wire = builder.Wire(self.path, transport=httpx2.MockTransport(handler))
 
         async def go():
-            return await wire.client.post(
+            await wire.client.post(
                 "https://api.example/chat",
                 json={"model": "deepseek-flash"},
                 headers={"Authorization": "Bearer not-a-key"},
             )
+            await wire.client.post("https://api.example/plain", content=b"not json")
 
         asyncio.run(go())
         lines = [json.loads(l) for l in self.path.read_text().splitlines()]
-        self.assertEqual([m["dir"] for m in lines], ["request", "response"])
-        self.assertEqual(json.loads(lines[0]["body"]), {"model": "deepseek-flash"})
+        self.assertEqual([m["dir"] for m in lines], ["request", "response", "request", "response"])
+        # a body that is JSON is recorded as the parsed value, so the record reads without a
+        # second json.loads; a body that is not JSON is recorded as the text it was
+        self.assertEqual(lines[0]["body"], {"model": "deepseek-flash"})
         self.assertEqual(lines[1]["status"], 200)
-        self.assertEqual(json.loads(lines[1]["body"]), {"ok": 1})
-        self.assertEqual(wire.attempts, 1)
+        self.assertEqual(lines[1]["body"], {"ok": 1})
+        self.assertEqual(lines[2]["body"], "not json")
+        self.assertEqual(lines[3]["body"], "plain answer")
+        self.assertEqual(wire.attempts, 2)
         self.assertNotIn("not-a-key", self.path.read_text())
         self.assertEqual(lines[0]["headers"]["authorization"], "<redacted>")
         self.assertEqual(lines[1]["headers"]["set-cookie"], "<redacted>")
@@ -674,7 +681,8 @@ class WireTest(unittest.TestCase):
             report, messages, usage, stopped, detail = run(agent, "goal")
         self.assertEqual(stopped, "answer")
         self.assertEqual(report.check, "green")
-        request = json.loads(next(json.loads(l) for l in self.path.read_text().splitlines())["body"])
+        request = next(json.loads(l) for l in self.path.read_text().splitlines())["body"]
+        self.assertIsInstance(request, dict)  # the wire records a JSON body as JSON
         self.assertEqual(sorted(request), ["messages", "model", "stream", "tool_choice", "tools"])
         self.assertEqual(request["tool_choice"], "auto")
         self.assertNotIn("temperature", request)
