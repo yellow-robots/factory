@@ -392,6 +392,15 @@ class Wire:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"t": round(time.time(), 3), **entry}, ensure_ascii=False) + "\n")
 
+    @staticmethod
+    def _body(text: str) -> Any:
+        """A body that parses as JSON is recorded as the parsed value, so reading the record needs
+        no second json.loads; a body that does not parse as JSON stays the text it was."""
+        try:
+            return json.loads(text)
+        except ValueError:  # not JSON: keep the text, as the only thing it can be read as
+            return text
+
     def _headers(self, headers: Any) -> dict[str, str]:
         """Which headers were sent, never what the secret ones said."""
         out = {}
@@ -413,7 +422,7 @@ class Wire:
             url=str(request.url),
             status=None,
             headers=self._headers(request.headers),
-            body=body,
+            body=self._body(body),
         )
 
     async def on_response(self, response: Any) -> None:
@@ -426,7 +435,7 @@ class Wire:
             url=str(req.url),
             status=response.status_code,
             headers=self._headers(response.headers),
-            body=response.text,
+            body=self._body(response.text),
         )
 
 
