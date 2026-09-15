@@ -1,0 +1,628 @@
+#!/usr/bin/env python3
+"""The builder: a cold session that changes a world until its tests pass. Factory v0.3.
+
+    uv run builder.py <world> "<goal>"
+
+The world is the directory named on the command line, reachable only through five functions:
+list, read, write, edit and check. Writes are confined to the world and refused on the goal's
+tests and the toolchain; check runs the world's tests in a container with no network and the
+world mounted read-only, so code the model writes never runs on the host and cannot reach the
+key. The loop is pydantic-ai, pinned; the provider is DeepSeek's chat completions API, the key
+read from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves
+runs/<utc-stamp>/ under the factory itself, never in the world, with goal.txt, wire.jsonl (every
+HTTP attempt as it happened), messages.json (the library's messages), check-<n>.log per check,
+diff.patch (what the run left in the world), report.json, response.md (the report rendered) and
+numbers.json.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import importlib.metadata
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Literal
+
+# Before the import: the library greets stderr once per process unless this is set.
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+
+import httpx2  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+from pydantic_ai import (  # noqa: E402
+    Agent,
+    ModelAPIError,
+    ModelMessagesTypeAdapter,
+    RunUsage,
+    Tool,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UsageLimits,
+    capture_run_messages,
+)
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings  # noqa: E402
+from pydantic_ai.profiles.openai import OpenAIModelProfile  # noqa: E402
+from pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402
+
+RUNS = Path(__file__).resolve().parent / "runs"  # the factory's record, never inside the world
+KEY_FILE = Path.home() / ".config" / "factory" / "deepseek.key"
+MODEL = "deepseek-flash"
+LIBRARY = "pydantic-ai-slim " + importlib.metadata.version("pydantic-ai-slim")
+TOOL_CALLS_CAP = 80  # tool calls per run; over it the run stops with no report
+REQUEST_CAP = 60  # provider requests per run
+LIST_CAP = 500  # entries per list
+READ_LINES_CAP = 300  # lines per read
+READ_BYTES_CAP = 32_000  # bytes per read
+WRITE_CAP = 30  # writes and edits per run, together
+CHECK_CAP = 8  # checks per run
+# What green means, in the world's own terms. -P keeps the world's root off sys.path while the
+# runner is imported, or a file named unittest.py at the world root shadows the stdlib and turns
+# any suite green; `discover` still finds the world's tests and puts the root back for them.
+CHECK_CMD = ("python", "-P", "-m", "unittest", "discover", "-q")
+CHECK_TIMEOUT = 120  # seconds for one check, then the container is killed
+CHECK_TAIL_LINES = 60  # lines of check output handed back
+CHECK_TAIL_BYTES = 8_000  # and at most this many bytes of them
+IMAGE_TIMEOUT = 600  # seconds for the one image build
+# Hidden at the root because they are what running, installing and planning the program leave
+# behind, not the world; .git is the human's record and its hooks run on the host.
+HIDDEN = ("runs", ".claude", "__pycache__", ".venv", "plans", ".git")
+# Refused to write and edit: the tests are the goal's acceptance criteria and the toolchain is
+# what check runs against. A basename glob anywhere, a prefix, or an exact path at the root;
+# the glob is unittest's own discovery pattern, so every file the check collects is covered.
+PROTECTED = ("test*.py", "tests/", "pyproject.toml", "uv.lock", "check.Dockerfile")
+# USD per 1M tokens, peak rates; api-docs.deepseek.com/quick_start/pricing read on 2026-09-15.
+PRICE = {"cache_hit": 0.006, "cache_miss": 0.3, "output": 1.2}
+
+ROLE = """\
+You are the builder. You are given a goal and a world: a directory with code and tests. You
+can explore it with `list` and `read`, change it with `write` and `edit`, and test it with
+`check`. The goal is reached when `check` is green: the tests are the goal's acceptance
+criteria and cannot be changed.
+
+Work in this order: read what the goal touches; run `check` once to see what fails; make the
+smallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or
+when you cannot make it green within the budget, and return the report through the
+`final_result` function: changed (the paths you wrote or edited, in order), did (what you
+changed and why, one fact per item, each naming a path), check (green or red), failing (test
+names if red), unsure (what you could not determine or verify).
+
+Rules: change only what the goal needs; prefer `edit` over `write` for existing files; never
+work around a failing test by changing what it asserts; no commentary outside the report.
+"""
+
+
+class BuildReport(BaseModel):
+    """The builder's report: what it changed in the world, and whether the tests pass."""
+
+    changed: list[str] = Field(description="The paths you wrote or edited, in order.")
+    did: list[str] = Field(
+        description="What you changed and why, one fact per item, each naming a path."
+    )
+    check: Literal["green", "red"] = Field(description="Green or red: the state of the last check.")
+    failing: list[str] = Field(description="Test names if red.")
+    unsure: list[str] = Field(description="What you could not determine or verify.")
+
+
+SECTIONS = (("Changed", "changed"), ("Did", "did"), ("Check", "check"),
+            ("Failing", "failing"), ("Unsure", "unsure"))  # fmt: skip
+
+
+def render(report: BuildReport) -> str:
+    """The report in v0.1's markdown shape: five headings, one bullet per item."""
+    out: list[str] = []
+    for heading, field in SECTIONS:
+        out.append(f"## {heading}")
+        items = getattr(report, field)
+        if isinstance(items, str):  # check is one value, and renders as one bullet
+            items = [items]
+        out.extend(f"- {item}" for item in items or ["(none)"])
+        out.append("")
+    return "\n".join(out)
+
+
+class Plane:
+    """The execution plane: what the model can do to the world, and the record of it."""
+
+    def __init__(self, root: Path, run_dir: Path, hidden: tuple[str, ...] = HIDDEN,
+                 protected: tuple[str, ...] = PROTECTED, sandbox: Any = None):  # fmt: skip
+        self.root = root.resolve()
+        self.run_dir = run_dir
+        self.hidden = hidden
+        self.protected = protected
+        self.sandbox = sandbox
+        self.listed: list[str] = []
+        self.read_paths: list[str] = []
+        self.lines_read = 0
+        self.written: list[str] = []
+        self.edited: list[str] = []
+        self.checks: list[dict[str, Any]] = []
+
+    def _resolve(self, path: str) -> tuple[Path, str]:
+        p = (self.root / (path or ".")).resolve()
+        if p != self.root and self.root not in p.parents:
+            raise ValueError(f"outside the world: {path}")
+        rel = p.relative_to(self.root).as_posix() or "."
+        if rel.split("/", 1)[0] in self.hidden:
+            raise ValueError(f"not part of the world: {path}")
+        return p, rel
+
+    def _writable(self, rel: str) -> None:
+        """The goal's tests and the toolchain are the human's; the builder may read them only."""
+        name = rel.rsplit("/", 1)[-1]
+        for pattern in self.protected:
+            if pattern.endswith("/"):  # anything under that directory
+                hit = rel == pattern[:-1] or rel.startswith(pattern)
+            elif "*" in pattern:  # that basename, anywhere in the world
+                hit = fnmatch.fnmatchcase(name, pattern)
+            else:  # that exact path at the root, not the basename anywhere
+                hit = rel == pattern
+            if hit:
+                raise ValueError(
+                    f"protected: {rel} (the goal's tests and the toolchain are not the "
+                    "builder's to change)"
+                )
+
+    def _capped(self) -> str:
+        if len(self.written) + len(self.edited) >= WRITE_CAP:
+            return f"error: cap reached ({WRITE_CAP} writes and edits); report now"
+        return ""
+
+    def list(self, path: str = ".") -> str:
+        """List one directory of the world: one entry per line as kind, size, path. Path is
+        relative to the world root; '.' is the root.
+
+        Args:
+            path: The directory to list, relative to the world root.
+        """
+        try:
+            p, rel = self._resolve(path)
+            if not p.is_dir():
+                raise ValueError(f"not a directory: {path}")
+            entries = sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name))
+            if rel == ".":
+                entries = [e for e in entries if e.name not in self.hidden]
+            lines = []
+            for e in entries[:LIST_CAP]:
+                kind = "link" if e.is_symlink() else "dir" if e.is_dir() else "file"
+                size = e.lstat().st_size if kind == "file" else 0
+                lines.append(f"{kind}\t{size}\t{e.relative_to(self.root).as_posix()}")
+            if len(entries) > LIST_CAP:
+                lines.append(f"...\t{len(entries) - LIST_CAP} more entries not shown")
+        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop
+            return f"error: {e}"
+        self.listed.append(rel)
+        return "\n".join(lines) or "(empty)"
+
+    def read(self, path: str, start: int = 1) -> str:
+        """Read a file of the world as numbered lines, from line `start` (1-based), at most 300
+        lines or 32000 bytes per call; a truncated read says where to continue.
+
+        Args:
+            path: The file to read, relative to the world root.
+            start: The first line to read, 1-based.
+        """
+        try:
+            p, rel = self._resolve(path)
+            if not p.is_file():
+                raise ValueError(f"not a file: {path}")
+            start = max(1, int(start))
+            out: list[str] = []
+            n = nbytes = 0
+            with p.open("r", encoding="utf-8", errors="replace") as f:
+                for i, line in enumerate(f, 1):
+                    if i < start:
+                        continue
+                    size = len(line.encode())
+                    if n >= READ_LINES_CAP or nbytes + size > READ_BYTES_CAP:
+                        if n:  # one line per call at least, or a long line dead-ends the read
+                            out.append(f"...\ttruncated; continue with start={i}")
+                            break
+                        cut = line.encode()[:READ_BYTES_CAP].decode("utf-8", "ignore")
+                        out.append(f"{i}\t{cut} …(line cut at {READ_BYTES_CAP} bytes)")
+                    else:
+                        out.append(f"{i}\t{line.rstrip(chr(10))}")
+                    n += 1
+                    nbytes += size
+        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop
+            return f"error: {e}"
+        self.read_paths.append(rel)
+        self.lines_read += n
+        return "\n".join(out) or "(empty)"
+
+    def write(self, path: str, content: str) -> str:
+        """Write a file of the world: create it, or replace what is there with `content`.
+        Directories on the way are created. The tests and the toolchain cannot be written.
+
+        Args:
+            path: The file to write, relative to the world root.
+            content: The whole text of the file, as it should be afterwards.
+        """
+        capped = self._capped()
+        if capped:
+            return capped
+        try:
+            p, rel = self._resolve(path)
+            self._writable(rel)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop
+            return f"error: {e}"
+        self.written.append(rel)
+        return f"wrote {rel} ({len(content.splitlines())} lines)"
+
+    def edit(self, path: str, old: str, new: str) -> str:
+        """Edit a file of the world: replace `old` with `new`, once. `old` must appear in the
+        file exactly once; if it does not, nothing is changed and the count is reported. The
+        tests and the toolchain cannot be edited.
+
+        Args:
+            path: The file to edit, relative to the world root.
+            old: The exact text to replace; include lines around it to make it unique.
+            new: The text to put in its place.
+        """
+        capped = self._capped()
+        if capped:
+            return capped
+        if not old:  # every file contains the empty string, everywhere
+            return "error: old text is empty"
+        try:
+            p, rel = self._resolve(path)
+            self._writable(rel)
+            if not p.is_file():
+                raise ValueError(f"not a file: {path}")
+            text = p.read_text(encoding="utf-8")
+            found = text.count(old)
+            if found != 1:
+                if found == 0:
+                    return f"error: old text not found in {rel}"
+                return f"error: old text found {found} times in {rel}; include more context"
+            before = len(text.splitlines())
+            text = text.replace(old, new, 1)
+            p.write_text(text, encoding="utf-8")
+        except (ValueError, OSError, RuntimeError) as e:  # UnicodeDecodeError is a ValueError
+            return f"error: {e}"
+        self.edited.append(rel)
+        return f"edited {rel} ({before} -> {len(text.splitlines())} lines)"
+
+    def check(self) -> str:
+        """Run the world's tests and return the exit code and the tail of the output: exit 0 is
+        green, anything else is red. The tests run in a container, with the world read-only and
+        no network, so this reports on the world as it is on disk. At most 8 checks per run.
+        """
+        if len(self.checks) >= CHECK_CAP:
+            return f"error: cap reached ({CHECK_CAP} checks); report now"
+        if self.sandbox is None:
+            return "error: no sandbox; check is not available in this run"
+        n = len(self.checks) + 1
+        t0 = time.time()
+        try:
+            code, output = self.sandbox.run(self.root, self.run_dir, n)
+            seconds = round(time.time() - t0, 1)
+            log = self.run_dir / f"check-{n}.log"
+            log.write_text(output, encoding="utf-8", errors="replace")
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as e:
+            return f"error: {e}"
+        self.checks.append({"exit": code, "seconds": seconds})
+        tail = "\n".join(output.splitlines()[-CHECK_TAIL_LINES:])
+        if len(tail.encode()) > CHECK_TAIL_BYTES:  # the end of the output is the part that says why
+            tail = tail.encode()[-CHECK_TAIL_BYTES:].decode("utf-8", "ignore")
+        return f"exit {code}\n{tail}"
+
+
+class Sandbox:
+    """Where the world's tests run: a container, no network, the world mounted read-only.
+
+    The only place that knows about Docker. The image is the world's own locked dependencies,
+    built once per (uv.lock, check.Dockerfile) pair and reused by every run afterwards.
+    """
+
+    @staticmethod
+    def image(world: Path) -> str:
+        """The image name for this world: what it locks and how it is built, hashed."""
+        h = hashlib.sha256((world / "uv.lock").read_bytes() + (world / "check.Dockerfile").read_bytes())
+        return f"factory-check:{h.hexdigest()[:12]}"
+
+    @staticmethod
+    def ensure_image(world: Path, run_dir: Path) -> str:
+        """Build the image if it is not there yet; the build is the one step with network."""
+        name = Sandbox.image(world)
+        seen = subprocess.run(["docker", "image", "inspect", name], capture_output=True)
+        if seen.returncode == 0:
+            return name
+        built = subprocess.run(
+            # -f absolute: docker resolves a relative -f against the caller's directory, and the
+            # factory never runs from inside the world.
+            ["docker", "build", "-f", str(world / "check.Dockerfile"), "-t", name, str(world)],
+            capture_output=True,
+            timeout=IMAGE_TIMEOUT,
+        )
+        (run_dir / "image-build.log").write_bytes(built.stdout + built.stderr)
+        if built.returncode != 0:
+            raise RuntimeError(f"docker build failed (exit {built.returncode}); see image-build.log")
+        return name
+
+    @staticmethod
+    def run(world: Path, run_dir: Path, n: int) -> tuple[int, str]:
+        """The world's tests, once: the exit code and everything the run printed."""
+        name = Sandbox.ensure_image(world, run_dir)
+        container = f"factory-check-{run_dir.name}-{n}"
+        argv = [
+            "docker", "run", "--rm", "--name", container,
+            "--network", "none",  # the check cannot reach the key, the provider or the internet
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            "-e", "HOME=/tmp",
+            "-e", "PYTHONDONTWRITEBYTECODE=1",  # the world is read-only; do not try to cache
+            "-v", f"{world}:/w:ro", "-w", "/w",
+            "--memory", "1g", "--cpus", "2", "--pids-limit", "256",
+            name, *CHECK_CMD,
+        ]  # fmt: skip
+        try:
+            done = subprocess.run(argv, capture_output=True, timeout=CHECK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:  # the check is over either way; a wedged daemon must not hang the run too
+                subprocess.run(["docker", "kill", container], capture_output=True, timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            return 124, f"timeout after {CHECK_TIMEOUT} s"
+        # unittest writes to stderr; the world's own code may write to either.
+        return done.returncode, (done.stdout + done.stderr).decode("utf-8", "replace")
+
+
+SECRET_HEADERS = ("authorization", "x-api-key", "cookie", "set-cookie", "proxy-authorization")
+
+
+class Wire:
+    """The raw HTTP record: one line per attempt, request and response, with no secret in it."""
+
+    def __init__(self, path: Path, transport: Any = None):
+        self.path = path
+        self.attempts = 0
+        path.touch()
+        self.client = httpx2.AsyncClient(
+            transport=transport,
+            event_hooks={"request": [self.on_request], "response": [self.on_response]},
+        )
+
+    def _write(self, **entry: Any) -> None:
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": round(time.time(), 3), **entry}, ensure_ascii=False) + "\n")
+
+    def _headers(self, headers: Any) -> dict[str, str]:
+        """Which headers were sent, never what the secret ones said."""
+        out = {}
+        for name, value in headers.items():
+            name = name.lower()
+            out[name] = "<redacted>" if name in SECRET_HEADERS else value
+        return out
+
+    async def on_request(self, request: Any) -> None:
+        """Every attempt the SDK makes, headers and body included; the key is never written."""
+        self.attempts += 1
+        try:
+            body = request.content.decode("utf-8", "replace")
+        except Exception:  # a streamed body has nothing to record
+            body = ""
+        self._write(
+            dir="request",
+            method=request.method,
+            url=str(request.url),
+            status=None,
+            headers=self._headers(request.headers),
+            body=body,
+        )
+
+    async def on_response(self, response: Any) -> None:
+        """The answer to it, read in full so the body is there even when the SDK streams."""
+        await response.aread()
+        req = response.request
+        self._write(
+            dir="response",
+            method=req.method,
+            url=str(req.url),
+            status=response.status_code,
+            headers=self._headers(response.headers),
+            body=response.text,
+        )
+
+
+# The stock DeepSeek profile keys on the name: only `deepseek-v4-*` is treated as thinking-capable,
+# so for `deepseek-flash` the library believes thinking is off and forces a tool choice, which the
+# API rejects with 400 "Thinking mode does not support this tool_choice". Saying what the model is
+# — thinking-capable, thinking on by default, no forced tool choice while it thinks — makes the
+# library send `tool_choice: auto` and leaves thinking at the API default, as in v0.1.
+PROFILE = OpenAIModelProfile(
+    supports_thinking=True,
+    openai_reasoning_enabled_by_default=True,
+    openai_supports_forced_tool_choice_with_thinking=False,
+)
+
+
+def build_agent(
+    plane: Plane, key: str = "", http_client: Any = None, model: Any = None
+) -> Agent[None, BuildReport]:
+    """The agent: the role, the five functions of the plane, a typed report, our caps."""
+    if model is None:
+        model = OpenAIChatModel(
+            MODEL, provider=DeepSeekProvider(api_key=key, http_client=http_client), profile=PROFILE
+        )
+    return Agent(
+        model,
+        instructions=ROLE,
+        output_type=BuildReport,
+        tools=[
+            Tool(plane.list, takes_ctx=False),
+            Tool(plane.read, takes_ctx=False),
+            Tool(plane.write, takes_ctx=False),
+            Tool(plane.edit, takes_ctx=False),
+            Tool(plane.check, takes_ctx=False),
+        ],
+        # No temperature: DeepSeek ignores it in thinking mode, and the settings should say what
+        # the request actually is. Thinking stays at the API default.
+        model_settings=OpenAIChatModelSettings(timeout=180),
+        retries={"tools": 1, "output": 2},
+    )
+
+
+def run(agent: Agent[None, BuildReport], goal: str) -> tuple[BuildReport | None, list, RunUsage, str, str]:
+    """One run under the caps: the report if there is one, the messages either way."""
+    usage = RunUsage()
+    report, stopped, detail = None, "answer", ""
+    with capture_run_messages() as messages:
+        try:
+            result = agent.run_sync(
+                goal,
+                usage=usage,
+                usage_limits=UsageLimits(tool_calls_limit=TOOL_CALLS_CAP, request_limit=REQUEST_CAP),
+            )
+            report = result.output
+        except UsageLimitExceeded as e:
+            stopped, detail = "cap", str(e)
+        except (UnexpectedModelBehavior, ModelAPIError) as e:  # ModelHTTPError is one of these
+            stopped, detail = "error", str(e)
+    return report, list(messages), usage, stopped, detail
+
+
+def git(world: Path, *args: str) -> str:
+    """Read-only git in the world. Not a function of the plane: the model never sees this."""
+    done = subprocess.run(
+        ["git", "-C", str(world), *args],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )  # --no-index exits 1 when the files differ, which is the normal case here
+    return done.stdout
+
+
+def record_diff(world: Path, run_dir: Path) -> dict[str, Any]:
+    """What the run left in the world: diff.patch, and the three numbers about it."""
+    if not (world / ".git").exists():  # a worktree has a .git file, a clone a .git directory
+        return {"diff": "not a git checkout", "files_changed": 0, "insertions": 0, "deletions": 0}
+    # -z so a path with a space or a quote survives; -uall so a new directory is listed as files.
+    status = git(world, "status", "--porcelain", "-z", "--untracked-files=all")
+    untracked = [entry[3:] for entry in status.split("\0") if entry.startswith("?? ")]
+    # Against HEAD, so a change the run staged is in the patch too; before the first commit
+    # there is no HEAD and a bare diff is all there is.
+    head = subprocess.run(
+        ["git", "-C", str(world), "rev-parse", "--verify", "-q", "HEAD"],
+        capture_output=True,
+        timeout=60,
+    ).returncode == 0
+    diff = ["diff", "HEAD"] if head else ["diff"]
+    patch = [git(world, *diff)]
+    for rel in untracked:
+        patch.append(git(world, "diff", "--no-index", "/dev/null", rel))
+    (run_dir / "diff.patch").write_text("".join(patch))  # the patch first: counting can fail
+    files = insertions = deletions = 0
+    for line in git(world, *diff, "--numstat").splitlines():
+        added, removed, _path = line.split("\t", 2)
+        files += 1
+        insertions += int(added) if added.isdigit() else 0  # "-" for a binary file
+        deletions += int(removed) if removed.isdigit() else 0
+    for rel in untracked:
+        files += 1
+        p = world / rel  # a broken symlink or a nested checkout has no lines to count
+        insertions += len(p.read_bytes().splitlines()) if p.is_file() and not p.is_symlink() else 0
+    return {"files_changed": files, "insertions": insertions, "deletions": deletions}
+
+
+def sha256(data: str) -> str:
+    return hashlib.sha256(data.encode()).hexdigest()[:16]
+
+
+def usage_error(reason: str = "") -> int:
+    print('usage: builder.py <world> "<goal>"', file=sys.stderr)
+    if reason:
+        print(reason, file=sys.stderr)
+    return 2
+
+
+def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+    if len(argv) != 3 or not argv[1].strip() or not argv[2].strip():
+        return usage_error()
+    world = Path(argv[1]).resolve()
+    if not world.is_dir():
+        return usage_error(f"not a directory: {argv[1]}")
+    goal = argv[2].strip()
+    # The key file holds the bare key, or one `name=value` line as in an env file.
+    key = KEY_FILE.read_text().strip().rsplit("=", 1)[-1].strip().strip("'\"")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir, nth = RUNS / stamp, 1
+    while True:  # two runs in the same second each keep their own record
+        try:
+            run_dir.mkdir(parents=True)
+            break
+        except FileExistsError:
+            nth += 1
+            run_dir = RUNS / f"{stamp}-{nth}"
+    (run_dir / "goal.txt").write_text(goal + "\n")
+
+    wire = Wire(run_dir / "wire.jsonl")
+    plane = Plane(world, run_dir, sandbox=sandbox if sandbox is not None else Sandbox())
+    agent = build_agent(plane, key=key, http_client=wire.client, model=model)
+    t0 = time.time()
+    report, messages, usage, stopped, detail = run(agent, goal)
+    seconds = round(time.time() - t0, 1)
+
+    (run_dir / "messages.json").write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=1))
+    if report is not None:
+        (run_dir / "report.json").write_text(report.model_dump_json(indent=1) + "\n")
+        (run_dir / "response.md").write_text(render(report))
+    try:
+        changes = record_diff(world, run_dir)
+    except (OSError, ValueError, subprocess.SubprocessError) as e:  # never lose the record over git
+        changes = {"diff": f"error: {e}", "files_changed": 0, "insertions": 0, "deletions": 0}
+    miss = usage.input_tokens - usage.cache_read_tokens
+    table = (
+        usage.cache_read_tokens * PRICE["cache_hit"]
+        + miss * PRICE["cache_miss"]
+        + usage.output_tokens * PRICE["output"]
+    ) / 1e6
+    priced = usage.cost is not None  # genai-prices has no deepseek-flash row; ours is the fallback
+    cost_usd = round(float(usage.cost) if priced else table, 5)
+    checks = [c["exit"] for c in plane.checks]
+    numbers = {
+        "model": MODEL,
+        "role": sha256(ROLE),
+        "wrapper": sha256(Path(__file__).read_text()),
+        "library": LIBRARY,
+        "world": str(world),
+        "stopped": stopped,
+        "requests": usage.requests,
+        "wire_attempts": wire.attempts,
+        "tool_calls": usage.tool_calls,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+        "reasoning_tokens": usage.details.get("reasoning_tokens", 0),
+        "cost_usd": cost_usd,
+        "cost_source": "genai-prices" if priced else "table",
+        "lists": len(plane.listed),
+        "reads": len(plane.read_paths),
+        "files_read": len(set(plane.read_paths)),
+        "lines_read": plane.lines_read,
+        "writes": len(plane.written),
+        "edits": len(plane.edited),
+        "checks": len(checks),
+        # The plane's own truth about the world, next to the report's claim about it.
+        "check": "none" if not checks else "green" if checks[-1] == 0 else "red",
+        "check_seconds": round(sum(c["seconds"] for c in plane.checks), 1),
+        **changes,
+        "seconds": seconds,
+    }
+    recorded = numbers | {"detail": detail} if detail else numbers  # why it stopped, if not answer
+    (run_dir / "numbers.json").write_text(json.dumps(recorded, indent=1) + "\n")
+    print(run_dir)
+    print(" ".join(f"{k}={v}" for k, v in numbers.items()))  # the numbers line stays one line of k=v
+    if detail:
+        print(f"{stopped}: {detail}", file=sys.stderr)
+    return 0 if stopped == "answer" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
