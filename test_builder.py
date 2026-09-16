@@ -43,7 +43,7 @@ REPORT = {
     "failing": [],
     "unsure": [],
 }
-ROLE_SHA256 = "36ae8adaca11268e"  # v0.3 decision 10, one word changed in v0.5; changing the prompt is a version
+ROLE_SHA256 = "97196fd3f141c915"  # v0.3 decision 10, one word changed in v0.5, search named in v0.7; changing the prompt is a version
 
 
 class FakeSandbox:
@@ -175,6 +175,8 @@ class ToolsTest(unittest.TestCase):
         self.assertIn(str(builder.READ_LINES_CAP), Tools.read.__doc__)
         self.assertIn(str(builder.READ_BYTES_CAP), Tools.read.__doc__)
         self.assertIn(str(builder.CHECK_CAP), Tools.check.__doc__)
+        self.assertIn(str(builder.SEARCH_LINES_CAP), Tools.search.__doc__)  # seed: codebase-context
+        self.assertIn(str(builder.SEARCH_BYTES_CAP), Tools.search.__doc__)
 
     # v0.3: write
 
@@ -245,6 +247,40 @@ class ToolsTest(unittest.TestCase):
         reason = "(not the builder's to change: the tests, the toolchain, the vault and git's own files)"
         for path in (".gitignore", "test_x.py", "docs/x.md", "uv.lock"):
             self.assertEqual(self.tools.write(path, "x\n"), f"error: protected: {path} {reason}", path)
+
+    def test_search_finds_lines_by_path_and_number_across_the_checkout(self):
+        """seed: codebase-context. Plain-text, case-sensitive matches as path:line:text, files in
+        list's order, hidden paths never searched, a path outside or hidden an error like read's,
+        files that are not UTF-8 skipped, an empty pattern an error, no match said so."""
+        (self.root / "bin.dat").write_bytes(b"\xff\xfe two\n")
+        self.assertEqual(self.tools.search("two"), "a.txt:2:two")
+        out = self.tools.search("line 99")
+        self.assertEqual(out.splitlines()[0], "sub/b.txt:99:line 99")
+        self.assertEqual(len(out.splitlines()), 11)  # 99 and 990 to 999
+        self.assertEqual(self.tools.search("record"), "no matches")  # the hidden files hold "the record"
+        self.assertEqual(self.tools.search("TWO"), "no matches")
+        self.assertEqual(self.tools.search("keep", "sub"), "sub/test_y.py:1:keep")
+        for bad in ("runs", ".git", ".claude"):
+            self.assertTrue(self.tools.search("x", bad).startswith("error: not part of the checkout"), bad)
+        self.assertTrue(self.tools.search("x", "..").startswith("error: outside the checkout"))
+        self.assertTrue(self.tools.search("x", "escape").startswith("error:"))
+        self.assertTrue(self.tools.search("").startswith("error:"))
+        self.assertEqual(len(self.tools.searched), 5)
+
+    def test_search_is_capped_by_lines_and_bytes_and_says_how_many_more(self):
+        """seed: codebase-context."""
+        (self.root / "many.txt").write_text("".join(f"needle {i}\n" for i in range(500)))
+        out = self.tools.search("needle")
+        lines = out.splitlines()
+        self.assertEqual(len(lines), builder.SEARCH_LINES_CAP + 1)
+        self.assertEqual(lines[0], "many.txt:1:needle 0")
+        self.assertEqual(lines[-1], f"...\t{500 - builder.SEARCH_LINES_CAP} more matches not shown")
+        (self.root / "wide.txt").write_text("".join("w" * 1000 + " needle\n" for _ in range(60)))
+        out = self.tools.search("w" * 1000)  # 60 matches of a kilobyte each: the byte cap binds first
+        self.assertLessEqual(len(out.encode()), builder.SEARCH_BYTES_CAP + 200)
+        self.assertTrue(out.splitlines()[0].startswith("wide.txt:1:"))
+        self.assertTrue(out.splitlines()[-1].startswith("...\t"))
+        self.assertEqual(len(self.tools.searched), 2)
 
     def test_docs_are_readable_and_never_written(self):
         """seed: docs-protected. The seeds live in the checkout the builder reads: write and edit
@@ -472,6 +508,7 @@ class RoleTest(unittest.TestCase):
         pins every other character."""
         self.assertEqual(hashlib.sha256(builder.ROLE.encode()).hexdigest()[:16], ROLE_SHA256)
         self.assertIn("a goal and a checkout: a directory with code and tests", builder.ROLE)
+        self.assertIn("explore it with `list`, `read` and `search`,", builder.ROLE)  # seed: codebase-context
         self.assertNotIn("world", builder.ROLE)
         self.assertTrue(builder.ROLE.startswith("You are the builder."))
         self.assertIn("Work in this order:", builder.ROLE)
@@ -891,6 +928,17 @@ class MainTest(unittest.TestCase):
         self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["seed"])
         self.assertEqual((run_dir / "goal.txt").read_text(), "make x bigger\n")
 
+    def test_searches_are_counted(self):
+        """seed: codebase-context. The numbers count the searches, in the line too."""
+        model = scripted([call("search", {"pattern": "x = 1"}, "c1")], [call("final_result", REPORT, "c2")])
+        code, lines, run_dir = self.main(model, FakeSandbox([]))
+        self.assertEqual(code, 0)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["searches"], 1)
+        self.assertIn("searches=1", lines[1])
+        returns = [p["content"] for m in json.loads((run_dir / "messages.json").read_text()) for p in m["parts"] if p.get("part_kind") == "tool-return"]
+        self.assertEqual(returns[0], "f.py:1:x = 1")
+
     def test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so(self):
         """seed: terms-checkout-and-tools. record_diff writes diff.patch only when the run changed
         something, and the code's own text says so."""
@@ -1023,7 +1071,7 @@ class WireTest(unittest.TestCase):
         self.assertEqual(sorted(request), ["messages", "model", "stream", "tool_choice", "tools"])
         self.assertEqual(request["tool_choice"], "auto")
         self.assertNotIn("temperature", request)
-        self.assertEqual([t["function"]["name"] for t in request["tools"]], ["list", "read", "write", "edit", "check", "final_result"])
+        self.assertEqual([t["function"]["name"] for t in request["tools"]], ["list", "read", "search", "write", "edit", "check", "final_result"])  # seed: codebase-context
         self.assertEqual(request["messages"][0], {"role": "system", "content": builder.ROLE.rstrip("\n")})
         self.assertEqual(request["messages"][1], {"role": "user", "content": "goal"})
         self.assertNotIn("not-a-key", self.path.read_text())

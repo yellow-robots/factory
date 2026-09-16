@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: spec
+status: building
 summary: The builder explores a checkout file by file; a larger checkout needs search and a map, once the cost curve says so.
 value: 3
 effort: M
