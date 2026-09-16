@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: building
+status: done
 summary: The gate and the builder read `## Goal` by different rules, so a seed can pass the gate and fail every build with a usage error.
 value: 3
 effort: S

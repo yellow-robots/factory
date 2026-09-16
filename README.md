@@ -10,7 +10,7 @@ uv run builder.py <checkout> "<goal>" # one build; the goal is text or the path 
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 121 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 122 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -154,3 +154,7 @@ with search: 27 runs, 31 cents and 25 minutes, every run honest,
 the rename three of three, the tempted test refused twice of three, tokens a request halved where
 the model used to read whole files to find a place and up by a few thousand where there was
 nothing to find. The table, beside v0.6's numbers, is in `docs/versions/v0.7.md`.
+
+v0.8, one build for one seed, green, about three cents and two minutes: the gate reads the Goal
+with the builder's reader. The first build given the seed's path as its goal, the record naming
+the seed; eleven searches and four files read for a fifteen-line diff.
