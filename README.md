@@ -1,16 +1,16 @@
 # factory
 
-v0.6: the builder measured. The builder that works on a checkout with tools, the gate that keeps
-its documents honest, the table of its records, and an evaluation set that runs cases against the
-factory's own code and counts how the builder fails. Every line of code since v0.3 was written by
-the factory itself, from tests written before each build.
+v0.7: the builder that takes a seed of its own vault as its goal, searches the checkout instead of
+reading it whole, and is measured by an evaluation set that runs cases against the factory's own
+code, with the gate that keeps its documents honest and the table of its records. Every line of
+code since v0.3 was written by the factory itself, from tests written before each build.
 
 ```sh
-uv run builder.py <checkout> "<goal>" # one build; the record lands in runs/ beside this file
+uv run builder.py <checkout> "<goal>" # one build; the goal is text or the path of a seed, docs/seeds/<name>.md
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 98 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 108 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -18,8 +18,15 @@ Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.t
 a git worktree; a directory that is not a git checkout, and a checkout with uncommitted or untracked
 changes, are refused with a usage error, exit 2, before any record exists, so a build always
 runs on a known commit. The run record lands under the factory's own `runs/`, never in the
-checkout. Five tools, the only things the model
-can do: `list(path)`; `read(path, start)` (numbered lines, 300 lines or 32,000 bytes per call);
+checkout. The goal is text, or the path of a seed of the vault, `docs/seeds/<name>.md`: one word
+ending in `.md` is a path, anything with whitespace in it is text. The note is read from the
+checkout's commit, so `head` pins the goal too; its `## Goal` section, read as Markdown (to the
+next heading of level one or two, fenced blocks whole, `%%` comments out), is the goal,
+`seed: <name>` its first line and the name in the record; a path not in the commit, or a note
+without a Goal, is a usage error. Six tools, the only things the model can do: `list(path)`; `read(path, start)` (numbered lines, 300
+lines or 32,000 bytes per call); `search(pattern, path)` (plain-text, case-sensitive matches as
+`path:line:text` under a directory, the first 100 lines or 32,000 bytes of them, then how many
+more; files read line by line, those not UTF-8 or over 1,000,000 bytes skipped and counted);
 `write(path, content)` (create or replace a file, parents created inside the checkout);
 `edit(path, old, new)` (replace exactly one occurrence of `old`; zero or many is an error naming
 the count); `check()` (the checkout's tests in a container, exit code and the last 60 lines back,
@@ -50,7 +57,8 @@ message history); `check-<n>.log` per check; `diff.patch` (`git diff HEAD` plus 
 untracked file; absent when the run changed nothing); `report.json`/`response.md` (five sections:
 Changed, Did, Check, Failing, Unsure; only when there is a report); and `numbers.json`, also one
 `key=value` line on stdout: model, role and wrapper hashes, library version, checkout and
-`head` (the checkout's commit), `stopped` (`answer`/`cap`/`error`),
+`head` (the checkout's commit), `seed` (the seed's name, null for a text goal), `stopped`
+(`answer`/`cap`/`error`),
 requests, attempts, tool calls, tokens (input, output, cache read, reasoning), cost and its
 source (`table`: our price table, genai-prices has no row for this model), lists, reads, files
 and lines read, writes, edits, checks, `check` (green/red/none: the tools' own verdict on the
@@ -91,7 +99,9 @@ removed whatever happened. The records are ordinary records. When every run is d
 tab-separated table, a row per case: runs; green, the runs whose check ended green; honest, the
 runs whose report claimed what the check said; refused, the tool calls that hit a wall; the
 medians of requests, tool calls, edits, checks, input tokens per request, cost and seconds; the
-cost summed; and the median size of the diff. Nine cases probe known ways to fail: a change
+cost summed; the medians of the diff's size in lines, of the files changed and of the lines
+deleted; and stray files, the median count of paths the run wrote or edited that the goal names
+neither by path nor by basename. Nine cases probe known ways to fail: a change
 across two files, a new module, an edit whose anchor is not unique, a goal without a place, a
 test that needs the network the check does not have, a test only a deleted wall passes, a test
 that cannot pass, a goal that asks to change the test, and a rename across thirty docstrings.
