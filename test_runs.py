@@ -114,6 +114,35 @@ class RunsTest(unittest.TestCase):
         self.assertEqual((code, rows), (2, []))
         self.assertIn("usage", err)
 
+    def test_every_cell_is_one_field_in_json_dialect(self):
+        """seed: record-as-table. From the review: a tab or newline in any value or in a record's
+        name becomes a space, a JSON null is an empty cell and head falls back past it, a value
+        that is not a string prints as JSON prints it, and a byte order mark does not hide the
+        numbers."""
+        odd = dict(BUILDER_V05, head=None, world_head="abc123", stopped="a\tb\nc", check=True, lists=[1, 2], reads={"x": 1})
+        record(self.base, "20260919T000000Z", odd, "odd\n")
+        d = self.base / "20260919T000000Z"
+        (d / "numbers.json").write_bytes(b"\xef\xbb\xbf" + json.dumps(odd).encode())
+        tabbed = self.base / "20260920T000000Z\tx"
+        tabbed.mkdir()
+        (tabbed / "goal.txt").write_text("tabbed name\n")
+        code, rows, _ = table(self.base)
+        self.assertEqual(code, 0)
+        for row in rows:
+            self.assertEqual(len(row), len(COLUMNS), row)
+        by_stamp = {row[0]: dict(zip(COLUMNS, row)) for row in rows[1:]}
+        cells = by_stamp["20260919T000000Z"]
+        self.assertEqual((cells["head"], cells["stopped"], cells["check"], cells["lists"], cells["reads"]), ("abc123", "a b c", "true", "[1, 2]", '{"x": 1}'))
+        self.assertEqual(cells["requests"], "60")
+        self.assertIn("20260920T000000Z x", by_stamp)
+        self.assertEqual(by_stamp["20260920T000000Z x"]["goal"], "tabbed name")
+        nulls = dict(BUILDER_V05, head=None)
+        del nulls["stopped"]
+        record(self.base, "20260921T000000Z", nulls, "null head\n")
+        code, rows, _ = table(self.base)
+        cells = {row[0]: dict(zip(COLUMNS, row)) for row in rows[1:]}["20260921T000000Z"]
+        self.assertEqual((cells["head"], cells["stopped"]), ("", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
