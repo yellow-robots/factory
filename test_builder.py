@@ -233,8 +233,8 @@ class ToolsTest(unittest.TestCase):
             self.assertTrue(self.tools.read(path).startswith("error: not part of the checkout"), path)
         self.assertTrue(self.tools.list("sub/.git").startswith("error: not part of the checkout"))
         self.assertTrue(self.tools.edit("sub/.git/config", "core", "x").startswith("error: not part of the checkout"))
-        self.assertNotIn(".git", names_in(self.tools.list("sub")))
-        self.assertIn("b.txt", names_in(self.tools.list("sub")))
+        self.assertNotIn("sub/.git", names_in(self.tools.list("sub")))
+        self.assertIn("sub/b.txt", names_in(self.tools.list("sub")))  # entries stay paths from the checkout root
         self.assertFalse((self.root / "a").exists())
         self.assertEqual((self.root / "sub" / ".git" / "config").read_text(), "[core]\n")
         self.assertEqual((self.tools.written, self.tools.edited), ([], []))
