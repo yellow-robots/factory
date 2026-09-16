@@ -244,6 +244,24 @@ class CheckTest(GateTest):
         self.edit("docs/seeds/b.md", SEED_B)
         self.assertEqual(self.check(), (0, "", ""))
 
+    def test_the_goal_is_read_as_the_builder_reads_it(self):
+        """seed: one-goal-reader. The gate reads ## Goal with the builder's reader, so it reports a
+        Goal whose only text is a %% comment, a ## Goal inside a comment block, a heading indented
+        four spaces, and a comment left open, and accepts a Goal whose text starts with a
+        level-three heading or a fence, as builder.read_seed would."""
+        goal = "## Goal\n\nAdd z so that w.\n"
+        for body, word in (
+            ("## Goal\n\n%%drafted%%\n", "Goal"),
+            ("%%\n## Goal\n\nnot yet\n%%\n\n## Idea\n\nMaybe.\n", "Goal"),
+            ("    ## Goal\n\nindented\n", "Goal"),
+            ("## Goal\n\nAdd z %% and a comment never closed.\n", "comment"),
+        ):
+            self.edit("docs/seeds/b.md", SEED_B.replace(goal, body))
+            self.assert_problem("docs/seeds/b.md", word)
+        for body in ("## Goal\n\n### Details\n\nAdd z so that w.\n", "## Goal\n\n```\n## Idea\n```\n\nAdd z.\n"):
+            self.edit("docs/seeds/b.md", SEED_B.replace(goal, body))
+            self.assertEqual(self.check(), (0, "", ""), body)
+
     def test_a_building_or_done_seed_is_named_by_a_test_docstring(self):
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
         self.assert_problem("docs/seeds/b.md", "seed: b")

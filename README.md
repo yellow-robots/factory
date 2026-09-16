@@ -78,8 +78,8 @@ line.
 honest. `check` reports, one line per problem with the path: a note whose type names no template,
 a wikilink that does not resolve, a seed whose fields do not follow its status (created as
 `YYYY-MM-DD`, summary, value 1 to 5 and effort S, M, L from open; a version note and a `## Goal`
-from spec; a test whose docstring says `seed: <name>` from building; rejected needs only what open
-needs) or carries a field with no consumer, a version note not named like a tag, more than one
+with text, read as the builder reads it, from spec; a test whose docstring says `seed: <name>`
+from building; rejected needs only what open needs) or carries a field with no consumer, a version note not named like a tag, more than one
 version note without a tag, a tagged version with a seed not done or rejected, a property the
 backlog names in a filter, formula, column, sort, group or summary that is no field of the seed
 template, read as Obsidian writes the base, and a committed record whose wire is not
