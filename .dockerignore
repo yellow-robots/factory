@@ -2,6 +2,5 @@
 .venv
 runs
 .claude
-plans
 __pycache__
 *.pyc
