@@ -1,0 +1,47 @@
+diff --git a/runs.py b/runs.py
+index fbfac4c..d97b1b6 100644
+--- a/runs.py
++++ b/runs.py
+@@ -46,19 +46,24 @@ def _first_line(path: Path) -> str:
+ def _numbers(record: Path) -> dict[str, Any]:
+     """The record's `numbers.json` as a mapping; empty when it is absent or unreadable."""
+     try:
+-        data = json.loads((record / "numbers.json").read_text(encoding="utf-8"))
++        data = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+     except (OSError, ValueError):
+         return {}
+     return data if isinstance(data, dict) else {}
+ 
+ 
++def _field(value: Any) -> str:
++    """One cell: a string as it is, anything else as JSON prints it; a tab or newline becomes a space."""
++    text = value if isinstance(value, str) else json.dumps(value)
++    return text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
++
++
+ def _cell(numbers: dict[str, Any], column: str) -> str:
+-    if column == "head":  # v0.5 renamed the field; older records carry the checkout as world_head
+-        for key in ("head", "world_head"):
+-            if key in numbers:
+-                return str(numbers[key])
+-        return ""
+-    return str(numbers[column]) if column in numbers else ""
++    keys = ("head", "world_head") if column == "head" else (column,)
++    for key in keys:  # v0.5 renamed the field; older records carry the checkout as world_head
++        if key in numbers and numbers[key] is not None:
++            return _field(numbers[key])
++    return ""
+ 
+ 
+ def main(argv: list[str], runs: Any = None) -> int:
+@@ -71,8 +76,8 @@ def main(argv: list[str], runs: Any = None) -> int:
+         numbers = _numbers(record)
+         lines.append(
+             "\t".join(
+-                record.name if column == "stamp" else
+-                _first_line(record / "goal.txt") if column == "goal" else
++                _field(record.name) if column == "stamp" else
++                _field(_first_line(record / "goal.txt")) if column == "goal" else
+                 _cell(numbers, column)
+                 for column in COLUMNS
+             )
