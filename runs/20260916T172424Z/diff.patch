@@ -1,0 +1,13 @@
+diff --git a/builder.py b/builder.py
+index 3f0093e..71805a0 100644
+--- a/builder.py
++++ b/builder.py
+@@ -607,6 +607,8 @@ def sha256(data: str) -> str:
+ 
+ def usage_error(reason: str = "") -> int:
+     print('usage: builder.py <checkout> "<goal>"', file=sys.stderr)
++    print("the provider key is read from ~/.config/factory/deepseek.key "
++          "(a bare key or one name=value line)", file=sys.stderr)
+     if reason:
+         print(reason, file=sys.stderr)
+     return 2

@@ -1,0 +1,20 @@
+diff --git a/record.py b/record.py
+new file mode 100644
+index 0000000..e2b913f
+--- /dev/null
++++ b/record.py
+@@ -0,0 +1,14 @@
++"""The files a run leaves, in README order, and the one to read first."""
++
++FILES = (
++    "goal.txt",
++    "wire.jsonl",
++    "messages.json",
++    "check-<n>.log",
++    "diff.patch",
++    "report.json",
++    "response.md",
++    "numbers.json",
++)
++
++FIRST = "numbers.json"

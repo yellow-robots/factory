@@ -1,0 +1,14 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_the_docstrings_say_tree (test_rename_many.Rename.test_the_docstrings_say_tree)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_rename_many.py", line 17, in test_the_docstrings_say_tree
+    self.assertNotIn("checkout", doc)
+AssertionError: 'checkout' unexpectedly found in 'The builder: a cold session that changes a checkout until its tests pass.\n\n    uv run builder.py <checkout> "<goal>"\n\nThe checkout is the directory named on the command line, reachable only through five tools:\nlist, read, write, edit and check. Writes are confined to the checkout and refused on the goal\'s\ntests and the toolchain; check runs the checkout\'s tests in a container with no network and the\ncheckout mounted read-only, so code the model writes never runs on the host and cannot reach the\nkey. The loop is pydantic-ai, pinned; the provider is DeepSeek\'s chat completions API, the key\nread from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves\nruns/<utc-stamp>/ under the factory itself, never in the checkout, with goal.txt, wire.jsonl\n(every HTTP attempt as it happened), messages.json (the library\'s messages), check-<n>.log per\ncheck, diff.patch (what the run left in the checkout; absent when it left nothing), report.json,\nresponse.md (the report rendered) and numbers.json.\n'
+
+----------------------------------------------------------------------
+Ran 99 tests in 10.046s
+
+FAILED (failures=1)

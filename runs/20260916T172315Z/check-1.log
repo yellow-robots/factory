@@ -1,0 +1,14 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_the_usage_error_names_the_key_file (test_ambiguous_goal.Ambiguous.test_the_usage_error_names_the_key_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_ambiguous_goal.py", line 15, in test_the_usage_error_names_the_key_file
+    self.assertIn("~/.config/factory/deepseek.key", err.getvalue())
+AssertionError: '~/.config/factory/deepseek.key' not found in 'usage: builder.py <checkout> "<goal>"\n'
+
+----------------------------------------------------------------------
+Ran 99 tests in 9.753s
+
+FAILED (failures=1)

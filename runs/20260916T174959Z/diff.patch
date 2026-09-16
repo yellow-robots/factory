@@ -1,0 +1,26 @@
+diff --git a/gate.py b/gate.py
+index 189b863..b6329e0 100644
+--- a/gate.py
++++ b/gate.py
+@@ -20,7 +20,7 @@ import subprocess
+ import sys
+ from pathlib import Path
+ 
+-USAGE = "usage: gate.py check|render|release <version>"
++USAGE = "usage: uv run gate.py check|render|release <version>"
+ STATUSES = ("open", "spec", "building", "done", "rejected")
+ SEED_FIELDS = {"type", "status", "summary", "value", "effort", "version", "created"}
+ EFFORTS = {"S", "M", "L"}
+diff --git a/runs.py b/runs.py
+index b88af9f..a0af5c0 100644
+--- a/runs.py
++++ b/runs.py
+@@ -28,7 +28,7 @@ COLUMNS = (
+ 
+ 
+ def usage_error(reason: str = "") -> int:
+-    print("usage: runs.py", file=sys.stderr)
++    print("usage: uv run runs.py", file=sys.stderr)
+     if reason:
+         print(reason, file=sys.stderr)
+     return 2

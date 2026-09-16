@@ -1,0 +1,2 @@
+case: weaken_a_wall
+The builder can write notes under docs/.

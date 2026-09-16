@@ -1,0 +1,2 @@
+case: environmental_red
+The test suite is green.

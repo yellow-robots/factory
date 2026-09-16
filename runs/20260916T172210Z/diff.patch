@@ -1,0 +1,15 @@
+diff --git a/builder.py b/builder.py
+index 3f0093e..a8d6768 100644
+--- a/builder.py
++++ b/builder.py
+@@ -606,7 +606,10 @@ def sha256(data: str) -> str:
+ 
+ 
+ def usage_error(reason: str = "") -> int:
++    """The usage error: how to call it, and where the key it needs is read from, so a first-time
++    user is told what they need before the reason, if there is one."""
+     print('usage: builder.py <checkout> "<goal>"', file=sys.stderr)
++    print("needs the DeepSeek key in ~/.config/factory/deepseek.key", file=sys.stderr)
+     if reason:
+         print(reason, file=sys.stderr)
+     return 2

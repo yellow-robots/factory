@@ -1,0 +1,21 @@
+{
+ "changed": [
+  "builder.py"
+ ],
+ "did": [
+  "builder.py: renamed checkout to tree throughout the module docstring, including the `uv run builder.py <tree> \"<goal>\"` usage placeholder and the diff.patch description, so builder.__doc__ contains tree and no checkout.",
+  "builder.py: renamed checkout to tree in the class docstrings of BuildReport, Tools and Sandbox (Tools.__doc__, Sandbox.__doc__).",
+  "builder.py: renamed checkout to tree in the method docstrings Tools.list, Tools.read, Tools.write, Tools.edit, Tools.check, Sandbox.image and Sandbox.run.",
+  "builder.py: renamed checkout to tree in the git helper docstrings git, head, dirty_paths and record_diff.",
+  "builder.py: left the ROLE text (still `a goal and a checkout`), all code, identifiers, error messages and comments on checkout, as the goal requires."
+ ],
+ "check": "red",
+ "failing": [
+  "test_builder.MainTest.test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so"
+ ],
+ "unsure": [
+  "test_rename_many.Rename.test_the_docstrings_say_tree now passes, but test_builder.py line 856 asserts that builder.__doc__ contains the literal phrase 'diff.patch (what the run left in the checkout; absent when it left nothing)', which directly contradicts test_rename_many's assertNotIn('checkout', builder.__doc__); no change to builder.py can satisfy both.",
+  "Updating that stale assertion would mean editing a test, which is disallowed and refused by the tool (test_builder.py reports 'protected: ... not the builder's to change'), so the full suite cannot be made green without either editing a test or weakening a wall.",
+  "Whether the grader runs the whole suite or only the case's test_rename_many.py is unverified; the described rename itself is complete and the acceptance test passes."
+ ]
+}

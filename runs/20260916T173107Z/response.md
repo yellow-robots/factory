@@ -1,0 +1,14 @@
+## Changed
+- record.py
+
+## Did
+- Created record.py at the repository root defining FILES as the tuple of run files in README order (goal.txt through numbers.json) and FIRST as "numbers.json", matching test_new_file.py.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- (none)

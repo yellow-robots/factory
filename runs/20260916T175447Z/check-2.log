@@ -1,0 +1,27 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_docs_are_readable_and_never_written (test_builder.ToolsTest.test_docs_are_readable_and_never_written)
+seed: docs-protected. The seeds live in the checkout the builder reads: write and edit
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 255, in test_docs_are_readable_and_never_written
+    self.assertTrue(self.tools.write(bad, "x\n").startswith("error:"), bad)
+AssertionError: False is not true : docs/seeds/s.md
+
+======================================================================
+FAIL: test_the_protected_refusal_names_the_real_reason (test_builder.ToolsTest.test_the_protected_refusal_names_the_real_reason)
+seed: record-hardening. The model reads why a path is protected, and the reason covers
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 247, in test_the_protected_refusal_names_the_real_reason
+    self.assertEqual(self.tools.write(path, "x\n"), f"error: protected: {path} {reason}", path)
+AssertionError: 'wrote docs/x.md (1 lines)' != "error: protected: docs/x.md (not the bui[70 chars]les)"
+- wrote docs/x.md (1 lines)
++ error: protected: docs/x.md (not the builder's to change: the tests, the toolchain, the vault and git's own files)
+ : docs/x.md
+
+----------------------------------------------------------------------
+Ran 99 tests in 9.924s
+
+FAILED (failures=2)
