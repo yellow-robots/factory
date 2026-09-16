@@ -1,0 +1,40 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from check.Dockerfile
+#1 transferring dockerfile: 963B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.12-slim
+#2 DONE 0.8s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 82B done
+#3 DONE 0.0s
+
+#4 [1/6] FROM docker.io/library/python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 155.06kB done
+#5 DONE 0.0s
+
+#6 [2/6] RUN apt-get update && apt-get install -y --no-install-recommends git     && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [3/6] WORKDIR /lock
+#7 CACHED
+
+#8 [4/6] COPY pyproject.toml uv.lock ./
+#8 CACHED
+
+#9 [5/6] RUN pip install --no-cache-dir uv     && uv export --frozen --no-hashes --no-dev -o /tmp/req.txt     && pip install --no-cache-dir -r /tmp/req.txt
+#9 CACHED
+
+#10 [6/6] WORKDIR /w
+#10 CACHED
+
+#11 exporting to image
+#11 exporting layers done
+#11 writing image sha256:3dec583b15a76f094a024c053762943ca0385f0a25fa52feb09d534d5030be5e done
+#11 naming to docker.io/library/factory-check:c784061c416b done
+#11 DONE 0.0s

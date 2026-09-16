@@ -1,0 +1,45 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_gits_first_line_alone_decides_not_a_checkout (test_builder.MainTest.test_gits_first_line_alone_decides_not_a_checkout)
+seed: record-hardening. A path that contains git's phrase does not make a good checkout
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 836, in test_gits_first_line_alone_decides_not_a_checkout
+    self.assertEqual(builder.git_env().get("LC_ALL"), "C")
+AssertionError: None != 'C'
+
+======================================================================
+FAIL: test_the_record_names_every_path_the_run_touched_whatever_git_lists (test_builder.MainTest.test_the_record_names_every_path_the_run_touched_whatever_git_lists)
+seed: record-hardening. A committed .gitattributes with `* -diff` cannot turn the patch
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 825, in test_the_record_names_every_path_the_run_touched_whatever_git_lists
+    self.assertIn(text, patch)
+AssertionError: '+x = 2' not found in 'diff --git a/f.py b/f.py\nindex 7d4290a..407de30 100644\nBinary files a/f.py and b/f.py differ\ndiff --git a/new.txt b/new.txt\nnew file mode 100644\nindex 0000000..ce01362\nBinary files /dev/null and b/new.txt differ\ndiff --git a/sub/deep.txt b/sub/deep.txt\nnew file mode 100644\nindex 0000000..4cdb226\nBinary files /dev/null and b/sub/deep.txt differ\n'
+
+======================================================================
+FAIL: test_a_dot_git_component_is_not_part_of_the_checkout_at_any_depth (test_builder.ToolsTest.test_a_dot_git_component_is_not_part_of_the_checkout_at_any_depth)
+seed: record-hardening. sub/.git/x is git's and not the checkout's: no tool reads, lists,
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 232, in test_a_dot_git_component_is_not_part_of_the_checkout_at_any_depth
+    self.assertTrue(self.tools.write(path, "x\n").startswith("error: not part of the checkout"), path)
+AssertionError: False is not true : sub/.git
+
+======================================================================
+FAIL: test_the_protected_refusal_names_the_real_reason (test_builder.ToolsTest.test_the_protected_refusal_names_the_real_reason)
+seed: record-hardening. The model reads why a path is protected, and the reason covers
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 247, in test_the_protected_refusal_names_the_real_reason
+    self.assertEqual(self.tools.write(path, "x\n"), f"error: protected: {path} {reason}", path)
+AssertionError: "erro[21 chars]ore (the goal's tests and the toolchain are no[22 chars]nge)" != "erro[21 chars]ore (not the builder's to change: the tests, t[40 chars]les)"
+- error: protected: .gitignore (the goal's tests and the toolchain are not the builder's to change)
++ error: protected: .gitignore (not the builder's to change: the tests, the toolchain, the vault and git's own files)
+ : .gitignore
+
+----------------------------------------------------------------------
+Ran 98 tests in 10.496s
+
+FAILED (failures=4)

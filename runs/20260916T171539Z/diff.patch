@@ -1,0 +1,129 @@
+diff --git a/builder.py b/builder.py
+index 5ec3013..4e81968 100644
+--- a/builder.py
++++ b/builder.py
+@@ -150,7 +150,11 @@ class Tools:
+         if p != self.root and self.root not in p.parents:
+             raise ValueError(f"outside the checkout: {path}")
+         rel = p.relative_to(self.root).as_posix() or "."
+-        if rel.split("/", 1)[0] in self.hidden:
++        parts = rel.split("/")
++        # A .git component at any depth is git's, not the checkout's: a write there could forge a
++        # nested repository and hide a subtree from the record. The other hidden names are only
++        # the record at the root.
++        if parts[0] in self.hidden or ".git" in parts or ".git" in path.split("/"):
+             raise ValueError(f"not part of the checkout: {path}")
+         return p, rel
+ 
+@@ -168,8 +172,8 @@ class Tools:
+                 hit = rel == pattern
+             if hit:
+                 raise ValueError(
+-                    f"protected: {rel} (the goal's tests and the toolchain are not the "
+-                    "builder's to change)"
++                    f"protected: {rel} (not the builder's to change: the tests, the toolchain, "
++                    "the vault and git's own files)"
+                 )
+ 
+     def _capped(self) -> str:
+@@ -178,8 +182,8 @@ class Tools:
+         return ""
+ 
+     def list(self, path: str = ".") -> str:
+-        """List one directory of the checkout: one entry per line as kind, size, path. Path is
+-        relative to the checkout root; '.' is the root.
++        """List one directory of the checkout: one entry per line as kind, size, name. Path is the
++        directory to list, relative to the checkout root; '.' is the root.
+ 
+         Args:
+             path: The directory to list, relative to the checkout root.
+@@ -189,13 +193,13 @@ class Tools:
+             if not p.is_dir():
+                 raise ValueError(f"not a directory: {path}")
+             entries = sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name))
+-            if rel == ".":
+-                entries = [e for e in entries if e.name not in self.hidden]
++            skip = self.hidden if rel == "." else (".git",)  # git's own files are never listed
++            entries = [e for e in entries if e.name not in skip]
+             lines = []
+             for e in entries[:LIST_CAP]:
+                 kind = "link" if e.is_symlink() else "dir" if e.is_dir() else "file"
+                 size = e.lstat().st_size if kind == "file" else 0
+-                lines.append(f"{kind}\t{size}\t{e.relative_to(self.root).as_posix()}")
++                lines.append(f"{kind}\t{size}\t{e.name}")
+             if len(entries) > LIST_CAP:
+                 lines.append(f"...\t{len(entries) - LIST_CAP} more entries not shown")
+         except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop
+@@ -510,10 +514,12 @@ GIT_ENV_UNSET = (
+ 
+ 
+ def git_env() -> dict[str, str]:
+-    """The environment git runs in: the caller's, without its own GIT_* pointers."""
++    """The environment git runs in: the caller's, without its own GIT_* pointers, and in English,
++    so git's refusals are the ones the code reads whatever the host's locale says."""
+     env = dict(os.environ)
+     for name in GIT_ENV_UNSET:
+         env.pop(name, None)
++    env["LC_ALL"] = "C"
+     return env
+ 
+ 
+@@ -538,6 +544,17 @@ def git(checkout: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
+     return done.stdout
+ 
+ 
++def git_refusal(stderr: str) -> str:
++    """What git said, from the first line of its stderr after `fatal: ` and nothing else: a path
++    that merely contains the phrase cannot decide it, and LC_ALL keeps the phrase English."""
++    for line in stderr.splitlines():
++        line = line.strip()
++        if line.startswith("fatal:"):
++            return line[len("fatal:"):].strip()
++    lines = stderr.splitlines()
++    return lines[0].strip() if lines else ""
++
++
+ def head(checkout: Path) -> str:
+     """The checkout's HEAD commit; empty only when the checkout has no commit yet."""
+     return git(checkout, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).strip()
+@@ -563,7 +580,7 @@ def record_diff(checkout: Path, run_dir: Path) -> dict[str, Any]:
+     # configuration, nor a .gitattributes in the checkout can replace it with a program's output.
+     # Every diff ends its options with --, so a file the run names -x.txt or HEAD is a path to git
+     # and not an option or a revision.
+-    flags = ("--no-ext-diff", "--no-textconv")
++    flags = ("--no-ext-diff", "--no-textconv", "--text")
+     parts = [git(checkout, "diff", *flags, "HEAD", "--")]
+     for rel in untracked:
+         parts.append(git(checkout, "diff", *flags, "--no-index", "--", "/dev/null", rel, ok=(0, 1)))
+@@ -612,12 +629,14 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+     except FileNotFoundError:
+         return usage_error(f"git is not available: {argv[1]}")
+     except GitError as e:
+-        # git ran and refused the directory. It is no checkout only when git itself says so: a
+-        # directory with no repository above it ("not a git repository") and a .git that is not
+-        # git's ("invalid gitfile format") are the two such refusals, with no probe. Any other
+-        # refusal of git's -- a broken configuration, here or at a later call -- carries git's own
+-        # words, exit 2, since a good checkout is not called not a git checkout for git's failure.
+-        if not any(s in str(e) for s in ("not a git repository", "invalid gitfile format")):
++        # git ran and refused the directory. It is no checkout only when git itself says so, read
++        # from the first line of its stderr after `fatal: ` and nothing else: a directory with no
++        # repository above it ("not a git repository") and a .git that is not git's ("invalid
++        # gitfile format") are the two such refusals, with no probe. Any other refusal of git's --
++        # a broken configuration, here or at a later call -- carries git's own words, exit 2, since
++        # a good checkout is not called not a git checkout for git's failure.
++        refusal = git_refusal(str(e))
++        if not refusal.startswith(("not a git repository", "invalid gitfile format")):
+             return usage_error(str(e))
+         return usage_error(f"not a git checkout: {argv[1]}")
+     except (OSError, subprocess.SubprocessError) as e:
+@@ -700,6 +719,10 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+         "lines_read": tools.lines_read,
+         "writes": len(tools.written),
+         "edits": len(tools.edited),
++        # The paths the tools touched, in order: the record names every file the run changed,
++        # whatever git lists or hides from the diff.
++        "written": tools.written,
++        "edited": tools.edited,
+         "checks": len(checks),
+         # The tools' own truth about the checkout, next to the report's claim about it.
+         "check": "none" if not checks else "green" if checks[-1] == 0 else "red",
