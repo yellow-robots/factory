@@ -199,7 +199,8 @@ class Tools:
             for e in entries[:LIST_CAP]:
                 kind = "link" if e.is_symlink() else "dir" if e.is_dir() else "file"
                 size = e.lstat().st_size if kind == "file" else 0
-                lines.append(f"{kind}\t{size}\t{e.name}")
+                name = e.name if rel == "." else f"{rel}/{e.name}"  # paths from the checkout root
+                lines.append(f"{kind}\t{size}\t{name}")
             if len(entries) > LIST_CAP:
                 lines.append(f"...\t{len(entries) - LIST_CAP} more entries not shown")
         except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop
