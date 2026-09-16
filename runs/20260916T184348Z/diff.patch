@@ -1,0 +1,13 @@
+diff --git a/builder.py b/builder.py
+index b78d6d0..72aa9df 100644
+--- a/builder.py
++++ b/builder.py
+@@ -60,7 +60,7 @@ READ_LINES_CAP = 300  # lines per read
+ READ_BYTES_CAP = 32_000  # bytes per read
+ SEARCH_LINES_CAP = 100  # matches per search
+ SEARCH_BYTES_CAP = 32_000  # bytes per search
+-WRITE_CAP = 30  # writes and edits per run, together
++WRITE_CAP = 31  # writes and edits per run, together
+ CHECK_CAP = 8  # checks per run
+ # What green means, in the checkout's own terms. -P keeps the checkout's root off sys.path while
+ # the runner is imported, or a file named unittest.py at the checkout root shadows the stdlib and

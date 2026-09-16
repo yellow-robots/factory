@@ -1,0 +1,29 @@
+diff --git a/record.py b/record.py
+new file mode 100644
+index 0000000..5190920
+--- /dev/null
++++ b/record.py
+@@ -0,0 +1,23 @@
++#!/usr/bin/env python3
++"""The files a run leaves, in the order `README.md` lists them.
++
++    goal.txt, wire.jsonl, messages.json, check-<n>.log, diff.patch, report.json, response.md,
++    numbers.json
++
++`FIRST` is the one to read first: the numbers, `stopped`, `check`, `head`, cost and counts.
++"""
++
++from __future__ import annotations
++
++FILES = (
++    "goal.txt",
++    "wire.jsonl",
++    "messages.json",
++    "check-<n>.log",
++    "diff.patch",
++    "report.json",
++    "response.md",
++    "numbers.json",
++)
++
++FIRST = "numbers.json"

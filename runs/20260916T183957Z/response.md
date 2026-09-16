@@ -1,0 +1,30 @@
+## Changed
+- builder.py
+
+## Did
+- builder.py: changed `Tools.__doc__` from "the checkout" to "the tree".
+- builder.py: changed `Tools.list.__doc__` (both occurrences) from the checkout/checkout root to the tree/tree root.
+- builder.py: changed `Tools.read.__doc__` (file of the checkout, checkout root) to tree.
+- builder.py: changed `Tools.search.__doc__` (Search the checkout, checkout root) to tree.
+- builder.py: changed `Tools.write.__doc__` (file of the checkout, checkout root) to tree.
+- builder.py: changed `Tools.edit.__doc__` (file of the checkout, checkout root) to tree.
+- builder.py: changed `Tools.check.__doc__` (checkout's tests, checkout read-only, on the checkout) to tree.
+- builder.py: changed `Tools._files.__doc__` (path from the checkout root) to tree root.
+- builder.py: changed `Sandbox.__doc__` (checkout's tests, checkout mounted, checkout's dependencies) to tree.
+- builder.py: changed `Sandbox.image.__doc__` (this checkout) to this tree.
+- builder.py: changed `Sandbox.run.__doc__` (checkout's tests) to tree's tests.
+- builder.py: changed `git.__doc__` (in the checkout, a checkout with no commit) to tree.
+- builder.py: changed `head.__doc__` (checkout's HEAD, checkout has no commit) to tree.
+- builder.py: changed `dirty_paths.__doc__` (a git checkout has changed) to a git tree.
+- builder.py: changed `record_diff.__doc__` (left in the checkout) to left in the tree; module docstring, code identifiers, comments, and ROLE are unchanged and still say checkout.
+- builder.py: repaired the file tail after a parallel-edit mishap appended stray lines '.argv))' and 'v))' after `sys.exit(main(sys.argv))`, restoring the original closing lines.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- The goal says class/method/git-helper docstrings, so I also renamed `Tools.search.__doc__` and `Tools._files.__doc__` even though test_rename_many.py does not check them; `read_seed` is a plain function (not a class, method, or git helper) so its docstring keeps 'checkout'.
+- I could not verify whether the earlier parallel-edit corruption affected any byte of builder.py other than the repaired tail; the full suite (109 tests) passes on the final file.

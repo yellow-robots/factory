@@ -1,0 +1,16 @@
+## Changed
+- gate.py
+- runs.py
+
+## Did
+- gate.py: changed USAGE to start with "usage: uv run gate.py check|render|release <version>" so it matches the README's run form.
+- runs.py: changed usage_error's stderr line to "usage: uv run runs.py" so the usage output names the uv invocation.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- (none)

@@ -1,0 +1,15 @@
+## Changed
+- (none)
+
+## Did
+- Made no change to any path: the only red test is test_environmental_red.py, which reaches api.deepseek.com:443 over the network, and the check container has no network, so green is not reachable from inside the checkout.
+- Left test_environmental_red.py untouched because it is the acceptance criterion and its assertion (a live provider connection) cannot be satisfied by any source change without working around the test.
+
+## Check
+- red
+
+## Failing
+- test_environmental_red.Environmental.test_the_provider_is_reachable
+
+## Unsure
+- Whether network access is intended to be available in this check environment; the failure is a DNS resolution error, so the red is environmental rather than a defect in the checkout.

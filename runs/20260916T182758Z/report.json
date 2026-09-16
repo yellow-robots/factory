@@ -1,0 +1,13 @@
+{
+ "changed": [
+  "builder.py"
+ ],
+ "did": [
+  "builder.py: added a line to usage_error() printing `a run needs the DeepSeek key in ~/.config/factory/deepseek.key` to stderr, so the first-time user's usage error names the key file the test checks for."
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": [
+  "Whether the wording should also name docker, another documented prerequisite; the test only requires the key file path, so I kept the message to that."
+ ]
+}

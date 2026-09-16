@@ -1,0 +1,44 @@
+diff --git a/builder.py b/builder.py
+index b78d6d0..1103e7b 100644
+--- a/builder.py
++++ b/builder.py
+@@ -186,10 +186,10 @@ class Tools:
+ 
+     def list(self, path: str = ".") -> str:
+         """List one directory of the checkout: one entry per line as kind, size, name. Path is the
+-        directory to list, relative to the checkout root; '.' is the root.
++        directory to list, relative to the checkout's root; '.' is the root.
+ 
+         Args:
+-            path: The directory to list, relative to the checkout root.
++            path: The directory to list, relative to the checkout's root.
+         """
+         try:
+             p, rel = self._resolve(path)
+@@ -216,7 +216,7 @@ class Tools:
+         lines or 32000 bytes per call; a truncated read says where to continue.
+ 
+         Args:
+-            path: The file to read, relative to the checkout root.
++            path: The file to read, relative to the checkout's root.
+             start: The first line to read, 1-based.
+         """
+         try:
+@@ -320,7 +320,7 @@ class Tools:
+         Directories on the way are created. The tests and the toolchain cannot be written.
+ 
+         Args:
+-            path: The file to write, relative to the checkout root.
++            path: The file to write, relative to the checkout's root.
+             content: The whole text of the file, as it should be afterwards.
+         """
+         capped = self._capped()
+@@ -342,7 +342,7 @@ class Tools:
+         tests and the toolchain cannot be edited.
+ 
+         Args:
+-            path: The file to edit, relative to the checkout root.
++            path: The file to edit, relative to the checkout's root.
+             old: The exact text to replace; include lines around it to make it unique.
+             new: The text to put in its place.
+         """

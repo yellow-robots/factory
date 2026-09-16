@@ -1,0 +1,58 @@
+======================================================================
+ERROR: test_anchor_not_unique (unittest.loader._FailedTest.test_anchor_not_unique)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_anchor_not_unique
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 396, in _find_test_path
+    module = self._get_module_from_name(name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 339, in _get_module_from_name
+    __import__(name)
+  File "/w/test_anchor_not_unique.py", line 5, in <module>
+    from builder import Tools
+  File "/w/builder.py", line 853
+    )
+    ^
+SyntaxError: unmatched ')'
+
+
+======================================================================
+ERROR: test_builder (unittest.loader._FailedTest.test_builder)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_builder
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 396, in _find_test_path
+    module = self._get_module_from_name(name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 339, in _get_module_from_name
+    __import__(name)
+  File "/w/test_builder.py", line 34, in <module>
+    import builder
+  File "/w/builder.py", line 853
+    )
+    ^
+SyntaxError: unmatched ')'
+
+
+======================================================================
+ERROR: test_evals (unittest.loader._FailedTest.test_evals)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_evals
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 396, in _find_test_path
+    module = self._get_module_from_name(name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 339, in _get_module_from_name
+    __import__(name)
+  File "/w/test_evals.py", line 27, in <module>
+    import builder
+  File "/w/builder.py", line 853
+    )
+    ^
+SyntaxError: unmatched ')'
+
+
+----------------------------------------------------------------------
+Ran 37 tests in 3.597s
+
+FAILED (errors=3)

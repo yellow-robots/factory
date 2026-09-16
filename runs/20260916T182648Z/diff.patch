@@ -1,0 +1,15 @@
+diff --git a/builder.py b/builder.py
+index b78d6d0..bcabd2e 100644
+--- a/builder.py
++++ b/builder.py
+@@ -678,7 +678,10 @@ def sha256(data: str) -> str:
+ 
+ 
+ def usage_error(reason: str = "") -> int:
++    key = KEY_FILE
++    shown = f"~/{key.relative_to(Path.home()).as_posix()}" if key.is_relative_to(Path.home()) else str(key)
+     print('usage: builder.py <checkout> "<goal>"', file=sys.stderr)
++    print(f"needs the DeepSeek key in {shown} (the bare key, or one name=value line), and docker", file=sys.stderr)
+     if reason:
+         print(reason, file=sys.stderr)
+     return 2
