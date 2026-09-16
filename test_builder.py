@@ -251,14 +251,14 @@ class ToolsTest(unittest.TestCase):
     def test_search_finds_lines_by_path_and_number_across_the_checkout(self):
         """seed: codebase-context. Plain-text, case-sensitive matches as path:line:text, files in
         list's order, hidden paths never searched, a path outside or hidden an error like read's,
-        files that are not UTF-8 skipped, an empty pattern an error, no match said so."""
+        files that are not UTF-8 skipped and counted, an empty pattern an error, no match said so."""
         (self.root / "bin.dat").write_bytes(b"\xff\xfe two\n")
-        self.assertEqual(self.tools.search("two"), "a.txt:2:two")
+        self.assertEqual(self.tools.search("two"), "a.txt:2:two\n...\t1 files not searched")
         out = self.tools.search("line 99")
         self.assertEqual(out.splitlines()[0], "sub/b.txt:99:line 99")
-        self.assertEqual(len(out.splitlines()), 11)  # 99 and 990 to 999
-        self.assertEqual(self.tools.search("record"), "no matches")  # the hidden files hold "the record"
-        self.assertEqual(self.tools.search("TWO"), "no matches")
+        self.assertEqual(len(out.splitlines()), 12)  # 99 and 990 to 999, then the file not searched
+        self.assertEqual(self.tools.search("record"), "no matches\n...\t1 files not searched")  # the hidden files hold "the record" and are not counted
+        self.assertEqual(self.tools.search("TWO"), "no matches\n...\t1 files not searched")
         self.assertEqual(self.tools.search("keep", "sub"), "sub/test_y.py:1:keep")
         for bad in ("runs", ".git", ".claude"):
             self.assertTrue(self.tools.search("x", bad).startswith("error: not part of the checkout"), bad)
@@ -281,6 +281,42 @@ class ToolsTest(unittest.TestCase):
         self.assertTrue(out.splitlines()[0].startswith("wide.txt:1:"))
         self.assertTrue(out.splitlines()[-1].startswith("...\t"))
         self.assertEqual(len(self.tools.searched), 2)
+
+    def test_search_skips_files_over_a_size_cap_counts_the_files_it_skips_and_numbers_lines_like_read(self):
+        """seed: codebase-context. A file larger than SEARCH_FILE_CAP bytes is not searched, like one
+        that is not UTF-8; the result then ends with how many files were not searched, after the
+        matches or after `no matches`; line numbers are read's, universal newlines, so a form feed
+        inside a line starts no new line."""
+        self.assertIn(str(builder.SEARCH_FILE_CAP), Tools.search.__doc__)
+        (self.root / "big.txt").write_bytes(b"needle\n" + b"x" * builder.SEARCH_FILE_CAP)  # over the cap by a line
+        (self.root / "fits.txt").write_bytes(b"needle\n" + b"x" * (builder.SEARCH_FILE_CAP - 7))  # exactly the cap
+        (self.root / "bin.dat").write_bytes(b"\xff\xfe needle\n")
+        self.assertEqual(self.tools.search("needle").splitlines(), ["fits.txt:1:needle", "...\t2 files not searched"])
+        self.assertEqual(self.tools.search("nothing").splitlines(), ["no matches", "...\t2 files not searched"])
+        self.assertEqual(self.tools.search("line 1000", "sub"), "sub/b.txt:1000:line 1000")  # nothing skipped under sub
+        (self.root / "ff.txt").write_bytes(b"one\n\x0ctwo\nthree needle\n")
+        self.assertIn("ff.txt:3:three needle", self.tools.search("needle"))
+        self.assertIn("3\tthree needle", self.tools.read("ff.txt"))
+
+    def test_search_shows_the_first_matches_and_cuts_a_lone_match_longer_than_the_cap(self):
+        """seed: codebase-context. The matches shown are the first in order: the first match that
+        does not fit in the bytes left ends the shown part, and the trailer counts exactly what
+        follows; a match longer than the cap, when nothing was shown yet, is cut to fit and marked,
+        like read's long line, so no match is out of reach."""
+        lines = [("w" * 2000 if i % 2 == 0 else "s") + " needle" for i in range(80)]
+        (self.root / "alt.txt").write_text("\n".join(lines) + "\n")
+        out = self.tools.search("needle").splitlines()
+        shown, trailer = out[:-1], out[-1]
+        self.assertEqual(shown, [f"alt.txt:{i + 1}:{lines[i]}" for i in range(len(shown))])  # a prefix of the matches
+        self.assertLess(len(shown), 80)
+        self.assertEqual(trailer, f"...\t{80 - len(shown)} more matches not shown")
+        (self.root / "alt.txt").unlink()
+        (self.root / "long.txt").write_text("L" * 40_000 + " needle\n")
+        out = self.tools.search("needle")
+        self.assertTrue(out.startswith("long.txt:1:LLLL"))
+        self.assertIn("cut", out)
+        self.assertNotIn("more matches", out)
+        self.assertLessEqual(len(out.encode()), builder.SEARCH_BYTES_CAP + 200)
 
     def test_docs_are_readable_and_never_written(self):
         """seed: docs-protected. The seeds live in the checkout the builder reads: write and edit
