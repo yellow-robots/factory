@@ -223,6 +223,29 @@ class ToolsTest(unittest.TestCase):
         self.assertIn(".gitignore", self.tools.list("."))
         self.assertTrue(self.tools.write("gitattributes.txt", "x\n").startswith("wrote"))
 
+    def test_a_dot_git_component_is_not_part_of_the_checkout_at_any_depth(self):
+        """seed: record-hardening. sub/.git/x is git's and not the checkout's: no tool reads, lists,
+        writes or edits it, and a listing does not show it, as with .git at the root."""
+        (self.root / "sub" / ".git").mkdir()
+        (self.root / "sub" / ".git" / "config").write_text("[core]\n")
+        for path in ("sub/.git", "sub/.git/config", "sub/.git/hooks/pre-commit", "a/b/.git/x"):
+            self.assertTrue(self.tools.write(path, "x\n").startswith("error: not part of the checkout"), path)
+            self.assertTrue(self.tools.read(path).startswith("error: not part of the checkout"), path)
+        self.assertTrue(self.tools.list("sub/.git").startswith("error: not part of the checkout"))
+        self.assertTrue(self.tools.edit("sub/.git/config", "core", "x").startswith("error: not part of the checkout"))
+        self.assertNotIn(".git", names_in(self.tools.list("sub")))
+        self.assertIn("b.txt", names_in(self.tools.list("sub")))
+        self.assertFalse((self.root / "a").exists())
+        self.assertEqual((self.root / "sub" / ".git" / "config").read_text(), "[core]\n")
+        self.assertEqual((self.tools.written, self.tools.edited), ([], []))
+
+    def test_the_protected_refusal_names_the_real_reason(self):
+        """seed: record-hardening. The model reads why a path is protected, and the reason covers
+        every protected file, not only the tests and the toolchain."""
+        reason = "(not the builder's to change: the tests, the toolchain, the vault and git's own files)"
+        for path in (".gitignore", "test_x.py", "docs/x.md", "uv.lock"):
+            self.assertEqual(self.tools.write(path, "x\n"), f"error: protected: {path} {reason}", path)
+
     def test_docs_are_readable_and_never_written(self):
         """seed: docs-protected. The seeds live in the checkout the builder reads: write and edit
         refuse anything under docs/ as protected, list and read still work there."""
@@ -777,6 +800,46 @@ class MainTest(unittest.TestCase):
         (self.checkout / ".git" / "config").write_text("[core\nbroken\n")
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("bad config", err.getvalue())
+        self.assertNotIn("not a git checkout", err.getvalue())
+        self.assertFalse(self.runs.exists())
+
+    def test_the_record_names_every_path_the_run_touched_whatever_git_lists(self):
+        """seed: record-hardening. A committed .gitattributes with `* -diff` cannot turn the patch
+        into a binary notice, and the numbers carry the written and edited paths in order."""
+        (self.checkout / ".gitattributes").write_text("* -diff\n")
+        git(self.checkout, "add", ".gitattributes")
+        git(self.checkout, "commit", "-q", "-m", "attributes")
+        model = scripted(
+            [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+            [call("write", {"path": "new.txt", "content": "hello\n"}, "c2")],
+            [call("write", {"path": "sub/deep.txt", "content": "deep\n"}, "c3")],
+            [call("final_result", REPORT, "c4")],
+        )
+        code, lines, run_dir = self.main(model, FakeSandbox([]))
+        self.assertEqual(code, 0)
+        patch = (run_dir / "diff.patch").read_text()
+        for text in ("+x = 2", "+hello", "+deep"):
+            self.assertIn(text, patch)
+        self.assertNotIn("Binary files", patch)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual((numbers["written"], numbers["edited"]), (["new.txt", "sub/deep.txt"], ["f.py"]))
+        self.assertIn("written=", lines[1])
+        self.assertIn("edited=", lines[1])
+        self.assertEqual(len(lines), 2)
+
+    def test_gits_first_line_alone_decides_not_a_checkout(self):
+        """seed: record-hardening. A path that contains git's phrase does not make a good checkout
+        no checkout, and git answers in English whatever the host's locale says."""
+        self.assertEqual(builder.git_env().get("LC_ALL"), "C")
+        phrase = Path(self.tmp.name) / "not a git repository"
+        phrase.mkdir()
+        (phrase / "bad.gitconfig").write_text("[core\nbroken\n")
+        err = io.StringIO()
+        env = {"GIT_CONFIG_GLOBAL": str(phrase / "bad.gitconfig"), "LC_ALL": "es_ES.UTF-8", "LANGUAGE": "es", "LANG": "es_ES.UTF-8"}
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
         self.assertEqual(code, 2)
         self.assertIn("bad config", err.getvalue())
