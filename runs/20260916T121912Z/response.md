@@ -1,0 +1,16 @@
+## Changed
+- gate.py
+
+## Did
+- gate.py: changed the seed status rank so `rejected` is treated like `open` (rank 0), since rejected is a way out at any stage and needs no version, ## Goal or naming test.
+- gate.py: made `_annotate` return whether `git tag -a` succeeded instead of ignoring its exit code, so a tag git cannot create is reported rather than silently passing.
+- gate.py: in `main` release handling, when `_annotate` fails, emit a `docs/versions/<version>.md: git could not create tag <version>` problem and return 1 without running render.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- (none)

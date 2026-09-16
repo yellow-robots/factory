@@ -214,7 +214,9 @@ def _seed_problems(
         return problems + [
             f"{rel}: status {status} is not one of {', '.join(STATUSES)}"
         ]
-    rank = STATUSES.index(status)
+    # rejected is a way out at any stage: it needs only what open needs, never a version,
+    # a Goal or a test.
+    rank = 0 if status == "rejected" else STATUSES.index(status)
 
     if not fm.get("summary", ""):
         problems.append(f"{rel}: seed has no summary")
@@ -382,19 +384,23 @@ def _release_problems(root: Path, version: str) -> list[str]:
     return problems
 
 
-def _annotate(root: Path, version: str, note: Path) -> None:
+def _annotate(root: Path, version: str, note: Path) -> bool:
     body = frontmatter(_read(note))[1]
     paragraph = _first_paragraph(body)
     bullets = _changelog_bullets(body)
     message = paragraph
     if bullets:
         message = (paragraph + "\n" if paragraph else "") + "\n".join(bullets)
-    subprocess.run(
-        ["git", "tag", "-a", version, "-m", message, "HEAD"],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-    )
+    try:
+        done = subprocess.run(
+            ["git", "tag", "-a", version, "-m", message, "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
 
 
 def _emit(problems: list[str]) -> int:
@@ -427,7 +433,9 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
             problems = _release_problems(root, version)
         if problems:
             return _emit(problems)
-        _annotate(root, version, root / "docs" / "versions" / f"{version}.md")
+        note = root / "docs" / "versions" / f"{version}.md"
+        if not _annotate(root, version, note):
+            return _emit([f"docs/versions/{version}.md: git could not create tag {version}"])
         problems_render(root)
         return 0
     return _usage()

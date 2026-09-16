@@ -1,18 +1,3 @@
----
-type: seed
-status: done
-summary: Every document is an input or output of a loop step and drifts unless a deterministic gate checks it; one script validates the vault, renders the changelog and cuts the tags.
-value: 5
-effort: M
-version: v0.4
----
-
-## Evidence
-
-v1 kept its documents honest only with templates, a deterministic gate and hooks; every hand-maintained file without one rotted (findings report, 2026-09-12). v0.1 to v0.3 were specified in plan files outside git and closed with commit messages; nothing checked that the orientation page, the version notes and the tags agreed, and the page's first cold reader found three errors in it (commit 6cd3eca, 2026-09-16). The owner's items 2 (define and gate the specs) and 4 (formalise input and output), 2026-09-16.
-
-## Goal
-
 Add `gate.py` at the repository root, run as `uv run gate.py <command>`, with `main(argv, root=None)` shaped like `builder.main`: `argv[0]` is the program name, `root` defaults to the directory `gate.py` is in. Three commands. Each prints one line per problem on stdout, starting with the path relative to `root` and saying what is missing, and exits 1 if there is any; with nothing to report it prints nothing and exits 0. A missing or unknown command, or `release` without a version, prints usage on stderr and exits 2.
 
 `check` validates `docs/` and the repository against it:
