@@ -1,0 +1,15 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so (test_builder.MainTest.test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so)
+seed: terms-checkout-and-tools. record_diff writes diff.patch only when the run changed
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 656, in test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so
+    self.assertIn("absent when the run left nothing", builder.record_diff.__doc__)
+AssertionError: 'absent when the run left nothing' not found in 'What the run left in the checkout: diff.patch (absent when it left nothing), and the\n    three numbers about it.'
+
+----------------------------------------------------------------------
+Ran 68 tests in 6.113s
+
+FAILED (failures=1)
