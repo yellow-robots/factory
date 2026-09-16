@@ -1,0 +1,19 @@
+## Changed
+- builder.py
+
+## Did
+- builder.py: added SEARCH_LINES_CAP = 100 and SEARCH_BYTES_CAP = 32_000 beside the other tool caps
+- builder.py: added self.searched to Tools.__init__ to record each successful search
+- builder.py: added a _files walker (list order, hidden names at the root and .git anywhere skipped, symlinks not followed) and the search(pattern, path=".") method after read, with the caps in its docstring, an error for an empty pattern, the read-style path errors, skipping non-UTF-8 files, 'no matches', and the '...\t<n> more matches not shown' trailer
+- builder.py: registered Tool(tools.search, takes_ctx=False) after read in build_agent so the request lists list, read, search, write, edit, check, then final_result
+- builder.py: added "searches": len(tools.searched) to the numbers dict so numbers.json and the printed numbers line carry it
+- builder.py: changed the ROLE text to 'explore it with `list`, `read` and `search`,' with nothing else altered, giving the expected hash
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- The module docstring and build_agent docstring still say 'five tools' (e.g. 'reachable only through five tools' and 'the five tools'), because test_the_record_leaves_nothing... asserts those exact substrings; only the role text was changed per the goal.

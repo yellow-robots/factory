@@ -58,6 +58,8 @@ REQUEST_CAP = 60  # provider requests per run
 LIST_CAP = 500  # entries per list
 READ_LINES_CAP = 300  # lines per read
 READ_BYTES_CAP = 32_000  # bytes per read
+SEARCH_LINES_CAP = 100  # matches per search
+SEARCH_BYTES_CAP = 32_000  # bytes per search
 WRITE_CAP = 30  # writes and edits per run, together
 CHECK_CAP = 8  # checks per run
 # What green means, in the checkout's own terms. -P keeps the checkout's root off sys.path while
@@ -83,7 +85,7 @@ PRICE = {"cache_hit": 0.006, "cache_miss": 0.3, "output": 1.2}
 
 ROLE = """\
 You are the builder. You are given a goal and a checkout: a directory with code and tests. You
-can explore it with `list` and `read`, change it with `write` and `edit`, and test it with
+can explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with
 `check`. The goal is reached when `check` is green: the tests are the goal's acceptance
 criteria and cannot be changed.
 
@@ -140,6 +142,7 @@ class Tools:
         self.sandbox = sandbox
         self.listed: list[str] = []
         self.read_paths: list[str] = []
+        self.searched: list[str] = []
         self.lines_read = 0
         self.written: list[str] = []
         self.edited: list[str] = []
@@ -243,6 +246,74 @@ class Tools:
         self.read_paths.append(rel)
         self.lines_read += n
         return "\n".join(out) or "(empty)"
+
+    def _files(self, directory: Path, rel: str):
+        """Every file under `directory`, in the order `list` gives: directories first, then files,
+        each by name, hidden names at the root and any .git component skipped, symlinks not
+        followed. Yields the file and its path from the checkout root."""
+        try:
+            entries = sorted(directory.iterdir(), key=lambda e: (not e.is_dir(), e.name))
+        except (OSError, RuntimeError):  # a directory that cannot be listed has no files to search
+            return
+        for e in entries:
+            if e.is_symlink():  # a link is not a file of the checkout, whatever it points at
+                continue
+            if e.name == ".git" or (rel == "." and e.name in self.hidden):
+                continue
+            child = e.name if rel == "." else f"{rel}/{e.name}"
+            if e.is_dir():
+                yield from self._files(e, child)
+            elif e.is_file():
+                yield e, child
+
+    def search(self, pattern: str, path: str = ".") -> str:
+        """Search the checkout for a pattern: every line of every file under `path` that contains
+        `pattern` as plain text, case-sensitive, one match per line as `<path>:<line number>:<text>`.
+        Files come in the order `list` gives and lines in order; at most 100 lines or 32000 bytes
+        per search, then how many more matches were not shown; a file whose bytes are not UTF-8 is
+        skipped.
+
+        Args:
+            pattern: The plain text to find; case-sensitive, and must not be empty.
+            path: The directory to search, relative to the checkout root; '.' is the root.
+        """
+        if not pattern:
+            return "error: the pattern is empty"
+        try:
+            p, rel = self._resolve(path)
+            if not p.is_dir():
+                raise ValueError(f"not a directory: {path}")
+            out: list[str] = []
+            shown = nbytes = total = 0
+            for f, frel in self._files(p, rel):
+                try:
+                    with f.open("rb") as fh:
+                        text = fh.read().decode("utf-8")
+                except (OSError, UnicodeDecodeError):  # not UTF-8: the whole file is skipped
+                    continue
+                for i, line in enumerate(text.splitlines(), 1):
+                    if pattern not in line:
+                        continue
+                    total += 1
+                    if shown >= SEARCH_LINES_CAP:
+                        continue
+                    entry = f"{frel}:{i}:{line}"
+                    size = len(entry.encode()) + 1
+                    if nbytes + size > SEARCH_BYTES_CAP:
+                        continue
+                    out.append(entry)
+                    nbytes += size
+                    shown += 1
+            if not total:
+                found = "no matches"
+            else:
+                found = "\n".join(out)
+                if total > shown:
+                    found += f"\n...\t{total - shown} more matches not shown"
+        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop
+            return f"error: {e}"
+        self.searched.append(rel)
+        return found
 
     def write(self, path: str, content: str) -> str:
         """Write a file of the checkout: create it, or replace what is there with `content`.
@@ -476,6 +547,7 @@ def build_agent(
         tools=[
             Tool(tools.list, takes_ctx=False),
             Tool(tools.read, takes_ctx=False),
+            Tool(tools.search, takes_ctx=False),
             Tool(tools.write, takes_ctx=False),
             Tool(tools.edit, takes_ctx=False),
             Tool(tools.check, takes_ctx=False),
@@ -753,6 +825,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         "reads": len(tools.read_paths),
         "files_read": len(set(tools.read_paths)),
         "lines_read": tools.lines_read,
+        "searches": len(tools.searched),
         "writes": len(tools.written),
         "edits": len(tools.edited),
         # The paths the tools touched, in order: the record names every file the run changed,

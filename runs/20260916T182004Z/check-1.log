@@ -1,0 +1,92 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+ERROR: test_searches_are_counted (test_builder.MainTest.test_searches_are_counted)
+seed: codebase-context. The numbers count the searches, in the line too.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 937, in test_searches_are_counted
+    self.assertEqual(numbers["searches"], 1)
+                     ~~~~~~~^^^^^^^^^^^^
+KeyError: 'searches'
+
+======================================================================
+ERROR: test_search_finds_lines_by_path_and_number_across_the_checkout (test_builder.ToolsTest.test_search_finds_lines_by_path_and_number_across_the_checkout)
+seed: codebase-context. Plain-text, case-sensitive matches as path:line:text, files in
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 256, in test_search_finds_lines_by_path_and_number_across_the_checkout
+    self.assertEqual(self.tools.search("two"), "a.txt:2:two")
+                     ^^^^^^^^^^^^^^^^^
+AttributeError: 'Tools' object has no attribute 'search'
+
+======================================================================
+ERROR: test_search_is_capped_by_lines_and_bytes_and_says_how_many_more (test_builder.ToolsTest.test_search_is_capped_by_lines_and_bytes_and_says_how_many_more)
+seed: codebase-context.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 273, in test_search_is_capped_by_lines_and_bytes_and_says_how_many_more
+    out = self.tools.search("needle")
+          ^^^^^^^^^^^^^^^^^
+AttributeError: 'Tools' object has no attribute 'search'
+
+======================================================================
+ERROR: test_the_docstrings_state_the_caps (test_builder.ToolsTest.test_the_docstrings_state_the_caps)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 178, in test_the_docstrings_state_the_caps
+    self.assertIn(str(builder.SEARCH_LINES_CAP), Tools.search.__doc__)  # seed: codebase-context
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'builder' has no attribute 'SEARCH_LINES_CAP'. Did you mean: 'READ_LINES_CAP'?
+
+======================================================================
+FAIL: test_a_green_build_in_a_git_checkout_leaves_the_full_record_and_the_diff (test_builder.MainTest.test_a_green_build_in_a_git_checkout_leaves_the_full_record_and_the_diff)
+seed: terms-checkout-and-tools. The numbers name the checkout and its head.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 671, in test_a_green_build_in_a_git_checkout_leaves_the_full_record_and_the_diff
+    self.assertEqual(numbers["role"], ROLE_SHA256)
+AssertionError: '36ae8adaca11268e' != '97196fd3f141c915'
+- 36ae8adaca11268e
++ 97196fd3f141c915
+
+
+======================================================================
+FAIL: test_the_role_is_the_plan_text (test_builder.RoleTest.test_the_role_is_the_plan_text)
+seed: terms-checkout-and-tools. The role says checkout where it said world; the hash
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 509, in test_the_role_is_the_plan_text
+    self.assertEqual(hashlib.sha256(builder.ROLE.encode()).hexdigest()[:16], ROLE_SHA256)
+AssertionError: '36ae8adaca11268e' != '97196fd3f141c915'
+- 36ae8adaca11268e
++ 97196fd3f141c915
+
+
+======================================================================
+FAIL: test_the_request_the_library_sends_has_the_plan_shape (test_builder.WireTest.test_the_request_the_library_sends_has_the_plan_shape)
+Through the real model class and a mock transport: no temperature, tool_choice auto,
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 1074, in test_the_request_the_library_sends_has_the_plan_shape
+    self.assertEqual([t["function"]["name"] for t in request["tools"]], ["list", "read", "search", "write", "edit", "check", "final_result"])  # seed: codebase-context
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['list', 'read', 'write', 'edit', 'check', 'final_result'] != ['list', 'read', 'search', 'write', 'edit', 'check', 'final_result']
+
+First differing element 2:
+'write'
+'search'
+
+Second list contains 1 additional elements.
+First extra element 6:
+'final_result'
+
+- ['list', 'read', 'write', 'edit', 'check', 'final_result']
++ ['list', 'read', 'search', 'write', 'edit', 'check', 'final_result']
+?                 ++++++++++
+
+
+----------------------------------------------------------------------
+Ran 108 tests in 11.995s
+
+FAILED (failures=3, errors=4)
