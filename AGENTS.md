@@ -23,7 +23,7 @@ Then derive:
 - The version in flight is the note in `docs/versions/` whose name is not a tag; there is at most one. Its seeds are the notes in `docs/seeds/` whose `version` names it.
 - A seed's stage is its `status`. `open`: evidence and an idea. `spec`: a `## Goal` the builder can be given, assigned to a version. `building`: at least one test names it, `seed: <name>` in the test's docstring, committed red. `done`: merged and green. `rejected`: a way out at any stage. `docs/templates/seed.md` states what each status requires and the gate checks it; `docs/backlog.base` ranks the seeds.
 - What the builder does and refuses is `README.md`; the walls are the constants at the top of `builder.py`; the exact behaviour is `test_builder.py`. The gate's is `test_gate.py`.
-- A run is a directory under `runs/`: read `numbers.json` first (`stopped`, `check`, `world_head`, cost, counts), then `response.md`, `diff.patch` and `wire.jsonl`. The commit that took the diff names the run in its `Built-By` trailer.
+- A run is a directory under `runs/`: read `numbers.json` first (`stopped`, `check`, `world_head`, cost, counts), then `response.md`, `diff.patch` and `wire.jsonl`. The commit that took the diff names the run in its `Built-By` trailer, so the builds of a version are `git log --format='%h %(trailers:key=Built-By,valueonly)' tags/<previous>..tags/<version>`, and the run's `world_head` is the red commit it started from.
 
 ## How a version is made
 
@@ -39,7 +39,7 @@ The owner and the attended agent choose seeds from the backlog and promote them 
 
 ## Not derivable from the repository
 
-- `docs/` is an Obsidian vault the owner keeps open. Obsidian rewrites a file it shows: frontmatter reordered, a `{{...}}` in the frontmatter destroyed, a `.base` file reformatted. A dirty `docs/` may be the owner's content or Obsidian's rewrite; read the diff before committing or discarding it.
+- `docs/` is an Obsidian vault the owner keeps open. `backlog.base` changes whenever the owner adjusts a view, a filter or an order there, and a note's frontmatter is re-serialised when a property is edited there, in Obsidian's own shape; a frontmatter value that is not valid YAML, such as a bare `{{date}}`, does not survive that. A dirty `docs/` is the owner's content: read the diff and commit it as theirs.
 - A version exists only as a tag. Commit 48cbbe4 is titled `v0.4`; it is one change released in v0.4, not the version.
 - Branches `bootstrap` and `v0.1` to `v0.3` are leftovers of past worktrees and share their names with the tags, so git warns and prefers the tag. Write `tags/v0.3` where it matters.
 - `plans/` is ignored: scratch for plan files; the plans of v0.2 and v0.3 are appended to their version notes.
