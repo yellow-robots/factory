@@ -1,6 +1,6 @@
 ---
 type: seed
-status: spec
+status: building
 summary: world and plane are the observer's words; the builder works on a checkout with tools, and the code, the role and the documents should say so.
 value: 3
 effort: S

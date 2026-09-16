@@ -58,7 +58,7 @@ TEST_GREEN = '''\
 import unittest
 
 
-class WorldTest(unittest.TestCase):
+class RepoTest(unittest.TestCase):
     def test_d(self):
         """seed: d. The first thing holds."""
         self.assertEqual(1, 1)
@@ -97,7 +97,7 @@ def make_repo(base: Path) -> Path:
     write(root, "docs/versions/v0.1.md", V01)
     write(root, "docs/versions/v0.2.md", V02)
     write(root, "AGENTS.md", AGENTS)
-    write(root, "test_world.py", TEST_GREEN)
+    write(root, "test_repo.py", TEST_GREEN)
     write(root, ".gitignore", "__pycache__/\n")
     git(root, "init", "-q")
     git(root, "add", "-A")
@@ -200,13 +200,13 @@ class CheckTest(GateTest):
     def test_a_building_or_done_seed_is_named_by_a_test_docstring(self):
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
         self.assert_problem("docs/seeds/b.md", "seed: b")
-        self.edit("test_world.py", TEST_GREEN + "\n# seed: b\n")  # a comment is not a docstring
+        self.edit("test_repo.py", TEST_GREEN + "\n# seed: b\n")  # a comment is not a docstring
         self.assert_problem("docs/seeds/b.md", "seed: b")
-        self.edit("test_world.py", TEST_GREEN_B)
+        self.edit("test_repo.py", TEST_GREEN_B)
         self.assertEqual(self.check(), (0, "", ""))
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
         self.assertEqual(self.check(), (0, "", ""))
-        self.edit("test_world.py", TEST_GREEN)
+        self.edit("test_repo.py", TEST_GREEN)
         self.assert_problem("docs/seeds/b.md", "seed: b")
 
     def test_a_version_note_is_named_like_a_tag(self):
@@ -217,7 +217,7 @@ class CheckTest(GateTest):
         self.edit("docs/versions/v0.3.md", V02.replace("v0.2: the next", "v0.3: the one after"))
         self.assert_problem("docs/versions/")
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
-        self.edit("test_world.py", TEST_GREEN_B)
+        self.edit("test_repo.py", TEST_GREEN_B)
         git(self.root, "tag", "v0.2")  # v0.2 released: v0.3 alone is in flight
         self.assertEqual(self.check(), (0, "", ""))
 
@@ -242,7 +242,7 @@ class RenderTest(GateTest):
 
     def test_render_writes_the_changelog_newest_first(self):
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
-        self.edit("test_world.py", TEST_GREEN_B)
+        self.edit("test_repo.py", TEST_GREEN_B)
         self.commit("two")
         git(self.root, "tag", "v0.2")
         self.assertEqual(run(self.root, "render"), (0, "", ""))
@@ -267,7 +267,7 @@ class ReleaseTest(GateTest):
     def ready(self):
         """v0.2 ready: its seed done and named by a test, AGENTS.md changed since v0.1, committed."""
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
-        self.edit("test_world.py", TEST_GREEN_B)
+        self.edit("test_repo.py", TEST_GREEN_B)
         self.edit("AGENTS.md", AGENTS + "\nRevised for v0.2.\n")
         self.commit("two")
 
@@ -320,13 +320,13 @@ class ReleaseTest(GateTest):
 
     def test_release_refuses_when_agents_md_is_unchanged_since_the_previous_tag(self):
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
-        self.edit("test_world.py", TEST_GREEN_B)
+        self.edit("test_repo.py", TEST_GREEN_B)
         self.commit("two")  # AGENTS.md as it was at v0.1
         self.assert_refused("AGENTS.md")
 
     def test_release_refuses_a_red_suite(self):
         self.ready()
-        self.edit("test_world.py", TEST_RED_B)
+        self.edit("test_repo.py", TEST_RED_B)
         self.commit("three")
         self.assert_refused("test")
 

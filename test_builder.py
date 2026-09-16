@@ -1,4 +1,4 @@
-"""The builder's acceptance tests, written from plans/v0.3.md before the code.
+"""The builder's acceptance tests, written from the v0.3 plan (docs/versions/v0.3.md) before the code.
 
     uv run python -m unittest -v
 
@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 import builder
-from builder import BuildReport, Plane, Sandbox, build_agent, render, run
+from builder import BuildReport, Tools, Sandbox, build_agent, render, run
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -43,7 +43,7 @@ REPORT = {
     "failing": [],
     "unsure": [],
 }
-ROLE_SHA256 = "3d4040934b16a225"  # plans/v0.3.md decision 10; changing the prompt is a version
+ROLE_SHA256 = "36ae8adaca11268e"  # v0.3 decision 10, one word changed in v0.5; changing the prompt is a version
 
 
 class FakeSandbox:
@@ -53,8 +53,8 @@ class FakeSandbox:
         self.results = list(results)
         self.calls = []
 
-    def run(self, world, run_dir, n):
-        self.calls.append((Path(world), Path(run_dir), n))
+    def run(self, checkout, run_dir, n):
+        self.calls.append((Path(checkout), Path(run_dir), n))
         return self.results.pop(0)
 
 
@@ -81,10 +81,10 @@ def scripted(*turns):
     return FunctionModel(model)
 
 
-def git(world: Path, *args: str) -> str:
+def git(checkout: Path, *args: str) -> str:
     out = subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
-        cwd=world, capture_output=True, text=True, check=True,
+        cwd=checkout, capture_output=True, text=True, check=True,
     )
     return out.stdout
 
@@ -97,7 +97,7 @@ class PlaneTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name) / "world"
+        self.root = Path(self.tmp.name) / "checkout"
         self.root.mkdir()
         self.run_dir = Path(self.tmp.name) / "run"
         self.run_dir.mkdir()
@@ -118,12 +118,12 @@ class PlaneTest(unittest.TestCase):
         (self.root / "tests_x.py").write_text("keep\n")  # test*.py: unittest would discover it
         (self.root / "attest.py").write_text("free\n")
         self.sandbox = FakeSandbox([])
-        self.plane = Plane(self.root, self.run_dir, sandbox=self.sandbox)
+        self.tools = Tools(self.root, self.run_dir, sandbox=self.sandbox)
 
     # carried over from v0.2
 
     def test_list_root_hides_the_record_and_shows_kinds(self):
-        out = self.plane.list(".")
+        out = self.tools.list(".")
         self.assertIn("file\t14\ta.txt", out)
         self.assertIn("dir\t0\tsub", out)
         self.assertIn("link\t0\tescape", out)
@@ -132,138 +132,142 @@ class PlaneTest(unittest.TestCase):
         for hidden in builder.HIDDEN:
             self.assertNotIn(hidden, names)
 
-    def test_paths_cannot_leave_the_world(self):
+    def test_the_hidden_names_are_the_record_the_harness_the_caches_and_git(self):
+        """seed: terms-checkout-and-tools. plans is gone from the checkout and from the list."""
+        self.assertEqual(builder.HIDDEN, ("runs", ".claude", "__pycache__", ".venv", ".git"))
+
+    def test_paths_cannot_leave_the_checkout(self):
         for bad in ("..", "../..", "/etc", "escape", "outside_dir/hostname", *(f"{h}/secret" for h in builder.HIDDEN)):
-            self.assertTrue(self.plane.read(bad).startswith("error:"), bad)
-        self.assertTrue(self.plane.list("..").startswith("error: outside the world"))
-        self.assertTrue(self.plane.list(".claude").startswith("error: not part of the world"))
-        self.assertTrue(self.plane.list(".git").startswith("error: not part of the world"))
-        self.assertEqual(self.plane.read_paths, [])
-        self.assertEqual(self.plane.listed, [])
+            self.assertTrue(self.tools.read(bad).startswith("error:"), bad)
+        self.assertTrue(self.tools.list("..").startswith("error: outside the checkout"))
+        self.assertTrue(self.tools.list(".claude").startswith("error: not part of the checkout"))
+        self.assertTrue(self.tools.list(".git").startswith("error: not part of the checkout"))
+        self.assertEqual(self.tools.read_paths, [])
+        self.assertEqual(self.tools.listed, [])
 
     def test_read_numbers_lines_and_truncates_with_a_continuation(self):
-        self.assertEqual(self.plane.read("a.txt"), "1\tone\n2\ttwo\n3\tthree")
-        out = self.plane.read("sub/b.txt")
+        self.assertEqual(self.tools.read("a.txt"), "1\tone\n2\ttwo\n3\tthree")
+        out = self.tools.read("sub/b.txt")
         self.assertTrue(out.startswith("1\tline 1\n"))
         self.assertIn(f"...\ttruncated; continue with start={builder.READ_LINES_CAP + 1}", out)
-        out = self.plane.read("sub/b.txt", start=990)
+        out = self.tools.read("sub/b.txt", start=990)
         self.assertTrue(out.startswith("990\tline 990\n"))
         self.assertTrue(out.endswith("1000\tline 1000"))
-        self.assertEqual(self.plane.lines_read, 3 + builder.READ_LINES_CAP + 11)
+        self.assertEqual(self.tools.lines_read, 3 + builder.READ_LINES_CAP + 11)
 
     def test_a_line_longer_than_the_byte_cap_is_cut_and_the_next_line_continues(self):
         (self.root / "wide.txt").write_text("x" * 40_000 + "\nshort\n")
-        out = self.plane.read("wide.txt")
+        out = self.tools.read("wide.txt")
         self.assertTrue(out.startswith("1\t" + "x" * 100))
         self.assertIn(f"(line cut at {builder.READ_BYTES_CAP} bytes)", out)
         self.assertTrue(out.endswith("...\ttruncated; continue with start=2"))
-        self.assertEqual(self.plane.read("wide.txt", start=2), "2\tshort")
+        self.assertEqual(self.tools.read("wide.txt", start=2), "2\tshort")
 
     def test_wrong_kinds_missing_paths_and_symlink_loops_are_errors_not_crashes(self):
         os.symlink("loop", self.root / "loop")
-        self.assertTrue(self.plane.list("a.txt").startswith("error: not a directory"))
-        self.assertTrue(self.plane.read("sub").startswith("error: not a file"))
-        self.assertTrue(self.plane.read("nope.txt").startswith("error: not a file"))
-        self.assertTrue(self.plane.read("loop").startswith("error:"))
-        self.assertTrue(self.plane.list("loop").startswith("error:"))
+        self.assertTrue(self.tools.list("a.txt").startswith("error: not a directory"))
+        self.assertTrue(self.tools.read("sub").startswith("error: not a file"))
+        self.assertTrue(self.tools.read("nope.txt").startswith("error: not a file"))
+        self.assertTrue(self.tools.read("loop").startswith("error:"))
+        self.assertTrue(self.tools.list("loop").startswith("error:"))
 
     def test_the_docstrings_state_the_caps(self):
-        self.assertIn(str(builder.READ_LINES_CAP), Plane.read.__doc__)
-        self.assertIn(str(builder.READ_BYTES_CAP), Plane.read.__doc__)
-        self.assertIn(str(builder.CHECK_CAP), Plane.check.__doc__)
+        self.assertIn(str(builder.READ_LINES_CAP), Tools.read.__doc__)
+        self.assertIn(str(builder.READ_BYTES_CAP), Tools.read.__doc__)
+        self.assertIn(str(builder.CHECK_CAP), Tools.check.__doc__)
 
     # v0.3: write
 
     def test_write_creates_with_parents_and_overwrites(self):
-        self.assertEqual(self.plane.write("new/dir/f.txt", "a\nb\n"), "wrote new/dir/f.txt (2 lines)")
+        self.assertEqual(self.tools.write("new/dir/f.txt", "a\nb\n"), "wrote new/dir/f.txt (2 lines)")
         self.assertEqual((self.root / "new" / "dir" / "f.txt").read_text(), "a\nb\n")
-        self.assertEqual(self.plane.write("new/dir/f.txt", "c\n"), "wrote new/dir/f.txt (1 lines)")
+        self.assertEqual(self.tools.write("new/dir/f.txt", "c\n"), "wrote new/dir/f.txt (1 lines)")
         self.assertEqual((self.root / "new" / "dir" / "f.txt").read_text(), "c\n")
-        self.assertEqual(self.plane.written, ["new/dir/f.txt", "new/dir/f.txt"])
+        self.assertEqual(self.tools.written, ["new/dir/f.txt", "new/dir/f.txt"])
 
     def test_write_and_edit_refuse_outside_hidden_and_protected_paths(self):
         outside = ("../x.txt", "/etc/x", "escape", "outside_dir/x")
         hidden = tuple(f"{h}/x" for h in builder.HIDDEN) + (".git/hooks/pre-commit",)
         protected = ("test_x.py", "testfoo.py", "tests_x.py", "sub/test_y.py", "tests/a/b.py", "pyproject.toml", "uv.lock", "check.Dockerfile", "alias.py")
         for bad in outside + hidden + protected:
-            self.assertTrue(self.plane.write(bad, "x\n").startswith("error:"), bad)
-            self.assertTrue(self.plane.edit(bad, "keep", "x").startswith("error:"), bad)
+            self.assertTrue(self.tools.write(bad, "x\n").startswith("error:"), bad)
+            self.assertTrue(self.tools.edit(bad, "keep", "x").startswith("error:"), bad)
         for p in protected:
-            self.assertIn("protected", self.plane.write(p, "x\n"), p)
+            self.assertIn("protected", self.tools.write(p, "x\n"), p)
             self.assertEqual((self.root / p).read_text(), "keep\n", p)
         self.assertFalse((self.root / "runs" / "x").exists())
         self.assertFalse((self.root / ".git" / "hooks").exists())
         self.assertFalse(Path("/etc/x").exists())
-        self.assertEqual(self.plane.written, [])
-        self.assertEqual(self.plane.edited, [])
+        self.assertEqual(self.tools.written, [])
+        self.assertEqual(self.tools.edited, [])
 
     def test_names_that_only_resemble_protected_ones_are_free(self):
-        self.assertTrue(self.plane.write("contest.py", "x\n").startswith("wrote contest.py"))
-        self.assertTrue(self.plane.write("attest.py", "x\n").startswith("wrote attest.py"))
-        self.assertTrue(self.plane.write("sub/pyproject.toml", "x\n").startswith("wrote sub/pyproject.toml"))
-        self.assertTrue(self.plane.edit("contest.py", "x", "y").startswith("edited contest.py"))
+        self.assertTrue(self.tools.write("contest.py", "x\n").startswith("wrote contest.py"))
+        self.assertTrue(self.tools.write("attest.py", "x\n").startswith("wrote attest.py"))
+        self.assertTrue(self.tools.write("sub/pyproject.toml", "x\n").startswith("wrote sub/pyproject.toml"))
+        self.assertTrue(self.tools.edit("contest.py", "x", "y").startswith("edited contest.py"))
 
     def test_docs_are_readable_and_never_written(self):
-        """seed: docs-protected. The seeds live in the world the builder reads: write and edit
+        """seed: docs-protected. The seeds live in the checkout the builder reads: write and edit
         refuse anything under docs/ as protected, list and read still work there."""
         (self.root / "docs" / "seeds").mkdir(parents=True)
         (self.root / "docs" / "seeds" / "s.md").write_text("keep\n")
         for bad in ("docs/seeds/s.md", "docs/new.md", "docs/deeper/still/new.md"):
-            self.assertTrue(self.plane.write(bad, "x\n").startswith("error:"), bad)
-            self.assertIn("protected", self.plane.write(bad, "x\n"), bad)
-        self.assertIn("protected", self.plane.edit("docs/seeds/s.md", "keep", "x"))
+            self.assertTrue(self.tools.write(bad, "x\n").startswith("error:"), bad)
+            self.assertIn("protected", self.tools.write(bad, "x\n"), bad)
+        self.assertIn("protected", self.tools.edit("docs/seeds/s.md", "keep", "x"))
         self.assertEqual((self.root / "docs" / "seeds" / "s.md").read_text(), "keep\n")
         self.assertFalse((self.root / "docs" / "new.md").exists())
-        self.assertEqual((self.plane.written, self.plane.edited), ([], []))
-        self.assertIn("s.md", self.plane.list("docs/seeds"))
-        self.assertIn("keep", self.plane.read("docs/seeds/s.md"))
-        self.assertTrue(self.plane.write("docsx/free.md", "x\n").startswith("wrote docsx/free.md"))
+        self.assertEqual((self.tools.written, self.tools.edited), ([], []))
+        self.assertIn("s.md", self.tools.list("docs/seeds"))
+        self.assertIn("keep", self.tools.read("docs/seeds/s.md"))
+        self.assertTrue(self.tools.write("docsx/free.md", "x\n").startswith("wrote docsx/free.md"))
 
     # v0.3: edit
 
     def test_edit_replaces_exactly_one_occurrence(self):
-        self.assertEqual(self.plane.edit("a.txt", "two", "2"), "edited a.txt (3 -> 3 lines)")
+        self.assertEqual(self.tools.edit("a.txt", "two", "2"), "edited a.txt (3 -> 3 lines)")
         self.assertEqual((self.root / "a.txt").read_text(), "one\n2\nthree\n")
-        self.assertEqual(self.plane.edit("a.txt", "2\n", "2\n2b\n"), "edited a.txt (3 -> 4 lines)")
-        self.assertEqual(self.plane.edited, ["a.txt", "a.txt"])
+        self.assertEqual(self.tools.edit("a.txt", "2\n", "2\n2b\n"), "edited a.txt (3 -> 4 lines)")
+        self.assertEqual(self.tools.edited, ["a.txt", "a.txt"])
 
     def test_edit_errors_on_zero_empty_and_many_occurrences_without_touching_the_file(self):
         (self.root / "dup.txt").write_text("x\nx\n")
-        self.assertEqual(self.plane.edit("a.txt", "nope", "x"), "error: old text not found in a.txt")
-        self.assertEqual(self.plane.edit("a.txt", "", "x"), "error: old text is empty")
+        self.assertEqual(self.tools.edit("a.txt", "nope", "x"), "error: old text not found in a.txt")
+        self.assertEqual(self.tools.edit("a.txt", "", "x"), "error: old text is empty")
         self.assertEqual(
-            self.plane.edit("dup.txt", "x", "y"),
+            self.tools.edit("dup.txt", "x", "y"),
             "error: old text found 2 times in dup.txt; include more context",
         )
         self.assertEqual((self.root / "a.txt").read_text(), "one\ntwo\nthree\n")
         self.assertEqual((self.root / "dup.txt").read_text(), "x\nx\n")
-        self.assertTrue(self.plane.edit("nope.txt", "a", "b").startswith("error: not a file"))
-        self.assertTrue(self.plane.edit("sub", "a", "b").startswith("error: not a file"))
-        self.assertEqual(self.plane.edited, [])
+        self.assertTrue(self.tools.edit("nope.txt", "a", "b").startswith("error: not a file"))
+        self.assertTrue(self.tools.edit("sub", "a", "b").startswith("error: not a file"))
+        self.assertEqual(self.tools.edited, [])
 
     def test_writes_and_edits_share_one_cap(self):
         for i in range(builder.WRITE_CAP - 1):
-            self.assertTrue(self.plane.write(f"w{i}.txt", "x\n").startswith("wrote"))
-        self.assertTrue(self.plane.edit("a.txt", "one", "1").startswith("edited"))
+            self.assertTrue(self.tools.write(f"w{i}.txt", "x\n").startswith("wrote"))
+        self.assertTrue(self.tools.edit("a.txt", "one", "1").startswith("edited"))
         cap = f"error: cap reached ({builder.WRITE_CAP} writes and edits); report now"
-        self.assertEqual(self.plane.write("late.txt", "x\n"), cap)
-        self.assertEqual(self.plane.edit("a.txt", "1", "one"), cap)
+        self.assertEqual(self.tools.write("late.txt", "x\n"), cap)
+        self.assertEqual(self.tools.edit("a.txt", "1", "one"), cap)
         self.assertFalse((self.root / "late.txt").exists())
-        self.assertEqual(len(self.plane.written) + len(self.plane.edited), builder.WRITE_CAP)
+        self.assertEqual(len(self.tools.written) + len(self.tools.edited), builder.WRITE_CAP)
 
     # v0.3: check
 
     def test_check_records_each_run_and_returns_the_exit_and_the_tail(self):
         first = "F\n" + "=" * 10 + "\nFAIL: test_a\nFAILED (failures=1)\n"
         self.sandbox.results = [(1, first), (0, "..\nOK\n")]
-        out = self.plane.check()
+        out = self.tools.check()
         self.assertTrue(out.startswith("exit 1\n"), out)
         self.assertIn("FAILED (failures=1)", out)
         self.assertEqual((self.run_dir / "check-1.log").read_text(), first)
-        self.assertTrue(self.plane.check().startswith("exit 0\n"))
+        self.assertTrue(self.tools.check().startswith("exit 0\n"))
         self.assertEqual((self.run_dir / "check-2.log").read_text(), "..\nOK\n")
-        self.assertEqual([c["exit"] for c in self.plane.checks], [1, 0])
-        self.assertTrue(all(isinstance(c["seconds"], (int, float)) for c in self.plane.checks))
+        self.assertEqual([c["exit"] for c in self.tools.checks], [1, 0])
+        self.assertTrue(all(isinstance(c["seconds"], (int, float)) for c in self.tools.checks))
         self.assertEqual([c[2] for c in self.sandbox.calls], [1, 2])
         self.assertEqual(self.sandbox.calls[0][0], self.root)
         self.assertEqual(self.sandbox.calls[0][1], self.run_dir)
@@ -271,33 +275,33 @@ class PlaneTest(unittest.TestCase):
     def test_check_tail_is_capped_by_lines_and_bytes_but_the_log_is_whole(self):
         long = "".join(f"l{i}\n" for i in range(200))
         self.sandbox.results = [(0, long), (0, "y" * 20_000 + "\nOK\n")]
-        out = self.plane.check()
+        out = self.tools.check()
         body = out.split("\n", 1)[1]
         self.assertEqual(body.count("\n") + (0 if body.endswith("\n") else 1), 60)
         self.assertTrue(body.startswith("l140\n"))
         self.assertEqual((self.run_dir / "check-1.log").read_text(), long)
-        out = self.plane.check()
+        out = self.tools.check()
         self.assertLessEqual(len(out.encode()) - len("exit 0\n"), 8000)
         self.assertTrue(out.rstrip().endswith("OK"))
 
     def test_check_without_a_sandbox_or_with_a_broken_one_is_an_error_not_a_crash(self):
-        self.assertTrue(Plane(self.root, self.run_dir).check().startswith("error: no sandbox"))
+        self.assertTrue(Tools(self.root, self.run_dir).check().startswith("error: no sandbox"))
 
         class Broken:
-            def run(self, world, run_dir, n):
+            def run(self, checkout, run_dir, n):
                 raise RuntimeError("docker build failed (exit 1); see image-build.log")
 
-        out = Plane(self.root, self.run_dir, sandbox=Broken()).check()
+        out = Tools(self.root, self.run_dir, sandbox=Broken()).check()
         self.assertEqual(out, "error: docker build failed (exit 1); see image-build.log")
         self.assertFalse((self.run_dir / "check-1.log").exists())
 
     def test_check_cap_stops_calling_the_sandbox(self):
         self.sandbox.results = [(0, "OK\n")] * builder.CHECK_CAP
         for _ in range(builder.CHECK_CAP):
-            self.assertTrue(self.plane.check().startswith("exit 0"))
-        self.assertEqual(self.plane.check(), f"error: cap reached ({builder.CHECK_CAP} checks); report now")
+            self.assertTrue(self.tools.check().startswith("exit 0"))
+        self.assertEqual(self.tools.check(), f"error: cap reached ({builder.CHECK_CAP} checks); report now")
         self.assertEqual(len(self.sandbox.calls), builder.CHECK_CAP)
-        self.assertEqual(len(self.plane.checks), builder.CHECK_CAP)
+        self.assertEqual(len(self.tools.checks), builder.CHECK_CAP)
 
 
 class SandboxTest(unittest.TestCase):
@@ -306,10 +310,10 @@ class SandboxTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.world = Path(self.tmp.name) / "world"
-        self.world.mkdir()
-        (self.world / "uv.lock").write_text("lock\n")
-        (self.world / "check.Dockerfile").write_text("FROM x\n")
+        self.checkout = Path(self.tmp.name) / "checkout"
+        self.checkout.mkdir()
+        (self.checkout / "uv.lock").write_text("lock\n")
+        (self.checkout / "check.Dockerfile").write_text("FROM x\n")
         self.run_dir = Path(self.tmp.name) / "20260915T170000Z-2"
         self.run_dir.mkdir()
         self.image = "factory-check:" + hashlib.sha256(b"lock\n" + b"FROM x\n").hexdigest()[:12]
@@ -318,9 +322,9 @@ class SandboxTest(unittest.TestCase):
         return subprocess.CompletedProcess([], code, out, err)
 
     def test_image_name_hashes_the_lock_and_the_dockerfile(self):
-        self.assertEqual(Sandbox.image(self.world), self.image)
-        (self.world / "uv.lock").write_text("other\n")
-        self.assertNotEqual(Sandbox.image(self.world), self.image)
+        self.assertEqual(Sandbox.image(self.checkout), self.image)
+        (self.checkout / "uv.lock").write_text("other\n")
+        self.assertNotEqual(Sandbox.image(self.checkout), self.image)
 
     def test_run_uses_the_existing_image_with_the_plan_argv(self):
         calls = []
@@ -332,7 +336,7 @@ class SandboxTest(unittest.TestCase):
             return self.done(1, b"..F\n", b"FAILED (failures=1)\n")
 
         with mock.patch.object(builder.subprocess, "run", fake_run):
-            code, output = Sandbox.run(self.world, self.run_dir, 1)
+            code, output = Sandbox.run(self.checkout, self.run_dir, 1)
         self.assertEqual(code, 1)
         self.assertEqual(output, "..F\nFAILED (failures=1)\n")
         self.assertEqual(calls[0][0], ["docker", "image", "inspect", self.image])
@@ -345,7 +349,7 @@ class SandboxTest(unittest.TestCase):
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "-e", "HOME=/tmp",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
-                "-v", f"{self.world}:/w:ro", "-w", "/w",
+                "-v", f"{self.checkout}:/w:ro", "-w", "/w",
                 "--memory", "1g", "--cpus", "2", "--pids-limit", "256",
                 self.image, "python", "-P", "-m", "unittest", "discover", "-q",
             ],
@@ -365,10 +369,10 @@ class SandboxTest(unittest.TestCase):
             return self.done(0, b"OK\n", b"")
 
         with mock.patch.object(builder.subprocess, "run", fake_run):
-            code, output = Sandbox.run(self.world, self.run_dir, 1)
+            code, output = Sandbox.run(self.checkout, self.run_dir, 1)
         self.assertEqual((code, output), (0, "OK\n"))
         build, kw = calls[1]
-        self.assertEqual(build, ["docker", "build", "-f", str(self.world / "check.Dockerfile"), "-t", self.image, str(self.world)])
+        self.assertEqual(build, ["docker", "build", "-f", str(self.checkout / "check.Dockerfile"), "-t", self.image, str(self.checkout)])
         self.assertEqual(kw.get("timeout"), builder.IMAGE_TIMEOUT)
         self.assertEqual((self.run_dir / "image-build.log").read_bytes(), b"built\n")
 
@@ -380,7 +384,7 @@ class SandboxTest(unittest.TestCase):
 
         with mock.patch.object(builder.subprocess, "run", fake_run):
             with self.assertRaises(RuntimeError) as ctx:
-                Sandbox.run(self.world, self.run_dir, 1)
+                Sandbox.run(self.checkout, self.run_dir, 1)
         self.assertIn("docker build failed (exit 2)", str(ctx.exception))
         self.assertIn("image-build.log", str(ctx.exception))
         self.assertEqual((self.run_dir / "image-build.log").read_bytes(), b"boom\n")
@@ -397,7 +401,7 @@ class SandboxTest(unittest.TestCase):
             return self.done(0)
 
         with mock.patch.object(builder.subprocess, "run", fake_run):
-            code, output = Sandbox.run(self.world, self.run_dir, 3)
+            code, output = Sandbox.run(self.checkout, self.run_dir, 3)
         self.assertEqual(code, 124)
         self.assertIn(f"timeout after {builder.CHECK_TIMEOUT} s", output)
         kill, kw = calls[-1]
@@ -425,7 +429,11 @@ class RenderTest(unittest.TestCase):
 
 class RoleTest(unittest.TestCase):
     def test_the_role_is_the_plan_text(self):
+        """seed: terms-checkout-and-tools. The role says checkout where it said world; the hash
+        pins every other character."""
         self.assertEqual(hashlib.sha256(builder.ROLE.encode()).hexdigest()[:16], ROLE_SHA256)
+        self.assertIn("a goal and a checkout: a directory with code and tests", builder.ROLE)
+        self.assertNotIn("world", builder.ROLE)
         self.assertTrue(builder.ROLE.startswith("You are the builder."))
         self.assertIn("Work in this order:", builder.ROLE)
         self.assertIn("Rules: change only what the goal needs;", builder.ROLE)
@@ -435,18 +443,18 @@ class LoopTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name) / "world"
+        self.root = Path(self.tmp.name) / "checkout"
         self.root.mkdir()
         self.run_dir = Path(self.tmp.name) / "run"
         self.run_dir.mkdir()
         (self.root / "f.py").write_text("x = 1\n")
 
-    def plane(self, results):
+    def tools(self, results):
         self.sandbox = FakeSandbox(results)
-        return Plane(self.root, self.run_dir, sandbox=self.sandbox)
+        return Tools(self.root, self.run_dir, sandbox=self.sandbox)
 
     def test_edit_check_edit_check_then_the_report_ends_the_run(self):
-        plane = self.plane([(1, "FAIL: test_x\n"), (0, "OK\n")])
+        tools = self.tools([(1, "FAIL: test_x\n"), (0, "OK\n")])
         model = scripted(
             [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
             [call("check", {}, "c2")],
@@ -454,13 +462,13 @@ class LoopTest(unittest.TestCase):
             [call("check", {}, "c4")],
             [call("final_result", REPORT, "c5")],
         )
-        report, messages, usage, stopped, detail = run(build_agent(plane, model=model), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal")
         self.assertEqual((stopped, detail), ("answer", ""))
         self.assertIsInstance(report, BuildReport)
         self.assertEqual(report.check, "green")
         self.assertEqual((self.root / "f.py").read_text(), "x = 3\n")
-        self.assertEqual(plane.edited, ["f.py", "f.py"])
-        self.assertEqual([c["exit"] for c in plane.checks], [1, 0])
+        self.assertEqual(tools.edited, ["f.py", "f.py"])
+        self.assertEqual([c["exit"] for c in tools.checks], [1, 0])
         self.assertEqual(usage.tool_calls, 4)
         self.assertEqual(
             parts_of(messages)[:10],
@@ -472,48 +480,48 @@ class LoopTest(unittest.TestCase):
         self.assertTrue(returns[3].startswith("exit 0\n"))
 
     def test_the_write_cap_reaches_the_model_as_an_error(self):
-        plane = self.plane([])
+        tools = self.tools([])
         turns = [[call("write", {"path": f"w{i}.txt", "content": "x\n"}, f"w{i}")] for i in range(builder.WRITE_CAP + 1)]
-        report, messages, usage, stopped, detail = run(build_agent(plane, model=scripted(*turns)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), "goal")
         self.assertEqual(stopped, "answer")
-        self.assertEqual(len(plane.written), builder.WRITE_CAP)
+        self.assertEqual(len(tools.written), builder.WRITE_CAP)
         # the last tool return is the library's own for final_result; the cap error precedes it
         self.assertEqual(returns_of(messages)[-2], f"error: cap reached ({builder.WRITE_CAP} writes and edits); report now")
 
     def test_a_model_that_never_stops_hits_the_tool_call_cap(self):
-        plane = self.plane([])
+        tools = self.tools([])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # two calls per turn, so the tool-call cap binds before the request cap does
             return ModelResponse(parts=[call("list", {"path": "."}, "c1"), call("list", {"path": "."}, "c2")])
 
-        report, messages, usage, stopped, detail = run(build_agent(plane, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "cap")
         self.assertIsNone(report)
-        self.assertEqual(len(plane.listed), builder.TOOL_CALLS_CAP)
+        self.assertEqual(len(tools.listed), builder.TOOL_CALLS_CAP)
         self.assertIn("tool_calls_limit", detail)
 
     def test_a_model_that_never_stops_one_call_at_a_time_hits_the_request_cap(self):
-        plane = self.plane([])
+        tools = self.tools([])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[call("list", {"path": "."}, "c")])
 
-        report, messages, usage, stopped, detail = run(build_agent(plane, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "cap")
         self.assertIsNone(report)
-        self.assertEqual(len(plane.listed), builder.REQUEST_CAP)
+        self.assertEqual(len(tools.listed), builder.REQUEST_CAP)
         self.assertIn("request_limit", detail)
 
     def test_a_plain_text_answer_is_retried_by_the_library(self):
-        plane = self.plane([])
+        tools = self.tools([])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
                 return ModelResponse(parts=[TextPart("done")])
             return ModelResponse(parts=[call("final_result", REPORT, "c")])
 
-        report, messages, usage, stopped, detail = run(build_agent(plane, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "answer")
         self.assertIsInstance(report, BuildReport)
         retries = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
@@ -521,12 +529,12 @@ class LoopTest(unittest.TestCase):
         self.assertIn("Fix the errors and try again", retries[0].model_response())
 
     def test_a_provider_error_stops_the_run_without_a_report(self):
-        plane = self.plane([])
+        tools = self.tools([])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelAPIError("deepseek-flash", "boom")
 
-        report, messages, usage, stopped, detail = run(build_agent(plane, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "error")
         self.assertIsNone(report)
         self.assertIn("boom", detail)
@@ -537,25 +545,26 @@ class MainTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         base = Path(self.tmp.name)
-        self.world = base / "world"
-        self.world.mkdir()
-        (self.world / "f.py").write_text("x = 1\n")
+        self.checkout = base / "checkout"
+        self.checkout.mkdir()
+        (self.checkout / "f.py").write_text("x = 1\n")
+        git(self.checkout, "init", "-q")  # a checkout is a git checkout; a plain directory is refused
+        git(self.checkout, "add", "f.py")
+        git(self.checkout, "commit", "-q", "-m", "start")
         (base / "key").write_text("DEEPSEEK_API_KEY=not-a-key\n")
         self.runs = base / "runs"
         self.enterContext(mock.patch.object(builder, "RUNS", self.runs))
         self.enterContext(mock.patch.object(builder, "KEY_FILE", base / "key"))
 
-    def main(self, model, sandbox, world=None):
+    def main(self, model, sandbox, checkout=None):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            code = builder.main(["builder.py", str(world or self.world), "make x bigger"], model=model, sandbox=sandbox)
+            code = builder.main(["builder.py", str(checkout or self.checkout), "make x bigger"], model=model, sandbox=sandbox)
         run_dirs = list(self.runs.iterdir()) if self.runs.exists() else []
         return code, out.getvalue().splitlines(), (run_dirs[0] if run_dirs else None)
 
-    def test_a_green_build_in_a_git_world_leaves_the_full_record_and_the_diff(self):
-        git(self.world, "init", "-q")
-        git(self.world, "add", "f.py")
-        git(self.world, "commit", "-q", "-m", "start")
+    def test_a_green_build_in_a_git_checkout_leaves_the_full_record_and_the_diff(self):
+        """seed: terms-checkout-and-tools. The numbers name the checkout and its head."""
         model = scripted(
             [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
             [call("write", {"path": "new.txt", "content": "hello\nworld\n"}, "c2")],
@@ -574,14 +583,14 @@ class MainTest(unittest.TestCase):
         self.assertIn("new.txt", patch)
         self.assertIn("+hello", patch)
         numbers = json.loads((run_dir / "numbers.json").read_text())
-        self.assertEqual(numbers["world_head"], git(self.world, "rev-parse", "HEAD").strip())
+        self.assertEqual(numbers["head"], git(self.checkout, "rev-parse", "HEAD").strip())
         self.assertEqual(numbers["stopped"], "answer")
         self.assertEqual(numbers["check"], "green")
         self.assertEqual((numbers["checks"], numbers["writes"], numbers["edits"]), (1, 1, 1))
         self.assertEqual(numbers["files_changed"], 2)  # f.py, new.txt
         self.assertGreaterEqual(numbers["insertions"], 3)
         self.assertEqual(numbers["deletions"], 1)
-        self.assertEqual(numbers["world"], str(self.world.resolve()))
+        self.assertEqual(numbers["checkout"], str(self.checkout.resolve()))
         self.assertGreaterEqual(numbers["check_seconds"], 0)
         self.assertEqual(numbers["role"], ROLE_SHA256)
         self.assertEqual(len(numbers["wrapper"]), 16)
@@ -603,13 +612,19 @@ class MainTest(unittest.TestCase):
         self.assertEqual(json.loads((run_dir / "report.json").read_text())["check"], "green")
         self.assertIn("check=red", lines[1])
 
-    def test_a_world_without_git_records_that_and_no_patch(self):
-        code, lines, run_dir = self.main(scripted(), FakeSandbox([]))
-        self.assertEqual(code, 0)
-        numbers = json.loads((run_dir / "numbers.json").read_text())
-        self.assertEqual(numbers["diff"], "not a git checkout")
-        self.assertEqual(numbers["check"], "none")
-        self.assertFalse((run_dir / "diff.patch").exists())
+    def test_a_directory_without_git_is_a_usage_error(self):
+        """seed: terms-checkout-and-tools. The checkout must be a git checkout: a plain directory
+        is refused with a usage error naming git, exit 2, before any run directory exists."""
+        plain = Path(self.tmp.name) / "plain"
+        plain.mkdir()
+        (plain / "f.py").write_text("x = 1\n")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(plain), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("usage", err.getvalue())
+        self.assertIn("git", err.getvalue())
+        self.assertFalse(self.runs.exists())
 
     def test_a_provider_error_is_recorded_and_returns_one(self):
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -623,37 +638,30 @@ class MainTest(unittest.TestCase):
         self.assertIn("boom", numbers["detail"])
         self.assertNotIn("detail=", lines[1])
 
-    def test_the_world_head_is_recorded_for_a_git_world(self):
-        """seed: world-pinned-to-commit. A run is comparable only if the world it ran on is a
-        known commit: numbers.json carries the world's HEAD as world_head."""
-        git(self.world, "init", "-q")
-        git(self.world, "add", "f.py")
-        git(self.world, "commit", "-q", "-m", "start")
+    def test_the_head_is_recorded_for_a_git_checkout(self):
+        """seed: world-pinned-to-commit; seed: terms-checkout-and-tools. A run is comparable only
+        if the checkout it ran on is a known commit: numbers.json carries the checkout's HEAD as
+        head, and the numbers line says checkout= and head=."""
         code, lines, run_dir = self.main(scripted(), FakeSandbox([]))
         self.assertEqual(code, 0)
         numbers = json.loads((run_dir / "numbers.json").read_text())
-        self.assertEqual(numbers["world_head"], git(self.world, "rev-parse", "HEAD").strip())
-        self.assertRegex(numbers["world_head"], r"^[0-9a-f]{40}$")
-        self.assertIn(f"world_head={numbers['world_head']}", lines[1])
+        self.assertEqual(numbers["head"], git(self.checkout, "rev-parse", "HEAD").strip())
+        self.assertRegex(numbers["head"], r"^[0-9a-f]{40}$")
+        self.assertIn(f" head={numbers['head']}", lines[1])
+        self.assertIn(f"checkout={self.checkout.resolve()}", lines[1])
+        self.assertNotIn("world", lines[1])
+        self.assertNotIn("world", numbers)
+        self.assertNotIn("world_head", numbers)
 
-    def test_a_world_without_git_records_a_null_head(self):
-        """seed: world-pinned-to-commit. A plain directory is a world too; its head is null."""
-        code, lines, run_dir = self.main(scripted(), FakeSandbox([]))
-        self.assertEqual(code, 0)
-        self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["world_head"])
-
-    def test_a_dirty_world_is_refused_before_any_record_exists(self):
-        """seed: world-pinned-to-commit. Uncommitted or untracked changes in a git world are a
+    def test_a_dirty_checkout_is_refused_before_any_record_exists(self):
+        """seed: world-pinned-to-commit. Uncommitted or untracked changes in a git checkout are a
         usage error naming the dirty paths, exit 2, no run directory and no model call: the
         tests must be committed before a build."""
-        git(self.world, "init", "-q")
-        git(self.world, "add", "f.py")
-        git(self.world, "commit", "-q", "-m", "start")
-        (self.world / "f.py").write_text("x = 2\n")  # modified, tracked
-        (self.world / "stray.txt").write_text("stray\n")  # untracked
+        (self.checkout / "f.py").write_text("x = 2\n")  # modified, tracked
+        (self.checkout / "stray.txt").write_text("stray\n")  # untracked
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            code = builder.main(["builder.py", str(self.world), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
         self.assertEqual(code, 2)
         self.assertIn("usage", err.getvalue())
         self.assertIn("f.py", err.getvalue())
@@ -664,9 +672,9 @@ class MainTest(unittest.TestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self.assertEqual(builder.main(["builder.py"]), 2)
-            self.assertEqual(builder.main(["builder.py", str(self.world)]), 2)
-            self.assertEqual(builder.main(["builder.py", str(self.world / "nope"), "goal"]), 2)
-            self.assertEqual(builder.main(["builder.py", str(self.world / "f.py"), "goal"]), 2)
+            self.assertEqual(builder.main(["builder.py", str(self.checkout)]), 2)
+            self.assertEqual(builder.main(["builder.py", str(self.checkout / "nope"), "goal"]), 2)
+            self.assertEqual(builder.main(["builder.py", str(self.checkout / "f.py"), "goal"]), 2)
         self.assertIn("usage", err.getvalue())
         self.assertFalse(self.runs.exists())
 
@@ -722,11 +730,11 @@ class WireTest(unittest.TestCase):
             }
             return httpx2.Response(200, json=completion)
 
-        world = Path(self.tmp.name) / "world"
-        world.mkdir()
+        checkout = Path(self.tmp.name) / "checkout"
+        checkout.mkdir()
         wire = builder.Wire(self.path, transport=httpx2.MockTransport(handler))
-        plane = Plane(world, Path(self.tmp.name), sandbox=FakeSandbox([]))
-        agent = build_agent(plane, key="not-a-key", http_client=wire.client)
+        tools = Tools(checkout, Path(self.tmp.name), sandbox=FakeSandbox([]))
+        agent = build_agent(tools, key="not-a-key", http_client=wire.client)
         with mock.patch.object(models, "ALLOW_MODEL_REQUESTS", True):
             report, messages, usage, stopped, detail = run(agent, "goal")
         self.assertEqual(stopped, "answer")
@@ -747,7 +755,7 @@ class RepositoryTest(unittest.TestCase):
 
     def test_the_run_records_are_tracked(self):
         """seed: commit-the-runs. The records are the baseline of every eval, so the ignore file
-        no longer hides them from git; the builder's world hides them regardless (PlaneTest)."""
+        no longer hides them from git; the builder's checkout hides them regardless (PlaneTest)."""
         ignored = (Path(builder.__file__).parent / ".gitignore").read_text().splitlines()
         self.assertNotIn("runs/", ignored)
         self.assertNotIn("runs", ignored)
