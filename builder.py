@@ -3,8 +3,8 @@
 
     uv run builder.py <checkout> "<goal>"
 
-The checkout is the directory named on the command line, reachable only through five tools:
-list, read, write, edit and check. Writes are confined to the checkout and refused on the goal's
+The checkout is the directory named on the command line, reachable only through six tools:
+list, read, search, write, edit and check. Writes are confined to the checkout and refused on the goal's
 tests and the toolchain; check runs the checkout's tests in a container with no network and the
 checkout mounted read-only, so code the model writes never runs on the host and cannot reach the
 key. The loop is pydantic-ai, pinned; the provider is DeepSeek's chat completions API, the key
@@ -535,7 +535,7 @@ PROFILE = OpenAIModelProfile(
 def build_agent(
     tools: Tools, key: str = "", http_client: Any = None, model: Any = None
 ) -> Agent[None, BuildReport]:
-    """The agent: the role, the five tools, a typed report, our caps."""
+    """The agent: the role, the six tools, a typed report, our caps."""
     if model is None:
         model = OpenAIChatModel(
             MODEL, provider=DeepSeekProvider(api_key=key, http_client=http_client), profile=PROFILE
