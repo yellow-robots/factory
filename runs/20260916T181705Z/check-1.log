@@ -1,0 +1,29 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_a_seed_path_is_a_goal (test_builder.MainTest.test_a_seed_path_is_a_goal)
+seed: formal-input-output. A path ending in .md that names a note of the checkout with a
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 865, in test_a_seed_path_is_a_goal
+    self.assertEqual((run_dir / "goal.txt").read_text(), goal + "\n")
+AssertionError: 'docs/seeds/make-x-two.md\n' != 'seed: make-x-two\nMake x equal 2 in f.py.\nAnd nothing else.\n'
+- docs/seeds/make-x-two.md
++ seed: make-x-two
++ Make x equal 2 in f.py.
++ And nothing else.
+
+
+======================================================================
+FAIL: test_a_seed_path_without_a_note_or_a_goal_is_a_usage_error_and_text_stays_text (test_builder.MainTest.test_a_seed_path_without_a_note_or_a_goal_is_a_usage_error_and_text_stays_text)
+seed: formal-input-output. A .md path naming no file of the checkout, or a note without a
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 886, in test_a_seed_path_without_a_note_or_a_goal_is_a_usage_error_and_text_stays_text
+    self.assertEqual(code, 2, goal)
+AssertionError: 0 != 2 : docs/missing.md
+
+----------------------------------------------------------------------
+Ran 105 tests in 11.462s
+
+FAILED (failures=2)

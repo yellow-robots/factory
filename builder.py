@@ -612,6 +612,34 @@ def usage_error(reason: str = "") -> int:
     return 2
 
 
+def read_seed(checkout: Path, arg: str) -> tuple[str, str | None]:
+    """The goal argument as the model gets it. A path ending in `.md` names a seed note of the
+    checkout: the goal is `seed: <name without .md>` then the text of the note's `## Goal`
+    section, and the name is the seed. Any other argument is text, the goal as it is and no
+    seed. A `.md` path that names no file of the checkout, or a note without a `## Goal` with
+    text under it, raises ValueError, which main turns into a usage error."""
+    if not arg.endswith(".md"):
+        return arg, None
+    p = (checkout / arg).resolve()
+    if (p != checkout and checkout not in p.parents) or not p.is_file():
+        raise ValueError(f"no such seed in the checkout: {arg}")
+    name = p.name.removesuffix(".md")
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() != "## Goal":
+            continue
+        section: list[str] = []
+        for after in lines[i + 1:]:
+            if after.lstrip().startswith("## "):  # the next section ends the Goal's text
+                break
+            section.append(after)
+        text = "\n".join(section).strip()
+        if not text:
+            raise ValueError(f"the seed has no text under ## Goal: {arg}")
+        return f"seed: {name}\n{text}", name
+    raise ValueError(f"the seed has no ## Goal section: {arg}")
+
+
 def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     if len(argv) != 3 or not argv[1].strip() or not argv[2].strip():
         return usage_error()
@@ -644,7 +672,13 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         return usage_error(f"git could not run: {e}")
     if not top or Path(top).resolve() != checkout:
         return usage_error(f"not a git checkout: {argv[1]}")
-    goal = argv[2].strip()
+    # The argument is text, or a seed note of the checkout read as it is; a .md path that names
+    # no such note, or a note without a ## Goal with text under it, is refused here, before any
+    # run directory exists.
+    try:
+        goal, seed = read_seed(checkout, argv[2].strip())
+    except (ValueError, OSError) as e:
+        return usage_error(str(e))
     # A build is reproducible only if the checkout it ran on is committed: a dirty git checkout is
     # a usage error, refused before the run directory or the key is touched.
     try:
@@ -704,6 +738,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         "library": LIBRARY,
         "checkout": str(checkout),
         "head": checkout_head,
+        "seed": seed,
         "stopped": stopped,
         "requests": usage.requests,
         "wire_attempts": wire.attempts,
