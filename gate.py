@@ -254,6 +254,19 @@ def _base_problems(docs: Path) -> list[str]:
     return problems
 
 
+def _wire_problems(root: Path) -> list[str]:
+    """Every record whose wire git tracks uncompressed: the record, in `wire.jsonl`."""
+    runs = root / "runs"
+    if not runs.is_dir():
+        return []
+    problems: list[str] = []
+    for path in sorted(runs.glob("*/wire.jsonl")):
+        rel = path.relative_to(root).as_posix()
+        if _git(root, "ls-files", "--", rel).strip():
+            problems.append(f"{rel}: the wire is committed uncompressed (wire.jsonl.gz)")
+    return problems
+
+
 def problems_check(root: Path) -> list[str]:
     root = Path(root)
     docs = root / "docs"
@@ -304,6 +317,7 @@ def problems_check(root: Path) -> list[str]:
         for _, rel in untagged:
             problems.append(f"{rel}: at most one version note may not be a tag ({len(untagged)} are)")
     problems.extend(_base_problems(docs))
+    problems.extend(_wire_problems(root))
     return problems
 
 

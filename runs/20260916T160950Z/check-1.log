@@ -1,0 +1,17 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_a_committed_wire_is_compressed (test_gate.CheckTest.test_a_committed_wire_is_compressed)
+seed: compress-the-wire. A tracked runs/<stamp>/wire.jsonl is a problem naming the
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 326, in test_a_committed_wire_is_compressed
+    self.assert_problem("runs/20260916T000000Z", "wire")
+  File "/w/test_gate.py", line 182, in assert_problem
+    self.assertEqual(code, 1, out)
+AssertionError: 0 != 1 : 
+
+----------------------------------------------------------------------
+Ran 71 tests in 7.122s
+
+FAILED (failures=1)

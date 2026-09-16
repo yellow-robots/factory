@@ -1,0 +1,3 @@
+`check` reports every record whose wire is committed uncompressed: a path `runs/<stamp>/wire.jsonl` that git tracks is a problem naming the record, `runs/<stamp>/wire.jsonl.gz` being the expected form. A `wire.jsonl` that git does not track is a build not yet reviewed and is not a problem. Nothing in `builder.py` changes: it writes `wire.jsonl`, and the attended agent compresses it at the factory's commit. The tests in `test_gate.py` whose docstring names this seed define the behaviour.
+
+After the build, by the attended agent: the wires of the records already committed are compressed, and `AGENTS.md` names the step.
