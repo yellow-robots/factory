@@ -13,4 +13,4 @@ Eight records as of 2026-09-16: three observer runs (v0.1, one of them the escap
 
 ## Goal
 
-Attended git work, not a build. Review the eight records under `runs/` for anything that must not be committed (a key-like string, a secret in a path), remove `runs/` from `.gitignore`, commit the records. The builder's world keeps hiding `runs`. The test naming this seed asserts that `.gitignore` no longer lists `runs/`. If the records grow past what a source repository should carry, a separate repository or a store is a later seed.
+Attended git work, not a build. Review the eight records under `runs/` for anything that must not be committed (a key-like string, a secret in a path), remove `runs/` from `.gitignore`, commit the records. The tools keep hiding `runs`. The test naming this seed asserts that `.gitignore` no longer lists `runs/`. If the records grow past what a source repository should carry, a separate repository or a store is a later seed.

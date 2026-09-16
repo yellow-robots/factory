@@ -13,4 +13,4 @@ Every diff so far was read by the attended agent, a model in another harness. Th
 
 ## Idea
 
-The observer's plane plus a `diff()` function, a typed report of findings with severity, path and line, and a verdict. First eval case: its report on a known diff against the attended agent's.
+The observer's tools plus a `diff()` function, a typed report of findings with severity, path and line, and a verdict. First eval case: its report on a known diff against the attended agent's.

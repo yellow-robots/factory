@@ -1,7 +1,7 @@
 ---
 type: seed
 status: open
-summary: Every read stays in the conversation; G1 spent 155k input tokens on three edits, and that curve decides how large a world the builder can work in.
+summary: Every read stays in the conversation; G1 spent 155k input tokens on three edits, and that curve decides how large a checkout the builder can work in.
 value: 4
 effort: S
 version:
@@ -13,4 +13,4 @@ version:
 
 ## Idea
 
-Measure input tokens per request across the failure-mode set before adding anything. Likely answers when the curve bites: a `search` function so the model reads less, or a compact map of the world; both are also the owner's item 3, inspecting the codebase.
+Measure input tokens per request across the failure-mode set before adding anything. Likely answers when the curve bites: a `search` function so the model reads less, or a compact map of the checkout; both are also the owner's item 3, inspecting the codebase.

@@ -1,7 +1,7 @@
 ---
 type: seed
 status: done
-summary: The seeds now live inside the world the builder reads; it must be able to read them and never write them.
+summary: The seeds now live inside the checkout the builder reads; it must be able to read them and never write them.
 value: 5
 effort: S
 version: v0.4
@@ -9,7 +9,7 @@ version: v0.4
 
 ## Evidence
 
-Decision of 2026-09-16 to move the vault under the repository: a seed beside its tests, readable by the builder as part of the world, so the goal on the command line can become a seed's path. The same move makes the seeds writable by the builder unless the plane says otherwise; today `PROTECTED` in `builder.py` covers the tests and the toolchain only.
+Decision of 2026-09-16 to move the vault under the repository: a seed beside its tests, readable by the builder as part of the checkout, so the goal on the command line can become a seed's path. The same move makes the seeds writable by the builder unless the tools says otherwise; today `PROTECTED` in `builder.py` covers the tests and the toolchain only.
 
 ## Goal
 

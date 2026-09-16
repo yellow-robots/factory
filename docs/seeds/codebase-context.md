@@ -1,7 +1,7 @@
 ---
 type: seed
 status: open
-summary: The builder explores a world file by file; a larger world needs search and a map, once the cost curve says so.
+summary: The builder explores a checkout file by file; a larger checkout needs search and a map, once the cost curve says so.
 value: 3
 effort: M
 version:
@@ -13,4 +13,4 @@ Owner's item 3, 2026-09-16. G1 read the whole of `builder.py` in three calls to 
 
 ## Idea
 
-A `search(pattern)` function first, a compact structural map of the world second; each one gated by what `cost-of-context` measures.
+A `search(pattern)` function first, a compact structural map of the checkout second; each one gated by what `cost-of-context` measures.
