@@ -1,11 +1,9 @@
 filters:
   and:
     - file.inFolder("seeds")
-    - 'type == "seed"'
-
+    - type == "seed"
 formulas:
-  rank: 'if(value && effort, (value - if(effort == "S", 0, if(effort == "M", 0.5, 1))).round(1), "")'
-
+  rank: if(value && effort, (value - if(effort == "S", 0, if(effort == "M", 0.5, 1))).round(1), "")
 properties:
   status:
     displayName: Status
@@ -19,19 +17,14 @@ properties:
     displayName: Effort
   version:
     displayName: Version
-  crossed_to:
-    displayName: Delivered as
-  created:
-    displayName: Born
-
 views:
   - type: table
     name: Pending
     filters:
       or:
-        - 'status == "open"'
-        - 'status == "spec"'
-        - 'status == "building"'
+        - status == "open"
+        - status == "spec"
+        - status == "building"
     order:
       - file.name
       - status
@@ -40,13 +33,11 @@ views:
       - formula.rank
       - value
       - effort
-      - created
     sort:
       - property: formula.rank
         direction: DESC
-      - property: created
+      - property: file.name
         direction: ASC
-
   - type: table
     name: By version
     groupBy:
@@ -58,17 +49,23 @@ views:
       - summary
       - formula.rank
       - effort
-
+  - type: table
+    name: Specs
+    filters:
+      and:
+        - version == this.file.basename
+    order:
+      - file.name
+      - status
+      - summary
+      - effort
   - type: table
     name: Archive
     filters:
       or:
-        - 'status == "done"'
-        - 'status == "rejected"'
-        - 'status == "superseded"'
+        - status == "done"
+        - status == "rejected"
     order:
       - file.name
       - status
       - version
-      - crossed_to
-      - created
