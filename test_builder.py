@@ -846,6 +846,51 @@ class MainTest(unittest.TestCase):
         self.assertNotIn("not a git checkout", err.getvalue())
         self.assertFalse(self.runs.exists())
 
+    def test_a_seed_path_is_a_goal(self):
+        """seed: formal-input-output. A path ending in .md that names a note of the checkout with a
+        ## Goal is read from the checkout: the model's goal is `seed: <name>` then the section's
+        text, goal.txt says exactly that, and the numbers carry the seed's name."""
+        note = "---\ntype: seed\n---\n\n## Evidence\n\nSome.\n\n## Goal\n\nMake x equal 2 in f.py.\nAnd nothing else.\n"
+        (self.checkout / "docs" / "seeds").mkdir(parents=True)
+        (self.checkout / "docs" / "seeds" / "make-x-two.md").write_text(note)
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "seed")
+        model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")], [call("final_result", REPORT, "c2")])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = builder.main(["builder.py", str(self.checkout), "docs/seeds/make-x-two.md"], model=model, sandbox=FakeSandbox([]))
+        self.assertEqual(code, 0)
+        run_dir = next(self.runs.iterdir())
+        goal = "seed: make-x-two\nMake x equal 2 in f.py.\nAnd nothing else."
+        self.assertEqual((run_dir / "goal.txt").read_text(), goal + "\n")
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["seed"], "make-x-two")
+        self.assertIn("seed=make-x-two", out.getvalue().splitlines()[1])
+        messages = json.loads((run_dir / "messages.json").read_text())
+        prompts = [p["content"] for m in messages for p in m["parts"] if p.get("part_kind") == "user-prompt"]
+        self.assertEqual(prompts[0], goal)
+
+    def test_a_seed_path_without_a_note_or_a_goal_is_a_usage_error_and_text_stays_text(self):
+        """seed: formal-input-output. A .md path naming no file of the checkout, or a note without a
+        ## Goal with text, is a usage error before any run directory; a goal that is text is text
+        and the seed is null."""
+        (self.checkout / "docs").mkdir()
+        (self.checkout / "docs" / "nogoal.md").write_text("---\ntype: seed\n---\n\n## Idea\n\nMaybe.\n")
+        (self.checkout / "docs" / "empty.md").write_text("---\ntype: seed\n---\n\n## Goal\n\n## Evidence\n\nNone.\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "notes")
+        for goal in ("docs/missing.md", "docs/nogoal.md", "docs/empty.md"):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = builder.main(["builder.py", str(self.checkout), goal], model=scripted(), sandbox=FakeSandbox([]))
+            self.assertEqual(code, 2, goal)
+            self.assertIn("usage", err.getvalue(), goal)
+        self.assertFalse(self.runs.exists())
+        code, lines, run_dir = self.main(scripted(), FakeSandbox([]))
+        self.assertEqual(code, 0)
+        self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["seed"])
+        self.assertEqual((run_dir / "goal.txt").read_text(), "make x bigger\n")
+
     def test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so(self):
         """seed: terms-checkout-and-tools. record_diff writes diff.patch only when the run changed
         something, and the code's own text says so."""

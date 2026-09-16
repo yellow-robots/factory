@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: spec
+status: building
 summary: The goal travels as a sentence on a command line and the report as five lists; the input should be a seed in the checkout and the output machine-readable for the next step.
 value: 3
 effort: M
