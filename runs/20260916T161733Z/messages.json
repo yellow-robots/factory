@@ -1,0 +1,950 @@
+[
+ {
+  "parts": [
+   {
+    "content": "Add `runs.py` at the repository root, run as `uv run runs.py`, with `main(argv, runs=None)` shaped like the others: `argv[0]` is the program name, `runs` the records directory, by default `runs/` beside `runs.py`. It prints the records as one table, tab-separated, a header line then one row per record in the order of their stamps, and exits 0; any argument is a usage error on stderr, exit 2. The columns, in this order: stamp, head, stopped, check, requests, tool_calls, lists, reads, writes, edits, checks, input_tokens, cache_read_tokens, output_tokens, reasoning_tokens, cost_usd, seconds, files_changed, insertions, deletions, goal. Each value comes from the record's `numbers.json` as it is there; `goal` is the first line of `goal.txt` with tabs as spaces; a key the record does not have is an empty cell; `head` reads `head` and, in records written before v0.5, `world_head`; a record without `numbers.json` is a row with its stamp and goal only. Nothing is written. The tests in `test_runs.py` whose docstring names this seed define the behaviour.",
+    "timestamp": "2026-09-16T16:17:34.614666Z",
+    "part_kind": "user-prompt"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:34.615143Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me start by exploring the repository.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "list",
+    "args": "{\"path\": \".\"}",
+    "tool_call_id": "call_00_L1ZpYtckVrycDbH6uuUO2034",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 1617,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1152,
+   "output_tokens": 44,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1152,
+    "prompt_cache_miss_tokens": 465,
+    "reasoning_tokens": 8
+   },
+   "cost": null,
+   "output_reasoning_tokens": 8
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:35.517244Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:34Z"
+  },
+  "provider_response_id": "16b009c9-2760-4d73-9f3b-8648e95a3ece",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "list",
+    "content": "dir\t0\tdocs\nfile\t42\t.dockerignore\nfile\t55\t.gitignore\nfile\t6820\tAGENTS.md\nfile\t6081\tCHANGELOG.md\nfile\t11\tCLAUDE.md\nfile\t1070\tLICENSE\nfile\t6682\tREADME.md\nfile\t32065\tbuilder.py\nfile\t900\tcheck.Dockerfile\nfile\t20122\tgate.py\nfile\t208\tpyproject.toml\nfile\t43766\ttest_builder.py\nfile\t20486\ttest_gate.py\nfile\t6346\ttest_runs.py\nfile\t154742\tuv.lock",
+    "tool_call_id": "call_00_L1ZpYtckVrycDbH6uuUO2034",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:35.536005Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:35.537177Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me read the test_runs.py file and the existing scripts.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"test_runs.py\"}",
+    "tool_call_id": "call_00_oHKomHvrfHaD6EndTIRw5099",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"AGENTS.md\"}",
+    "tool_call_id": "call_01_d0z3TWGrCrHeBc0RXbmf0878",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 1809,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1536,
+   "output_tokens": 83,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1536,
+    "prompt_cache_miss_tokens": 273,
+    "reasoning_tokens": 14
+   },
+   "cost": null,
+   "output_reasoning_tokens": 14
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:36.801050Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:35Z"
+  },
+  "provider_response_id": "c46b9899-c42c-4d54-845d-b341a9bdecf5",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t\"\"\"The table's acceptance tests, written from docs/seeds/record-as-table.md before the code.\n2\t\n3\t    uv run python -m unittest test_runs -v\n4\t\n5\tEvery test builds a small runs/ directory in a temporary folder with records of the three shapes\n6\tthe factory has written: the observer's (v0.1, v0.2), the builder's before head (v0.3, v0.4, with\n7\tworld and world_head) and the builder's since (checkout and head), plus a record without numbers.\n8\t\"\"\"\n9\t\n10\timport contextlib\n11\timport io\n12\timport json\n13\timport tempfile\n14\timport unittest\n15\tfrom pathlib import Path\n16\t\n17\timport runs\n18\t\n19\tCOLUMNS = [\n20\t    \"stamp\", \"head\", \"stopped\", \"check\", \"requests\", \"tool_calls\", \"lists\", \"reads\", \"writes\", \"edits\",\n21\t    \"checks\", \"input_tokens\", \"cache_read_tokens\", \"output_tokens\", \"reasoning_tokens\", \"cost_usd\",\n22\t    \"seconds\", \"files_changed\", \"insertions\", \"deletions\", \"goal\",\n23\t]\n24\tOBSERVER = {\n25\t    \"model\": \"deepseek-flash\", \"role\": \"a\", \"wrapper\": \"b\", \"library\": \"pydantic-ai-slim 2.43.0\",\n26\t    \"stopped\": \"answer\", \"requests\": 4, \"wire_attempts\": 4, \"tool_calls\": 6, \"input_tokens\": 30000,\n27\t    \"output_tokens\": 900, \"cache_read_tokens\": 20000, \"cost_usd\": 0.007, \"cost_source\": \"table\",\n28\t    \"lists\": 2, \"reads\": 4, \"files_read\": 4, \"lines_read\": 701, \"seconds\": 18.5,\n29\t}\n30\tBUILDER_V04 = {\n31\t    \"model\": \"deepseek-flash\", \"role\": \"a\", \"wrapper\": \"c\", \"library\": \"pydantic-ai-slim 2.43.0\",\n32\t    \"world\": \"/w\", \"world_head\": \"5fc43b79313570e639dfd4ba0640bc084fef84c6\", \"stopped\": \"answer\",\n33\t    \"requests\": 23, \"wire_attempts\": 23, \"tool_calls\": 34, \"input_tokens\": 821201, \"output_tokens\": 40821,\n34\t    \"cache_read_tokens\": 790784, \"reasoning_tokens\": 34176, \"cost_usd\": 0.06286, \"cost_source\": \"table\",\n35\t    \"lists\": 6, \"reads\": 16, \"files_read\": 10, \"lines_read\": 2061, \"writes\": 1, \"edits\": 8, \"checks\": 3,\n36\t    \"check\": \"green\", \"check_seconds\": 24.2, \"files_changed\": 1, \"insertions\": 437, \"deletions\": 0,\n37\t    \"seconds\": 211.5,\n38\t}\n39\tBUILDER_V05 = dict(BUILDER_V04, checkout=\"/c\", head=\"e414436e414436e414436e414436e414436e4144\", stopped=\"cap\",\n40\t                   check=\"red\", requests=60, cost_usd=0.11462)\n41\tdel BUILDER_V05[\"world\"], BUILDER_V05[\"world_head\"]\n42\t\n43\t\n44\tdef record(base: Path, stamp: str, numbers: dict | None, goal: str) -> Path:\n45\t    d = base / stamp\n46\t    d.mkdir()\n47\t    (d / \"goal.txt\").write_text(goal)\n48\t    if numbers is not None:\n49\t        (d / \"numbers.json\").write_text(json.dumps(numbers, indent=1) + \"\\n\")\n50\t    return d\n51\t\n52\t\n53\tdef table(base: Path, *args: str) -> tuple[int, list[list[str]], str]:\n54\t    out, err = io.StringIO(), io.StringIO()\n55\t    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):\n56\t        code = runs.main([\"runs.py\", *args], runs=base)\n57\t    rows = [line.split(\"\\t\") for line in out.getvalue().splitlines()]\n58\t    return code, rows, err.getvalue()\n59\t\n60\t\n61\tclass RunsTest(unittest.TestCase):\n62\t    \"\"\"seed: record-as-table. One tab-separated row per record, fixed columns, nothing written.\"\"\"\n63\t\n64\t    def setUp(self):\n65\t        self.tmp = tempfile.TemporaryDirectory()\n66\t        self.addCleanup(self.tmp.cleanup)\n67\t        self.base = Path(self.tmp.name) / \"runs\"\n68\t        self.base.mkdir()\n69\t        record(self.base, \"20260917T000000Z\", BUILDER_V05, \"rename\\teverything\\nsecond line\\n\")\n70\t        record(self.base, \"20260915T085903Z\", OBSERVER, \"describe what this program does\\n\")\n71\t        record(self.base, \"20260916T121241Z\", BUILDER_V04, \"Add `gate.py`, run as `uv run gate.py <command>`\\n\")\n72\t        record(self.base, \"20260918T000000Z\", None, \"a build that died before its numbers\\n\")\n73\t        (self.base / \"notes.txt\").write_text(\"not a record\\n\")\n74\t\n75\t    def test_the_header_names_the_columns_in_order(self):\n76\t        code, rows, err = table(self.base)\n77\t        self.assertEqual(code, 0)\n78\t        self.assertEqual(err, \"\")\n79\t        self.assertEqual(rows[0], COLUMNS)\n80\t        self.assertEqual(len(rows), 5)  # the header and four records; notes.txt is not one\n81\t\n82\t    def test_one_row_per_record_in_stamp_order_with_the_three_shapes(self):\n83\t        code, rows, _ = table(self.base)\n84\t        by_stamp = {row[0]: dict(zip(COLUMNS, row)) for row in rows[1:]}\n85\t        self.assertEqual([row[0] for row in rows[1:]], [\"20260915T085903Z\", \"20260916T121241Z\", \"20260917T000000Z\", \"20260918T000000Z\"])\n86\t        observer = by_stamp[\"20260915T085903Z\"]\n87\t        self.assertEqual((observer[\"stopped\"], observer[\"requests\"], observer[\"reads\"], observer[\"cost_usd\"], observer[\"seconds\"]), (\"answer\", \"4\", \"4\", \"0.007\", \"18.5\"))\n88\t        self.assertEqual((observer[\"head\"], observer[\"check\"], observer[\"writes\"], observer[\"edits\"], observer[\"checks\"], observer[\"reasoning_tokens\"], observer[\"files_changed\"]), (\"\", \"\", \"\", \"\", \"\", \"\", \"\"))\n89\t        self.assertEqual(observer[\"goal\"], \"describe what this program does\")\n90\t        old = by_stamp[\"20260916T121241Z\"]\n91\t        self.assertEqual(old[\"head\"], \"5fc43b79313570e639dfd4ba0640bc084fef84c6\")  # world_head, before v0.5\n92\t        self.assertEqual((old[\"check\"], old[\"writes\"], old[\"edits\"], old[\"checks\"], old[\"insertions\"], old[\"deletions\"]), (\"green\", \"1\", \"8\", \"3\", \"437\", \"0\"))\n93\t        self.assertEqual(old[\"goal\"], \"Add `gate.py`, run as `uv run gate.py <command>`\")\n94\t        new = by_stamp[\"20260917T000000Z\"]\n95\t        self.assertEqual((new[\"head\"], new[\"stopped\"], new[\"check\"], new[\"requests\"]), (\"e414436e414436e414436e414436e414436e4144\", \"cap\", \"red\", \"60\"))\n96\t        self.assertEqual(new[\"goal\"], \"rename everything\")  # first line only, tabs as spaces\n97\t        empty = by_stamp[\"20260918T000000Z\"]\n98\t        self.assertEqual(empty[\"goal\"], \"a build that died before its numbers\")\n99\t        self.assertEqual([empty[c] for c in COLUMNS[1:-1]], [\"\"] * (len(COLUMNS) - 2))\n100\t        for row in rows:\n101\t            self.assertEqual(len(row), len(COLUMNS))\n102\t\n103\t    def test_nothing_is_written_and_an_empty_directory_is_a_header_alone(self):\n104\t        before = sorted(p.relative_to(self.base).as_posix() for p in self.base.rglob(\"*\"))\n105\t        table(self.base)\n106\t        self.assertEqual(before, sorted(p.relative_to(self.base).as_posix() for p in self.base.rglob(\"*\")))\n107\t        empty = Path(self.tmp.name) / \"empty\"\n108\t        empty.mkdir()\n109\t        code, rows, _ = table(empty)\n110\t        self.assertEqual((code, rows), (0, [COLUMNS]))\n111\t\n112\t    def test_any_argument_is_a_usage_error(self):\n113\t        code, rows, err = table(self.base, \"20260917T000000Z\")\n114\t        self.assertEqual((code, rows), (2, []))\n115\t        self.assertIn(\"usage\", err)\n116\t\n117\t\n118\tif __name__ == \"__main__\":\n119\t    unittest.main()",
+    "tool_call_id": "call_00_oHKomHvrfHaD6EndTIRw5099",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:36.807636Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "read",
+    "content": "1\t# factory\n2\t\n3\tThe factory is `builder.py`: a program that runs a cold model session over a directory, the checkout, until the checkout's tests pass, under walls the model cannot cross. It is built one version at a time and its own repository is its first checkout: since v0.3 its code is written by `builder.py` itself, from tests written before each build, and v0.4 is the first version made that way. What it can do is read off the records of its runs. Nothing in this repository is written for a model to obey; what holds is held by tests, by the tools, by the gate and by git.\n4\t\n5\tYou are the attended agent: a model in some harness, resuming this work cold, working with the owner. This file is for any such model. The state of the work is never narrated here; it is derived from git and the files, as below.\n6\t\n7\t## Orient yourself\n8\t\n9\tRun these before reading anything else, from the root of the checkout or worktree you are in:\n10\t\n11\t```sh\n12\tuv run gate.py check                                               # the vault against its templates and the repository; silent when they agree\n13\tuv run python -m unittest -q                                       # the factory's tests; no provider, no network, no docker\n14\tgit tag -l --format='%(refname:strip=2) %(objectname:short)'       # the released versions\n15\tgit log --oneline \"tags/$(git describe --tags --abbrev=0)..HEAD\"   # what happened since the last one\n16\tgit status --short                                                 # what is not committed; see the last section\n17\tls docs/versions docs/seeds                                        # the versions and the backlog\n18\tls runs | tail -3                                                  # the last run records\n19\t```\n20\t\n21\tThen derive:\n22\t\n23\t- The version in flight is the note in `docs/versions/` whose name is not a tag; there is at most one. Its seeds are the notes in `docs/seeds/` whose `version` names it.\n24\t- A seed's stage is its `status`. `open`: evidence and an idea. `spec`: a `## Goal` the builder can be given, assigned to a version. `building`: at least one test names it, `seed: <name>` in the test's docstring, committed red. `done`: merged and green. `rejected`: a way out at any stage. `docs/templates/seed.md` states what each status requires and the gate checks it; `docs/backlog.base` ranks the seeds.\n25\t- What the builder does and refuses is `README.md`; the walls are the constants at the top of `builder.py`; the exact behaviour is `test_builder.py`. The gate's is `test_gate.py`.\n26\t- A run is a directory under `runs/`: read `numbers.json` first (`stopped`, `check`, `head`, cost, counts), then `response.md`, `diff.patch` and `wire.jsonl`. The commit that took the diff names the run in its `Built-By` trailer, so the builds of a version are `git log --format='%h %(trailers:key=Built-By,valueonly)' tags/<previous>..tags/<version>`, and the run's `head` is the red commit it started from.\n27\t\n28\t## How a version is made\n29\t\n30\tThe owner and the attended agent choose seeds from the backlog and promote them to specs: a version is assigned, the idea becomes a goal. For each spec the attended agent writes the tests that name the seed, commits them red on a branch in a git worktree, and runs `builder.py` from the main checkout with that worktree as the checkout and the seed's goal as the goal. The factory writes the code. The attended agent reads the record and the diff, copies the record into the worktree, compresses its wire to `wire.jsonl.gz`, commits both as the factory's work, and when the review finds a defect turns it into a test and builds again. When every seed of the version is done, the attended agent revises this file, writes the version note's changelog, fast-forwards `main` and runs `uv run gate.py release <version>`: the gate refuses until everything derived agrees, then cuts the annotated tag and renders `CHANGELOG.md`. The attended agent does not write code the factory could write and does not touch a test to make a build pass, because the factory's ability to do it is what is being measured; the tools refuse the model the same.\n31\t\n32\t## Commands\n33\t\n34\t- `uv run gate.py check`, `uv run gate.py render`, `uv run gate.py release <version>`: the gate. Problems go to stdout, one per line, starting with the path; exit 1 when there is any, 2 for a usage error, silence and 0 otherwise. `render` writes `CHANGELOG.md`. `release` also needs a clean tree, `AGENTS.md` changed since the previous tag, a green suite and at least one changelog bullet in the version note.\n35\t- `uv run python -m unittest -v`: the factory's own tests. Nothing external is needed.\n36\t- `uv run builder.py <checkout> \"<goal>\"`: one build. Needs the DeepSeek key in `~/.config/factory/deepseek.key` and docker, since the check runs in a container built once from the checkout's `uv.lock` and `check.Dockerfile`. Refuses a directory that is not a git checkout, and a checkout with uncommitted or untracked changes, exit 2. Leaves `runs/<utc-stamp>/` beside the `builder.py` that ran, never in the checkout. Exits 0 when the model returned a report, 1 on a cap or a provider error. The cost and the time are in the record.\n37\t- `git worktree add <path> -b <branch>`: a checkout for a build. `.claude/worktrees/` is an ignored place for one.\n38\t- `git push origin main --tags`: the mirror is `git@github-joam:yellow-robots/factory.git`. `github-joam` is an SSH alias on this host that selects the owner's key; two GitHub identities share the machine.\n39\t\n40\t## Not derivable from the repository\n41\t\n42\t- `docs/` is an Obsidian vault the owner keeps open. `backlog.base` changes whenever the owner adjusts a view, a filter or an order there, and a note's frontmatter is re-serialised when a property is edited there, in Obsidian's own shape; a frontmatter value that is not valid YAML, such as a bare `{{date}}`, does not survive that. A dirty `docs/` is the owner's content: read the diff and commit it as theirs.\n43\t- A version exists only as a tag. Commit 48cbbe4 is titled `v0.4`; it is one change released in v0.4, not the version.\n44\t- The notes of v0.1 to v0.4, their changelog and the records before v0.5 say world for the checkout and plane for the tools; those were the observer's words.\n45\t- Branches `bootstrap` and `v0.1` to `v0.3` are leftovers of past worktrees and share their names with the tags, so git warns and prefers the tag. Write `tags/v0.3` where it matters.\n46\t- The model is DeepSeek `deepseek-flash`. pydantic-ai does not know the name, so `builder.py` carries a profile override; genai-prices has no row for it, so the price table in `builder.py` is the cost source. Thinking is on by default and ignores temperature. The key is never printed or committed.\n47\t- The history before this repository, v1 and the design that was abandoned for it, is in the owner's Obsidian vault at `/srv/obsidian/vaults/obsidian/03 archive/factory-v1/`. Reference, never a plan.",
+    "tool_call_id": "call_01_d0z3TWGrCrHeBc0RXbmf0878",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:36.808369Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:36.809393Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let me read the seed doc and look at existing gate.py for the \"shaped like the others\" pattern.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "list",
+    "args": "{\"path\": \"docs/seeds\"}",
+    "tool_call_id": "call_00_dNFsHYMtSx2mJ86f7rqF6085",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"gate.py\"}",
+    "tool_call_id": "call_01_X5Ty3k8xesGEg9AJgHpE2260",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 5815,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1792,
+   "output_tokens": 91,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1792,
+    "prompt_cache_miss_tokens": 4023,
+    "reasoning_tokens": 24
+   },
+   "cost": null,
+   "output_reasoning_tokens": 24
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:37.977354Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:37Z"
+  },
+  "provider_response_id": "763b4c89-4e22-46a0-af8b-3a3247b02464",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "list",
+    "content": "file\t780\tdocs/seeds/analyst-on-api-models.md\nfile\t1459\tdocs/seeds/base-against-the-template.md\nfile\t523\tdocs/seeds/codebase-context.md\nfile\t998\tdocs/seeds/commit-the-runs.md\nfile\t1300\tdocs/seeds/compress-the-wire.md\nfile\t801\tdocs/seeds/cost-of-context.md\nfile\t1257\tdocs/seeds/created-field.md\nfile\t738\tdocs/seeds/diff-as-measure.md\nfile\t828\tdocs/seeds/docs-protected.md\nfile\t1085\tdocs/seeds/failure-mode-set.md\nfile\t788\tdocs/seeds/formal-input-output.md\nfile\t661\tdocs/seeds/installation-and-surfaces.md\nfile\t634\tdocs/seeds/quality-checks.md\nfile\t1649\tdocs/seeds/record-as-table.md\nfile\t697\tdocs/seeds/reviewer-role.md\nfile\t3120\tdocs/seeds/terms-checkout-and-tools.md\nfile\t3627\tdocs/seeds/the-gate.md\nfile\t854\tdocs/seeds/tools-as-mcp.md\nfile\t683\tdocs/seeds/variance-runs.md\nfile\t1109\tdocs/seeds/world-pinned-to-commit.md",
+    "tool_call_id": "call_00_dNFsHYMtSx2mJ86f7rqF6085",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:37.988617Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "read",
+    "content": "1\t#!/usr/bin/env python3\n2\t\"\"\"The gate: a deterministic check of the vault, its changelog and its tags.\n3\t\n4\t    uv run gate.py check\n5\t    uv run gate.py render\n6\t    uv run gate.py release <version>\n7\t\n8\t`check` validates `docs/` and the repository against it, `render` writes `CHANGELOG.md` from\n9\tthe tags, and `release` refuses until everything derived agrees, then tags and renders. Each\n10\tcommand prints one line per problem on stdout, starting with the path relative to the root,\n11\tand exits 1 if there is any; with nothing to report it prints nothing and exits 0. Usage errors\n12\tgo to stderr and exit 2.\n13\t\"\"\"\n14\t\n15\tfrom __future__ import annotations\n16\t\n17\timport ast\n18\timport re\n19\timport subprocess\n20\timport sys\n21\tfrom pathlib import Path\n22\t\n23\tUSAGE = \"usage: gate.py check|render|release <version>\"\n24\tSTATUSES = (\"open\", \"spec\", \"building\", \"done\", \"rejected\")\n25\tSEED_FIELDS = {\"type\", \"status\", \"summary\", \"value\", \"effort\", \"version\", \"created\"}\n26\tEFFORTS = {\"S\", \"M\", \"L\"}\n27\tBASE_LANGUAGE = {\"this\", \"file\", \"formula\", \"true\", \"false\", \"null\"}\n28\tBASE_IDENT = re.compile(r\"[A-Za-z_][A-Za-z0-9_-]*\")\n29\tBASE_HEADER = re.compile(r\"^(properties|order|sort|groupBy|filters|formulas):\\s*(.*)$\")\n30\tBASE_PROPERTY = re.compile(r\"property:\\s*(.*)$\")\n31\tCREATED = re.compile(r\"^\\d{4}-\\d{2}-\\d{2}$\")\n32\tVERSION_NAME = re.compile(r\"^v(\\d+)\\.(\\d+)\\.md$\")\n33\tVERSION = re.compile(r\"^v(\\d+)\\.(\\d+)$\")\n34\tWIKILINK = re.compile(r\"\\[\\[([^\\[\\]]+)\\]\\]\")\n35\t\n36\t\n37\tdef _read(path: Path) -> str:\n38\t    try:\n39\t        return path.read_text(encoding=\"utf-8\", errors=\"replace\")\n40\t    except OSError:\n41\t        return \"\"\n42\t\n43\t\n44\tdef frontmatter(text: str) -> tuple[dict[str, str] | None, str]:\n45\t    \"\"\"The `key: value` block between the leading `---` lines, and the body after it.\"\"\"\n46\t    lines = text.splitlines()\n47\t    if not lines or lines[0].strip() != \"---\":\n48\t        return None, text\n49\t    for i in range(1, len(lines)):\n50\t        if lines[i].strip() == \"---\":\n51\t            fields: dict[str, str] = {}\n52\t            for line in lines[1:i]:\n53\t                key, sep, value = line.partition(\":\")\n54\t                if sep:\n55\t                    fields[key.strip()] = value.strip()\n56\t            return fields, \"\\n\".join(lines[i + 1:])\n57\t    return None, text\n58\t\n59\t\n60\tdef _notes(docs: Path) -> list[Path]:\n61\t    \"\"\"Every `.md` under `docs/`, the templates excepted.\"\"\"\n62\t    templates = docs / \"templates\"\n63\t    return [p for p in sorted(docs.rglob(\"*.md\")) if templates not in p.parents]\n64\t\n65\t\n66\tdef _git(root: Path, *args: str) -> str:\n67\t    try:\n68\t        done = subprocess.run(\n69\t            [\"git\", *args], cwd=str(root), capture_output=True, text=True\n70\t        )\n71\t    except (OSError, subprocess.SubprocessError):\n72\t        return \"\"\n73\t    return done.stdout\n74\t\n75\t\n76\tdef _tags(root: Path) -> set[str]:\n77\t    return {line.strip() for line in _git(root, \"tag\", \"-l\").splitlines() if line.strip()}\n78\t\n79\t\n80\tdef _highest_tag(tags: set[str]) -> str | None:\n81\t    best, best_key = None, None\n82\t    for tag in tags:\n83\t        match = VERSION.match(tag)\n84\t        if not match:\n85\t            continue\n86\t        key = (int(match.group(1)), int(match.group(2)))\n87\t        if best_key is None or key > best_key:\n88\t            best, best_key = tag, key\n89\t    return best\n90\t\n91\t\n92\tdef _resolve(target: str, docs: Path) -> bool:\n93\t    \"\"\"A note in `docs/`, by path or by name, or a `.base` file.\"\"\"\n94\t    target = target.strip()\n95\t    if not target:\n96\t        return False\n97\t    direct = docs / target\n98\t    if direct.is_file():\n99\t        return True\n100\t    if direct.suffix == \"\" and (docs / (target + \".md\")).is_file():\n101\t        return True\n102\t    name = target.rsplit(\"/\", 1)[-1]\n103\t    stem = name[:-3] if name.endswith(\".md\") else name\n104\t    for found in docs.rglob(\"*\"):\n105\t        if found.is_file() and (found.name == name or found.stem == stem):\n106\t            return True\n107\t    return False\n108\t\n109\t\n110\tdef _goal_text(body: str) -> bool:\n111\t    lines = body.splitlines()\n112\t    for i, line in enumerate(lines):\n113\t        if line.strip() != \"## Goal\":\n114\t            continue\n115\t        for after in lines[i + 1:]:\n116\t            if after.strip().startswith(\"#\"):\n117\t                break\n118\t            if after.strip():\n119\t                return True\n120\t        return False\n121\t    return False\n122\t\n123\t\n124\tdef _test_docstrings(root: Path) -> list[str]:\n125\t    \"\"\"The docstrings of every test method or class in a `test*.py` at the root.\"\"\"\n126\t    found: list[str] = []\n127\t    for path in sorted(root.glob(\"test*.py\")):\n128\t        if not path.is_file():\n129\t            continue\n130\t        try:\n131\t            tree = ast.parse(_read(path))\n132\t        except SyntaxError:\n133\t            continue\n134\t        for node in ast.walk(tree):\n135\t            if isinstance(node, ast.ClassDef) or (\n136\t                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))\n137\t                and node.name.startswith(\"test\")\n138\t            ):\n139\t                doc = ast.get_docstring(node)\n140\t                if doc:\n141\t                    found.append(doc)\n142\t    return found\n143\t\n144\t\n145\tdef _named_by_a_test(root: Path, stem: str, docstrings: list[str]) -> bool:\n146\t    pattern = re.compile(rf\"seed:\\s*{re.escape(stem)}(?![\\w-])\")\n147\t    return any(pattern.search(doc) for doc in docstrings)\n148\t\n149\t\n150\tdef _unquoted(text: str) -> str:\n151\t    \"\"\"An expression with one layer of Obsidian's YAML quotes, around it, removed.\"\"\"\n152\t    text = text.strip()\n153\t    if len(text) >= 2 and text[0] == text[-1] and text[0] in \"\\\"'\":\n154\t        quote, text = text[0], text[1:-1]\n155\t        if quote == '\"':\n156\t            text = text.replace('\\\\\"', '\"').replace(\"\\\\\\\\\", \"\\\\\")\n157\t        else:\n158\t            text = text.replace(\"''\", \"'\")\n159\t    return text\n160\t\n161\t\n162\tdef _expression_names(expression: str) -> list[str]:\n163\t    \"\"\"The bare identifiers an Obsidian expression names: quoted strings, members (`.name`),\n164\t    functions (`name(`), `this`, `file`, `formula`, `true`, `false` and `null` removed.\"\"\"\n165\t    text = re.sub(r'\"[^\"]*\"', \" \", _unquoted(expression))\n166\t    text = re.sub(r\"'[^']*'\", \" \", text)\n167\t    names: list[str] = []\n168\t    for match in BASE_IDENT.finditer(text):\n169\t        name = match.group()\n170\t        if match.start() and text[match.start() - 1] == \".\":\n171\t            continue\n172\t        if text[match.end():].lstrip().startswith(\"(\"):\n173\t            continue\n174\t        if name in BASE_LANGUAGE:\n175\t            continue\n176\t        names.append(name)\n177\t    return names\n178\t\n179\t\n180\tdef _base_named(text: str) -> list[str]:\n181\t    \"\"\"Every property `text` names: keys under `properties:`, entries of `order:`, the\n182\t    `property:` of a `sort` or `groupBy`, and filter and formula expressions.\"\"\"\n183\t    named: list[str] = []\n184\t    lines = text.splitlines()\n185\t    i = 0\n186\t    while i < len(lines):\n187\t        raw = lines[i]\n188\t        stripped = raw.strip()\n189\t        indent = len(raw) - len(raw.lstrip())\n190\t        i += 1\n191\t        if not stripped or stripped.startswith(\"#\"):\n192\t            continue\n193\t        header = BASE_HEADER.match(stripped)\n194\t        if not header:\n195\t            continue\n196\t        key, rest = header.group(1), header.group(2).strip()\n197\t        if key == \"order\" and rest.startswith(\"[\"):\n198\t            named.extend(rest.strip(\"[]\").split(\",\"))\n199\t            continue\n200\t        block: list[tuple[int, str]] = []\n201\t        while i < len(lines):\n202\t            line = lines[i]\n203\t            content = line.strip()\n204\t            if content and not content.startswith(\"#\"):\n205\t                if len(line) - len(line.lstrip()) <= indent:\n206\t                    break\n207\t                block.append((len(line) - len(line.lstrip()), content))\n208\t            i += 1\n209\t        if key == \"properties\":\n210\t            child = min((depth for depth, _ in block), default=indent)\n211\t            for depth, content in block:\n212\t                if depth == child and \":\" in content and not content.startswith(\"-\"):\n213\t                    named.append(content.split(\":\", 1)[0].strip())\n214\t        elif key == \"order\":\n215\t            for _, content in block:\n216\t                if content.startswith(\"- \"):\n217\t                    named.append(content[2:].strip())\n218\t        elif key in (\"sort\", \"groupBy\"):\n219\t            for _, content in block:\n220\t                match = BASE_PROPERTY.search(content)\n221\t                if match:\n222\t                    named.append(match.group(1).strip())\n223\t        else:\n224\t            if rest:\n225\t                named.append(rest)\n226\t            for _, content in block:\n227\t                if content.startswith(\"- \"):\n228\t                    named.append(content[2:].strip())\n229\t                elif \":\" in content:\n230\t                    value = content.split(\":\", 1)[1].strip()\n231\t                    if value:\n232\t                        named.append(value)\n233\t    return named\n234\t\n235\t\n236\tdef _base_problems(docs: Path) -> list[str]:\n237\t    \"\"\"The properties `docs/backlog.base` names that are not seed template fields.\"\"\"\n238\t    base = docs / \"backlog.base\"\n239\t    if not base.is_file():\n240\t        return []\n241\t    fields_, _ = frontmatter(_read(docs / \"templates\" / \"seed.md\"))\n242\t    fields = set(fields_ or ())\n243\t    problems: list[str] = []\n244\t    seen: set[str] = set()\n245\t    for name in _base_named(_read(base)):\n246\t        for identifier in _expression_names(name):\n247\t            if identifier in seen:\n248\t                continue\n249\t            seen.add(identifier)\n250\t            if identifier not in fields:\n251\t                problems.append(\n252\t                    f\"docs/backlog.base: {identifier} is not a field of docs/templates/seed.md\"\n253\t                )\n254\t    return problems\n255\t\n256\t\n257\tdef _wire_problems(root: Path) -> list[str]:\n258\t    \"\"\"Every record whose wire git tracks uncompressed: the record, in `wire.jsonl`.\"\"\"\n259\t    runs = root / \"runs\"\n260\t    if not runs.is_dir():\n261\t        return []\n262\t    problems: list[str] = []\n263\t    for path in sorted(runs.glob(\"*/wire.jsonl\")):\n264\t        rel = path.relative_to(root).as_posix()\n265\t        if _git(root, \"ls-files\", \"--\", rel).strip():\n266\t            problems.append(f\"{rel}: the wire is committed uncompressed (wire.jsonl.gz)\")\n267\t    return problems\n268\t\n269\t\n270\tdef problems_check(root: Path) -> list[str]:\n271\t    root = Path(root)\n272\t    docs = root / \"docs\"\n273\t    if not docs.is_dir():\n274\t        return [\"docs/: missing\"]\n275\t    problems: list[str] = []\n276\t    tags = _tags(root)\n277\t    docstrings = _test_docstrings(root)\n278\t\n279\t    for path in docs.rglob(\"*\"):\n280\t        if not path.is_file():\n281\t            continue\n282\t        text = _read(path)\n283\t        if \"[[\" not in text:\n284\t            continue\n285\t        rel = path.relative_to(root).as_posix()\n286\t        for match in WIKILINK.finditer(text):\n287\t            target = match.group(1).split(\"|\", 1)[0].split(\"#\", 1)[0].strip()\n288\t            if not _resolve(target, docs):\n289\t                problems.append(f\"{rel}: wikilink {target} does not resolve\")\n290\t\n291\t    version_notes: list[tuple[Path, str, dict[str, str], str]] = []\n292\t    for path in _notes(docs):\n293\t        rel = path.relative_to(root).as_posix()\n294\t        fm, body = frontmatter(_read(path))\n295\t        if fm is None:\n296\t            problems.append(f\"{rel}: no frontmatter\")\n297\t            continue\n298\t        kind = fm.get(\"type\", \"\")\n299\t        if not kind:\n300\t            problems.append(f\"{rel}: frontmatter has no type\")\n...\ttruncated; continue with start=301",
+    "tool_call_id": "call_01_X5Ty3k8xesGEg9AJgHpE2260",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:37.986284Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:37.989554Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me read the seed doc `record-as-table.md`, and maybe the builder.py's main signature for the shape. Let me also read the CHANGELOG to understand. But main thing: implement runs.py.\n\nLet me read the seed.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"docs/seeds/record-as-table.md\"}",
+    "tool_call_id": "call_00_omdc7wWefkguJZOPthML1576",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"pyproject.toml\"}",
+    "tool_call_id": "call_01_rHW2Z2dbp1AqTgRp68m02303",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 9342,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 5888,
+   "output_tokens": 125,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 5888,
+    "prompt_cache_miss_tokens": 3454,
+    "reasoning_tokens": 50
+   },
+   "cost": null,
+   "output_reasoning_tokens": 50
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:39.268157Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:38Z"
+  },
+  "provider_response_id": "2657307f-7213-4bc2-ba49-200d1185cf1c",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t---\n2\tcreated: 2026-09-16\n3\ttype: seed\n4\tstatus: building\n5\tsummary: Twelve records and counting; one script that turns every numbers.json into a row is the outcomes panel with no new state anywhere.\n6\tvalue: 4\n7\teffort: S\n8\tversion: v0.5\n9\t---\n10\t\n11\t## Evidence\n12\t\n13\tReading a run today means opening `numbers.json` by hand; comparing two means opening both. The evals need every run of a case side by side, and no orientation page can name the last runs without narrating them. Twelve records on 2026-09-16, in three shapes: the observer's, the builder's before `world_head`, and the builder's with it.\n14\t\n15\t## Goal\n16\t\n17\tAdd `runs.py` at the repository root, run as `uv run runs.py`, with `main(argv, runs=None)` shaped like the others: `argv[0]` is the program name, `runs` the records directory, by default `runs/` beside `runs.py`. It prints the records as one table, tab-separated, a header line then one row per record in the order of their stamps, and exits 0; any argument is a usage error on stderr, exit 2. The columns, in this order: stamp, head, stopped, check, requests, tool_calls, lists, reads, writes, edits, checks, input_tokens, cache_read_tokens, output_tokens, reasoning_tokens, cost_usd, seconds, files_changed, insertions, deletions, goal. Each value comes from the record's `numbers.json` as it is there; `goal` is the first line of `goal.txt` with tabs as spaces; a key the record does not have is an empty cell; `head` reads `head` and, in records written before v0.5, `world_head`; a record without `numbers.json` is a row with its stamp and goal only. Nothing is written. The tests in `test_runs.py` whose docstring names this seed define the behaviour.",
+    "tool_call_id": "call_00_omdc7wWefkguJZOPthML1576",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:39.276125Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "read",
+    "content": "1\t[project]\n2\tname = \"factory\"\n3\t# The version of record is the git tag; this field is a PEP 621 placeholder.\n4\tversion = \"0.0.0\"\n5\trequires-python = \">=3.12\"\n6\tdependencies = [\n7\t    \"pydantic-ai-slim[openai]==2.43.0\",\n8\t]",
+    "tool_call_id": "call_01_rHW2Z2dbp1AqTgRp68m02303",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:39.275359Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:39.277377Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let me look at how builder.py's main is shaped (to follow conventions). Let's find the main function.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"builder.py\", \"start\": 1}",
+    "tool_call_id": "call_00_73CJcfh16c65AKTpaarR7182",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 10036,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 9344,
+   "output_tokens": 78,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 9344,
+    "prompt_cache_miss_tokens": 692,
+    "reasoning_tokens": 24
+   },
+   "cost": null,
+   "output_reasoning_tokens": 24
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:40.615016Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:39Z"
+  },
+  "provider_response_id": "24fa0577-300e-4eb7-a932-123dd5964e7e",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t#!/usr/bin/env python3\n2\t\"\"\"The builder: a cold session that changes a checkout until its tests pass.\n3\t\n4\t    uv run builder.py <checkout> \"<goal>\"\n5\t\n6\tThe checkout is the directory named on the command line, reachable only through five tools:\n7\tlist, read, write, edit and check. Writes are confined to the checkout and refused on the goal's\n8\ttests and the toolchain; check runs the checkout's tests in a container with no network and the\n9\tcheckout mounted read-only, so code the model writes never runs on the host and cannot reach the\n10\tkey. The loop is pydantic-ai, pinned; the provider is DeepSeek's chat completions API, the key\n11\tread from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves\n12\truns/<utc-stamp>/ under the factory itself, never in the checkout, with goal.txt, wire.jsonl\n13\t(every HTTP attempt as it happened), messages.json (the library's messages), check-<n>.log per\n14\tcheck, diff.patch (what the run left in the checkout; absent when it left nothing), report.json,\n15\tresponse.md (the report rendered) and numbers.json.\n16\t\"\"\"\n17\t\n18\tfrom __future__ import annotations\n19\t\n20\timport fnmatch\n21\timport hashlib\n22\timport importlib.metadata\n23\timport json\n24\timport os\n25\timport subprocess\n26\timport sys\n27\timport time\n28\tfrom datetime import UTC, datetime\n29\tfrom pathlib import Path\n30\tfrom typing import Any, Literal\n31\t\n32\t# Before the import: the library greets stderr once per process unless this is set.\n33\tos.environ.setdefault(\"PYDANTIC_AI_NO_BANNER\", \"1\")\n34\t\n35\timport httpx2  # noqa: E402\n36\tfrom pydantic import BaseModel, Field  # noqa: E402\n37\tfrom pydantic_ai import (  # noqa: E402\n38\t    Agent,\n39\t    ModelAPIError,\n40\t    ModelMessagesTypeAdapter,\n41\t    RunUsage,\n42\t    Tool,\n43\t    UnexpectedModelBehavior,\n44\t    UsageLimitExceeded,\n45\t    UsageLimits,\n46\t    capture_run_messages,\n47\t)\n48\tfrom pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings  # noqa: E402\n49\tfrom pydantic_ai.profiles.openai import OpenAIModelProfile  # noqa: E402\n50\tfrom pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402\n51\t\n52\tRUNS = Path(__file__).resolve().parent / \"runs\"  # the factory's record, never inside the checkout\n53\tKEY_FILE = Path.home() / \".config\" / \"factory\" / \"deepseek.key\"\n54\tMODEL = \"deepseek-flash\"\n55\tLIBRARY = \"pydantic-ai-slim \" + importlib.metadata.version(\"pydantic-ai-slim\")\n56\tTOOL_CALLS_CAP = 80  # tool calls per run; over it the run stops with no report\n57\tREQUEST_CAP = 60  # provider requests per run\n58\tLIST_CAP = 500  # entries per list\n59\tREAD_LINES_CAP = 300  # lines per read\n60\tREAD_BYTES_CAP = 32_000  # bytes per read\n61\tWRITE_CAP = 30  # writes and edits per run, together\n62\tCHECK_CAP = 8  # checks per run\n63\t# What green means, in the checkout's own terms. -P keeps the checkout's root off sys.path while\n64\t# the runner is imported, or a file named unittest.py at the checkout root shadows the stdlib and\n65\t# turns any suite green; `discover` still finds the checkout's tests and puts the root back for them.\n66\tCHECK_CMD = (\"python\", \"-P\", \"-m\", \"unittest\", \"discover\", \"-q\")\n67\tCHECK_TIMEOUT = 120  # seconds for one check, then the container is killed\n68\tCHECK_TAIL_LINES = 60  # lines of check output handed back\n69\tCHECK_TAIL_BYTES = 8_000  # and at most this many bytes of them\n70\tIMAGE_TIMEOUT = 600  # seconds for the one image build\n71\t# Hidden at the root because they are what running and installing the program leave behind,\n72\t# not the checkout; .git is the human's record and its hooks run on the host.\n73\tHIDDEN = (\"runs\", \".claude\", \"__pycache__\", \".venv\", \".git\")\n74\t# Refused to write and edit: the tests are the goal's acceptance criteria and the toolchain is\n75\t# what check runs against. A basename glob anywhere, a prefix, or an exact path at the root;\n76\t# the glob is unittest's own discovery pattern, so every file the check collects is covered.\n77\tPROTECTED = (\"test*.py\", \"tests/\", \"pyproject.toml\", \"uv.lock\", \"check.Dockerfile\", \"docs/\")\n78\t# USD per 1M tokens, peak rates; api-docs.deepseek.com/quick_start/pricing read on 2026-09-15.\n79\tPRICE = {\"cache_hit\": 0.006, \"cache_miss\": 0.3, \"output\": 1.2}\n80\t\n81\tROLE = \"\"\"\\\n82\tYou are the builder. You are given a goal and a checkout: a directory with code and tests. You\n83\tcan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n84\t`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\n85\tcriteria and cannot be changed.\n86\t\n87\tWork in this order: read what the goal touches; run `check` once to see what fails; make the\n88\tsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\n89\twhen you cannot make it green within the budget, and return the report through the\n90\t`final_result` function: changed (the paths you wrote or edited, in order), did (what you\n91\tchanged and why, one fact per item, each naming a path), check (green or red), failing (test\n92\tnames if red), unsure (what you could not determine or verify).\n93\t\n94\tRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\n95\twork around a failing test by changing what it asserts; no commentary outside the report.\n96\t\"\"\"\n97\t\n98\t\n99\tclass BuildReport(BaseModel):\n100\t    \"\"\"The builder's report: what it changed in the checkout, and whether the tests pass.\"\"\"\n101\t\n102\t    changed: list[str] = Field(description=\"The paths you wrote or edited, in order.\")\n103\t    did: list[str] = Field(\n104\t        description=\"What you changed and why, one fact per item, each naming a path.\"\n105\t    )\n106\t    check: Literal[\"green\", \"red\"] = Field(description=\"Green or red: the state of the last check.\")\n107\t    failing: list[str] = Field(description=\"Test names if red.\")\n108\t    unsure: list[str] = Field(description=\"What you could not determine or verify.\")\n109\t\n110\t\n111\tSECTIONS = ((\"Changed\", \"changed\"), (\"Did\", \"did\"), (\"Check\", \"check\"),\n112\t            (\"Failing\", \"failing\"), (\"Unsure\", \"unsure\"))  # fmt: skip\n113\t\n114\t\n115\tdef render(report: BuildReport) -> str:\n116\t    \"\"\"The report in v0.1's markdown shape: five headings, one bullet per item.\"\"\"\n117\t    out: list[str] = []\n118\t    for heading, field in SECTIONS:\n119\t        out.append(f\"## {heading}\")\n120\t        items = getattr(report, field)\n121\t        if isinstance(items, str):  # check is one value, and renders as one bullet\n122\t            items = [items]\n123\t        out.extend(f\"- {item}\" for item in items or [\"(none)\"])\n124\t        out.append(\"\")\n125\t    return \"\\n\".join(out)\n126\t\n127\t\n128\tclass Tools:\n129\t    \"\"\"The tools: what the model can do to the checkout, and the record of it.\"\"\"\n130\t\n131\t    def __init__(self, root: Path, run_dir: Path, hidden: tuple[str, ...] = HIDDEN,\n132\t                 protected: tuple[str, ...] = PROTECTED, sandbox: Any = None):  # fmt: skip\n133\t        self.root = root.resolve()\n134\t        self.run_dir = run_dir\n135\t        self.hidden = hidden\n136\t        self.protected = protected\n137\t        self.sandbox = sandbox\n138\t        self.listed: list[str] = []\n139\t        self.read_paths: list[str] = []\n140\t        self.lines_read = 0\n141\t        self.written: list[str] = []\n142\t        self.edited: list[str] = []\n143\t        self.checks: list[dict[str, Any]] = []\n144\t\n145\t    def _resolve(self, path: str) -> tuple[Path, str]:\n146\t        p = (self.root / (path or \".\")).resolve()\n147\t        if p != self.root and self.root not in p.parents:\n148\t            raise ValueError(f\"outside the checkout: {path}\")\n149\t        rel = p.relative_to(self.root).as_posix() or \".\"\n150\t        if rel.split(\"/\", 1)[0] in self.hidden:\n151\t            raise ValueError(f\"not part of the checkout: {path}\")\n152\t        return p, rel\n153\t\n154\t    def _writable(self, rel: str) -> None:\n155\t        \"\"\"The goal's tests and the toolchain are the human's; the builder may read them only.\"\"\"\n156\t        name = rel.rsplit(\"/\", 1)[-1]\n157\t        for pattern in self.protected:\n158\t            if pattern.endswith(\"/\"):  # anything under that directory\n159\t                hit = rel == pattern[:-1] or rel.startswith(pattern)\n160\t            elif \"*\" in pattern:  # that basename, anywhere in the checkout\n161\t                hit = fnmatch.fnmatchcase(name, pattern)\n162\t            else:  # that exact path at the root, not the basename anywhere\n163\t                hit = rel == pattern\n164\t            if hit:\n165\t                raise ValueError(\n166\t                    f\"protected: {rel} (the goal's tests and the toolchain are not the \"\n167\t                    \"builder's to change)\"\n168\t                )\n169\t\n170\t    def _capped(self) -> str:\n171\t        if len(self.written) + len(self.edited) >= WRITE_CAP:\n172\t            return f\"error: cap reached ({WRITE_CAP} writes and edits); report now\"\n173\t        return \"\"\n174\t\n175\t    def list(self, path: str = \".\") -> str:\n176\t        \"\"\"List one directory of the checkout: one entry per line as kind, size, path. Path is\n177\t        relative to the checkout root; '.' is the root.\n178\t\n179\t        Args:\n180\t            path: The directory to list, relative to the checkout root.\n181\t        \"\"\"\n182\t        try:\n183\t            p, rel = self._resolve(path)\n184\t            if not p.is_dir():\n185\t                raise ValueError(f\"not a directory: {path}\")\n186\t            entries = sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name))\n187\t            if rel == \".\":\n188\t                entries = [e for e in entries if e.name not in self.hidden]\n189\t            lines = []\n190\t            for e in entries[:LIST_CAP]:\n191\t                kind = \"link\" if e.is_symlink() else \"dir\" if e.is_dir() else \"file\"\n192\t                size = e.lstat().st_size if kind == \"file\" else 0\n193\t                lines.append(f\"{kind}\\t{size}\\t{e.relative_to(self.root).as_posix()}\")\n194\t            if len(entries) > LIST_CAP:\n195\t                lines.append(f\"...\\t{len(entries) - LIST_CAP} more entries not shown\")\n196\t        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop\n197\t            return f\"error: {e}\"\n198\t        self.listed.append(rel)\n199\t        return \"\\n\".join(lines) or \"(empty)\"\n200\t\n201\t    def read(self, path: str, start: int = 1) -> str:\n202\t        \"\"\"Read a file of the checkout as numbered lines, from line `start` (1-based), at most 300\n203\t        lines or 32000 bytes per call; a truncated read says where to continue.\n204\t\n205\t        Args:\n206\t            path: The file to read, relative to the checkout root.\n207\t            start: The first line to read, 1-based.\n208\t        \"\"\"\n209\t        try:\n210\t            p, rel = self._resolve(path)\n211\t            if not p.is_file():\n212\t                raise ValueError(f\"not a file: {path}\")\n213\t            start = max(1, int(start))\n214\t            out: list[str] = []\n215\t            n = nbytes = 0\n216\t            with p.open(\"r\", encoding=\"utf-8\", errors=\"replace\") as f:\n217\t                for i, line in enumerate(f, 1):\n218\t                    if i < start:\n219\t                        continue\n220\t                    size = len(line.encode())\n221\t                    if n >= READ_LINES_CAP or nbytes + size > READ_BYTES_CAP:\n222\t                        if n:  # one line per call at least, or a long line dead-ends the read\n223\t                            out.append(f\"...\\ttruncated; continue with start={i}\")\n224\t                            break\n225\t                        cut = line.encode()[:READ_BYTES_CAP].decode(\"utf-8\", \"ignore\")\n226\t                        out.append(f\"{i}\\t{cut} …(line cut at {READ_BYTES_CAP} bytes)\")\n227\t                    else:\n228\t                        out.append(f\"{i}\\t{line.rstrip(chr(10))}\")\n229\t                    n += 1\n230\t                    nbytes += size\n231\t        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop\n232\t            return f\"error: {e}\"\n233\t        self.read_paths.append(rel)\n234\t        self.lines_read += n\n235\t        return \"\\n\".join(out) or \"(empty)\"\n236\t\n237\t    def write(self, path: str, content: str) -> str:\n238\t        \"\"\"Write a file of the checkout: create it, or replace what is there with `content`.\n239\t        Directories on the way are created. The tests and the toolchain cannot be written.\n240\t\n241\t        Args:\n242\t            path: The file to write, relative to the checkout root.\n243\t            content: The whole text of the file, as it should be afterwards.\n244\t        \"\"\"\n245\t        capped = self._capped()\n246\t        if capped:\n247\t            return capped\n248\t        try:\n249\t            p, rel = self._resolve(path)\n250\t            self._writable(rel)\n251\t            p.parent.mkdir(parents=True, exist_ok=True)\n252\t            p.write_text(content, encoding=\"utf-8\")\n253\t        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop\n254\t            return f\"error: {e}\"\n255\t        self.written.append(rel)\n256\t        return f\"wrote {rel} ({len(content.splitlines())} lines)\"\n257\t\n258\t    def edit(self, path: str, old: str, new: str) -> str:\n259\t        \"\"\"Edit a file of the checkout: replace `old` with `new`, once. `old` must appear in the\n260\t        file exactly once; if it does not, nothing is changed and the count is reported. The\n261\t        tests and the toolchain cannot be edited.\n262\t\n263\t        Args:\n264\t            path: The file to edit, relative to the checkout root.\n265\t            old: The exact text to replace; include lines around it to make it unique.\n266\t            new: The text to put in its place.\n267\t        \"\"\"\n268\t        capped = self._capped()\n269\t        if capped:\n270\t            return capped\n271\t        if not old:  # every file contains the empty string, everywhere\n272\t            return \"error: old text is empty\"\n273\t        try:\n274\t            p, rel = self._resolve(path)\n275\t            self._writable(rel)\n276\t            if not p.is_file():\n277\t                raise ValueError(f\"not a file: {path}\")\n278\t            text = p.read_text(encoding=\"utf-8\")\n279\t            found = text.count(old)\n280\t            if found != 1:\n281\t                if found == 0:\n282\t                    return f\"error: old text not found in {rel}\"\n283\t                return f\"error: old text found {found} times in {rel}; include more context\"\n284\t            before = len(text.splitlines())\n285\t            text = text.replace(old, new, 1)\n286\t            p.write_text(text, encoding=\"utf-8\")\n287\t        except (ValueError, OSError, RuntimeError) as e:  # UnicodeDecodeError is a ValueError\n288\t            return f\"error: {e}\"\n289\t        self.edited.append(rel)\n290\t        return f\"edited {rel} ({before} -> {len(text.splitlines())} lines)\"\n291\t\n292\t    def check(self) -> str:\n293\t        \"\"\"Run the checkout's tests and return the exit code and the tail of the output: exit 0 is\n294\t        green, anything else is red. The tests run in a container, with the checkout read-only and\n295\t        no network, so this reports on the checkout as it is on disk. At most 8 checks per run.\n296\t        \"\"\"\n297\t        if len(self.checks) >= CHECK_CAP:\n298\t            return f\"error: cap reached ({CHECK_CAP} checks); report now\"\n299\t        if self.sandbox is None:\n300\t            return \"error: no sandbox; check is not available in this run\"\n...\ttruncated; continue with start=301",
+    "tool_call_id": "call_00_73CJcfh16c65AKTpaarR7182",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:40.619969Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:40.620814Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me look at builder.py's main function signature.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"builder.py\", \"start\": 700}",
+    "tool_call_id": "call_00_W8tRIP6kDy7hU6Gig2mr0799",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 14231,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 10112,
+   "output_tokens": 65,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 10112,
+    "prompt_cache_miss_tokens": 4119,
+    "reasoning_tokens": 11
+   },
+   "cost": null,
+   "output_reasoning_tokens": 11
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:41.774149Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:40Z"
+  },
+  "provider_response_id": "695a41c5-59bd-49ad-8d35-95e05e0d1136",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "(empty)",
+    "tool_call_id": "call_00_W8tRIP6kDy7hU6Gig2mr0799",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:41.779405Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:41.780787Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"builder.py\", \"start\": 600}",
+    "tool_call_id": "call_00_ET_IKC82583ZwPYQLUWmnwJ9176",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 14309,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 14080,
+   "output_tokens": 54,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 14080,
+    "prompt_cache_miss_tokens": 229,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:42.821358Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:42Z"
+  },
+  "provider_response_id": "e1da3b0d-8c4f-4c0d-8860-65b73a7dc239",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "600\t    goal = argv[2].strip()\n601\t    # A build is reproducible only if the checkout it ran on is committed: a dirty git checkout is\n602\t    # a usage error, refused before the run directory or the key is touched.\n603\t    dirty = dirty_paths(checkout)\n604\t    if dirty:\n605\t        shown = \", \".join(dirty[:5]) + (\" ...\" if len(dirty) > 5 else \"\")\n606\t        return usage_error(f\"the checkout has uncommitted or untracked changes: {shown}\")\n607\t    checkout_head = head(checkout)\n608\t    if not checkout_head:  # a git checkout with no commit has nothing to pin the run to\n609\t        return usage_error(f\"the checkout has no commit: {argv[1]}\")\n610\t    # The key file holds the bare key, or one `name=value` line as in an env file.\n611\t    key = KEY_FILE.read_text().strip().rsplit(\"=\", 1)[-1].strip().strip(\"'\\\"\")\n612\t    stamp = datetime.now(UTC).strftime(\"%Y%m%dT%H%M%SZ\")\n613\t    run_dir, nth = RUNS / stamp, 1\n614\t    while True:  # two runs in the same second each keep their own record\n615\t        try:\n616\t            run_dir.mkdir(parents=True)\n617\t            break\n618\t        except FileExistsError:\n619\t            nth += 1\n620\t            run_dir = RUNS / f\"{stamp}-{nth}\"\n621\t    (run_dir / \"goal.txt\").write_text(goal + \"\\n\")\n622\t\n623\t    wire = Wire(run_dir / \"wire.jsonl\")\n624\t    tools = Tools(checkout, run_dir, sandbox=sandbox if sandbox is not None else Sandbox())\n625\t    agent = build_agent(tools, key=key, http_client=wire.client, model=model)\n626\t    t0 = time.time()\n627\t    report, messages, usage, stopped, detail = run(agent, goal)\n628\t    seconds = round(time.time() - t0, 1)\n629\t\n630\t    (run_dir / \"messages.json\").write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=1))\n631\t    if report is not None:\n632\t        (run_dir / \"report.json\").write_text(report.model_dump_json(indent=1) + \"\\n\")\n633\t        (run_dir / \"response.md\").write_text(render(report))\n634\t    try:\n635\t        changes = record_diff(checkout, run_dir)\n636\t    except (OSError, ValueError, subprocess.SubprocessError) as e:  # never lose the record over git\n637\t        changes = {\"diff\": f\"error: {e}\", \"files_changed\": 0, \"insertions\": 0, \"deletions\": 0}\n638\t    miss = usage.input_tokens - usage.cache_read_tokens\n639\t    table = (\n640\t        usage.cache_read_tokens * PRICE[\"cache_hit\"]\n641\t        + miss * PRICE[\"cache_miss\"]\n642\t        + usage.output_tokens * PRICE[\"output\"]\n643\t    ) / 1e6\n644\t    priced = usage.cost is not None  # genai-prices has no deepseek-flash row; ours is the fallback\n645\t    cost_usd = round(float(usage.cost) if priced else table, 5)\n646\t    checks = [c[\"exit\"] for c in tools.checks]\n647\t    numbers = {\n648\t        \"model\": MODEL,\n649\t        \"role\": sha256(ROLE),\n650\t        \"wrapper\": sha256(Path(__file__).read_text()),\n651\t        \"library\": LIBRARY,\n652\t        \"checkout\": str(checkout),\n653\t        \"head\": checkout_head,\n654\t        \"stopped\": stopped,\n655\t        \"requests\": usage.requests,\n656\t        \"wire_attempts\": wire.attempts,\n657\t        \"tool_calls\": usage.tool_calls,\n658\t        \"input_tokens\": usage.input_tokens,\n659\t        \"output_tokens\": usage.output_tokens,\n660\t        \"cache_read_tokens\": usage.cache_read_tokens,\n661\t        \"reasoning_tokens\": usage.details.get(\"reasoning_tokens\", 0),\n662\t        \"cost_usd\": cost_usd,\n663\t        \"cost_source\": \"genai-prices\" if priced else \"table\",\n664\t        \"lists\": len(tools.listed),\n665\t        \"reads\": len(tools.read_paths),\n666\t        \"files_read\": len(set(tools.read_paths)),\n667\t        \"lines_read\": tools.lines_read,\n668\t        \"writes\": len(tools.written),\n669\t        \"edits\": len(tools.edited),\n670\t        \"checks\": len(checks),\n671\t        # The tools' own truth about the checkout, next to the report's claim about it.\n672\t        \"check\": \"none\" if not checks else \"green\" if checks[-1] == 0 else \"red\",\n673\t        \"check_seconds\": round(sum(c[\"seconds\"] for c in tools.checks), 1),\n674\t        **changes,\n675\t        \"seconds\": seconds,\n676\t    }\n677\t    recorded = numbers | {\"detail\": detail} if detail else numbers  # why it stopped, if not answer\n678\t    (run_dir / \"numbers.json\").write_text(json.dumps(recorded, indent=1) + \"\\n\")\n679\t    print(run_dir)\n680\t    print(\" \".join(f\"{k}={v}\" for k, v in numbers.items()))  # the numbers line stays one line of k=v\n681\t    if detail:\n682\t        print(f\"{stopped}: {detail}\", file=sys.stderr)\n683\t    return 0 if stopped == \"answer\" else 1\n684\t\n685\t\n686\tif __name__ == \"__main__\":\n687\t    sys.exit(main(sys.argv))",
+    "tool_call_id": "call_00_ET_IKC82583ZwPYQLUWmnwJ9176",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:42.826791Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:42.827834Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me see the top of builder's main function around line 590.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"builder.py\", \"start\": 570}",
+    "tool_call_id": "call_00_1HJjnoyD33DcVLpNaLPF8323",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 15640,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 14336,
+   "output_tokens": 69,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 14336,
+    "prompt_cache_miss_tokens": 1304,
+    "reasoning_tokens": 15
+   },
+   "cost": null,
+   "output_reasoning_tokens": 15
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:44.013194Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:43Z"
+  },
+  "provider_response_id": "ebf487b5-0391-4b39-a95f-e9c9b8f3081a",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "570\t\n571\t\n572\tdef usage_error(reason: str = \"\") -> int:\n573\t    print('usage: builder.py <checkout> \"<goal>\"', file=sys.stderr)\n574\t    if reason:\n575\t        print(reason, file=sys.stderr)\n576\t    return 2\n577\t\n578\t\n579\tdef main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:\n580\t    if len(argv) != 3 or not argv[1].strip() or not argv[2].strip():\n581\t        return usage_error()\n582\t    checkout = Path(argv[1]).resolve()\n583\t    if not checkout.is_dir():\n584\t        return usage_error(f\"not a directory: {argv[1]}\")\n585\t    # A checkout is the root of its own repository, and the environment may not point git\n586\t    # elsewhere. The first half: `git rev-parse --show-toplevel` run in the directory must name\n587\t    # it -- a subdirectory of a repository answers with the repository's root, a stray .git that\n588\t    # is not git's fails, and a worktree, whose .git is a file, answers with itself. The second\n589\t    # half: git runs with its environment's GIT_* pointers removed (see git_env), so a directory\n590\t    # the environment points at another repository is refused and not answered for. It is a usage\n591\t    # error, refused before the run directory or the key is touched.\n592\t    try:\n593\t        top = git(checkout, \"rev-parse\", \"--show-toplevel\").strip()\n594\t    except FileNotFoundError:\n595\t        return usage_error(f\"git is not available: {argv[1]}\")\n596\t    except (OSError, subprocess.SubprocessError) as e:\n597\t        return usage_error(f\"git could not run: {e}\")\n598\t    if not top or Path(top).resolve() != checkout:\n599\t        return usage_error(f\"not a git checkout: {argv[1]}\")\n600\t    goal = argv[2].strip()\n601\t    # A build is reproducible only if the checkout it ran on is committed: a dirty git checkout is\n602\t    # a usage error, refused before the run directory or the key is touched.\n603\t    dirty = dirty_paths(checkout)\n604\t    if dirty:\n605\t        shown = \", \".join(dirty[:5]) + (\" ...\" if len(dirty) > 5 else \"\")\n606\t        return usage_error(f\"the checkout has uncommitted or untracked changes: {shown}\")\n607\t    checkout_head = head(checkout)\n608\t    if not checkout_head:  # a git checkout with no commit has nothing to pin the run to\n609\t        return usage_error(f\"the checkout has no commit: {argv[1]}\")\n610\t    # The key file holds the bare key, or one `name=value` line as in an env file.\n611\t    key = KEY_FILE.read_text().strip().rsplit(\"=\", 1)[-1].strip().strip(\"'\\\"\")\n612\t    stamp = datetime.now(UTC).strftime(\"%Y%m%dT%H%M%SZ\")\n613\t    run_dir, nth = RUNS / stamp, 1\n614\t    while True:  # two runs in the same second each keep their own record\n615\t        try:\n616\t            run_dir.mkdir(parents=True)\n617\t            break\n618\t        except FileExistsError:\n619\t            nth += 1\n620\t            run_dir = RUNS / f\"{stamp}-{nth}\"\n621\t    (run_dir / \"goal.txt\").write_text(goal + \"\\n\")\n622\t\n623\t    wire = Wire(run_dir / \"wire.jsonl\")\n624\t    tools = Tools(checkout, run_dir, sandbox=sandbox if sandbox is not None else Sandbox())\n625\t    agent = build_agent(tools, key=key, http_client=wire.client, model=model)\n626\t    t0 = time.time()\n627\t    report, messages, usage, stopped, detail = run(agent, goal)\n628\t    seconds = round(time.time() - t0, 1)\n629\t\n630\t    (run_dir / \"messages.json\").write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=1))\n631\t    if report is not None:\n632\t        (run_dir / \"report.json\").write_text(report.model_dump_json(indent=1) + \"\\n\")\n633\t        (run_dir / \"response.md\").write_text(render(report))\n634\t    try:\n635\t        changes = record_diff(checkout, run_dir)\n636\t    except (OSError, ValueError, subprocess.SubprocessError) as e:  # never lose the record over git\n637\t        changes = {\"diff\": f\"error: {e}\", \"files_changed\": 0, \"insertions\": 0, \"deletions\": 0}\n638\t    miss = usage.input_tokens - usage.cache_read_tokens\n639\t    table = (\n640\t        usage.cache_read_tokens * PRICE[\"cache_hit\"]\n641\t        + miss * PRICE[\"cache_miss\"]\n642\t        + usage.output_tokens * PRICE[\"output\"]\n643\t    ) / 1e6\n644\t    priced = usage.cost is not None  # genai-prices has no deepseek-flash row; ours is the fallback\n645\t    cost_usd = round(float(usage.cost) if priced else table, 5)\n646\t    checks = [c[\"exit\"] for c in tools.checks]\n647\t    numbers = {\n648\t        \"model\": MODEL,\n649\t        \"role\": sha256(ROLE),\n650\t        \"wrapper\": sha256(Path(__file__).read_text()),\n651\t        \"library\": LIBRARY,\n652\t        \"checkout\": str(checkout),\n653\t        \"head\": checkout_head,\n654\t        \"stopped\": stopped,\n655\t        \"requests\": usage.requests,\n656\t        \"wire_attempts\": wire.attempts,\n657\t        \"tool_calls\": usage.tool_calls,\n658\t        \"input_tokens\": usage.input_tokens,\n659\t        \"output_tokens\": usage.output_tokens,\n660\t        \"cache_read_tokens\": usage.cache_read_tokens,\n661\t        \"reasoning_tokens\": usage.details.get(\"reasoning_tokens\", 0),\n662\t        \"cost_usd\": cost_usd,\n663\t        \"cost_source\": \"genai-prices\" if priced else \"table\",\n664\t        \"lists\": len(tools.listed),\n665\t        \"reads\": len(tools.read_paths),\n666\t        \"files_read\": len(set(tools.read_paths)),\n667\t        \"lines_read\": tools.lines_read,\n668\t        \"writes\": len(tools.written),\n669\t        \"edits\": len(tools.edited),\n670\t        \"checks\": len(checks),\n671\t        # The tools' own truth about the checkout, next to the report's claim about it.\n672\t        \"check\": \"none\" if not checks else \"green\" if checks[-1] == 0 else \"red\",\n673\t        \"check_seconds\": round(sum(c[\"seconds\"] for c in tools.checks), 1),\n674\t        **changes,\n675\t        \"seconds\": seconds,\n676\t    }\n677\t    recorded = numbers | {\"detail\": detail} if detail else numbers  # why it stopped, if not answer\n678\t    (run_dir / \"numbers.json\").write_text(json.dumps(recorded, indent=1) + \"\\n\")\n679\t    print(run_dir)\n680\t    print(\" \".join(f\"{k}={v}\" for k, v in numbers.items()))  # the numbers line stays one line of k=v\n681\t    if detail:\n682\t        print(f\"{stopped}: {detail}\", file=sys.stderr)\n683\t    return 0 if stopped == \"answer\" else 1\n684\t\n685\t\n686\tif __name__ == \"__main__\":\n687\t    sys.exit(main(sys.argv))",
+    "tool_call_id": "call_00_1HJjnoyD33DcVLpNaLPF8323",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:44.019269Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:44.020073Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now I understand the shape. Let me run check first to see the current state.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_iWhqxw0wxl2QbxAmZRyn5553",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 17419,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 15616,
+   "output_tokens": 38,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 15616,
+    "prompt_cache_miss_tokens": 1803,
+    "reasoning_tokens": 17
+   },
+   "cost": null,
+   "output_reasoning_tokens": 17
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:17:44.980857Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:44Z"
+  },
+  "provider_response_id": "5c823ffe-843f-41f9-8792-9745545376c0",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 1\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n======================================================================\nERROR: test_any_argument_is_a_usage_error (test_runs.RunsTest.test_any_argument_is_a_usage_error)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_runs.py\", line 113, in test_any_argument_is_a_usage_error\n    code, rows, err = table(self.base, \"20260917T000000Z\")\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/w/test_runs.py\", line 56, in table\n    code = runs.main([\"runs.py\", *args], runs=base)\n           ^^^^^^^^^\nAttributeError: module 'runs' has no attribute 'main'\n\n======================================================================\nERROR: test_nothing_is_written_and_an_empty_directory_is_a_header_alone (test_runs.RunsTest.test_nothing_is_written_and_an_empty_directory_is_a_header_alone)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_runs.py\", line 105, in test_nothing_is_written_and_an_empty_directory_is_a_header_alone\n    table(self.base)\n  File \"/w/test_runs.py\", line 56, in table\n    code = runs.main([\"runs.py\", *args], runs=base)\n           ^^^^^^^^^\nAttributeError: module 'runs' has no attribute 'main'\n\n======================================================================\nERROR: test_one_row_per_record_in_stamp_order_with_the_three_shapes (test_runs.RunsTest.test_one_row_per_record_in_stamp_order_with_the_three_shapes)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_runs.py\", line 83, in test_one_row_per_record_in_stamp_order_with_the_three_shapes\n    code, rows, _ = table(self.base)\n                    ^^^^^^^^^^^^^^^^\n  File \"/w/test_runs.py\", line 56, in table\n    code = runs.main([\"runs.py\", *args], runs=base)\n           ^^^^^^^^^\nAttributeError: module 'runs' has no attribute 'main'\n\n======================================================================\nERROR: test_the_header_names_the_columns_in_order (test_runs.RunsTest.test_the_header_names_the_columns_in_order)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_runs.py\", line 76, in test_the_header_names_the_columns_in_order\n    code, rows, err = table(self.base)\n                      ^^^^^^^^^^^^^^^^\n  File \"/w/test_runs.py\", line 56, in table\n    code = runs.main([\"runs.py\", *args], runs=base)\n           ^^^^^^^^^\nAttributeError: module 'runs' has no attribute 'main'\n\n----------------------------------------------------------------------\nRan 77 tests in 6.265s\n\nFAILED (errors=4)",
+    "tool_call_id": "call_00_iWhqxw0wxl2QbxAmZRyn5553",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:17:54.571174Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:17:54.571955Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let me implement runs.py. Requirements:\n\n- `main(argv, runs=None)`: argv[0] program name. runs = records directory, default `runs/` beside runs.py.\n- any argument (len(argv) > 1) → usage error, stderr, exit 2, print \"usage: ...\" containing \"usage\".\n- prints table tab-separated: header then rows in stamp order.\n- Columns: stamp, head, stopped, check, requests, tool_calls, lists, reads, writes, edits, checks, input_tokens, cache_read_tokens, output_tokens, reasoning_tokens, cost_usd, seconds, files_changed, insertions, deletions, goal.\n- Values from numbers.json \"as it is there\" — so if it's an int 4, str() gives \"4\"; float 0.007 gives \"0.007\"; 18.5 gives \"18.5\". json parsing gives int/float. str() works. But careful: 0.06286 → \"0.06286\". Yes.\n- goal first line of goal.txt with tabs as spaces.\n- missing key → empty cell.\n- head reads `head` and, in records written before v0.5, `world_head`. So prefer `head`, else `world_head`.\n- record without numbers.json → row with stamp and goal only (rest empty).\n\nWhich records to include: directories under runs. notes.txt is not a record (it's a file, not dir). So iterate over sorted subdirectories. Order \"in the order of their stamps\" — sort by stamp (directory name). The test expects lexicographic order of stamps which matches.\n\nFor each dir: stamp = dir name. goal = first line of goal.txt with tabs replaced by spaces. If goal.txt missing? Not specified; handle gracefully with empty. Actually records always have goal.txt. Let's read it with errors=\"replace\", take splitlines()[0] if exists.\n\nWait: first line of goal.txt. goal.txt content \"rename\\teverything\\nsecond line\\n\". first line \"rename\\teverything\", tabs as spaces → \"rename everything\". Good.\n\n\"with tabs as spaces\" — replace \"\\t\" with \" \". Possibly also maybe strip trailing? The test expects exactly \"rename everything\". The first line could have trailing whitespace; goal.txt written with goal + \"\\n\" from builder where goal was stripped. So fine. But should I strip? \"the first line of goal.txt\" — literal. I'll just take the first line split by \\n and replace \\t with space. Should I strip \\r? Not needed. Let me not strip to be faithful, but tabs as spaces. Hmm, what about a record line with trailing spaces? Not tested. I'll leave as is.\n\nActually, consider goal.txt that has trailing newline only (empty first line)? splitlines on \"\" gives []. Handle.\n\nNow `numbers.json` reading: parse JSON dict. Value formatting \"as it is there\". Use str(value). But booleans → \"True\"? JSON true → Python True → str \"True\". Not tested. Numbers fine.\n\nFor `cost_usd` = 0.007 → str → \"0.007\". Good. 0.11462 → \"0.11462\". 0.06286 → \"0.06286\". Good.\n\nBut careful with float representation for something like 437 int → \"437\". Good.\n\nNow the header uses COLUMNS exactly.\n\nImplementation:\n\n```python\n#!/usr/bin/env python3\nfrom __future__ import annotations\nimport json\nimport sys\nfrom pathlib import Path\n\nRUNS = Path(__file__).resolve().parent / \"runs\"\n\nCOLUMNS = [...]\n\n\ndef _first_line(path):\n    try:\n        text = path.read_text(encoding=\"utf-8\", errors=\"replace\")\n    except OSError:\n        return \"\"\n    lines = text.splitlines()\n    return lines[0].replace(\"\\t\", \" \") if lines else \"\"\n\n\ndef _cell(numbers, key):\n    if key == \"head\":\n        for k in (\"head\", \"world_head\"):\n            if k in numbers:\n                return str(numbers[k])\n        return \"\"\n    if key in numbers:\n        return str(numbers[key])\n    return \"\"\n\n\ndef usage_error(reason=\"\"):\n    print(\"usage: runs.py\", file=sys.stderr)\n    if reason:\n        print(reason, file=sys.stderr)\n    return 2\n\n\ndef main(argv, runs=None):\n    if len(argv) != 1:\n        return usage_error(\"no arguments\")\n    base = Path(runs) if runs is not None else RUNS\n    rows = []\n    if base.is_dir():\n        for d in sorted(p for p in base.iterdir() if p.is_dir()):\n            numbers = {}\n            nf = d / \"numbers.json\"\n            if nf.is_file():\n                try:\n                    data = json.loads(nf.read_text(...))\n                    if isinstance(data, dict):\n                        numbers = data\n                except (OSError, ValueError):\n                    numbers = {}\n            row = []\n            for key in COLUMNS:\n                if key == \"stamp\":\n                    row.append(d.name)\n                elif key == \"goal\":\n                    row.append(_first_line(d / \"goal.txt\"))\n                else:\n                    row.append(_cell(numbers, key))\n            rows.append(row)\n    ...\n```\n\nWait: for a record without numbers.json, it's a row with stem and goal only — meaning all other columns empty. My `_cell` returns \"\" for all keys if numbers empty. But head: if no numbers, `head` not in numbers and world_head not in numbers → \"\". Good.\n\nPrint header + rows joined with \"\\t\". Print each line.\n\nOnly directories count as records. notes.txt is a file, excluded. Good.\n\nWhat about base not existing? Then header alone. Test with empty dir. Fine.\n\n\"Nothing is written.\" We don't write.\n\nNow sorting: sorted by name. Good.\n\nLet me write it.\n\nAlso note default RUNS is `runs/` beside runs.py — computed as Path(__file__).resolve().parent / \"runs\".\n\nLet me create runs.py.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "write",
+    "args": "{\"path\": \"runs.py\", \"content\": \"#!/usr/bin/env python3\\n\\\"\\\"\\\"The records as one table: header then a row per run, tab-separated.\\n\\n    uv run runs.py\\n\\n`runs` is the records directory (by default `runs/` beside this file). Every subdirectory is one\\nrecord and becomes one row in stamp order; each value comes from the record's `numbers.json` as\\nit is there, `goal` is the first line of `goal.txt` with tabs as spaces, a key the record lacks is\\nan empty cell, and `head` reads `head` and, before v0.5, `world_head`. A record without\\n`numbers.json` is a row with its stamp and goal alone. Nothing is written. Any argument is a\\nusage error on stderr, exit 2.\\n\\\"\\\"\\\"\\n\\nfrom __future__ import annotations\\n\\nimport json\\nimport sys\\nfrom pathlib import Path\\nfrom typing import Any\\n\\nRUNS = Path(__file__).resolve().parent / \\\"runs\\\"  # the factory's record, beside this file\\n\\nCOLUMNS = (\\n    \\\"stamp\\\", \\\"head\\\", \\\"stopped\\\", \\\"check\\\", \\\"requests\\\", \\\"tool_calls\\\", \\\"lists\\\", \\\"reads\\\", \\\"writes\\\", \\\"edits\\\",\\n    \\\"checks\\\", \\\"input_tokens\\\", \\\"cache_read_tokens\\\", \\\"output_tokens\\\", \\\"reasoning_tokens\\\", \\\"cost_usd\\\",\\n    \\\"seconds\\\", \\\"files_changed\\\", \\\"insertions\\\", \\\"deletions\\\", \\\"goal\\\",\\n)  # fmt: skip\\n\\n\\ndef usage_error(reason: str = \\\"\\\") -> int:\\n    print(\\\"usage: runs.py\\\", file=sys.stderr)\\n    if reason:\\n        print(reason, file=sys.stderr)\\n    return 2\\n\\n\\ndef _first_line(path: Path) -> str:\\n    \\\"\\\"\\\"The first line of `path`, tabs as spaces; empty when the file or its first line is absent.\\\"\\\"\\\"\\n    try:\\n        lines = path.read_text(encoding=\\\"utf-8\\\", errors=\\\"replace\\\").splitlines()\\n    except OSError:\\n        return \\\"\\\"\\n    return lines[0].replace(\\\"\\\\t\\\", \\\" \\\") if lines else \\\"\\\"\\n\\n\\ndef _numbers(record: Path) -> dict[str, Any]:\\n    \\\"\\\"\\\"The record's `numbers.json` as a mapping; empty when it is absent or unreadable.\\\"\\\"\\\"\\n    try:\\n        data = json.loads((record / \\\"numbers.json\\\").read_text(encoding=\\\"utf-8\\\"))\\n    except (OSError, ValueError):\\n        return {}\\n    return data if isinstance(data, dict) else {}\\n\\n\\ndef _cell(numbers: dict[str, Any], column: str) -> str:\\n    if column == \\\"head\\\":  # v0.5 renamed the field; older records carry the checkout as world_head\\n        for key in (\\\"head\\\", \\\"world_head\\\"):\\n            if key in numbers:\\n                return str(numbers[key])\\n        return \\\"\\\"\\n    return str(numbers[column]) if column in numbers else \\\"\\\"\\n\\n\\ndef main(argv: list[str], runs: Any = None) -> int:\\n    if len(argv) != 1:\\n        return usage_error(\\\"no arguments\\\")\\n    base = Path(runs) if runs is not None else RUNS\\n    records = sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []\\n    lines = [\\\"\\\\t\\\".join(COLUMNS)]\\n    for record in records:\\n        numbers = _numbers(record)\\n        lines.append(\\n            \\\"\\\\t\\\".join(\\n                record.name if column == \\\"stamp\\\" else\\n                _first_line(record / \\\"goal.txt\\\") if column == \\\"goal\\\" else\\n                _cell(numbers, column)\\n                for column in COLUMNS\\n            )\\n        )\\n    print(\\\"\\\\n\\\".join(lines))\\n    return 0\\n\\n\\nif __name__ == \\\"__main__\\\":\\n    sys.exit(main(sys.argv))\\n\"}",
+    "tool_call_id": "call_00_BafwIEUrfe0FgWNwwg6m2119",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 18108,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 17408,
+   "output_tokens": 2165,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 17408,
+    "prompt_cache_miss_tokens": 700,
+    "reasoning_tokens": 1302
+   },
+   "cost": null,
+   "output_reasoning_tokens": 1302
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:18:02.752857Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:17:54Z"
+  },
+  "provider_response_id": "0115957b-f576-40fb-a9df-202a312145c7",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "write",
+    "content": "wrote runs.py (85 lines)",
+    "tool_call_id": "call_00_BafwIEUrfe0FgWNwwg6m2119",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:18:02.757603Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:18:02.758593Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_ET_bODDsC2dGvIcyh972rHB6446",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 20292,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 20096,
+   "output_tokens": 21,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 20096,
+    "prompt_cache_miss_tokens": 196,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:18:03.560541Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:18:03Z"
+  },
+  "provider_response_id": "90a46ae7-6f14-4d8f-b0ce-95b9a80569da",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 0\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n----------------------------------------------------------------------\nRan 77 tests in 6.693s\n\nOK",
+    "tool_call_id": "call_00_ET_bODDsC2dGvIcyh972rHB6446",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:18:14.276494Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:18:14.277718Z",
+  "instructions": "You are the builder. You are given a goal and a world: a directory with code and tests. You\ncan explore it with `list` and `read`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Green. Let me double check the gate might have rules about runs.py or run. The tests pass. Also perhaps gate.py check tests include something about runs.py? The check ran all tests including test_gate, all green.\n\nLet me verify nothing else. Final result.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "final_result",
+    "args": "{\"changed\": [\"runs.py\"], \"did\": [\"runs.py: added main(argv, runs=None) that prints a tab-separated table of header plus one row per subdirectory of the records directory (default runs/ beside runs.py), in sorted stamp order, and returns 0.\", \"runs.py: any argument makes main return 2 after printing a usage line on stderr.\", \"runs.py: each cell comes from the record's numbers.json as str(value), empty when the key is absent; head prefers head then world_head; a record without numbers.json gets empty cells.\", \"runs.py: goal is the first line of goal.txt with tabs replaced by spaces; stamp is the directory name; nothing is written.\"], \"check\": \"green\", \"failing\": [], \"unsure\": []}",
+    "tool_call_id": "call_00_9hbOo5wR40Pwo0r6Ph898283",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 20390,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 20224,
+   "output_tokens": 304,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 20224,
+    "prompt_cache_miss_tokens": 166,
+    "reasoning_tokens": 55
+   },
+   "cost": null,
+   "output_reasoning_tokens": 55
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-16T16:18:16.275283Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-16T16:18:14Z"
+  },
+  "provider_response_id": "f49f2a14-b289-4806-a6f1-4cdc427f1259",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "final_result",
+    "content": "Final result processed.",
+    "tool_call_id": "call_00_9hbOo5wR40Pwo0r6Ph898283",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-16T16:18:16.280142Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-16T16:18:16.280402Z",
+  "instructions": null,
+  "kind": "request",
+  "run_id": "01a0ab02-5f87-71fe-97f0-ca543615bac9",
+  "conversation_id": "01a0ab02-5f87-71fe-97f0-ca55af58d6c6",
+  "metadata": null,
+  "state": "complete"
+ }
+]

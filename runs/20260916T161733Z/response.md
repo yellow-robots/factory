@@ -1,0 +1,17 @@
+## Changed
+- runs.py
+
+## Did
+- runs.py: added main(argv, runs=None) that prints a tab-separated table of header plus one row per subdirectory of the records directory (default runs/ beside runs.py), in sorted stamp order, and returns 0.
+- runs.py: any argument makes main return 2 after printing a usage line on stderr.
+- runs.py: each cell comes from the record's numbers.json as str(value), empty when the key is absent; head prefers head then world_head; a record without numbers.json gets empty cells.
+- runs.py: goal is the first line of goal.txt with tabs replaced by spaces; stamp is the directory name; nothing is written.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- (none)
