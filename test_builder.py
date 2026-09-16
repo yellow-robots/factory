@@ -93,7 +93,7 @@ def names_in(listing: str) -> list[str]:
     return [line.split("\t")[2] for line in listing.splitlines() if "\t" in line]
 
 
-class PlaneTest(unittest.TestCase):
+class ToolsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -645,6 +645,48 @@ class MainTest(unittest.TestCase):
             self.assertIn(words, err.getvalue())
         self.assertFalse(self.runs.exists())
 
+    def test_a_checkout_is_the_root_of_its_own_repository(self):
+        """seed: terms-checkout-and-tools. A subdirectory of a repository, with or without a stray
+        .git directory of its own, is not a checkout: git would answer for the repository above.
+        Nor is a directory the environment points elsewhere with GIT_DIR. A worktree is one."""
+        deep = self.checkout / "deep"
+        deep.mkdir()
+        (deep / "g.py").write_text("y = 1\n")
+        bogus = self.checkout / "bogus"
+        (bogus / ".git").mkdir(parents=True)
+        (bogus / "h.py").write_text("z = 1\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "more")
+        stray = Path(self.tmp.name) / "stray"
+        stray.mkdir()
+        (stray / ".git").write_text("not a gitdir pointer\n")
+        refused = [(deep, {}), (bogus, {}), (stray, {"GIT_DIR": str(self.checkout / ".git")}), (stray, {"GIT_DIR": str(self.checkout / ".git"), "GIT_WORK_TREE": str(stray)})]
+        for checkout, env in refused:
+            err = io.StringIO()
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = builder.main(["builder.py", str(checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+            self.assertEqual(code, 2, (checkout, env))
+            self.assertIn("not a git checkout", err.getvalue(), (checkout, env))
+        self.assertFalse(self.runs.exists())
+        worktree = Path(self.tmp.name) / "wt"
+        git(self.checkout, "worktree", "add", "-q", str(worktree))
+        code, lines, run_dir = self.main(scripted(), FakeSandbox([]), checkout=worktree)
+        self.assertEqual(code, 0)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["head"], git(worktree, "rev-parse", "HEAD").strip())
+        self.assertEqual(numbers["checkout"], str(worktree.resolve()))
+
+    def test_git_that_cannot_run_before_the_run_is_a_usage_error(self):
+        """seed: terms-checkout-and-tools. No git on PATH is a usage error naming git, exit 2, no
+        traceback and no run directory."""
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"PATH": str(Path(self.tmp.name) / "nobin")}), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("usage", err.getvalue())
+        self.assertIn("git", err.getvalue())
+        self.assertFalse(self.runs.exists())
+
     def test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so(self):
         """seed: terms-checkout-and-tools. record_diff writes diff.patch only when the run changed
         something, and the code's own text says so."""
@@ -656,6 +698,8 @@ class MainTest(unittest.TestCase):
         self.assertIn("absent when the run left nothing", builder.record_diff.__doc__)
         self.assertIn("the five tools", builder.build_agent.__doc__)
         self.assertIn("not one of the tools", builder.git.__doc__)
+        self.assertIn("reachable only through five tools", builder.__doc__)
+        self.assertNotIn("Factory v0.3", builder.__doc__)
 
     def test_a_provider_error_is_recorded_and_returns_one(self):
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -786,7 +830,7 @@ class RepositoryTest(unittest.TestCase):
 
     def test_the_run_records_are_tracked(self):
         """seed: commit-the-runs. The records are the baseline of every eval, so the ignore file
-        no longer hides them from git; the builder's checkout hides them regardless (PlaneTest)."""
+        no longer hides them from git; the builder's checkout hides them regardless (ToolsTest)."""
         ignored = (Path(builder.__file__).parent / ".gitignore").read_text().splitlines()
         self.assertNotIn("runs/", ignored)
         self.assertNotIn("runs", ignored)
