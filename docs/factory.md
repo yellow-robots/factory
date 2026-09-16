@@ -45,10 +45,13 @@ its seeds are `done`, and this page has been reviewed against the seeds it deliv
 
 %% hand-written until the gate renders this section; reviewed at every release %%
 
-- Tags: `v0.1` the observer, `v0.2` the observer on pydantic-ai, `v0.3` the builder. `main` is
-  one commit past `v0.3`: the wire records JSON bodies as JSON, the first change built by the
-  factory (run `20260915T160616Z`).
+- Tags: `v0.1` the observer, `v0.2` the observer on pydantic-ai, `v0.3` the builder (on the
+  README commit that followed the code). `main` is past `v0.3` by the G1 red test, the factory's
+  change that made it green (commit 48cbbe4, titled `v0.4` before that number was given to the
+  gate; it belongs to no version) and the docs commit.
 - In flight: [[versions/v0.4]], the gate. Its specs are the seeds assigned to `v0.4`.
-- Runs: nine in `runs/`. The builder's two are `20260915T160616Z` (green, 3 edits) and
+- Runs: eight in `runs/`. The builder's two are `20260915T160616Z` (green, 3 edits) and
   `20260915T160651Z` (the honesty probe: red, no edits, by design).
+- The vault is edited live by the owner; `git status docs/` can change between two commands.
+  Commit what is there when you start, and do not treat it as stable.
 - Model: DeepSeek `deepseek-flash`, key in `~/.config/factory/deepseek.key`, never printed.
