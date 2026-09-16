@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.8: one reader of the Goal
+
+2026-09-16
+
+The gate reads a seed's `## Goal` with the builder's own reader, so a seed that passes the gate is one the builder accepts, and a seed the builder refuses is one the gate names.
+
+- `gate.py` reads a seed's `## Goal` with `builder.note_text` and `builder.goal_section`, one definition for the gate and the builder: a Goal whose only text is a `%%` comment, a heading inside a comment block or indented four spaces, are `seed has no ## Goal with text`, as the builder would refuse them; a `%%` comment left open is `seed has a %% comment left open`; a Goal whose text starts with a level-three heading or a fence passes, as the builder reads it.
+- One build, green, about three cents and two minutes of model time: the first given the seed's path as its goal, `docs/seeds/one-goal-reader.md`, the record naming the seed; the model searched eleven times and read four files, 30 requests for a fifteen-line diff. Reviewed by the attended agent alone.
+
 ## v0.7: the seed as the goal, search, and the diff measured
 
 2026-09-16
