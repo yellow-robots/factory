@@ -33,16 +33,16 @@ def fm(**fields) -> str:
     return "---\n" + "".join(f"{k}: {v}\n" if str(v) else f"{k}:\n" for k, v in fields.items()) + "---\n"
 
 
-TEMPLATE_SEED = fm(type="seed", status="open", summary="", value="", effort="", version="") + "\n## Evidence\n\n## Idea\n"
+TEMPLATE_SEED = fm(created='"{{date}}"', type="seed", status="open", summary="", value="", effort="", version="") + "\n## Evidence\n\n## Idea\n"
 TEMPLATE_VERSION = fm(type="version") + "\n# v0.0: name\n\nWhat the version is for.\n\n## Changelog\n\n-\n"
 BASE = 'filters:\n  and:\n    - type == "seed"\nviews:\n  - type: table\n    name: Specs\n'
-SEED_A = fm(type="seed", status="open", summary="an idea", value=3, effort="S", version="") + (
+SEED_A = fm(created="2026-09-16", type="seed", status="open", summary="an idea", value=3, effort="S", version="") + (
     "\n## Evidence\n\nRun x, 2026-09-16.\n\n## Idea\n\nDo y, see [[b]].\n"
 )
-SEED_B = fm(type="seed", status="spec", summary="a spec", value=4, effort="M", version="v0.2") + (
+SEED_B = fm(created="2026-09-16", type="seed", status="spec", summary="a spec", value=4, effort="M", version="v0.2") + (
     "\n## Evidence\n\nRun y, 2026-09-16.\n\n## Goal\n\nAdd z so that w.\n"
 )
-SEED_D = fm(type="seed", status="done", summary="delivered", value=5, effort="S", version="v0.1") + (
+SEED_D = fm(created="2026-09-15", type="seed", status="done", summary="delivered", value=5, effort="S", version="v0.1") + (
     "\n## Evidence\n\nRun z, 2026-09-15.\n\n## Goal\n\nThe first thing.\n"
 )
 V01 = fm(type="version") + (
@@ -231,6 +231,20 @@ class CheckTest(GateTest):
         """rejected is a way out at any stage, not a stage after done: no version, Goal or test."""
         self.edit("docs/seeds/a.md", SEED_A.replace("status: open", "status: rejected") + "\nRejected: no run shows it matters.\n")
         self.assertEqual(self.check(), (0, "", ""))
+
+    def test_a_seed_carries_the_date_it_was_born(self):
+        """seed: created-field. created is allowed, required from open on and shaped YYYY-MM-DD; the
+        templates stay exempt."""
+        self.assertEqual(self.check(), (0, "", ""))
+        self.edit("docs/seeds/a.md", SEED_A.replace("created: 2026-09-16\n", ""))
+        self.assert_problem("docs/seeds/a.md", "created")
+        for bad in ("created: yesterday", "created: 2026-9-16", "created: 16-09-2026", "created:"):
+            self.edit("docs/seeds/a.md", SEED_A.replace("created: 2026-09-16", bad))
+            self.assert_problem("docs/seeds/a.md", "created")
+        self.edit("docs/seeds/a.md", SEED_A.replace("created: 2026-09-16", "created: 2026-09-17"))
+        self.assertEqual(self.check(), (0, "", ""))
+        self.edit("docs/seeds/a.md", SEED_A.replace("status: open", "status: rejected").replace("created: 2026-09-16\n", ""))
+        self.assert_problem("docs/seeds/a.md", "created")
 
     def test_templates_are_exempt(self):
         self.edit("docs/templates/seed.md", TEMPLATE_SEED.replace("type: seed", "type: whatever"))
