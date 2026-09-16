@@ -1,6 +1,6 @@
 ---
 type: seed
-status: building
+status: done
 summary: The seeds now live inside the world the builder reads; it must be able to read them and never write them.
 value: 5
 effort: S
