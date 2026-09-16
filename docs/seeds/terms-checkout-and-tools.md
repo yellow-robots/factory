@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: done
+status: building
 summary: world and plane are the observer's words; the builder works on a checkout with tools, and the code, the role and the documents should say so.
 value: 3
 effort: S
@@ -23,3 +23,5 @@ From the review of the first build: the module docstring lists `diff.patch (what
 From the review of the second build: a checkout is the root of its own repository, which `git rev-parse --show-toplevel` run in it must name, and git runs with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` removed from its environment, so a subdirectory of a repository, with or without a `.git` of its own, and a directory the environment points elsewhere are refused as `not a git checkout`, while a worktree, whose `.git` is a file, is a checkout; a git that cannot run before the run is a usage error naming git, never a traceback; the comment above the guard explains both its halves; the module docstring says `reachable only through five tools` and no longer names a version.
 
 From the review of the third build: the two diffs of `record_diff` run with `--no-ext-diff` and `--no-textconv`, so neither the environment, nor the configuration, nor a `.gitattributes` in the checkout can replace the patch with a program's output; a git that ran and failed before the run directory exists, whichever call it was, is a usage error carrying git's own message, exit 2, and a good checkout is not called `not a git checkout` for a failure of git's.
+
+From the review of the fourth build: the diffs of `record_diff` end their options with `--`, so a file the run names like an option or a revision, `-x.txt` or `HEAD`, still yields the patch and the numbers; a directory is refused as `not a git checkout` only when git itself says `not a git repository` or `invalid gitfile format`, and any other failure of git's, at whichever call before the run, is a usage error carrying git's words in the same shape, with no probe; `.gitattributes` and `.gitignore` are protected from write and edit at any depth, since a filter or an ignore rule the model wrote would change what git records of the run.

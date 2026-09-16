@@ -207,6 +207,22 @@ class ToolsTest(unittest.TestCase):
         self.assertTrue(self.tools.write("sub/pyproject.toml", "x\n").startswith("wrote sub/pyproject.toml"))
         self.assertTrue(self.tools.edit("contest.py", "x", "y").startswith("edited contest.py"))
 
+    def test_git_attributes_and_ignore_files_are_protected(self):
+        """seed: terms-checkout-and-tools. A .gitattributes or .gitignore the model wrote would
+        change what git records of the run, a filter running on the host or a file hidden from
+        the diff: both are protected at any depth, readable and listable still."""
+        (self.root / "sub" / ".gitattributes").write_text("keep\n")
+        for bad in (".gitattributes", ".gitignore", "sub/.gitignore", "sub/.gitattributes"):
+            self.assertIn("protected", self.tools.write(bad, "x\n"), bad)
+        self.assertIn("protected", self.tools.edit(".gitignore", "runs/", "x"))
+        self.assertIn("protected", self.tools.edit("sub/.gitattributes", "keep", "x"))
+        self.assertEqual((self.root / ".gitignore").read_text(), "runs/\n")
+        self.assertEqual((self.root / "sub" / ".gitattributes").read_text(), "keep\n")
+        self.assertEqual((self.tools.written, self.tools.edited), ([], []))
+        self.assertIn("runs/", self.tools.read(".gitignore"))
+        self.assertIn(".gitignore", self.tools.list("."))
+        self.assertTrue(self.tools.write("gitattributes.txt", "x\n").startswith("wrote"))
+
     def test_docs_are_readable_and_never_written(self):
         """seed: docs-protected. The seeds live in the checkout the builder reads: write and edit
         refuse anything under docs/ as protected, list and read still work there."""
@@ -723,17 +739,48 @@ class MainTest(unittest.TestCase):
         real = builder.git
         calls: list[str] = []
 
-        def failing(checkout, *args):
+        def failing(checkout, *args, **kwargs):
             calls.append(args[0])
             if len(calls) == 2:
                 raise subprocess.TimeoutExpired(["git", *args], 60)
-            return real(checkout, *args)
+            return real(checkout, *args, **kwargs)
 
         err = io.StringIO()
         with mock.patch.object(builder, "git", failing), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
         self.assertEqual(code, 2)
         self.assertIn("timed out", err.getvalue())
+        self.assertFalse(self.runs.exists())
+
+    def test_a_run_may_leave_files_named_like_an_option_or_a_revision(self):
+        """seed: terms-checkout-and-tools. A file the run names -x.txt or HEAD is a file to git's
+        diff, not an option or a revision: the patch and the numbers still come."""
+        model = scripted(
+            [call("write", {"path": "-x.txt", "content": "dash\n"}, "c1")],
+            [call("write", {"path": "HEAD", "content": "head\n"}, "c2")],
+            [call("final_result", REPORT, "c3")],
+        )
+        code, lines, run_dir = self.main(model, FakeSandbox([]))
+        self.assertEqual(code, 0)
+        patch = (run_dir / "diff.patch").read_text()
+        self.assertIn("+dash", patch)
+        self.assertIn("+head", patch)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual((numbers["files_changed"], numbers["insertions"]), (2, 2))
+        self.assertNotIn("diff", numbers)
+        self.assertEqual(len(lines), 2)
+
+    def test_gits_refusal_of_a_real_checkout_carries_gits_words(self):
+        """seed: terms-checkout-and-tools. "not a git checkout" is said only when git itself says
+        the directory is no repository; a checkout whose own .git/config is broken is refused
+        with git's words about it, exit 2, the same way at whichever call it fails."""
+        (self.checkout / ".git" / "config").write_text("[core\nbroken\n")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("bad config", err.getvalue())
+        self.assertNotIn("not a git checkout", err.getvalue())
         self.assertFalse(self.runs.exists())
 
     def test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so(self):
