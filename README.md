@@ -22,8 +22,9 @@ checkout. The goal is text, or the path of a seed of the vault, `docs/seeds/<nam
 ending in `.md` is a path, anything with whitespace in it is text. The note is read from the
 checkout's commit, so `head` pins the goal too; its `## Goal` section, read as Markdown (to the
 next heading of level one or two, fenced blocks whole, `%%` comments out), is the goal,
-`seed: <name>` its first line and the name in the record; a path not in the commit, or a note
-without a Goal, is a usage error. Six tools, the only things the model can do: `list(path)`; `read(path, start)` (numbered lines, 300
+`seed: <name>` its first line and the name in the record; a path not in the commit or naming
+an entry that is no file, a note without a Goal or with a `%%` comment left open, and any git
+failure on the way, are usage errors. Six tools, the only things the model can do: `list(path)`; `read(path, start)` (numbered lines, 300
 lines or 32,000 bytes per call); `search(pattern, path)` (plain-text, case-sensitive matches as
 `path:line:text` under a directory, the first 100 lines or 32,000 bytes of them, then how many
 more; files read line by line, those not UTF-8, over 1,000,000 bytes or unreadable skipped and

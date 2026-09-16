@@ -1113,6 +1113,46 @@ class MainTest(unittest.TestCase):
             with self.assertRaises(ValueError, msg=arg):
                 builder.read_seed(self.checkout, arg)
 
+    def test_a_note_with_crlf_lines_reads_as_one_with_lf(self):
+        """seed: formal-input-output. A note whose lines end in CRLF is the same note: its fences
+        close, its headings end the section, and the goal's lines end in LF."""
+        (self.checkout / "docs").mkdir()
+        body = "Show:\n\n```\n# inside\n```\n\nEnd."
+        lf = f"---\ntype: seed\n---\n\n## Goal\n\n{body}\n\n## Idea\n\nNo.\n"
+        (self.checkout / "docs" / "crlf.md").write_bytes(lf.replace("\n", "\r\n").encode())
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "note")
+        self.assertEqual(builder.read_seed(self.checkout, "docs/crlf.md"), (f"seed: crlf\n{body}", "crlf"))
+
+    def test_a_git_failure_reading_the_seed_is_a_usage_error(self):
+        """seed: formal-input-output. A checkout without a commit, or an argument git reads as
+        pathspec magic, is a usage error like any other refusal, exit 2 and no run directory, not
+        a traceback."""
+        empty = Path(self.tmp.name) / "empty"
+        empty.mkdir()
+        git(empty, "init", "-q")
+        for checkout, goal in ((empty, "docs/x.md"), (self.checkout, ":!f.md"), (self.checkout, ":(icase)f.md")):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = builder.main(["builder.py", str(checkout), goal], model=scripted(), sandbox=FakeSandbox([]))
+            self.assertEqual(code, 2, goal)
+            self.assertIn("usage", err.getvalue(), goal)
+        self.assertFalse(self.runs.exists())
+
+    def test_the_section_keeps_its_first_lines_indentation_and_marks_in_indented_code(self):
+        """seed: formal-input-output. Only blank lines are trimmed from the section's ends, so a
+        first line indented four spaces keeps them and is no heading; %% on a line indented four
+        spaces or more, an indented code block, is text like in a fence; the docstring of
+        read_seed names the refusals."""
+        (self.checkout / "docs").mkdir()
+        body = "    ## Changelog\n    a = '%%'\n    b = '%%'\n\nThen stop."
+        (self.checkout / "docs" / "indented.md").write_text(f"---\ntype: seed\n---\n\n## Goal\n\n{body}\n\n## Idea\n\nNo.\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "note")
+        self.assertEqual(builder.read_seed(self.checkout, "docs/indented.md"), (f"seed: indented\n{body}", "indented"))
+        for word in ("link", "%%", "commit"):
+            self.assertIn(word, builder.read_seed.__doc__)
+
     def test_searches_are_counted(self):
         """seed: codebase-context. The numbers count the searches, in the line too."""
         model = scripted([call("search", {"pattern": "x = 1"}, "c1")], [call("final_result", REPORT, "c2")])
