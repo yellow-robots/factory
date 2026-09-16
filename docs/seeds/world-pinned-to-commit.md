@@ -1,6 +1,6 @@
 ---
 type: seed
-status: spec
+status: building
 summary: A run is comparable and reproducible only if the world it ran on is a known commit; record it and refuse a dirty world.
 value: 3
 effort: S

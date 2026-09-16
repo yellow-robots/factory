@@ -556,9 +556,6 @@ class MainTest(unittest.TestCase):
         git(self.world, "init", "-q")
         git(self.world, "add", "f.py")
         git(self.world, "commit", "-q", "-m", "start")
-        (self.world / "staged.txt").write_text("staged\n")
-        git(self.world, "add", "staged.txt")
-        os.symlink("nowhere", self.world / "dangling")
         model = scripted(
             [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
             [call("write", {"path": "new.txt", "content": "hello\nworld\n"}, "c2")],
@@ -576,13 +573,13 @@ class MainTest(unittest.TestCase):
         self.assertIn("-x = 1", patch)
         self.assertIn("new.txt", patch)
         self.assertIn("+hello", patch)
-        self.assertIn("+staged", patch)  # staged but uncommitted changes are part of what the run left
         numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["world_head"], git(self.world, "rev-parse", "HEAD").strip())
         self.assertEqual(numbers["stopped"], "answer")
         self.assertEqual(numbers["check"], "green")
         self.assertEqual((numbers["checks"], numbers["writes"], numbers["edits"]), (1, 1, 1))
-        self.assertEqual(numbers["files_changed"], 4)  # f.py, new.txt, staged.txt, dangling
-        self.assertGreaterEqual(numbers["insertions"], 4)
+        self.assertEqual(numbers["files_changed"], 2)  # f.py, new.txt
+        self.assertGreaterEqual(numbers["insertions"], 3)
         self.assertEqual(numbers["deletions"], 1)
         self.assertEqual(numbers["world"], str(self.world.resolve()))
         self.assertGreaterEqual(numbers["check_seconds"], 0)
@@ -625,6 +622,43 @@ class MainTest(unittest.TestCase):
         self.assertEqual(numbers["stopped"], "error")
         self.assertIn("boom", numbers["detail"])
         self.assertNotIn("detail=", lines[1])
+
+    def test_the_world_head_is_recorded_for_a_git_world(self):
+        """seed: world-pinned-to-commit. A run is comparable only if the world it ran on is a
+        known commit: numbers.json carries the world's HEAD as world_head."""
+        git(self.world, "init", "-q")
+        git(self.world, "add", "f.py")
+        git(self.world, "commit", "-q", "-m", "start")
+        code, lines, run_dir = self.main(scripted(), FakeSandbox([]))
+        self.assertEqual(code, 0)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["world_head"], git(self.world, "rev-parse", "HEAD").strip())
+        self.assertRegex(numbers["world_head"], r"^[0-9a-f]{40}$")
+        self.assertIn(f"world_head={numbers['world_head']}", lines[1])
+
+    def test_a_world_without_git_records_a_null_head(self):
+        """seed: world-pinned-to-commit. A plain directory is a world too; its head is null."""
+        code, lines, run_dir = self.main(scripted(), FakeSandbox([]))
+        self.assertEqual(code, 0)
+        self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["world_head"])
+
+    def test_a_dirty_world_is_refused_before_any_record_exists(self):
+        """seed: world-pinned-to-commit. Uncommitted or untracked changes in a git world are a
+        usage error naming the dirty paths, exit 2, no run directory and no model call: the
+        tests must be committed before a build."""
+        git(self.world, "init", "-q")
+        git(self.world, "add", "f.py")
+        git(self.world, "commit", "-q", "-m", "start")
+        (self.world / "f.py").write_text("x = 2\n")  # modified, tracked
+        (self.world / "stray.txt").write_text("stray\n")  # untracked
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.world), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("usage", err.getvalue())
+        self.assertIn("f.py", err.getvalue())
+        self.assertIn("stray.txt", err.getvalue())
+        self.assertFalse(self.runs.exists())
 
     def test_usage_errors_exit_two(self):
         err = io.StringIO()
