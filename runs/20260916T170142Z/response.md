@@ -1,0 +1,18 @@
+## Changed
+- runs.py
+
+## Did
+- runs.py: inserted the COLUMNS entry "input_per_request" directly after "input_tokens", reflowing the tuple across lines (still fmt: skip) without reordering any other column.
+- runs.py: added _number(value) which returns the value only for int/float (excluding bool) and None otherwise, encoding the 'missing or not a number' rule.
+- runs.py: added _per_request(numbers) computing round(input_tokens / requests) via _field, returning "" when either value is not a number or requests is zero.
+- runs.py: made _cell dispatch the derived "input_per_request" column to _per_request, leaving all stored-key columns (including head/world_head) unchanged.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- The seed's second paragraph (reading the column across the factory's builds, its median per case in a table of evals.py, and a search function or checkout map) names no code or test in this checkout: there is no evals.py, and no test asserts it, so I implemented only the runs.py column that the acceptance tests define.
+- Half-way rounding uses Python's round (banker's rounding); no test exercises a .5 case, so I could not verify which tie direction the seed intends.

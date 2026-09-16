@@ -22,8 +22,8 @@ RUNS = Path(__file__).resolve().parent / "runs"  # the factory's record, beside 
 
 COLUMNS = (
     "stamp", "head", "stopped", "check", "requests", "tool_calls", "lists", "reads", "writes", "edits",
-    "checks", "input_tokens", "cache_read_tokens", "output_tokens", "reasoning_tokens", "cost_usd",
-    "seconds", "files_changed", "insertions", "deletions", "goal",
+    "checks", "input_tokens", "input_per_request", "cache_read_tokens", "output_tokens",
+    "reasoning_tokens", "cost_usd", "seconds", "files_changed", "insertions", "deletions", "goal",
 )  # fmt: skip
 
 
@@ -58,7 +58,24 @@ def _field(value: Any) -> str:
     return text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
 
 
+def _number(value: Any) -> float | None:
+    """`value` as a number, or None when it is absent or not one; a bool is not a number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _per_request(numbers: dict[str, Any]) -> str:
+    """`input_tokens` over `requests`, to the nearest integer; empty when either is unusable or requests is zero."""
+    tokens, requests = _number(numbers.get("input_tokens")), _number(numbers.get("requests"))
+    if tokens is None or requests is None or requests == 0:
+        return ""
+    return _field(round(tokens / requests))
+
+
 def _cell(numbers: dict[str, Any], column: str) -> str:
+    if column == "input_per_request":  # the cost-of-context column is derived, not stored
+        return _per_request(numbers)
     keys = ("head", "world_head") if column == "head" else (column,)
     for key in keys:  # v0.5 renamed the field; older records carry the checkout as world_head
         if key in numbers and numbers[key] is not None:
