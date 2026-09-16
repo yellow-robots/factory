@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: building
+status: done
 summary: A record's wire carries the whole context of every request and is the bulk of runs/; compress it once the build is reviewed and committed.
 value: 2
 effort: S
