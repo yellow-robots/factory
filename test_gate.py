@@ -315,6 +315,22 @@ class CheckTest(GateTest):
         self.edit("docs/backlog.base", BASE)
         self.assertEqual(self.check(), (0, "", ""))
 
+    def test_a_committed_wire_is_compressed(self):
+        """seed: compress-the-wire. A tracked runs/<stamp>/wire.jsonl is a problem naming the
+        record; wire.jsonl.gz is the committed form; an untracked wire is a build not yet
+        reviewed and no problem."""
+        self.edit("runs/20260916T000000Z/wire.jsonl", '{"dir": "request"}\n')
+        self.edit("runs/20260916T000000Z/numbers.json", "{}\n")
+        self.assertEqual(self.check(), (0, "", ""))
+        self.commit("a record, reviewed too soon")
+        self.assert_problem("runs/20260916T000000Z", "wire")
+        git(self.root, "rm", "-q", "runs/20260916T000000Z/wire.jsonl")
+        self.edit("runs/20260916T000000Z/wire.jsonl.gz", "gz\n")
+        self.commit("the wire compressed")
+        self.assertEqual(self.check(), (0, "", ""))
+        self.edit("runs/20260917T000000Z/wire.jsonl", '{"dir": "request"}\n')
+        self.assertEqual(self.check(), (0, "", ""))
+
     def test_templates_are_exempt(self):
         self.edit("docs/templates/seed.md", TEMPLATE_SEED.replace("type: seed", "type: whatever"))
         self.assertEqual(self.check(), (0, "", ""))
