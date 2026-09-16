@@ -318,6 +318,23 @@ class ToolsTest(unittest.TestCase):
         self.assertNotIn("more matches", out)
         self.assertLessEqual(len(out.encode()), builder.SEARCH_BYTES_CAP + 200)
 
+    def test_search_counts_a_directory_it_cannot_list_and_refuses_a_pattern_with_a_newline(self):
+        """seed: codebase-context. A directory that cannot be listed counts once among the entries
+        not searched, since what is under it was not; a pattern with a newline in it is an error,
+        since search matches one line at a time; the docstring says a lone long match is cut."""
+        self.assertIn("cut", Tools.search.__doc__)
+        self.assertTrue(self.tools.search("one\ntwo").startswith("error:"))
+        self.assertTrue(self.tools.search("one\n").startswith("error:"))
+        self.assertEqual(self.tools.search("one"), "a.txt:1:one")
+        if os.geteuid() == 0:
+            self.skipTest("root lists any directory")
+        (self.root / "locked").mkdir()
+        (self.root / "locked" / "t.txt").write_text("one\n")
+        (self.root / "locked").chmod(0)
+        self.addCleanup((self.root / "locked").chmod, 0o755)
+        self.assertEqual(self.tools.search("one"), "a.txt:1:one\n...\t1 files not searched")
+        self.assertTrue(self.tools.list("locked").startswith("error:"))
+
     def test_docs_are_readable_and_never_written(self):
         """seed: docs-protected. The seeds live in the checkout the builder reads: write and edit
         refuse anything under docs/ as protected, list and read still work there."""

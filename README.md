@@ -26,7 +26,8 @@ next heading of level one or two, fenced blocks whole, `%%` comments out), is th
 without a Goal, is a usage error. Six tools, the only things the model can do: `list(path)`; `read(path, start)` (numbered lines, 300
 lines or 32,000 bytes per call); `search(pattern, path)` (plain-text, case-sensitive matches as
 `path:line:text` under a directory, the first 100 lines or 32,000 bytes of them, then how many
-more; files read line by line, those not UTF-8 or over 1,000,000 bytes skipped and counted);
+more; files read line by line, those not UTF-8, over 1,000,000 bytes or unreadable skipped and
+counted, a directory that cannot be listed among them);
 `write(path, content)` (create or replace a file, parents created inside the checkout);
 `edit(path, old, new)` (replace exactly one occurrence of `old`; zero or many is an error naming
 the count); `check()` (the checkout's tests in a container, exit code and the last 60 lines back,
