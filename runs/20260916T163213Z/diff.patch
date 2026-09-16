@@ -1,0 +1,121 @@
+diff --git a/builder.py b/builder.py
+index c0eb273..cb126b5 100644
+--- a/builder.py
++++ b/builder.py
+@@ -24,6 +24,7 @@ import json
+ import os
+ import subprocess
+ import sys
++import tempfile
+ import time
+ from datetime import UTC, datetime
+ from pathlib import Path
+@@ -512,8 +513,14 @@ def git_env() -> dict[str, str]:
+     return env
+ 
+ 
+-def git(checkout: Path, *args: str) -> str:
+-    """Read-only git in the checkout, not one of the tools: the model never sees this."""
++class GitError(RuntimeError):
++    """git ran and exited nonzero: the message carries git's own words."""
++
++
++def git(checkout: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
++    """Read-only git in the checkout, not one of the tools: the model never sees this. A git that
++    exits outside `ok` is an error carrying git's own words; --no-index exits 1 when the files
++    differ, which is the normal case here, and a checkout with no commit answers HEAD with 1."""
+     done = subprocess.run(
+         ["git", "-C", str(checkout), *args],
+         capture_output=True,
+@@ -521,13 +528,15 @@ def git(checkout: Path, *args: str) -> str:
+         errors="replace",
+         timeout=60,
+         env=git_env(),
+-    )  # --no-index exits 1 when the files differ, which is the normal case here
++    )
++    if done.returncode not in ok:
++        raise GitError(done.stderr.strip() or f"git exited {done.returncode}")
+     return done.stdout
+ 
+ 
+ def head(checkout: Path) -> str:
+-    """The checkout's HEAD commit."""
+-    return git(checkout, "rev-parse", "--verify", "-q", "HEAD").strip()
++    """The checkout's HEAD commit; empty only when the checkout has no commit yet."""
++    return git(checkout, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).strip()
+ 
+ 
+ def dirty_paths(checkout: Path) -> list[str]:
+@@ -546,9 +555,12 @@ def record_diff(checkout: Path, run_dir: Path) -> dict[str, Any]:
+     untracked = [entry[3:] for entry in status.split("\0") if entry.startswith("?? ")]
+     # Against HEAD, so a change the run staged is in the patch too; the checkout is always a git
+     # checkout with a commit, so there is always a HEAD. A run that left nothing leaves no patch.
+-    parts = [git(checkout, "diff", "HEAD")]
++    # --no-ext-diff and --no-textconv keep the patch git's own: neither the environment, nor the
++    # configuration, nor a .gitattributes in the checkout can replace it with a program's output.
++    flags = ("--no-ext-diff", "--no-textconv")
++    parts = [git(checkout, "diff", *flags, "HEAD")]
+     for rel in untracked:
+-        parts.append(git(checkout, "diff", "--no-index", "/dev/null", rel))
++        parts.append(git(checkout, "diff", *flags, "--no-index", "/dev/null", rel, ok=(0, 1)))
+     patch = "".join(parts)
+     if patch:
+         (run_dir / "diff.patch").write_text(patch)  # the patch first: counting can fail
+@@ -593,6 +605,28 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+         top = git(checkout, "rev-parse", "--show-toplevel").strip()
+     except FileNotFoundError:
+         return usage_error(f"git is not available: {argv[1]}")
++    except GitError as e:
++        # git ran and refused the directory. A directory that is not a checkout and a git whose own
++        # configuration is broken both refuse `rev-parse`; `git config --list` needs no checkout, so
++        # it tells the two apart. A failure of git's carries git's own words; otherwise the
++        # directory is not a checkout, and a good checkout is never called that for git's failure.
++        try:
++            probe = subprocess.run(
++                ["git", "config", "--list"],
++                cwd=tempfile.gettempdir(),
++                capture_output=True,
++                encoding="utf-8",
++                errors="replace",
++                timeout=60,
++                env=git_env(),
++            )
++        except FileNotFoundError:
++            return usage_error(f"git is not available: {argv[1]}")
++        except (OSError, subprocess.SubprocessError) as probe_error:
++            return usage_error(f"git could not run: {probe_error}")
++        if probe.returncode != 0:
++            return usage_error(str(e))
++        return usage_error(f"not a git checkout: {argv[1]}")
+     except (OSError, subprocess.SubprocessError) as e:
+         return usage_error(f"git could not run: {e}")
+     if not top or Path(top).resolve() != checkout:
+@@ -600,11 +634,17 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+     goal = argv[2].strip()
+     # A build is reproducible only if the checkout it ran on is committed: a dirty git checkout is
+     # a usage error, refused before the run directory or the key is touched.
+-    dirty = dirty_paths(checkout)
++    try:
++        dirty = dirty_paths(checkout)
++    except (OSError, subprocess.SubprocessError, GitError) as e:
++        return usage_error(str(e))
+     if dirty:
+         shown = ", ".join(dirty[:5]) + (" ..." if len(dirty) > 5 else "")
+         return usage_error(f"the checkout has uncommitted or untracked changes: {shown}")
+-    checkout_head = head(checkout)
++    try:
++        checkout_head = head(checkout)
++    except (OSError, subprocess.SubprocessError, GitError) as e:
++        return usage_error(str(e))
+     if not checkout_head:  # a git checkout with no commit has nothing to pin the run to
+         return usage_error(f"the checkout has no commit: {argv[1]}")
+     # The key file holds the bare key, or one `name=value` line as in an env file.
+@@ -633,7 +673,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+         (run_dir / "response.md").write_text(render(report))
+     try:
+         changes = record_diff(checkout, run_dir)
+-    except (OSError, ValueError, subprocess.SubprocessError) as e:  # never lose the record over git
++    except (OSError, ValueError, subprocess.SubprocessError, GitError) as e:  # never lose the record
+         changes = {"diff": f"error: {e}", "files_changed": 0, "insertions": 0, "deletions": 0}
+     miss = usage.input_tokens - usage.cache_read_tokens
+     table = (
