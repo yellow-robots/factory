@@ -1048,6 +1048,54 @@ class MainTest(unittest.TestCase):
             ("seed: commented\nThe real goal.\nIn two lines.\n\n### Details\n\nStill the goal.", "commented"),
         )
 
+    def test_code_keeps_its_comment_marks_and_an_open_comment_is_refused(self):
+        """seed: formal-input-output. %% inside a code span or a fenced block is the note's text,
+        not a comment mark, so a Goal that mentions `%%` in code keeps it whole; a %% comment left
+        open to the end of the note is a usage error, not a comment."""
+        (self.checkout / "docs").mkdir()
+        body = "The `%%` marks are comments; write `%%` in code.\nSecond line.\n\n```\n%%\nnot a comment\n%%\n```\n\nLast line."
+        (self.checkout / "docs" / "spans.md").write_text(f"---\ntype: seed\n---\n\n## Goal\n\n{body}\n\n## Idea\n\nNo.\n")
+        (self.checkout / "docs" / "open.md").write_text("---\ntype: seed\n---\n\n## Goal\n\nThe goal %% and a comment never closed.\n\n## Idea\n\nNo.\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "notes")
+        self.assertEqual(builder.read_seed(self.checkout, "docs/spans.md"), (f"seed: spans\n{body}", "spans"))
+        with self.assertRaises(ValueError):
+            builder.read_seed(self.checkout, "docs/open.md")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "docs/open.md"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("usage", err.getvalue())
+        self.assertFalse(self.runs.exists())
+
+    def test_fences_close_like_markdown_and_indented_lines_are_not_headings(self):
+        """seed: formal-input-output. A fence closes only with the same character and at least as
+        many marks as opened it, so a block of four backticks holds a block of three whole and a
+        backtick block holds tildes; a line indented four spaces is no heading, whatever it starts
+        with, so it stays in the section."""
+        (self.checkout / "docs").mkdir()
+        body = (
+            "Show both:\n\n````md\n```\n## Changelog\n```\n````\n\n```\n~~~\n## Not a heading\n~~~\n```\n\n"
+            "    ## Changelog\n    indented code\n\nEnd."
+        )
+        (self.checkout / "docs" / "fences.md").write_text(f"---\ntype: seed\n---\n\n## Goal\n\n{body}\n\n## Idea\n\nNo.\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "note")
+        self.assertEqual(builder.read_seed(self.checkout, "docs/fences.md"), (f"seed: fences\n{body}", "fences"))
+
+    def test_a_commit_entry_that_is_not_a_file_is_no_seed(self):
+        """seed: formal-input-output. A symbolic link is refused whatever its target's name says,
+        since git show gives a link's target as its bytes; so is a directory."""
+        (self.checkout / "docs").mkdir()
+        (self.checkout / "docs" / "link.md").symlink_to("x\n## Goal\n\nowned\n")
+        (self.checkout / "docs" / "dir.md").mkdir()
+        (self.checkout / "docs" / "dir.md" / "inner.md").write_text("## Goal\n\nowned\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "entries")
+        for arg in ("docs/link.md", "docs/dir.md"):
+            with self.assertRaises(ValueError, msg=arg):
+                builder.read_seed(self.checkout, arg)
+
     def test_searches_are_counted(self):
         """seed: codebase-context. The numbers count the searches, in the line too."""
         model = scripted([call("search", {"pattern": "x = 1"}, "c1")], [call("final_result", REPORT, "c2")])
