@@ -203,6 +203,22 @@ class PlaneTest(unittest.TestCase):
         self.assertTrue(self.plane.write("sub/pyproject.toml", "x\n").startswith("wrote sub/pyproject.toml"))
         self.assertTrue(self.plane.edit("contest.py", "x", "y").startswith("edited contest.py"))
 
+    def test_docs_are_readable_and_never_written(self):
+        """seed: docs-protected. The seeds live in the world the builder reads: write and edit
+        refuse anything under docs/ as protected, list and read still work there."""
+        (self.root / "docs" / "seeds").mkdir(parents=True)
+        (self.root / "docs" / "seeds" / "s.md").write_text("keep\n")
+        for bad in ("docs/seeds/s.md", "docs/new.md", "docs/deeper/still/new.md"):
+            self.assertTrue(self.plane.write(bad, "x\n").startswith("error:"), bad)
+            self.assertIn("protected", self.plane.write(bad, "x\n"), bad)
+        self.assertIn("protected", self.plane.edit("docs/seeds/s.md", "keep", "x"))
+        self.assertEqual((self.root / "docs" / "seeds" / "s.md").read_text(), "keep\n")
+        self.assertFalse((self.root / "docs" / "new.md").exists())
+        self.assertEqual((self.plane.written, self.plane.edited), ([], []))
+        self.assertIn("s.md", self.plane.list("docs/seeds"))
+        self.assertIn("keep", self.plane.read("docs/seeds/s.md"))
+        self.assertTrue(self.plane.write("docsx/free.md", "x\n").startswith("wrote docsx/free.md"))
+
     # v0.3: edit
 
     def test_edit_replaces_exactly_one_occurrence(self):
