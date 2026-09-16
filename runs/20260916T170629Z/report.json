@@ -1,0 +1,19 @@
+{
+ "changed": [
+  "evals.py"
+ ],
+ "did": [
+  "evals.py: added the evaluation harness with main(argv, root=None, model=None, sandbox=None), defaulting root to the directory evals.py is in and handing model/sandbox straight to builder.main.",
+  "evals.py: each case runs N times (3 default, --runs N) in a detached git worktree at HEAD under a temporary directory, with files/ copied in and the one test_*.py copied to the worktree root and committed as `case: <name>` by factory <factory@localhost>, then removed and pruned in a finally even when the builder fails.",
+  "evals.py: the goal handed to builder.main is `case: <name>` on the first line followed by the text of goal.md.",
+  "evals.py: records are discovered by the new directories under builder.RUNS around each builder.main call, and builder's stdout is redirected so the tab-separated table is the only stdout.",
+  "evals.py: prints the COLUMNS header then one row per case in the order given, with runs/green/honest/refused counts, medians (odd middle, even mean, missing numbers omitted, whole without decimal, else 6 places) of requests, tool_calls, edits, checks, input_per_request and diff_lines, cost_usd, seconds, and cost_total as round(sum,6).",
+  "evals.py: exit 0 when every run answered, 1 when any was capped or errored, and 2 on stderr with a usage line for a missing case, a case without goal.md or with not exactly one test_*.py, or --runs that is not a positive integer, validated before any run."
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": [
+  "the seed's closing paragraph assigns the cases/ tree, the full set run and the version note to the attended agent, so evals.py is the whole of this build and no cases/ were added",
+  "behaviour beyond the acceptance tests (e.g. --runs=2 form, a case named twice, an unreadable builder record) was implemented but not exercised by test_evals.py"
+ ]
+}
