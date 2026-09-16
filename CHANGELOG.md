@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.5: checkout, tools and the table
+
+2026-09-16
+
+The words the builder is described with become the ones it works with, checkout and tools, and a checkout is required; the vault gets its born date back and its backlog checked against the template; a reviewed record's wire is compressed; and the records become a table, the first instrument over them.
+
+- `builder.py` works on a checkout with tools: `world` became `checkout` in code, keys and messages, `Plane` became `Tools`, the role says checkout and its hash changed with it; a checkout must be the root of its own git repository with a commit, git runs without the environment's `GIT_DIR` and its kin, and a git that cannot run is a usage error; `plans` left the hidden names; a run that changed nothing leaves no `diff.patch`.
+- Seeds carry `created`, first in the frontmatter, a date the gate requires from open on; the backlog shows it as Born and orders equal ranks by it.
+- The gate checks the backlog's columns, filters, formulas, sorts, groups and summaries against the seed template's fields, reading the base as Obsidian writes it, nested groups and the `note.` prefix included.
+- The gate reports a committed record whose wire is not compressed; the attended agent compresses `wire.jsonl` to `wire.jsonl.gz` at the factory's commit, and the fourteen wires committed before are compressed, 28.5 MB to 7.6 MB.
+- `runs.py` prints the records as one tab-separated table, a row per record with fixed columns, `head` read from the new key or the older `world_head`.
+- Eleven builds for five seeds, all green, about forty-four cents and twenty-four minutes of model time. The rename hit the request cap at its third green check, complete but unreported, after the model wandered through the docs and probed three walls; four follow-ups from review finished it. Nine defects found by six independent reviews became tests and follow-up builds: the code's own text lagging a behaviour change, a subdirectory or a stray `.git` accepted as a checkout, a `git diff` that obeyed the environment's external driver, the record lost to a file named like an option, git's refusals of a real checkout mislabelled, three misreadings of Obsidian's filter shapes, and a table cell that a tab could break. `.gitattributes` and `.gitignore` are protected from the model since then.
+
 ## v0.4: the gate
 
 2026-09-16
