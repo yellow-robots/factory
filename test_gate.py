@@ -227,6 +227,11 @@ class CheckTest(GateTest):
         self.edit("docs/seeds/d.md", SEED_D.replace("status: done", "status: rejected"))
         self.assertEqual(self.check(), (0, "", ""))
 
+    def test_a_rejected_seed_needs_only_the_open_fields(self):
+        """rejected is a way out at any stage, not a stage after done: no version, Goal or test."""
+        self.edit("docs/seeds/a.md", SEED_A.replace("status: open", "status: rejected") + "\nRejected: no run shows it matters.\n")
+        self.assertEqual(self.check(), (0, "", ""))
+
     def test_templates_are_exempt(self):
         self.edit("docs/templates/seed.md", TEMPLATE_SEED.replace("type: seed", "type: whatever"))
         self.assertEqual(self.check(), (0, "", ""))
@@ -324,6 +329,17 @@ class ReleaseTest(GateTest):
         self.edit("test_world.py", TEST_RED_B)
         self.commit("three")
         self.assert_refused("test")
+
+    def test_release_reports_a_tag_it_could_not_create(self):
+        """A stale lock on the ref makes git refuse the tag; the release says so, exits 1 and
+        renders nothing, instead of reporting a release that did not happen."""
+        self.ready()
+        (self.root / ".git" / "refs" / "tags" / "v0.2.lock").write_text("held\n")
+        code, out, _ = self.release()
+        self.assertEqual(code, 1, out)
+        self.assertIn("v0.2", out)
+        self.assertNotIn("v0.2\n", git(self.root, "tag", "-l"))
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
 
     def test_release_refuses_a_note_without_changelog_bullets(self):
         self.ready()
