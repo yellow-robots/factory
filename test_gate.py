@@ -35,7 +35,54 @@ def fm(**fields) -> str:
 
 TEMPLATE_SEED = fm(created='"{{date}}"', type="seed", status="open", summary="", value="", effort="", version="") + "\n## Evidence\n\n## Idea\n"
 TEMPLATE_VERSION = fm(type="version") + "\n# v0.0: name\n\nWhat the version is for.\n\n## Changelog\n\n-\n"
-BASE = 'filters:\n  and:\n    - type == "seed"\nviews:\n  - type: table\n    name: Specs\n'
+BASE = """\
+filters:
+  and:
+    - file.inFolder("seeds")
+    - type == "seed"
+formulas:
+  rank: if(value && effort, (value - if(effort == "S", 0, if(effort == "M", 0.5, 1))).round(1), "")
+properties:
+  status:
+    displayName: Status
+  formula.rank:
+    displayName: Rank
+  created:
+    displayName: Born
+views:
+  - type: table
+    name: Pending
+    filters:
+      or:
+        - status == "open"
+        - status == "spec"
+    order:
+      - file.name
+      - status
+      - formula.rank
+      - created
+    sort:
+      - property: formula.rank
+        direction: DESC
+      - property: created
+        direction: ASC
+  - type: table
+    name: By version
+    groupBy:
+      property: version
+      direction: DESC
+    order:
+      - file.name
+      - summary
+  - type: table
+    name: Specs
+    filters:
+      and:
+        - version == this.file.basename
+    order:
+      - file.name
+      - effort
+"""
 SEED_A = fm(created="2026-09-16", type="seed", status="open", summary="an idea", value=3, effort="S", version="") + (
     "\n## Evidence\n\nRun x, 2026-09-16.\n\n## Idea\n\nDo y, see [[b]].\n"
 )
@@ -245,6 +292,28 @@ class CheckTest(GateTest):
         self.assertEqual(self.check(), (0, "", ""))
         self.edit("docs/seeds/a.md", SEED_A.replace("status: open", "status: rejected").replace("created: 2026-09-16\n", ""))
         self.assert_problem("docs/seeds/a.md", "created")
+
+    def test_the_backlog_names_only_fields_of_the_seed_template(self):
+        """seed: base-against-the-template. Every property the base names in filters, formulas,
+        properties, order, sort and groupBy is a template field; file., formula., this and the
+        function names belong to the language and are never reported."""
+        self.assertEqual(self.check(), (0, "", ""))
+        cases = (
+            (BASE.replace("      - status\n", "      - status\n      - owner\n"), "owner"),
+            (BASE.replace('    - type == "seed"\n', '    - type == "seed"\n    - priority > 3\n'), "priority"),
+            (BASE.replace("if(value && effort,", "if(value && weight,"), "weight"),
+            (BASE.replace("      - property: created\n", "      - property: born\n"), "born"),
+            (BASE.replace("  created:\n    displayName: Born\n", "  stale:\n    displayName: Stale\n"), "stale"),
+            (BASE.replace("      property: version\n", "      property: release\n"), "release"),
+        )
+        for bad, word in cases:
+            self.assertNotEqual(bad, BASE, word)
+            self.edit("docs/backlog.base", bad)
+            out = self.assert_problem("docs/backlog.base", word)
+            self.assertNotIn("file.name", out)
+            self.assertNotIn("basename", out)
+        self.edit("docs/backlog.base", BASE)
+        self.assertEqual(self.check(), (0, "", ""))
 
     def test_templates_are_exempt(self):
         self.edit("docs/templates/seed.md", TEMPLATE_SEED.replace("type: seed", "type: whatever"))
