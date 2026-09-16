@@ -1,0 +1,48 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+ERROR: test_a_git_failure_reading_the_seed_is_a_usage_error (test_builder.MainTest.test_a_git_failure_reading_the_seed_is_a_usage_error)
+seed: formal-input-output. A checkout without a commit, or an argument git reads as
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 1137, in test_a_git_failure_reading_the_seed_is_a_usage_error
+    code = builder.main(["builder.py", str(checkout), goal], model=scripted(), sandbox=FakeSandbox([]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/w/builder.py", line 937, in main
+    goal, seed = read_seed(checkout, argv[2].strip())
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/w/builder.py", line 885, in read_seed
+    if not committed_file(checkout, arg):  # no entry, or a tree, a link or a submodule
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/w/builder.py", line 867, in committed_file
+    entry = git(checkout, "ls-tree", "HEAD", "--", arg).strip()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/w/builder.py", line 640, in git
+    raise GitError(done.stderr.strip() or f"git exited {done.returncode}")
+builder.GitError: fatal: Not a valid object name HEAD
+
+======================================================================
+FAIL: test_the_section_keeps_its_first_lines_indentation_and_marks_in_indented_code (test_builder.MainTest.test_the_section_keeps_its_first_lines_indentation_and_marks_in_indented_code)
+seed: formal-input-output. Only blank lines are trimmed from the section's ends, so a
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 1152, in test_the_section_keeps_its_first_lines_indentation_and_marks_in_indented_code
+    self.assertEqual(builder.read_seed(self.checkout, "docs/indented.md"), (f"seed: indented\n{body}", "indented"))
+AssertionError: Tuples differ: ("seed: indented\n## Changelog\n    a = '\n'\n\nThen stop.", 'indented') != ("seed: indented\n    ## Changelog\n    a = '%%'\n    b = '[26 chars]ted')
+
+First differing element 0:
+"seed: indented\n## Changelog\n    a = '\n'\n\nThen stop."
+"seed: indented\n    ## Changelog\n    a = '%%'\n    b = '%%'\n\nThen stop."
+
+- ("seed: indented\n## Changelog\n    a = '\n'\n\nThen stop.", 'indented')
+?                                                             ------------
+
++ ("seed: indented\n    ## Changelog\n    a = '%%'\n    b = '%%'\n\nThen stop.",
+?                   ++++                      +++   +++++++++++
+
++  'indented')
+
+----------------------------------------------------------------------
+Ran 121 tests in 13.028s
+
+FAILED (failures=1, errors=1)

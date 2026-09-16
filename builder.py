@@ -796,8 +796,9 @@ def _scan_line(line: str, in_comment: bool) -> tuple[str, bool]:
 
 
 def note_text(text: str) -> str:
-    """The note's text with its `%%` comments removed. A mark inside a code span or a fenced code
-    block is the note's text, not a mark, and a comment left open to the end is a usage error."""
+    """The note's text with its `%%` comments removed. A mark inside a code span, a fenced code
+    block or an indented code block (four spaces or more) is the note's text, not a mark, and a
+    comment left open to the end is a usage error."""
     out: list[str] = []
     in_comment = False
     fence: tuple[str, int] | None = None
@@ -812,6 +813,9 @@ def note_text(text: str) -> str:
             if opened is not None:
                 out.append(line)
                 fence = opened
+                continue
+            if line.startswith(("    ", "\t")):  # an indented code block: %% here is text
+                out.append(line)
                 continue
         scanned, in_comment = _scan_line(line, in_comment)
         out.append(scanned)
@@ -858,7 +862,11 @@ def goal_section(text: str) -> str | None:
         if heading(line)[0] in (1, 2):  # the next section ends the text
             break
         section.append(line)
-    return "\n".join(section).strip()
+    while section and not section[0].strip():  # only blank lines: the first line keeps its indent
+        section.pop(0)
+    while section and not section[-1].strip():
+        section.pop()
+    return "\n".join(section)
 
 
 def committed_file(checkout: Path, arg: str) -> bool:
@@ -873,18 +881,22 @@ def read_seed(checkout: Path, arg: str) -> tuple[str, str | None]:
     """The goal argument as the model gets it. One word ending in `.md`, with no whitespace in it,
     names a seed note of the checkout: its text is the commit's, `git show HEAD:<path>`, not the
     working tree's, and the goal is `seed: <name without .md>` then the text of the note's `## Goal`
-    section; the name is the seed. Any other argument is text, the goal as it is and no seed. A
-    `.md` path that leaves the checkout, `..` and absolute paths among them, or names no file of
-    the commit, or a note without a `## Goal` with text under it, raises ValueError, which main
-    turns into a usage error."""
+    section; the name is the seed. Any other argument is text, the goal as it is and no seed.
+
+    Every refusal is a ValueError, which main turns into a usage error: a `.md` path that leaves
+    the checkout, `..` and absolute paths among them; one whose commit entry is no file, a symbolic
+    link or a directory among them; a note the commit does not hold; a note with no `## Goal`
+    section, or none with text under it; and a `%%` comment left open to the end of the note. A git
+    failure reading the seed is such a refusal too -- a checkout without a commit, or a path git
+    reads as pathspec magic -- never a traceback."""
     if not arg.endswith(".md") or any(c.isspace() for c in arg):
         return arg, None
     rel = Path(arg)
     if rel.is_absolute() or ".." in rel.parts:
         raise ValueError(f"not a seed of the checkout: {arg}")
-    if not committed_file(checkout, arg):  # no entry, or a tree, a link or a submodule
-        raise ValueError(f"no such seed in the commit: {arg}")
     try:
+        if not committed_file(checkout, arg):  # no entry, or a tree, a link or a submodule
+            raise ValueError(f"no such seed in the commit: {arg}")
         committed = git(checkout, "show", f"HEAD:{arg}")
     except GitError as e:
         raise ValueError(f"no such seed in the commit: {arg}: {e}") from e
