@@ -49,6 +49,9 @@ views:
       - summary
       - formula.rank
       - effort
+    sort:
+      - property: formula.rank
+        direction: DESC
   - type: table
     name: Specs
     filters:
