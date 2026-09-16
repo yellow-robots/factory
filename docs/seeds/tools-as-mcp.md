@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: Expose the tools as an MCP server so a frontier model in a subscription harness works under the same walls, paid by subscription; two claims to verify first.

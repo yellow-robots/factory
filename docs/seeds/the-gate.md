@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: done
 summary: Every document is an input or output of a loop step and drifts unless a deterministic gate checks it; one script validates the vault, renders the changelog and cuts the tags.

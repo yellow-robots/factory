@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: The check is the test suite and nothing else; a version built the wrong way passes it. Quality checks belong inside check.

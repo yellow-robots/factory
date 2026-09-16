@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: spec
 summary: The backlog's columns are consumers of the seed fields and nothing checks they still exist; the gate should.

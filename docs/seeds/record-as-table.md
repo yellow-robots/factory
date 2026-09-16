@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: spec
 summary: Twelve records and counting; one script that turns every numbers.json into a row is the outcomes panel with no new state anywhere.

@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: done
 summary: The run records are the baseline for every eval and live in an ignored folder on one machine; review them and commit them.

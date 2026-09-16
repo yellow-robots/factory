@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: Can an affordable API model turn a seed into a spec and its red tests, so the attended agent moves up to deciding with the owner?

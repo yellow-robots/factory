@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: done
 summary: A run is comparable and reproducible only if the checkout it ran on is a known commit; record it and refuse a dirty checkout.

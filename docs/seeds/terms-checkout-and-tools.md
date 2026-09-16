@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: done
 summary: world and plane are the observer's words; the builder works on a checkout with tools, and the code, the role and the documents should say so.

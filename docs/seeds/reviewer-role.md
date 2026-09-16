@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: A read-only role pointed at a diff with the goal "find defects", so a build is judged by a cold session before the attended agent reads it.

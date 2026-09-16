@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: Thinking mode ignores temperature, so no run repeats; every eval case needs three runs and its numbers are distributions.

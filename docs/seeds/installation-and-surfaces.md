@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: The factory is a checkout with uv and Docker on one host; how it is installed elsewhere and which checkouts it supports is undecided.

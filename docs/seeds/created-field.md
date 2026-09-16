@@ -1,6 +1,7 @@
 ---
+created: 2026-09-16
 type: seed
-status: building
+status: done
 summary: The date a seed was born is a column the owner reads; it comes back at the top of the frontmatter, with the gate allowing it and checking its shape.
 value: 2
 effort: S

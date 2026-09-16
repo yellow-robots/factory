@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: done
 summary: The seeds now live inside the checkout the builder reads; it must be able to read them and never write them.

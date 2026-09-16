@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: Green is a floor; the diff says what else changed, and the record already holds the numbers to measure it.

@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: Every read stays in the conversation; G1 spent 155k input tokens on three edits, and that curve decides how large a checkout the builder can work in.

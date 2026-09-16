@@ -17,6 +17,8 @@ properties:
     displayName: Effort
   version:
     displayName: Version
+  created:
+    displayName: Born
 views:
   - type: table
     name: Pending
@@ -33,10 +35,11 @@ views:
       - formula.rank
       - value
       - effort
+      - created
     sort:
       - property: formula.rank
         direction: DESC
-      - property: file.name
+      - property: created
         direction: ASC
   - type: table
     name: By version

@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: The builder explores a checkout file by file; a larger checkout needs search and a map, once the cost curve says so.

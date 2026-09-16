@@ -1,4 +1,5 @@
 ---
+created: 2026-09-16
 type: seed
 status: open
 summary: Two runs are a demonstration; a dozen goals on the factory's own code, each probing a known way to fail, each run three times, make the builder measurable.
