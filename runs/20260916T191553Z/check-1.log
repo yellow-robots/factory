@@ -1,0 +1,15 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_search_counts_a_directory_it_cannot_list_and_refuses_a_pattern_with_a_newline (test_builder.ToolsTest.test_search_counts_a_directory_it_cannot_list_and_refuses_a_pattern_with_a_newline)
+seed: codebase-context. A directory that cannot be listed counts once among the entries
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 325, in test_search_counts_a_directory_it_cannot_list_and_refuses_a_pattern_with_a_newline
+    self.assertIn("cut", Tools.search.__doc__)
+AssertionError: 'cut' not found in "Search the checkout for a pattern: every line of every file under `path` that contains\n        `pattern` as plain text, case-sensitive, one match per line as `<path>:<line number>:<text>`.\n        Files come in the order `list` gives and lines in order, numbered as `read` numbers them; at\n        most 100 lines or 32000 bytes per search, then how many more matches were not shown. A file\n        whose bytes are not UTF-8, one larger than 1000000 bytes, or one that cannot be read is\n        skipped, and the result ends with how many files that was.\n\n        Args:\n            pattern: The plain text to find; case-sensitive, and must not be empty.\n            path: The directory to search, relative to the checkout root; '.' is the root.\n        "
+
+----------------------------------------------------------------------
+Ran 118 tests in 12.550s
+
+FAILED (failures=1)
