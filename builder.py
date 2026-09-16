@@ -24,7 +24,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,10 +71,13 @@ IMAGE_TIMEOUT = 600  # seconds for the one image build
 # Hidden at the root because they are what running and installing the program leave behind,
 # not the checkout; .git is the human's record and its hooks run on the host.
 HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git")
-# Refused to write and edit: the tests are the goal's acceptance criteria and the toolchain is
-# what check runs against. A basename glob anywhere, a prefix, or an exact path at the root;
-# the glob is unittest's own discovery pattern, so every file the check collects is covered.
-PROTECTED = ("test*.py", "tests/", "pyproject.toml", "uv.lock", "check.Dockerfile", "docs/")
+# Refused to write and edit: the tests are the goal's acceptance criteria, the toolchain is what
+# check runs against, and a .gitattributes or .gitignore the model wrote would change what git
+# records of the run. A basename glob anywhere, a dotted basename anywhere, a prefix, or an exact
+# path at the root; the glob is unittest's own discovery pattern, so every file the check collects
+# is covered.
+PROTECTED = ("test*.py", "tests/", "pyproject.toml", "uv.lock", "check.Dockerfile", "docs/",
+             ".gitattributes", ".gitignore")  # fmt: skip
 # USD per 1M tokens, peak rates; api-docs.deepseek.com/quick_start/pricing read on 2026-09-15.
 PRICE = {"cache_hit": 0.006, "cache_miss": 0.3, "output": 1.2}
 
@@ -158,8 +160,10 @@ class Tools:
         for pattern in self.protected:
             if pattern.endswith("/"):  # anything under that directory
                 hit = rel == pattern[:-1] or rel.startswith(pattern)
-            elif "*" in pattern:  # that basename, anywhere in the checkout
+            elif "*" in pattern:  # that basename glob, anywhere in the checkout
                 hit = fnmatch.fnmatchcase(name, pattern)
+            elif pattern.startswith("."):  # that dotted basename, anywhere in the checkout
+                hit = name == pattern
             else:  # that exact path at the root, not the basename anywhere
                 hit = rel == pattern
             if hit:
@@ -557,15 +561,17 @@ def record_diff(checkout: Path, run_dir: Path) -> dict[str, Any]:
     # checkout with a commit, so there is always a HEAD. A run that left nothing leaves no patch.
     # --no-ext-diff and --no-textconv keep the patch git's own: neither the environment, nor the
     # configuration, nor a .gitattributes in the checkout can replace it with a program's output.
+    # Every diff ends its options with --, so a file the run names -x.txt or HEAD is a path to git
+    # and not an option or a revision.
     flags = ("--no-ext-diff", "--no-textconv")
-    parts = [git(checkout, "diff", *flags, "HEAD")]
+    parts = [git(checkout, "diff", *flags, "HEAD", "--")]
     for rel in untracked:
-        parts.append(git(checkout, "diff", *flags, "--no-index", "/dev/null", rel, ok=(0, 1)))
+        parts.append(git(checkout, "diff", *flags, "--no-index", "--", "/dev/null", rel, ok=(0, 1)))
     patch = "".join(parts)
     if patch:
         (run_dir / "diff.patch").write_text(patch)  # the patch first: counting can fail
     files = insertions = deletions = 0
-    for line in git(checkout, "diff", "HEAD", "--numstat").splitlines():
+    for line in git(checkout, "diff", "HEAD", "--numstat", "--").splitlines():
         added, removed, _path = line.split("\t", 2)
         files += 1
         insertions += int(added) if added.isdigit() else 0  # "-" for a binary file
@@ -606,25 +612,12 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     except FileNotFoundError:
         return usage_error(f"git is not available: {argv[1]}")
     except GitError as e:
-        # git ran and refused the directory. A directory that is not a checkout and a git whose own
-        # configuration is broken both refuse `rev-parse`; `git config --list` needs no checkout, so
-        # it tells the two apart. A failure of git's carries git's own words; otherwise the
-        # directory is not a checkout, and a good checkout is never called that for git's failure.
-        try:
-            probe = subprocess.run(
-                ["git", "config", "--list"],
-                cwd=tempfile.gettempdir(),
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60,
-                env=git_env(),
-            )
-        except FileNotFoundError:
-            return usage_error(f"git is not available: {argv[1]}")
-        except (OSError, subprocess.SubprocessError) as probe_error:
-            return usage_error(f"git could not run: {probe_error}")
-        if probe.returncode != 0:
+        # git ran and refused the directory. It is no checkout only when git itself says so: a
+        # directory with no repository above it ("not a git repository") and a .git that is not
+        # git's ("invalid gitfile format") are the two such refusals, with no probe. Any other
+        # refusal of git's -- a broken configuration, here or at a later call -- carries git's own
+        # words, exit 2, since a good checkout is not called not a git checkout for git's failure.
+        if not any(s in str(e) for s in ("not a git repository", "invalid gitfile format")):
             return usage_error(str(e))
         return usage_error(f"not a git checkout: {argv[1]}")
     except (OSError, subprocess.SubprocessError) as e:
