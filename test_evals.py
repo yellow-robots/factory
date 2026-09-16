@@ -32,7 +32,8 @@ models.ALLOW_MODEL_REQUESTS = False
 GREEN = {"changed": ["f.py"], "did": ["f.py: x is 2"], "check": "green", "failing": [], "unsure": []}
 COLUMNS = [
     "case", "runs", "green", "honest", "refused", "requests", "tool_calls", "edits", "checks",
-    "input_per_request", "cost_usd", "seconds", "cost_total", "diff_lines",
+    "input_per_request", "cost_usd", "seconds", "cost_total", "diff_lines", "files_changed", "deletions",
+    "stray_files",
 ]
 EDIT = ("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"})
 CHECK = ("check", {})
@@ -226,6 +227,21 @@ class TableTest(EvalsTest):
         self.assertEqual(cells["input_per_request"], median_text([round(n["input_tokens"] / n["requests"]) for n in numbers]))
         self.assertEqual(cells["cost_total"], str(round(sum(n["cost_usd"] for n in numbers), 6)))
         self.assertEqual(cells["diff_lines"], median_text([n["insertions"] + n["deletions"] for n in numbers]))
+        self.assert_root_untouched()
+
+    def test_the_diff_is_measured_against_the_goal(self):
+        """seed: diff-as-measure. files_changed and deletions from the numbers; stray_files the
+        distinct written or edited paths the goal's text names neither by path nor by basename;
+        medians over the runs, after diff_lines."""
+        plays = (EDIT, ("write", {"path": "notes/extra.md", "content": "x\n"}), ("write", {"path": "f.py", "content": "x = 2\n"}), CHECK)
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=player(*plays), sandbox=FakeSandbox([(0, "OK\n")] * 2))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[0][rows[0].index("diff_lines") + 1:], ["files_changed", "deletions", "stray_files"])
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["files_changed"], cells["deletions"], cells["stray_files"], cells["diff_lines"]), ("2", "1", "1", "3"))
+        for record in self.records():
+            numbers = self.numbers(record)
+            self.assertEqual((numbers["written"], numbers["edited"]), (["notes/extra.md", "f.py"], ["f.py"]))
         self.assert_root_untouched()
 
     def test_a_lying_report_is_not_honest_and_a_red_check_is_not_green(self):
