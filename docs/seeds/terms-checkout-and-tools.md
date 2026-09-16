@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: done
+status: building
 summary: world and plane are the observer's words; the builder works on a checkout with tools, and the code, the role and the documents should say so.
 value: 3
 effort: S
@@ -21,3 +21,5 @@ The documents follow after the build, by the attended agent: `README.md`, `AGENT
 From the review of the first build: the module docstring lists `diff.patch (what the run left in the checkout; absent when it left nothing)` and `record_diff`'s docstring says the patch is absent when the run left nothing, since that is what the build made true and the tests pin; the comment above `HIDDEN` no longer speaks of planning; a directory whose `.git` is not git's, a stray file, is refused as `not a git checkout`, and a checkout with no commit as `the checkout has no commit`; the joined patch is bound once; the two docstrings that said `the five functions of the tools` and `Not a function of the tools` say `the five tools` and `not one of the tools`.
 
 From the review of the second build: a checkout is the root of its own repository, which `git rev-parse --show-toplevel` run in it must name, and git runs with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` removed from its environment, so a subdirectory of a repository, with or without a `.git` of its own, and a directory the environment points elsewhere are refused as `not a git checkout`, while a worktree, whose `.git` is a file, is a checkout; a git that cannot run before the run is a usage error naming git, never a traceback; the comment above the guard explains both its halves; the module docstring says `reachable only through five tools` and no longer names a version.
+
+From the review of the third build: the two diffs of `record_diff` run with `--no-ext-diff` and `--no-textconv`, so neither the environment, nor the configuration, nor a `.gitattributes` in the checkout can replace the patch with a program's output; a git that ran and failed before the run directory exists, whichever call it was, is a usage error carrying git's own message, exit 2, and a good checkout is not called `not a git checkout` for a failure of git's.

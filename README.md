@@ -16,7 +16,7 @@ Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.t
 a git worktree; a directory that is not a git checkout, and a checkout with uncommitted or untracked
 changes, are refused with a usage error, exit 2, before any record exists, so a build always
 runs on a known commit. The run record lands under the factory's own `runs/`, never in the
-checkout. Five functions, the only things the model
+checkout. Five tools, the only things the model
 can do: `list(path)`; `read(path, start)` (numbered lines, 300 lines or 32,000 bytes per call);
 `write(path, content)` (create or replace a file, parents created inside the checkout);
 `edit(path, old, new)` (replace exactly one occurrence of `old`; zero or many is an error naming

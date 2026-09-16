@@ -687,6 +687,55 @@ class MainTest(unittest.TestCase):
         self.assertIn("git", err.getvalue())
         self.assertFalse(self.runs.exists())
 
+    def test_the_patch_is_gits_own_whatever_the_environment_or_the_attributes_say(self):
+        """seed: terms-checkout-and-tools. GIT_EXTERNAL_DIFF, a diff.external in the configuration
+        and a textconv driver named by a .gitattributes the model could write cannot replace
+        diff.patch with a program's output."""
+        spy = Path(self.tmp.name) / "spy.sh"
+        spy.write_text("#!/bin/sh\necho not a patch\n")
+        spy.chmod(0o755)
+        config = Path(self.tmp.name) / "gitconfig"
+        config.write_text(f'[diff "spy"]\n\ttextconv = {spy}\n[diff]\n\texternal = {spy}\n')
+        (self.checkout / ".gitattributes").write_text("f.py diff=spy\n")
+        git(self.checkout, "add", ".gitattributes")
+        git(self.checkout, "commit", "-q", "-m", "attributes")
+        model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")], [call("final_result", REPORT, "c2")])
+        with mock.patch.dict(os.environ, {"GIT_EXTERNAL_DIFF": str(spy), "GIT_CONFIG_GLOBAL": str(config)}):
+            code, lines, run_dir = self.main(model, FakeSandbox([]))
+        self.assertEqual(code, 0)
+        patch = (run_dir / "diff.patch").read_text()
+        self.assertIn("+x = 2", patch)
+        self.assertNotIn("not a patch", patch)
+
+    def test_git_that_fails_before_the_run_reports_its_own_words(self):
+        """seed: terms-checkout-and-tools. A git that ran and failed before the run directory
+        exists, whichever call it was, is a usage error carrying git's message, exit 2; a good
+        checkout is not called "not a git checkout" for a failure of git's."""
+        bad = Path(self.tmp.name) / "bad.gitconfig"
+        bad.write_text("[core\nbroken\n")
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(bad)}), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("bad config", err.getvalue())
+        self.assertNotIn("not a git checkout", err.getvalue())
+        self.assertFalse(self.runs.exists())
+        real = builder.git
+        calls: list[str] = []
+
+        def failing(checkout, *args):
+            calls.append(args[0])
+            if len(calls) == 2:
+                raise subprocess.TimeoutExpired(["git", *args], 60)
+            return real(checkout, *args)
+
+        err = io.StringIO()
+        with mock.patch.object(builder, "git", failing), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("timed out", err.getvalue())
+        self.assertFalse(self.runs.exists())
+
     def test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so(self):
         """seed: terms-checkout-and-tools. record_diff writes diff.patch only when the run changed
         something, and the code's own text says so."""
