@@ -1,0 +1,18 @@
+## Changed
+- builder.py
+
+## Did
+- In builder.py replaced `checkout` with `tree` in the Tools class docstring (Tools.__doc__).
+- In builder.py replaced `checkout` with `tree` in Tools.list.__doc__, Tools.read.__doc__, Tools.write.__doc__, Tools.edit.__doc__ and Tools.check.__doc__.
+- In builder.py replaced `checkout` with `tree` in the Sandbox class docstring and in Sandbox.image.__doc__ and Sandbox.run.__doc__.
+- In builder.py replaced `checkout` with `tree` in the git helper docstrings git.__doc__, head.__doc__, dirty_paths.__doc__ and record_diff.__doc__.
+- Left the module docstring (builder.__doc__), the ROLE text, all code identifiers/parameters and all comments with `checkout` untouched, as required.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- (none)

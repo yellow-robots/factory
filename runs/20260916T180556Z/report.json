@@ -1,0 +1,20 @@
+{
+ "changed": [
+  "builder.py"
+ ],
+ "did": [
+  "builder.py: the class docstrings now say tree, e.g. Tools (\"what the model can do to the tree\") and Sandbox (\"Where the tree's tests run ... the tree mounted read-only\").",
+  "builder.py: the method docstrings of Tools.list, Tools.read, Tools.write and Tools.edit now say tree, including the `path` argument lines (\"relative to the tree root\").",
+  "builder.py: the Tools.check docstring now says tree (\"Run the tree's tests ... with the tree read-only ... on the tree as it is on disk\"), keeping the wording of the cap sentence test_builder asserts.",
+  "builder.py: the Sandbox.image and Sandbox.run docstrings now say tree (\"The image name for this tree\", \"The tree's tests, once\").",
+  "builder.py: the git helpers' docstrings now say tree: git, head, dirty_paths and record_diff, keeping the phrases tests pin (\"not one of the tools\", \"absent when the run left nothing\").",
+  "builder.py: the BuildReport class docstring now says tree, since it is a class docstring and held the word checkout.",
+  "builder.py: the module docstring, the ROLE text, all code (parameter names, numbers.json's \"checkout\" key, error strings) and all comments keep checkout, as the goal requires."
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": [
+  "Whether BuildReport's docstring was meant to be in scope: it is a class docstring containing the word, so I renamed it; no test asserts either way.",
+  "Sandbox.ensure_image's docstring and git_env/git_refusal's have no occurrence of the word, so a rename leaves them unchanged; I did not add the word tree to them."
+ ]
+}
