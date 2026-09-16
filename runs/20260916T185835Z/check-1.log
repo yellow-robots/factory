@@ -1,0 +1,44 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+ERROR: test_search_skips_files_over_a_size_cap_counts_the_files_it_skips_and_numbers_lines_like_read (test_builder.ToolsTest.test_search_skips_files_over_a_size_cap_counts_the_files_it_skips_and_numbers_lines_like_read)
+seed: codebase-context. A file larger than SEARCH_FILE_CAP bytes is not searched, like one
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 290, in test_search_skips_files_over_a_size_cap_counts_the_files_it_skips_and_numbers_lines_like_read
+    self.assertIn(str(builder.SEARCH_FILE_CAP), Tools.search.__doc__)
+                      ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'builder' has no attribute 'SEARCH_FILE_CAP'. Did you mean: 'SEARCH_LINES_CAP'?
+
+======================================================================
+FAIL: test_search_finds_lines_by_path_and_number_across_the_checkout (test_builder.ToolsTest.test_search_finds_lines_by_path_and_number_across_the_checkout)
+seed: codebase-context. Plain-text, case-sensitive matches as path:line:text, files in
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 256, in test_search_finds_lines_by_path_and_number_across_the_checkout
+    self.assertEqual(self.tools.search("two"), "a.txt:2:two\n...\t1 files not searched")
+AssertionError: 'a.txt:2:two' != 'a.txt:2:two\n...\t1 files not searched'
+  a.txt:2:two
++ ...	1 files not searched
+
+
+======================================================================
+FAIL: test_search_shows_the_first_matches_and_cuts_a_lone_match_longer_than_the_cap (test_builder.ToolsTest.test_search_shows_the_first_matches_and_cuts_a_lone_match_longer_than_the_cap)
+seed: codebase-context. The matches shown are the first in order: the first match that
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 310, in test_search_shows_the_first_matches_and_cuts_a_lone_match_longer_than_the_cap
+    self.assertEqual(shown, [f"alt.txt:{i + 1}:{lines[i]}" for i in range(len(shown))])  # a prefix of the matches
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['alt[30667 chars]txt:32:s needle', 'alt.txt:34:s needle', 'alt.[518 chars]dle'] != ['alt[30667 chars]txt:31:wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww[26505 chars]dle']
+
+First differing element 30:
+'alt.txt:32:s needle'
+'alt.txt:31:wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww[1964 chars]edle'
+
+Diff is 57899 characters long. Set self.maxDiff to None to see it.
+
+----------------------------------------------------------------------
+Ran 114 tests in 11.343s
+
+FAILED (failures=2, errors=1)

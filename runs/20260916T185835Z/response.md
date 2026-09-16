@@ -1,0 +1,19 @@
+## Changed
+- builder.py
+
+## Did
+- builder.py: added SEARCH_FILE_CAP = 1_000_000 next to the other search caps.
+- builder.py: rewrote Tools.search to check each file's size first and count oversized, non-UTF-8, and unreadable files as `...\t<n> files not searched`, appended after the matches or after `no matches`.
+- builder.py: changed Tools.search line splitting from str.splitlines() to text-mode iteration with universal newlines so line numbers match read's (a form feed starts no new line).
+- builder.py: made Tools.search stop showing at the first match that does not fit the byte cap, count the rest for the `...\t<n> more matches not shown` trailer, and cut-and-mark a lone oversized match when nothing has been shown.
+- builder.py: extended the Tools.search docstring to state the 1000000-byte file cap alongside the existing line and byte caps.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- A file that decodes cleanly up to some line and then holds invalid UTF-8 is skipped whole and its already-seen matches are discarded; no test exercises that case, so the exact intended timing is inferred from 'files whose bytes are not UTF-8 are skipped'.
+- When both a `more matches not shown` trailer and a `files not searched` trailer apply, I put files-not-searched last per the spec's 'the result then ends with'; no test covers both together.
