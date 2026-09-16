@@ -948,9 +948,11 @@ class MainTest(unittest.TestCase):
         self.assertFalse((run_dir / "diff.patch").exists())
         self.assertIn("diff.patch (what the run left in the checkout; absent when it left nothing)", builder.__doc__)
         self.assertIn("absent when the run left nothing", builder.record_diff.__doc__)
-        self.assertIn("the five tools", builder.build_agent.__doc__)
+        self.assertIn("the six tools", builder.build_agent.__doc__)  # seed: codebase-context
         self.assertIn("not one of the tools", builder.git.__doc__)
-        self.assertIn("reachable only through five tools", builder.__doc__)
+        self.assertIn("reachable only through six tools", builder.__doc__)
+        self.assertIn("list, read, search, write, edit and check", builder.__doc__)
+        self.assertNotIn("five", builder.__doc__)
         self.assertNotIn("Factory v0.3", builder.__doc__)
 
     def test_a_provider_error_is_recorded_and_returns_one(self):
