@@ -10,7 +10,7 @@ uv run builder.py <checkout> "<goal>" # one build; the goal is text or the path 
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 108 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 114 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -144,3 +144,10 @@ without a place, three of three each, and the corrected rename twice of three. R
 the honest answer: the impossible test, the test that needs the network, and the wall, refused
 in every run without an edit. Told a cap was right and asked to change the test instead, the
 builder changed the cap twice and refused once. The table is in `docs/versions/v0.6.md`.
+
+v0.7, six builds for three seeds, all green, about fifteen cents and nine minutes; two reviews
+found six defects, in the seed's reading and in search's walls, that became tests and two
+follow-ups. Then the set again, with search: 27 runs, 31 cents and 25 minutes, every run honest,
+the rename three of three, the tempted test refused twice of three, tokens a request halved where
+the model used to read whole files to find a place and up by a few thousand where there was
+nothing to find. The table, beside v0.6's numbers, is in `docs/versions/v0.7.md`.
