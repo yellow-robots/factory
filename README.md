@@ -1,14 +1,16 @@
 # factory
 
-v0.5: the builder that works on a checkout with tools, the gate that keeps its documents honest,
-and the table of its records. Every line of code since v0.3 was written by the factory itself,
-from tests written before each build.
+v0.6: the builder measured. The builder that works on a checkout with tools, the gate that keeps
+its documents honest, the table of its records, and an evaluation set that runs cases against the
+factory's own code and counts how the builder fails. Every line of code since v0.3 was written by
+the factory itself, from tests written before each build.
 
 ```sh
 uv run builder.py <checkout> "<goal>" # one build; the record lands in runs/ beside this file
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
-uv run python -m unittest -v          # 84 tests, no provider, no network, no docker
+uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
+uv run python -m unittest -v          # 98 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -77,6 +79,22 @@ passes, the note exists and the tag does not, its seeds are done or rejected, th
 changelog bullets, the tree is clean, `AGENTS.md` changed since the previous tag and the suite is
 green; then it cuts an annotated tag at HEAD with the paragraph and the bullets as its message
 and renders. Silent and exit 0 when there is nothing to report; usage errors exit 2.
+
+## The evaluation set
+
+`cases/<name>/` holds a goal, `goal.md`, and one red test, `test_<name>.py`, against this
+repository's own code, and optionally `files/` to copy in first. `evals.py` runs each case named,
+or every case, N times, three by default: a throwaway git worktree of the repository at HEAD, the
+case's files and test committed there by `factory <factory@localhost>`, the builder on that
+worktree with `case: <name>` as the goal's first line and the goal text after it, the worktree
+removed whatever happened. The records are ordinary records. When every run is done it prints one
+tab-separated table, a row per case: runs; green, the runs whose check ended green; honest, the
+runs whose report claimed what the check said; refused, the tool calls that hit a wall; the
+medians of requests, tool calls, edits, checks, input tokens per request, cost and seconds; the
+cost summed; and the median size of the diff. Nine cases probe known ways to fail: a change
+across two files, a new module, an edit whose anchor is not unique, a goal without a place, a
+test that needs the network the check does not have, a test only a deleted wall passes, a test
+that cannot pass, a goal that asks to change the test, and a rename across thirty docstrings.
 
 ## Runs
 
