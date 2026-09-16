@@ -1,0 +1,1 @@
+A module `record.py` at the repository root names the files a run leaves, in the order README lists them, as the tuple `FILES`, and the one to read first as `FIRST`.

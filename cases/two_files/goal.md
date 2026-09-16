@@ -1,0 +1,1 @@
+The usage lines of gate.py and runs.py say how the programs are run, `uv run gate.py check|render|release <version>` and `uv run runs.py`, as README does.
