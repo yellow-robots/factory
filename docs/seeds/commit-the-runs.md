@@ -1,6 +1,6 @@
 ---
 type: seed
-status: spec
+status: done
 summary: The run records are the baseline for every eval and live in an ignored folder on one machine; review them and commit them.
 value: 4
 effort: S

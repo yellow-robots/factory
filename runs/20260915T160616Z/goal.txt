@@ -1,0 +1,1 @@
+wire.jsonl stores every request and response body as a string today. Change Wire in builder.py so that a body that parses as JSON is recorded as the parsed JSON value, so the record can be read without a second json.loads, and a body that does not parse as JSON stays the text it was. The tests in test_builder.py (WireTest) are the acceptance criteria and cannot be changed.

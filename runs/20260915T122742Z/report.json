@@ -1,0 +1,59 @@
+{
+ "looked_at": [
+  ".",
+  "README.md",
+  "pyproject.toml",
+  "observer.py",
+  "observer.py (start=301)",
+  "test_observer.py"
+ ],
+ "found": [
+  "observer.py line 2-12: the file's docstring calls it 'The observer: a cold session that looks at a world and reports. Factory v0.2', run as `uv run observer.py \"<goal>\"`.",
+  "observer.py line 6-8: the world is the directory the file lives in, reachable only through two functions, list and read; the run record under runs/ is not part of the world.",
+  "observer.py lines 46-48: WORLD is the directory containing observer.py; RUNS is WORLD/'runs'; KEY_FILE is ~/.config/factory/deepseek.key.",
+  "observer.py line 49: MODEL = 'deepseek-flash'; line 50 LIBRARY = 'pydantic-ai-slim ' + installed version.",
+  "observer.py lines 51-55 and 260-264: the model is built as OpenAIChatModel with DeepSeekProvider and an OpenAIModelProfile that sets supports_thinking=True, openai_reasoning_enabled_by_default=True, openai_supports_forced_tool_choice_with_thinking=False; model settings temperature=0, timeout=180.",
+  "observer.py lines 62-87: ROLE instructs the model to explore the world with list and read and return a report through the final_result function with four sections (Looked at, Found, Missing, Unsure), facts only, each Found claim naming its path.",
+  "observer.py lines 90-99: the output type is a pydantic model Report with fields looked_at, found, missing, unsure, each a list of strings.",
+  "observer.py lines 116-195: the Plane exposes exactly two operations, list(path) and read(path, start); list returns one line per entry as kind, size, path; read returns numbered lines.",
+  "observer.py lines 126-133: _resolve rejects any path resolving outside the world root ('outside the world') and any path whose first segment is in HIDDEN ('not part of the world').",
+  "observer.py line 58: HIDDEN = ('runs', '.claude', '__pycache__', '.venv', 'plans'); lines 147-148 filter these from a root listing.",
+  "observer.py lines 51-55: TOOL_CALLS_CAP=40 tool calls per run, REQUEST_CAP=60 provider requests per run, LIST_CAP=500 entries per list, READ_LINES_CAP=300 lines per read, READ_BYTES_CAP=32000 bytes per read.",
+  "observer.py lines 180-188: a read stops at 300 lines or 32000 bytes and emits '... truncated; continue with start=<n>'; a single line longer than the byte cap is cut at 32000 bytes with a note.",
+  "observer.py lines 156-157 and 191-192: a ValueError, OSError or RuntimeError (symlink loop) from list or read is returned as an 'error: ...' string, not raised; test_observer.py lines 66-72, 85-93 assert these error cases.",
+  "observer.py lines 90-113: render() emits four markdown headings in the order Looked at, Found, Missing, Unsure, one bullet per item, and '(none)' for an empty section.",
+  "observer.py lines 285-301: run() catches UsageLimitExceeded as stopped='cap' and UnexpectedModelBehavior/ModelAPIError as stopped='error'; in those cases the report is None.",
+  "observer.py lines 308-311: main requires exactly one non-empty argument, else prints usage and returns 2.",
+  "observer.py lines 313-324: main reads the key from KEY_FILE, taking the text after the last '=' if present, stripped of quotes; it creates runs/<utc-stamp> (or <stamp>-N on collision) and writes goal.txt.",
+  "observer.py lines 267-282: build_agent registers the two plane functions as tools, output_type=Report, and retries={'tools': 1, 'output': 2}.",
+  "observer.py lines 198-252: a Wire class wraps an httpx2.AsyncClient with request/response event hooks that append each attempt as JSONL with url, method, status, headers and body; SECRET_HEADERS ('authorization', 'x-api-key', 'cookie', 'set-cookie', 'proxy-authorization') are recorded as '<redacted>'.",
+  "observer.py lines 333-336: each run writes messages.json always, and report.json plus response.md only when a report exists.",
+  "observer.py lines 337-367: numbers.json records model, role/wrapper sha256 hashes, library, stopped, requests, wire_attempts, tool_calls, token counts, cost_usd, cost_source, lists, reads, files_read, lines_read, seconds; detail is added only when the run stopped for a reason.",
+  "observer.py lines 59-60, 343-344, 359: PRICE holds USD-per-1M-token rates (cache_hit 0.006, cache_miss 0.3, output 1.2) dated 2026-09-15; comment at line 343 states genai-prices has no deepseek-flash row, so the local table is the fallback cost_source='table'.",
+  "observer.py lines 368-372: main prints the run directory and one line of key=value numbers, prints the stop detail to stderr, and returns 0 if stopped=='answer' else 1.",
+  "test_observer.py lines 1-28: tests exercise the plane, render, the loop and main with FunctionModel, with models.ALLOW_MODEL_REQUESTS = False (no provider).",
+  "test_observer.py lines 139-180: tests assert tool calls are executed and final_result ends the run, that a model that never stops hits TOOL_CALLS_CAP with report None, that a plain-text answer is retried as report JSON by the library, and that a provider error stops the run without a report.",
+  "pyproject.toml: project name 'factory', version '0.0.0' as a PEP 621 placeholder (comment says the version of record is the git tag), requires-python '>=3.12', dependency 'pydantic-ai-slim[openai]==2.43.0'.",
+  "README.md lines 2-19: describes v0.1 'the observer, a cold session that looks at a world and reports', run as `python3 observer.py \"<goal>\"` or `python3 -m unittest -v`, and says a run leaves runs/<utc-stamp>/ with goal.txt, transcript.jsonl, response.md, numbers.json.",
+  "README.md line 10-12: the provider is DeepSeek (deepseek-flash) with the key in ~/.config/factory/deepseek.key, either the bare key or one name=value line."
+ ],
+ "missing": [
+  "The program cannot write to or change the world: the only tools registered are plane.list and plane.read (observer.py lines 275-282); there is no tool that creates, edits or deletes files.",
+  "It cannot reach anything outside the directory it lives in: _resolve rejects paths leaving the world root and marks them 'outside the world' (observer.py lines 128-129).",
+  "It cannot see the entries named in HIDDEN ('runs', '.claude', '__pycache__', '.venv', 'plans') at the world root, nor read into them (observer.py lines 58, 131-132, 147-148).",
+  "It cannot see more than LIST_CAP=500 entries in one listing, nor read more than 300 lines or 32000 bytes in one read (observer.py lines 53-55, 150-155, 181-188).",
+  "It cannot produce a report when a run exceeds TOOL_CALLS_CAP=40 tool calls or REQUEST_CAP=60 requests: run() returns report None with stopped='cap' (observer.py lines 51-52, 297-298; test_observer.py lines 169-180).",
+  "It cannot produce a report when the provider fails: ModelAPIError/UnexpectedModelBehavior give report None with stopped='error' (observer.py lines 299-300; test_observer.py lines 199-208).",
+  "It cannot run without the goal as a single non-empty command-line argument: otherwise main prints usage and returns 2 (observer.py lines 309-311).",
+  "It cannot run without a DeepSeek API key file at ~/.config/factory/deepseek.key; main reads that file unconditionally (observer.py lines 314, 48).",
+  "No file in the world states what the program is for beyond describing the observer itself; there is no specification, design doc or plan file present (root listing shows only .git, .gitignore, LICENSE, README.md, observer.py, pyproject.toml, test_observer.py, uv.lock)."
+ ],
+ "unsure": [
+  "The version is inconsistent across the world: README.md line 3 says 'v0.1', observer.py line 2 says 'Factory v0.2', pyproject.toml says version 0.0.0 is a placeholder with the git tag as the version of record; I could not determine the actual version from these files.",
+  "The run-record file names disagree: README.md lines 15-17 name goal.txt, transcript.jsonl, response.md, numbers.json, while observer.py docstring lines 9-11 and main lines 324-367 write goal.txt, wire.jsonl, messages.json, report.json, response.md, numbers.json; I could not determine which list is current.",
+  "The run command disagrees: README.md lines 6-7 use `python3 observer.py`, while observer.py line 4 and its docstring use `uv run observer.py`; I could not tell which is intended.",
+  "I did not read uv.lock, LICENSE, .gitignore or .git, so I cannot state what they contain or whether they bear on the goal.",
+  "Whether the program behaves as its comments claim against the live DeepSeek API — the PROFILE comment (observer.py lines 255-259) about a 400 'Thinking mode does not support this tool_choice' — cannot be determined from the files; the tests use FunctionModel and set ALLOW_MODEL_REQUESTS=False.",
+  "The PRICE constants' accuracy cannot be verified from the world; observer.py line 59 cites api-docs.deepseek.com pricing read on 2026-09-15, a source outside the world."
+ ]
+}

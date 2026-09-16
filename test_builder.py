@@ -692,5 +692,16 @@ class WireTest(unittest.TestCase):
         self.assertNotIn("not-a-key", self.path.read_text())
 
 
+class RepositoryTest(unittest.TestCase):
+    """The repository the factory lives in, as its own suite sees it."""
+
+    def test_the_run_records_are_tracked(self):
+        """seed: commit-the-runs. The records are the baseline of every eval, so the ignore file
+        no longer hides them from git; the builder's world hides them regardless (PlaneTest)."""
+        ignored = (Path(builder.__file__).parent / ".gitignore").read_text().splitlines()
+        self.assertNotIn("runs/", ignored)
+        self.assertNotIn("runs", ignored)
+
+
 if __name__ == "__main__":
     unittest.main()
