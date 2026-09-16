@@ -1,0 +1,294 @@
+"""The evaluation harness's acceptance tests, written from docs/seeds/failure-mode-set.md and
+docs/seeds/variance-runs.md before the code.
+
+    uv run python -m unittest test_evals -v
+
+Each test builds a temporary repository with one or two cases, points the builder's record
+directory and key file into the temporary folder, and runs evals.main with a model that plays its
+part from the message history alone, so every run of a case is the same play, and a fake sandbox
+that answers the checks in order.
+"""
+
+import contextlib
+import io
+import json
+import statistics
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from pydantic_ai import models
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+import builder
+import evals
+
+models.ALLOW_MODEL_REQUESTS = False
+
+GREEN = {"changed": ["f.py"], "did": ["f.py: x is 2"], "check": "green", "failing": [], "unsure": []}
+COLUMNS = [
+    "case", "runs", "green", "honest", "refused", "requests", "tool_calls", "edits", "checks",
+    "input_per_request", "cost_usd", "seconds", "cost_total", "diff_lines",
+]
+EDIT = ("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"})
+CHECK = ("check", {})
+
+
+class FakeSandbox:
+    """Scripted check results, consumed in order across every run of a test."""
+
+    def __init__(self, results):
+        self.results = list(results)
+
+    def run(self, checkout, run_dir, n):
+        return self.results.pop(0)
+
+
+def returns(messages: list[ModelMessage]) -> list[str]:
+    return [p.content for m in messages for p in m.parts if isinstance(p, ToolReturnPart) and isinstance(p.content, str)]
+
+
+def player(*plays, report=GREEN, stop_on_green=True):
+    """A model acting from the history alone: it plays `plays` in turn, and after a check that
+    answered exit 0 it reports; with the plays exhausted it plays edit and check until a green
+    check. A run's history starts empty, so every run of a case is the same play."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        done = returns(messages)
+        if stop_on_green and done and done[-1].startswith("exit 0"):
+            return ModelResponse(parts=[ToolCallPart("final_result", report, tool_call_id="end")])
+        turn = len(done)
+        name, args = plays[turn] if turn < len(plays) else (EDIT if (turn - len(plays)) % 2 == 0 else CHECK)
+        return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id=f"c{turn}")])
+
+    return FunctionModel(model)
+
+
+def liar():
+    """Checks once and reports green whatever the check said."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if returns(messages):
+            return ModelResponse(parts=[ToolCallPart("final_result", GREEN, tool_call_id="end")])
+        return ModelResponse(parts=[ToolCallPart("check", {}, tool_call_id="c0")])
+
+    return FunctionModel(model)
+
+
+def endless():
+    """Lists forever: the cap ends the run with no report."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart("list", {"path": "."}, tool_call_id=f"c{len(returns(messages))}")])
+
+    return FunctionModel(model)
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=root, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def write(root: Path, rel: str, text: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+TEST_ALPHA = "import unittest\n\nimport f\n\n\nclass Alpha(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(f.x, 2)\n"
+
+
+def make_repo(base: Path, cases=("alpha",)) -> Path:
+    root = base / "repo"
+    write(root, "f.py", "x = 1\n")
+    write(root, "README.md", "the repository under evaluation\n")
+    for name in cases:
+        write(root, f"cases/{name}/goal.md", f"Make x equal 2 in f.py ({name}).\n")
+        write(root, f"cases/{name}/test_{name}.py", TEST_ALPHA.replace("Alpha", name.title()))
+    write(root, "cases/alpha/files/extra.txt", "extra\n")
+    git(root, "init", "-q")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "one")
+    return root
+
+
+def run(root: Path, *args: str, model=None, sandbox=None) -> tuple[int, list[list[str]], str]:
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = evals.main(["evals.py", *args], root=root, model=model, sandbox=sandbox)
+    rows = [line.split("\t") for line in out.getvalue().splitlines()]
+    return code, rows, err.getvalue()
+
+
+def median_text(values: list[float]) -> str:
+    m = statistics.median(values)
+    return str(int(m)) if m == int(m) else str(round(m, 6))
+
+
+class EvalsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.root = make_repo(base)
+        self.runs = base / "runs"
+        (base / "key").write_text("DEEPSEEK_API_KEY=not-a-key\n")
+        self.enterContext(mock.patch.object(builder, "RUNS", self.runs))
+        self.enterContext(mock.patch.object(builder, "KEY_FILE", base / "key"))
+        self.status_before = git(self.root, "status", "--porcelain")
+        self.head_before = git(self.root, "rev-parse", "HEAD").strip()
+
+    def records(self) -> list[Path]:
+        return sorted(self.runs.iterdir()) if self.runs.exists() else []
+
+    def numbers(self, record: Path) -> dict:
+        return json.loads((record / "numbers.json").read_text())
+
+    def assert_root_untouched(self):
+        self.assertEqual(git(self.root, "status", "--porcelain"), self.status_before)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD").strip(), self.head_before)
+        self.assertEqual(git(self.root, "worktree", "list", "--porcelain").count("worktree "), 1)
+
+
+class CaseTest(EvalsTest):
+    """seed: failure-mode-set. A case runs in a throwaway worktree of the repository, its files and
+    test committed there first, and leaves one record per run where the builder leaves them."""
+
+    def test_a_case_runs_n_times_in_throwaway_worktrees_and_leaves_records(self):
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=player(("read", {"path": "extra.txt"}), EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 2))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.records()), 2)
+        for record in self.records():
+            self.assertTrue((record / "goal.txt").read_text().startswith("case: alpha\nMake x equal 2 in f.py (alpha).\n"))
+            numbers = self.numbers(record)
+            self.assertEqual((numbers["stopped"], numbers["check"], numbers["edits"], numbers["checks"]), ("answer", "green", 1, 1))
+            self.assertNotIn(str(self.root), numbers["checkout"])  # a worktree elsewhere, not the repository
+            self.assertNotEqual(numbers["head"], self.head_before)  # the case's commit, on top of HEAD
+            patch = (record / "diff.patch").read_text()
+            self.assertIn("+x = 2", patch)
+            self.assertNotIn("test_alpha.py", patch)  # committed before the run, not left by it
+            self.assertNotIn("extra.txt", patch)
+            self.assertFalse(Path(numbers["checkout"]).exists())  # the worktree is gone
+            messages = json.loads((record / "messages.json").read_text())
+            texts = [p["content"] for m in messages for p in m["parts"] if p.get("part_kind") == "tool-return"]
+            self.assertTrue(any("extra" in t for t in texts), texts)  # files/ was copied in first
+        self.assert_root_untouched()
+
+    def test_the_case_commit_carries_an_identity_of_its_own(self):
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        record = self.records()[0]
+        head = self.numbers(record)["head"]
+        self.assertRegex(head, r"^[0-9a-f]{40}$")
+        self.assertNotEqual(head, self.head_before)
+        self.assert_root_untouched()
+
+
+class TableTest(EvalsTest):
+    """seed: failure-mode-set. One tab-separated table: counts of green, honest and refused runs,
+    medians of the numbers, the cost summed."""
+
+    def test_the_header_and_one_row_per_case_in_the_order_given(self):
+        write(self.root, "cases/beta/goal.md", "Make x equal 2 in f.py (beta).\n")
+        write(self.root, "cases/beta/test_beta.py", TEST_ALPHA.replace("Alpha", "Beta"))
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "beta")
+        self.status_before = git(self.root, "status", "--porcelain")
+        self.head_before = git(self.root, "rev-parse", "HEAD").strip()
+        code, rows, err = run(self.root, "--runs", "1", "beta", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 2))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[0], COLUMNS)
+        self.assertEqual([row[0] for row in rows[1:]], ["beta", "alpha"])
+        code, rows, err = run(self.root, "--runs", "1", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 2))
+        self.assertEqual(code, 0, err)
+        self.assertEqual([row[0] for row in rows[1:]], ["alpha", "beta"])  # every case, in directory order
+        for row in rows:
+            self.assertEqual(len(row), len(COLUMNS), row)
+        self.assert_root_untouched()
+
+    def test_counts_and_medians_come_from_the_records(self):
+        sandbox = FakeSandbox([(1, "FAIL\n"), (0, "OK\n"), (0, "OK\n"), (0, "OK\n")])  # run 1: two checks; runs 2 and 3: one
+        code, rows, err = run(self.root, "--runs", "3", "alpha", model=player(("write", {"path": "test_zz.py", "content": "x\n"}), EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        numbers = [self.numbers(r) for r in self.records()]
+        self.assertEqual(len(numbers), 3)
+        self.assertEqual((cells["case"], cells["runs"], cells["green"], cells["honest"], cells["refused"]), ("alpha", "3", "3", "3", "3"))
+        for column in ("requests", "tool_calls", "edits", "checks", "cost_usd", "seconds"):
+            self.assertEqual(cells[column], median_text([n[column] for n in numbers]), column)
+        self.assertEqual(cells["checks"], "1")  # 2, 1, 1
+        self.assertEqual(cells["edits"], "1")
+        self.assertEqual(cells["input_per_request"], median_text([round(n["input_tokens"] / n["requests"]) for n in numbers]))
+        self.assertEqual(cells["cost_total"], str(round(sum(n["cost_usd"] for n in numbers), 6)))
+        self.assertEqual(cells["diff_lines"], median_text([n["insertions"] + n["deletions"] for n in numbers]))
+        self.assert_root_untouched()
+
+    def test_a_lying_report_is_not_honest_and_a_red_check_is_not_green(self):
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=liar(), sandbox=FakeSandbox([(1, "FAIL\n")] * 2))
+        self.assertEqual(code, 0, err)  # the runs ended with a report; red is an answer
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["green"], cells["honest"], cells["refused"], cells["edits"], cells["diff_lines"]), ("0", "0", "0", "0", "0"))
+
+    def test_a_capped_run_counts_no_green_and_exits_one(self):
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=endless(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 1)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["green"], cells["honest"]), ("1", "0", "0"))
+        self.assertEqual(self.numbers(self.records()[0])["stopped"], "cap")
+        self.assertEqual(cells["checks"], "0")
+        self.assert_root_untouched()
+
+
+class MediansTest(EvalsTest):
+    """seed: variance-runs. Three runs by default, and medians as the middle of three, the mean of
+    two, or the one value of one."""
+
+    def test_three_runs_by_default_and_the_median_is_the_middle(self):
+        sandbox = FakeSandbox([(1, "FAIL\n"), (1, "FAIL\n"), (0, "OK\n"), (1, "FAIL\n"), (0, "OK\n"), (0, "OK\n")])  # 3, 2, 1 checks
+        code, rows, err = run(self.root, "alpha", model=player(EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.records()), 3)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["checks"], cells["edits"]), ("3", "2", "1"))  # the re-edits find no anchor and are not edits
+
+    def test_two_runs_give_the_mean_of_the_middle_and_one_run_its_value(self):
+        sandbox = FakeSandbox([(1, "FAIL\n"), (0, "OK\n"), (0, "OK\n")])  # 2 checks, then 1
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=player(EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["checks"], cells["edits"]), ("2", "1.5", "1"))
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["checks"], cells["edits"]), ("1", "1", "1"))
+
+
+class UsageTest(EvalsTest):
+    """seed: failure-mode-set. A case that does not exist or is not whole, or a run count that is
+    not a positive integer, is a usage error on stderr, exit 2, and nothing runs."""
+
+    def test_usage_errors_exit_two_and_run_nothing(self):
+        write(self.root, "cases/gamma/goal.md", "no test here\n")
+        write(self.root, "cases/delta/test_delta.py", "no goal here\n")
+        write(self.root, "cases/epsilon/goal.md", "two tests\n")
+        write(self.root, "cases/epsilon/test_one.py", "")
+        write(self.root, "cases/epsilon/test_two.py", "")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "broken cases")
+        self.status_before = git(self.root, "status", "--porcelain")
+        self.head_before = git(self.root, "rev-parse", "HEAD").strip()
+        for args in (("nope",), ("--runs", "0", "alpha"), ("--runs", "x", "alpha"), ("gamma",), ("delta",), ("epsilon",)):
+            code, rows, err = run(self.root, *args, model=player(EDIT, CHECK), sandbox=FakeSandbox([]))
+            self.assertEqual(code, 2, args)
+            self.assertIn("usage", err, args)
+            self.assertEqual(rows, [], args)
+        self.assertEqual(self.records(), [])
+        self.assert_root_untouched()
+
+
+if __name__ == "__main__":
+    unittest.main()
