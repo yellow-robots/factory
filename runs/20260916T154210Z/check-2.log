@@ -1,0 +1,27 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_a_provider_error_is_recorded_and_returns_one (test_builder.MainTest.test_a_provider_error_is_recorded_and_returns_one)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 635, in test_a_provider_error_is_recorded_and_returns_one
+    self.assertEqual(sorted(p.name for p in run_dir.iterdir()), ["goal.txt", "messages.json", "numbers.json", "wire.jsonl"])
+AssertionError: Lists differ: ['diff.patch', 'goal.txt', 'messages.json', 'numbers.json', 'wire.jsonl'] != ['goal.txt', 'messages.json', 'numbers.json', 'wire.jsonl']
+
+First differing element 0:
+'diff.patch'
+'goal.txt'
+
+First list contains 1 additional elements.
+First extra element 4:
+'wire.jsonl'
+
+- ['diff.patch', 'goal.txt', 'messages.json', 'numbers.json', 'wire.jsonl']
+?  --------------
+
++ ['goal.txt', 'messages.json', 'numbers.json', 'wire.jsonl']
+
+----------------------------------------------------------------------
+Ran 66 tests in 6.515s
+
+FAILED (failures=1)

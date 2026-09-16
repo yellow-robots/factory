@@ -1,0 +1,19 @@
+======================================================================
+ERROR: test_builder (unittest.loader._FailedTest.test_builder)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_builder
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 396, in _find_test_path
+    module = self._get_module_from_name(name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/unittest/loader.py", line 339, in _get_module_from_name
+    __import__(name)
+  File "/w/test_builder.py", line 35, in <module>
+    from builder import BuildReport, Tools, Sandbox, build_agent, render, run
+ImportError: cannot import name 'Tools' from 'builder' (/w/builder.py). Did you mean: 'Tool'?
+
+
+----------------------------------------------------------------------
+Ran 25 tests in 3.126s
+
+FAILED (errors=1)
