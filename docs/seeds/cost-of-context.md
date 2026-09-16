@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: spec
+status: building
 summary: Every read stays in the conversation; G1 spent 155k input tokens on three edits, and that curve decides how large a checkout the builder can work in.
 value: 4
 effort: S

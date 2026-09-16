@@ -18,7 +18,7 @@ import runs
 
 COLUMNS = [
     "stamp", "head", "stopped", "check", "requests", "tool_calls", "lists", "reads", "writes", "edits",
-    "checks", "input_tokens", "cache_read_tokens", "output_tokens", "reasoning_tokens", "cost_usd",
+    "checks", "input_tokens", "input_per_request", "cache_read_tokens", "output_tokens", "reasoning_tokens", "cost_usd",
     "seconds", "files_changed", "insertions", "deletions", "goal",
 ]
 OBSERVER = {
@@ -86,6 +86,7 @@ class RunsTest(unittest.TestCase):
         observer = by_stamp["20260915T085903Z"]
         self.assertEqual((observer["stopped"], observer["requests"], observer["reads"], observer["cost_usd"], observer["seconds"]), ("answer", "4", "4", "0.007", "18.5"))
         self.assertEqual((observer["head"], observer["check"], observer["writes"], observer["edits"], observer["checks"], observer["reasoning_tokens"], observer["files_changed"]), ("", "", "", "", "", "", ""))
+        self.assertEqual(observer["input_per_request"], "7500")  # seed: cost-of-context; 30000 / 4
         self.assertEqual(observer["goal"], "describe what this program does")
         old = by_stamp["20260916T121241Z"]
         self.assertEqual(old["head"], "5fc43b79313570e639dfd4ba0640bc084fef84c6")  # world_head, before v0.5
@@ -142,6 +143,28 @@ class RunsTest(unittest.TestCase):
         code, rows, _ = table(self.base)
         cells = {row[0]: dict(zip(COLUMNS, row)) for row in rows[1:]}["20260921T000000Z"]
         self.assertEqual((cells["head"], cells["stopped"]), ("", ""))
+
+    def test_input_per_request_is_the_cost_of_context(self):
+        """seed: cost-of-context. input_tokens over requests, rounded to the nearest integer, after
+        input_tokens; empty when either is missing or not a number or requests is zero."""
+        code, rows, _ = table(self.base)
+        self.assertEqual(rows[0][rows[0].index("input_tokens") + 1], "input_per_request")
+        by_stamp = {row[0]: dict(zip(COLUMNS, row)) for row in rows[1:]}
+        self.assertEqual(by_stamp["20260916T121241Z"]["input_per_request"], "35704")  # 821201 / 23
+        self.assertEqual(by_stamp["20260917T000000Z"]["input_per_request"], "13687")  # 821201 / 60
+        self.assertEqual(by_stamp["20260918T000000Z"]["input_per_request"], "")
+        for stamp, numbers in (
+            ("20260922T000000Z", dict(OBSERVER, requests=0)),
+            ("20260923T000000Z", dict(OBSERVER, requests="four")),
+            ("20260924T000000Z", {k: v for k, v in OBSERVER.items() if k != "input_tokens"}),
+        ):
+            record(self.base, stamp, numbers, "odd\n")
+        code, rows, _ = table(self.base)
+        by_stamp = {row[0]: dict(zip(COLUMNS, row)) for row in rows[1:]}
+        for stamp in ("20260922T000000Z", "20260923T000000Z", "20260924T000000Z"):
+            self.assertEqual(by_stamp[stamp]["input_per_request"], "", stamp)
+        for row in rows:
+            self.assertEqual(len(row), len(COLUMNS), row)
 
 
 if __name__ == "__main__":
