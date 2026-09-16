@@ -1,0 +1,44 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+ERROR: test_a_green_build_in_a_git_world_leaves_the_full_record_and_the_diff (test_builder.MainTest.test_a_green_build_in_a_git_world_leaves_the_full_record_and_the_diff)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 577, in test_a_green_build_in_a_git_world_leaves_the_full_record_and_the_diff
+    self.assertEqual(numbers["world_head"], git(self.world, "rev-parse", "HEAD").strip())
+                     ~~~~~~~^^^^^^^^^^^^^^
+KeyError: 'world_head'
+
+======================================================================
+ERROR: test_a_world_without_git_records_a_null_head (test_builder.MainTest.test_a_world_without_git_records_a_null_head)
+seed: world-pinned-to-commit. A plain directory is a world too; its head is null.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 643, in test_a_world_without_git_records_a_null_head
+    self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["world_head"])
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+KeyError: 'world_head'
+
+======================================================================
+ERROR: test_the_world_head_is_recorded_for_a_git_world (test_builder.MainTest.test_the_world_head_is_recorded_for_a_git_world)
+seed: world-pinned-to-commit. A run is comparable only if the world it ran on is a
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 635, in test_the_world_head_is_recorded_for_a_git_world
+    self.assertEqual(numbers["world_head"], git(self.world, "rev-parse", "HEAD").strip())
+                     ~~~~~~~^^^^^^^^^^^^^^
+KeyError: 'world_head'
+
+======================================================================
+FAIL: test_a_dirty_world_is_refused_before_any_record_exists (test_builder.MainTest.test_a_dirty_world_is_refused_before_any_record_exists)
+seed: world-pinned-to-commit. Uncommitted or untracked changes in a git world are a
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 657, in test_a_dirty_world_is_refused_before_any_record_exists
+    self.assertEqual(code, 2)
+AssertionError: 0 != 2
+
+----------------------------------------------------------------------
+Ran 42 tests in 3.013s
+
+FAILED (failures=1, errors=3)

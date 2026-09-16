@@ -508,6 +508,21 @@ def git(world: Path, *args: str) -> str:
     return done.stdout
 
 
+def world_head(world: Path) -> str | None:
+    """The world's HEAD commit, or null when the world is not a git checkout or has no commit."""
+    if not (world / ".git").exists():  # a worktree has a .git file, a clone a .git directory
+        return None
+    return git(world, "rev-parse", "--verify", "-q", "HEAD").strip() or None
+
+
+def dirty_paths(world: Path) -> list[str]:
+    """The paths a git world has changed, staged or not, as git status names them. Read-only."""
+    status = git(world, "status", "--porcelain", "-z", "--untracked-files=all")
+    # Each entry is two status characters, a space, then the path; a rename adds the old path as
+    # a second NUL-separated field, which does not have that shape and is skipped.
+    return [entry[3:] for entry in status.split("\0") if len(entry) > 3 and entry[2] == " "]
+
+
 def record_diff(world: Path, run_dir: Path) -> dict[str, Any]:
     """What the run left in the world: diff.patch, and the three numbers about it."""
     if not (world / ".git").exists():  # a worktree has a .git file, a clone a .git directory
@@ -558,6 +573,14 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     if not world.is_dir():
         return usage_error(f"not a directory: {argv[1]}")
     goal = argv[2].strip()
+    # A build is reproducible only if the world it ran on is committed: a dirty git world is a
+    # usage error, refused before the run directory or the key is touched.
+    if (world / ".git").exists():
+        dirty = dirty_paths(world)
+        if dirty:
+            shown = ", ".join(dirty[:5]) + (" ..." if len(dirty) > 5 else "")
+            return usage_error(f"the world has uncommitted or untracked changes: {shown}")
+    head = world_head(world)
     # The key file holds the bare key, or one `name=value` line as in an env file.
     key = KEY_FILE.read_text().strip().rsplit("=", 1)[-1].strip().strip("'\"")
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -601,6 +624,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         "wrapper": sha256(Path(__file__).read_text()),
         "library": LIBRARY,
         "world": str(world),
+        "world_head": head,
         "stopped": stopped,
         "requests": usage.requests,
         "wire_attempts": wire.attempts,
