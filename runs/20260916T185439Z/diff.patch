@@ -1,0 +1,138 @@
+diff --git a/builder.py b/builder.py
+index b78d6d0..3fc4ed0 100644
+--- a/builder.py
++++ b/builder.py
+@@ -684,32 +684,91 @@ def usage_error(reason: str = "") -> int:
+     return 2
+ 
+ 
++def strip_comments(text: str) -> str:
++    """The note without its `%%` comments: everything between two marks, on one line or across
++    many, is not the note's text, so a heading inside one is not a heading."""
++    out: list[str] = []
++    i = 0
++    in_comment = False
++    while i < len(text):
++        if text.startswith("%%", i):
++            in_comment = not in_comment
++            i += 2
++        elif in_comment:
++            i += 1  # inside a comment: the bytes, the newlines and all, are not the note's text
++        else:
++            out.append(text[i])
++            i += 1
++    return "".join(out)
++
++
++def fence(line: str) -> bool:
++    """Whether the line opens or closes a fenced code block: ``` or ~~~, with any info string."""
++    stripped = line.lstrip()
++    return stripped.startswith("```") or stripped.startswith("~~~")
++
++
++def heading_level(line: str) -> int:
++    """The level of a markdown ATX heading, 0 when the line is not one: one to six #s, then a
++    space or the end of the line."""
++    stripped = line.lstrip()
++    n = len(stripped) - len(stripped.lstrip("#"))
++    if n == 0 or (len(stripped) > n and not stripped[n].isspace()):
++        return 0
++    return n
++
++
++def goal_section(text: str) -> str | None:
++    """The text under the note's `## Goal`, from its heading to the next heading of level one or
++    two, or None when the note has no such heading. A fenced code block belongs whole: a heading
++    inside one neither starts the section nor ends it, whatever its lines start with."""
++    lines = text.splitlines()
++    start, in_fence = None, False
++    for i, line in enumerate(lines):
++        if fence(line):
++            in_fence = not in_fence
++        elif not in_fence and line.strip() == "## Goal":
++            start = i
++            break
++    if start is None:
++        return None
++    section: list[str] = []
++    in_fence = False
++    for line in lines[start + 1:]:
++        if fence(line):
++            section.append(line)
++            in_fence = not in_fence
++        elif not in_fence and heading_level(line) in (1, 2):  # the next section ends the text
++            break
++        else:
++            section.append(line)
++    return "\n".join(section).strip()
++
++
+ def read_seed(checkout: Path, arg: str) -> tuple[str, str | None]:
+-    """The goal argument as the model gets it. A path ending in `.md` names a seed note of the
+-    checkout: the goal is `seed: <name without .md>` then the text of the note's `## Goal`
+-    section, and the name is the seed. Any other argument is text, the goal as it is and no
+-    seed. A `.md` path that names no file of the checkout, or a note without a `## Goal` with
+-    text under it, raises ValueError, which main turns into a usage error."""
+-    if not arg.endswith(".md"):
++    """The goal argument as the model gets it. One word ending in `.md`, with no whitespace in it,
++    names a seed note of the checkout: its text is the commit's, `git show HEAD:<path>`, not the
++    working tree's, and the goal is `seed: <name without .md>` then the text of the note's `## Goal`
++    section; the name is the seed. Any other argument is text, the goal as it is and no seed. A
++    `.md` path that leaves the checkout, `..` and absolute paths among them, or names no file of
++    the commit, or a note without a `## Goal` with text under it, raises ValueError, which main
++    turns into a usage error."""
++    if not arg.endswith(".md") or any(c.isspace() for c in arg):
+         return arg, None
+-    p = (checkout / arg).resolve()
+-    if (p != checkout and checkout not in p.parents) or not p.is_file():
+-        raise ValueError(f"no such seed in the checkout: {arg}")
+-    name = p.name.removesuffix(".md")
+-    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+-    for i, line in enumerate(lines):
+-        if line.strip() != "## Goal":
+-            continue
+-        section: list[str] = []
+-        for after in lines[i + 1:]:
+-            if after.lstrip().startswith("## "):  # the next section ends the Goal's text
+-                break
+-            section.append(after)
+-        text = "\n".join(section).strip()
+-        if not text:
+-            raise ValueError(f"the seed has no text under ## Goal: {arg}")
+-        return f"seed: {name}\n{text}", name
+-    raise ValueError(f"the seed has no ## Goal section: {arg}")
++    rel = Path(arg)
++    if rel.is_absolute() or ".." in rel.parts:
++        raise ValueError(f"not a seed of the checkout: {arg}")
++    try:
++        committed = git(checkout, "show", f"HEAD:{arg}")
++    except GitError as e:
++        raise ValueError(f"no such seed in the commit: {arg}: {e}") from e
++    text = goal_section(strip_comments(committed))
++    if text is None:
++        raise ValueError(f"the seed has no ## Goal section: {arg}")
++    if not text:
++        raise ValueError(f"the seed has no text under ## Goal: {arg}")
++    name = rel.name.removesuffix(".md")
++    return f"seed: {name}\n{text}", name
+ 
+ 
+ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+@@ -744,12 +803,13 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+         return usage_error(f"git could not run: {e}")
+     if not top or Path(top).resolve() != checkout:
+         return usage_error(f"not a git checkout: {argv[1]}")
+-    # The argument is text, or a seed note of the checkout read as it is; a .md path that names
+-    # no such note, or a note without a ## Goal with text under it, is refused here, before any
+-    # run directory exists.
++    # The argument is text, or one word ending in .md that names a seed note; the note's text is
++    # the checkout's commit, `git show HEAD:<path>`. A path that leaves the checkout, names no
++    # file of the commit, or a note without a ## Goal with text under it, is refused here, before
++    # any run directory exists.
+     try:
+         goal, seed = read_seed(checkout, argv[2].strip())
+-    except (ValueError, OSError) as e:
++    except (ValueError, OSError, subprocess.SubprocessError) as e:
+         return usage_error(str(e))
+     # A build is reproducible only if the checkout it ran on is committed: a dirty git checkout is
+     # a usage error, refused before the run directory or the key is touched.
