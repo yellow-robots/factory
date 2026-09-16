@@ -1,0 +1,54 @@
+diff --git a/gate.py b/gate.py
+index 189b863..46ee0e2 100644
+--- a/gate.py
++++ b/gate.py
+@@ -20,6 +20,8 @@ import subprocess
+ import sys
+ from pathlib import Path
+ 
++import builder
++
+ USAGE = "usage: gate.py check|render|release <version>"
+ STATUSES = ("open", "spec", "building", "done", "rejected")
+ SEED_FIELDS = {"type", "status", "summary", "value", "effort", "version", "created"}
+@@ -111,18 +113,18 @@ def _resolve(target: str, docs: Path) -> bool:
+     return False
+ 
+ 
+-def _goal_text(body: str) -> bool:
+-    lines = body.splitlines()
+-    for i, line in enumerate(lines):
+-        if line.strip() != "## Goal":
+-            continue
+-        for after in lines[i + 1:]:
+-            if after.strip().startswith("#"):
+-                break
+-            if after.strip():
+-                return True
+-        return False
+-    return False
++def _goal_problems(rel: str, body: str) -> list[str]:
++    """The seed's `## Goal` as `builder.read_seed` reads it: the builder's `note_text` and
++    `goal_section`, so the gate refuses exactly the notes the builder would. A `%%` comment left
++    open is its own problem; a note with no heading outside a fence or a comment, or no text under
++    it once the comments are out, has no Goal with text."""
++    try:
++        text = builder.note_text(body)
++    except ValueError:
++        return [f"{rel}: seed has a %% comment left open"]
++    if not builder.goal_section(text):
++        return [f"{rel}: seed has no ## Goal with text"]
++    return []
+ 
+ 
+ def _test_docstrings(root: Path) -> list[str]:
+@@ -422,8 +424,7 @@ def _seed_problems(
+             problems.append(f"{rel}: seed has no version")
+         elif not (docs / "versions" / f"{version}.md").is_file():
+             problems.append(f"{rel}: version {version} has no note docs/versions/{version}.md")
+-        if not _goal_text(body):
+-            problems.append(f"{rel}: seed has no ## Goal with text")
++        problems.extend(_goal_problems(rel, body))
+     if version and version in tags and status not in ("done", "rejected"):
+         problems.append(f"{rel}: version {version} is tagged but the seed is {status}")
+     if rank >= STATUSES.index("building") and not _named_by_a_test(root, path.stem, docstrings):
