@@ -331,6 +331,43 @@ class CheckTest(GateTest):
         self.edit("runs/20260917T000000Z/wire.jsonl", '{"dir": "request"}\n')
         self.assertEqual(self.check(), (0, "", ""))
 
+    def test_the_backlog_check_reads_what_obsidian_writes(self):
+        """seed: base-against-the-template. From the review: a nested filter group names no
+        property but its items do, note. is a prefix of a property, a hyphen in an expression is
+        the minus, a regex literal and an inline comment name nothing, summaries name properties,
+        and a missing seed template is one problem elsewhere, not one per property."""
+        nested = BASE.replace(
+            '      or:\n        - status == "open"\n        - status == "spec"\n',
+            '      and:\n        - or:\n            - status == "open"\n            - status == "spec"\n'
+            '        - not:\n            - version == ""\n        - not: status == "rejected"\n',
+        )
+        self.assertNotEqual(nested, BASE)
+        self.edit("docs/backlog.base", nested)
+        self.assertEqual(self.check(), (0, "", ""))
+        self.edit("docs/backlog.base", nested.replace('- status == "spec"', '- stauts == "spec"'))
+        out = self.assert_problem("docs/backlog.base", "stauts")
+        for keyword in (": and ", ": or ", ": not "):
+            self.assertNotIn(keyword, out)
+        self.edit("docs/backlog.base", BASE.replace('    - type == "seed"\n', '    - note.type == "seed"\n    - note.stauts == "open"\n'))
+        out = self.assert_problem("docs/backlog.base", "stauts")
+        self.assertNotIn(": note ", out)
+        self.assertNotIn(": type ", out)
+        self.edit("docs/backlog.base", BASE.replace("(value - if(effort", "(value-if(effort"))
+        self.assertEqual(self.check(), (0, "", ""))
+        self.edit("docs/backlog.base", BASE.replace("(value - if(effort", "(valeu-if(effort"))
+        self.assert_problem("docs/backlog.base", "valeu")
+        self.edit("docs/backlog.base", BASE.replace('    - type == "seed"\n', '    - type == "seed" # only seeds\n    - /^\\d{4}-\\d{2}-\\d{2}$/.matches(created)\n'))
+        self.assertEqual(self.check(), (0, "", ""))
+        self.edit("docs/backlog.base", BASE + "    summaries:\n      valeu: Sum\n")
+        self.assert_problem("docs/backlog.base", "valeu")
+        self.edit("docs/backlog.base", BASE + "    summaries:\n      value: Sum\n")
+        self.assertEqual(self.check(), (0, "", ""))
+        self.edit("docs/backlog.base", BASE)
+        (self.root / "docs" / "templates" / "seed.md").unlink()
+        code, out, _ = self.check()
+        self.assertEqual(code, 1)
+        self.assertNotIn("docs/backlog.base", out)
+
     def test_templates_are_exempt(self):
         self.edit("docs/templates/seed.md", TEMPLATE_SEED.replace("type: seed", "type: whatever"))
         self.assertEqual(self.check(), (0, "", ""))
