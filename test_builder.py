@@ -928,6 +928,90 @@ class MainTest(unittest.TestCase):
         self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["seed"])
         self.assertEqual((run_dir / "goal.txt").read_text(), "make x bigger\n")
 
+    def test_a_goal_is_a_seed_path_only_when_it_is_one_word_ending_in_md(self):
+        """seed: formal-input-output. A sentence that ends in a file's name, or a goal of several
+        lines, is text whatever it ends with; only one word ending in .md, no whitespace in it, is
+        the path of a seed, and one that names no note of the commit is refused."""
+        for text in ("add the run's files to README.md", "case: two_files\nsay how they run, as in README.md", "docs/seeds/one two.md"):
+            self.assertEqual(builder.read_seed(self.checkout, text), (text, None), text)
+        goal = "case: two_files\nsay how builder.py runs, as in README.md"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = builder.main(["builder.py", str(self.checkout), goal], model=scripted([call("final_result", REPORT, "c1")]), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 0)
+        run_dir = next(self.runs.iterdir())
+        self.assertEqual((run_dir / "goal.txt").read_text(), goal + "\n")
+        self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["seed"])
+        with self.assertRaises(ValueError):
+            builder.read_seed(self.checkout, "docs/seeds/missing.md")
+
+    def test_the_seed_is_read_from_the_checkouts_commit(self):
+        """seed: formal-input-output. The note's text is the commit's, git show HEAD:<path>, so the
+        record's head names exactly the goal the model was given: a working copy that differs does
+        not count, and a note git ignores, which no commit holds, is no seed."""
+        (self.checkout / "docs" / "seeds").mkdir(parents=True)
+        note = self.checkout / "docs" / "seeds" / "pinned.md"
+        note.write_text("---\ntype: seed\n---\n\n## Goal\n\nThe committed goal.\n")
+        (self.checkout / ".gitignore").write_text("ghost/\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "seed")
+        note.write_text("---\ntype: seed\n---\n\n## Goal\n\nThe edited goal.\n")
+        self.assertEqual(builder.read_seed(self.checkout, "docs/seeds/pinned.md"), ("seed: pinned\nThe committed goal.", "pinned"))
+        git(self.checkout, "checkout", "--", "docs/seeds/pinned.md")
+        (self.checkout / "ghost").mkdir()
+        (self.checkout / "ghost" / "haunt.md").write_text("## Goal\n\nBoo.\n")
+        self.assertEqual(builder.dirty_paths(self.checkout), [])  # ignored, so the clean check does not see it
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "ghost/haunt.md"], model=scripted(), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 2)
+        self.assertIn("usage", err.getvalue())
+        self.assertFalse(self.runs.exists())
+
+    def test_seed_paths_outside_the_checkout_are_refused(self):
+        """seed: formal-input-output. `..`, an absolute path outside the checkout and a link that
+        points out of it name no seed: a usage error before any run directory."""
+        outside = Path(self.tmp.name) / "outside.md"
+        outside.write_text("## Goal\n\nNot yours.\n")
+        (self.checkout / "docs").mkdir()
+        (self.checkout / "docs" / "link.md").symlink_to(outside)
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "link")
+        for goal in ("../outside.md", str(outside), "docs/link.md"):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = builder.main(["builder.py", str(self.checkout), goal], model=scripted(), sandbox=FakeSandbox([]))
+            self.assertEqual(code, 2, goal)
+            self.assertIn("usage", err.getvalue(), goal)
+        self.assertFalse(self.runs.exists())
+
+    def test_the_goal_section_is_read_as_markdown(self):
+        """seed: formal-input-output. The section runs from its heading to the next heading of
+        level one or two; a fenced code block inside it belongs to it whole, whatever its lines
+        start with; %% comments are not the note's text, so a ## Goal inside one is not the
+        heading and a comment inside the section is not the goal."""
+        (self.checkout / "docs").mkdir()
+        fenced = (
+            "---\ntype: seed\n---\n\n## Evidence\n\nA note may show a heading:\n\n```\n## Goal\n\nnot the goal\n```\n\n"
+            "## Goal\n\nWrite the note as:\n\n```md\n# Title\n\n## Changelog\n```\n\nThen stop.\n\n# Appendix\n\nNot the goal either.\n"
+        )
+        (self.checkout / "docs" / "fenced.md").write_text(fenced)
+        commented = (
+            "---\ntype: seed\n---\n%%\nthe template's rubric\n## Goal\n\nthe drafted goal, commented out\n%%\n\n"
+            "## Goal\n\n%%not this%%\nThe real goal.\nIn two lines.\n\n### Details\n\nStill the goal.\n%%\nnor this\n%%\n\n## Idea\n\nNo.\n"
+        )
+        (self.checkout / "docs" / "commented.md").write_text(commented)
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "notes")
+        self.assertEqual(
+            builder.read_seed(self.checkout, "docs/fenced.md"),
+            ("seed: fenced\nWrite the note as:\n\n```md\n# Title\n\n## Changelog\n```\n\nThen stop.", "fenced"),
+        )
+        self.assertEqual(
+            builder.read_seed(self.checkout, "docs/commented.md"),
+            ("seed: commented\nThe real goal.\nIn two lines.\n\n### Details\n\nStill the goal.", "commented"),
+        )
+
     def test_searches_are_counted(self):
         """seed: codebase-context. The numbers count the searches, in the line too."""
         model = scripted([call("search", {"pattern": "x = 1"}, "c1")], [call("final_result", REPORT, "c2")])
