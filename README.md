@@ -1,12 +1,14 @@
 # factory
 
-v0.4: the builder, and the gate that keeps its documents honest. The first version whose code
-the factory wrote itself, from tests written before each build.
+v0.5: the builder that works on a checkout with tools, the gate that keeps its documents honest,
+and the table of its records. Every line of code since v0.3 was written by the factory itself,
+from tests written before each build.
 
 ```sh
 uv run builder.py <checkout> "<goal>" # one build; the record lands in runs/ beside this file
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
-uv run python -m unittest -v          # 66 tests, no provider, no network, no docker
+uv run runs.py                        # the records as one tab-separated table
+uv run python -m unittest -v          # 78 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -38,7 +40,9 @@ the host and cannot reach the key or the network. Provider DeepSeek `deepseek-fl
 default; no temperature is sent because DeepSeek ignores it in thinking mode.
 
 A run leaves `runs/<utc-stamp>/`: `goal.txt`; `wire.jsonl` (every HTTP attempt, headers with
-secrets redacted, JSON bodies as JSON, other bodies as text); `messages.json` (the library's
+secrets redacted, JSON bodies as JSON, other bodies as text; compressed to `wire.jsonl.gz` when
+the record is reviewed and committed, since it repeats the whole context of every request);
+`messages.json` (the library's
 message history); `check-<n>.log` per check; `diff.patch` (`git diff HEAD` plus a diff per
 untracked file; absent when the run changed nothing); `report.json`/`response.md` (five sections:
 Changed, Did, Check, Failing, Unsure; only when there is a report); and `numbers.json`, also one
@@ -49,18 +53,24 @@ source (`table`: our price table, genai-prices has no row for this model), lists
 and lines read, writes, edits, checks, `check` (green/red/none: the tools' own verdict on the
 last check, next to the report's claim), check seconds, files changed, insertions, deletions,
 seconds; cap or error adds `detail` and exits 1. The records are committed: `runs/` is the
-baseline of every measurement.
+baseline of every measurement, and `runs.py` prints them as one table, a header then a row per
+record in stamp order, every value as `numbers.json` has it, an empty cell for a key a record
+lacks, `head` read from `head` or, in records before v0.5, `world_head`, and the goal's first
+line.
 
 ## The gate
 
 `docs/` is an Obsidian vault kept by git: `seeds/` the backlog, `versions/` one note per version,
 `templates/` what a note of each type carries, `backlog.base` the ranking. `gate.py` keeps them
 honest. `check` reports, one line per problem with the path: a note whose type names no template,
-a wikilink that does not resolve, a seed whose fields do not follow its status (summary, value 1
-to 5 and effort S, M, L from open; a version note and a `## Goal` from spec; a test whose
-docstring says `seed: <name>` from building; rejected needs only what open needs), a version note
-not named like a tag, more than one version note without a tag, a tagged version with a seed not
-done or rejected. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
+a wikilink that does not resolve, a seed whose fields do not follow its status (created as
+`YYYY-MM-DD`, summary, value 1 to 5 and effort S, M, L from open; a version note and a `## Goal`
+from spec; a test whose docstring says `seed: <name>` from building; rejected needs only what open
+needs) or carries a field with no consumer, a version note not named like a tag, more than one
+version note without a tag, a tagged version with a seed not done or rejected, a property the
+backlog names in a filter, formula, column, sort, group or summary that is no field of the seed
+template, read as Obsidian writes the base, and a committed record whose wire is not
+compressed. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
 note's title, first paragraph and `## Changelog` bullets. `release <version>` refuses unless check
 passes, the note exists and the tag does not, its seeds are done or rejected, the note has
 changelog bullets, the tree is clean, `AGENTS.md` changed since the previous tag and the suite is
@@ -86,3 +96,13 @@ commit recorded and a dirty checkout refused in 3 edits ($0.019, 64 s); the gate
 write and 8 edits over 3 checks ($0.063, 212 s), then 3 more edits after the review turned two
 of its defects into tests ($0.009, 41 s). Every record is in `runs/` and every commit that took a
 diff names its run in a `Built-By` trailer.
+
+v0.5, eight builds for five seeds, all green, about thirty cents and sixteen minutes of model
+time. The rename of world to checkout and plane to tools touched sixty places and hit the request
+cap of 60 at its third green check, complete but unreported: 19 edits, 59 tool calls, $0.115,
+343 s, and between two checks the model wandered through the changelog, three version notes and
+six seeds and probed three walls, a read of `.git/HEAD` and writes to `test_zzprobe.py` and
+`docs/zzprobe.md`, all refused. Two follow-ups from review finished the seed. The created field,
+the backlog check, the wire check and the table took one build each, the backlog check a second
+one after its review; five defects found by independent reviewers became tests and builds.
+Every wire of a committed record is compressed.
