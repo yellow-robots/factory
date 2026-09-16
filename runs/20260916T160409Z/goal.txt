@@ -1,0 +1,3 @@
+`gate.py` knows the seed field `created`: allowed beside type, status, summary, value, effort and version, required from `open` on, and shaped `YYYY-MM-DD`; a missing or misshaped `created` is a problem naming the file and the field. The templates stay exempt. Nothing else in `check` changes. The tests in `test_gate.py` whose docstring names this seed define the behaviour.
+
+After the build, by the attended agent: `created` first in the seed template as the quoted string `"{{date}}"`, which YAML accepts and the Templates plugin fills; the backlog shows it as Born and breaks rank ties by it; every seed gets the date of the commit that created it.

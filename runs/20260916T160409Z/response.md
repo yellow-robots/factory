@@ -1,0 +1,16 @@
+## Changed
+- gate.py
+
+## Did
+- gate.py: added `created` to SEED_FIELDS so it is an allowed seed field rather than an unknown one.
+- gate.py: added a CREATED regex `^\d{4}-\d{2}-\d{2}$` and, in _seed_problems, a check that emits `seed has no created` when empty and `created {value!r} is not YYYY-MM-DD` when misshaped, since the field is required from open on (and rejected needs what open needs).
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- The post-build attended-agent items (created first in docs/templates/seed.md, backlog Born/tie-break, per-seed commit dates) were left untouched as out-of-scope; no test exercises the repo's own docs.
+- created is validated by shape only, not as a real calendar date.
