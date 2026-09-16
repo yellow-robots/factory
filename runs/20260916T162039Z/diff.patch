@@ -1,0 +1,168 @@
+diff --git a/gate.py b/gate.py
+index 9a838a8..189b863 100644
+--- a/gate.py
++++ b/gate.py
+@@ -25,8 +25,12 @@ STATUSES = ("open", "spec", "building", "done", "rejected")
+ SEED_FIELDS = {"type", "status", "summary", "value", "effort", "version", "created"}
+ EFFORTS = {"S", "M", "L"}
+ BASE_LANGUAGE = {"this", "file", "formula", "true", "false", "null"}
+-BASE_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+-BASE_HEADER = re.compile(r"^(properties|order|sort|groupBy|filters|formulas):\s*(.*)$")
++BASE_MEMBER_ROOTS = {"this", "file", "formula"}
++BASE_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
++BASE_HEADER = re.compile(
++    r"^(properties|order|sort|groupBy|filters|formulas|summaries):\s*(.*)$"
++)
++BASE_GROUP = re.compile(r"^(and|or|not)\s*:(.*)$")
+ BASE_PROPERTY = re.compile(r"property:\s*(.*)$")
+ CREATED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+ VERSION_NAME = re.compile(r"^v(\d+)\.(\d+)\.md$")
+@@ -159,28 +163,67 @@ def _unquoted(text: str) -> str:
+     return text
+ 
+ 
++def _dot_root(text: str, dot: int) -> str:
++    """The identifier immediately before the `.` at `dot`, if there is one."""
++    i = dot - 1
++    while i >= 0 and text[i].isspace():
++        i -= 1
++    end = i + 1
++    while i >= 0 and (text[i].isalnum() or text[i] == "_"):
++        i -= 1
++    return text[i + 1:end]
++
++
+ def _expression_names(expression: str) -> list[str]:
+-    """The bare identifiers an Obsidian expression names: quoted strings, members (`.name`),
+-    functions (`name(`), `this`, `file`, `formula`, `true`, `false` and `null` removed."""
+-    text = re.sub(r'"[^"]*"', " ", _unquoted(expression))
++    """The bare identifiers an Obsidian expression names: quoted strings, regex literals,
++    `#` comments, members of `file.`/`formula.`/`this.`, functions (`name(`), and the language
++    names `this`, `file`, `formula`, `true`, `false` and `null` removed. A `note.` prefix is a
++    property's, so the name after it is checked."""
++    text = _unquoted(expression)
++    text = re.sub(r'"[^"]*"', " ", text)
+     text = re.sub(r"'[^']*'", " ", text)
++    text = re.sub(r"#[^\n]*", " ", text)
++    text = re.sub(r"/[^/\n]*/", " ", text)
+     names: list[str] = []
+     for match in BASE_IDENT.finditer(text):
+         name = match.group()
+-        if match.start() and text[match.start() - 1] == ".":
++        after = text[match.end():].lstrip()
++        if after.startswith("("):
+             continue
+-        if text[match.end():].lstrip().startswith("("):
++        if match.start() and text[match.start() - 1] == ".":
++            if _dot_root(text, match.start() - 1) != "note":
++                continue
++            names.append(name)
+             continue
+         if name in BASE_LANGUAGE:
+             continue
++        if after.startswith("."):
++            continue
+         names.append(name)
+     return names
+ 
+ 
+-def _base_named(text: str) -> list[str]:
+-    """Every property `text` names: keys under `properties:`, entries of `order:`, the
+-    `property:` of a `sort` or `groupBy`, and filter and formula expressions."""
+-    named: list[str] = []
++def _plain_names(name: str) -> list[str]:
++    """A property named under `properties:`, `order:`, `property:` or `summaries:`, where a
++    hyphen is part of the name; a `file.`, `formula.` or `this.` prefix is never reported, while
++    the name after a `note.` prefix is checked."""
++    name = _unquoted(name).strip()
++    if not name:
++        return []
++    root, _, rest = name.partition(".")
++    if root in BASE_MEMBER_ROOTS:
++        return []
++    if root == "note" and rest:
++        return [rest]
++    return [name]
++
++
++def _base_named(text: str) -> list[tuple[str, str]]:
++    """Every property `text` names, tagged as a plain name or an expression: keys under
++    `properties:` and `summaries:`, entries of `order:`, the `property:` of a `sort` or
++    `groupBy`, and filter and formula expressions. A nested `and:`/`or:`/`not:` group names no
++    property; its items, or its inline expression, do."""
++    named: list[tuple[str, str]] = []
+     lines = text.splitlines()
+     i = 0
+     while i < len(lines):
+@@ -195,7 +238,8 @@ def _base_named(text: str) -> list[str]:
+             continue
+         key, rest = header.group(1), header.group(2).strip()
+         if key == "order" and rest.startswith("["):
+-            named.extend(rest.strip("[]").split(","))
++            for entry in rest.strip("[]").split(","):
++                named.append(("name", entry.strip()))
+             continue
+         block: list[tuple[int, str]] = []
+         while i < len(lines):
+@@ -206,30 +250,35 @@ def _base_named(text: str) -> list[str]:
+                     break
+                 block.append((len(line) - len(line.lstrip()), content))
+             i += 1
+-        if key == "properties":
++        if key in ("properties", "summaries"):
+             child = min((depth for depth, _ in block), default=indent)
+             for depth, content in block:
+                 if depth == child and ":" in content and not content.startswith("-"):
+-                    named.append(content.split(":", 1)[0].strip())
++                    named.append(("name", content.split(":", 1)[0].strip()))
+         elif key == "order":
+             for _, content in block:
+                 if content.startswith("- "):
+-                    named.append(content[2:].strip())
++                    named.append(("name", content[2:].strip()))
+         elif key in ("sort", "groupBy"):
+             for _, content in block:
+                 match = BASE_PROPERTY.search(content)
+                 if match:
+-                    named.append(match.group(1).strip())
++                    named.append(("name", match.group(1).strip()))
+         else:
+             if rest:
+-                named.append(rest)
++                named.append(("expr", rest))
+             for _, content in block:
+                 if content.startswith("- "):
+-                    named.append(content[2:].strip())
++                    item = content[2:].strip()
++                    group = BASE_GROUP.match(item)
++                    if group is None:
++                        named.append(("expr", item))
++                    elif group.group(2).strip():
++                        named.append(("expr", group.group(2).strip()))
+                 elif ":" in content:
+                     value = content.split(":", 1)[1].strip()
+                     if value:
+-                        named.append(value)
++                        named.append(("expr", value))
+     return named
+ 
+ 
+@@ -239,11 +288,15 @@ def _base_problems(docs: Path) -> list[str]:
+     if not base.is_file():
+         return []
+     fields_, _ = frontmatter(_read(docs / "templates" / "seed.md"))
+-    fields = set(fields_ or ())
++    if fields_ is None:
++        # The missing template is reported once, elsewhere.
++        return []
++    fields = set(fields_)
+     problems: list[str] = []
+     seen: set[str] = set()
+-    for name in _base_named(_read(base)):
+-        for identifier in _expression_names(name):
++    for kind, name in _base_named(_read(base)):
++        identifiers = _plain_names(name) if kind == "name" else _expression_names(name)
++        for identifier in identifiers:
+             if identifier in seen:
+                 continue
+             seen.add(identifier)
