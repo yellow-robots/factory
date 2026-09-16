@@ -8,7 +8,7 @@ from tests written before each build.
 uv run builder.py <checkout> "<goal>" # one build; the record lands in runs/ beside this file
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
-uv run python -m unittest -v          # 78 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 81 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -97,12 +97,13 @@ write and 8 edits over 3 checks ($0.063, 212 s), then 3 more edits after the rev
 of its defects into tests ($0.009, 41 s). Every record is in `runs/` and every commit that took a
 diff names its run in a `Built-By` trailer.
 
-v0.5, eight builds for five seeds, all green, about thirty cents and sixteen minutes of model
+v0.5, ten builds for five seeds, all green, about forty cents and twenty-two minutes of model
 time. The rename of world to checkout and plane to tools touched sixty places and hit the request
 cap of 60 at its third green check, complete but unreported: 19 edits, 59 tool calls, $0.115,
 343 s, and between two checks the model wandered through the changelog, three version notes and
 six seeds and probed three walls, a read of `.git/HEAD` and writes to `test_zzprobe.py` and
-`docs/zzprobe.md`, all refused. Two follow-ups from review finished the seed. The created field,
-the backlog check, the wire check and the table took one build each, the backlog check a second
-one after its review; five defects found by independent reviewers became tests and builds.
-Every wire of a committed record is compressed.
+`docs/zzprobe.md`, all refused. Three follow-ups from review finished the seed: the code's own
+text, the checkout root guard, and a `git diff` kept git's own by flag. The created field and the
+wire check took one build each, the backlog check and the table two, the second after their
+reviews; seven defects found by five independent reviews became tests and builds. Every wire of
+a committed record is compressed.
