@@ -1,0 +1,200 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_a_building_or_done_seed_is_named_by_a_test_docstring (test_gate.CheckTest.test_a_building_or_done_seed_is_named_by_a_test_docstring)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 206, in test_a_building_or_done_seed_is_named_by_a_test_docstring
+    self.assertEqual(self.check(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_a_spec_names_an_existing_version_note_and_has_a_goal (test_gate.CheckTest.test_a_spec_names_an_existing_version_note_and_has_a_goal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 198, in test_a_spec_names_an_existing_version_note_and_has_a_goal
+    self.assertEqual(self.check(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_a_tagged_version_has_its_seeds_done_or_rejected (test_gate.CheckTest.test_a_tagged_version_has_its_seeds_done_or_rejected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 228, in test_a_tagged_version_has_its_seeds_done_or_rejected
+    self.assertEqual(self.check(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_a_valid_vault_is_silent (test_gate.CheckTest.test_a_valid_vault_is_silent)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 145, in test_a_valid_vault_is_silent
+    self.assertEqual(self.check(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_at_most_one_version_note_is_not_a_tag (test_gate.CheckTest.test_at_most_one_version_note_is_not_a_tag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 222, in test_at_most_one_version_note_is_not_a_tag
+    self.assertEqual(self.check(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_templates_are_exempt (test_gate.CheckTest.test_templates_are_exempt)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 232, in test_templates_are_exempt
+    self.assertEqual(self.check(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_wikilinks_resolve_to_a_note_by_path_or_name_or_to_a_base (test_gate.CheckTest.test_wikilinks_resolve_to_a_note_by_path_or_name_or_to_a_base)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 158, in test_wikilinks_resolve_to_a_note_by_path_or_name_or_to_a_base
+    self.assertEqual(self.check(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_a_ready_version_is_tagged_annotated_with_the_changelog_and_rendered (test_gate.ReleaseTest.test_a_ready_version_is_tagged_annotated_with_the_changelog_and_rendered)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 283, in test_a_ready_version_is_tagged_annotated_with_the_changelog_and_rendered
+    self.assertEqual(self.release(), (0, "", ""))
+AssertionError: Tuples differ: (1, 'docs/seeds/b.md: version v0.2 has no [94 chars], '') != (0, '', '')
+
+First differing element 0:
+1
+0
+
++ (0, '', '')
+- (1,
+-  'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\n'
+-  'docs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n',
+-  '')
+
+======================================================================
+FAIL: test_release_refuses_a_dirty_tree (test_gate.ReleaseTest.test_release_refuses_a_dirty_tree)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 314, in test_release_refuses_a_dirty_tree
+    self.assert_refused("stray.txt")
+  File "/w/test_gate.py", line 276, in assert_refused
+    self.assertIn(word, out)
+AssertionError: 'stray.txt' not found in 'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\ndocs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n'
+
+======================================================================
+FAIL: test_release_refuses_a_note_without_changelog_bullets (test_gate.ReleaseTest.test_release_refuses_a_note_without_changelog_bullets)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 332, in test_release_refuses_a_note_without_changelog_bullets
+    self.assert_refused("Changelog")
+  File "/w/test_gate.py", line 276, in assert_refused
+    self.assertIn(word, out)
+AssertionError: 'Changelog' not found in 'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\ndocs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n'
+
+======================================================================
+FAIL: test_release_refuses_a_red_suite (test_gate.ReleaseTest.test_release_refuses_a_red_suite)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 326, in test_release_refuses_a_red_suite
+    self.assert_refused("test")
+  File "/w/test_gate.py", line 276, in assert_refused
+    self.assertIn(word, out)
+AssertionError: 'test' not found in 'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\ndocs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n'
+
+======================================================================
+FAIL: test_release_refuses_a_version_without_a_note_or_already_tagged (test_gate.ReleaseTest.test_release_refuses_a_version_without_a_note_or_already_tagged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 302, in test_release_refuses_a_version_without_a_note_or_already_tagged
+    self.assert_refused("v0.3", version="v0.3")
+  File "/w/test_gate.py", line 276, in assert_refused
+    self.assertIn(word, out)
+AssertionError: 'v0.3' not found in 'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\ndocs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n'
+
+======================================================================
+FAIL: test_release_refuses_when_agents_md_is_unchanged_since_the_previous_tag (test_gate.ReleaseTest.test_release_refuses_when_agents_md_is_unchanged_since_the_previous_tag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 320, in test_release_refuses_when_agents_md_is_unchanged_since_the_previous_tag
+    self.assert_refused("AGENTS.md")
+  File "/w/test_gate.py", line 276, in assert_refused
+    self.assertIn(word, out)
+AssertionError: 'AGENTS.md' not found in 'docs/seeds/b.md: version v0.2 has no note docs/versions/v0.2.md\ndocs/seeds/d.md: version v0.1 has no note docs/versions/v0.1.md\n'
+
+----------------------------------------------------------------------
+Ran 64 tests in 3.957s
+
+FAILED (failures=13)
