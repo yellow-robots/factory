@@ -1,1 +1,1 @@
-In the docstrings of builder.py, the module's, the classes' and their methods', and the git helpers', the word `checkout` becomes `tree`; the code, the role text and the comments keep `checkout`.
+In builder.py, the word `checkout` becomes `tree` in the docstrings of the classes, of their methods and of the git helpers; the module docstring, the code, the role text and the comments keep `checkout`.

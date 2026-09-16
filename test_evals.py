@@ -12,6 +12,7 @@ that answers the checks in order.
 import contextlib
 import io
 import json
+import shutil
 import statistics
 import subprocess
 import tempfile
@@ -287,6 +288,60 @@ class UsageTest(EvalsTest):
             self.assertIn("usage", err, args)
             self.assertEqual(rows, [], args)
         self.assertEqual(self.records(), [])
+        self.assert_root_untouched()
+
+
+class RobustnessTest(EvalsTest):
+    """seed: failure-mode-set. From the review: a run that raises is one failed run and not the end
+    of the set; a line per finished run goes to stderr; a case name is one path segment; stale
+    worktrees are pruned once the temporary directory is gone."""
+
+    def test_a_run_that_raises_is_one_failed_run_and_the_set_goes_on(self):
+        def exploding(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError("the model exploded")
+
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=FunctionModel(exploding), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 1)
+        self.assertEqual(rows[0], COLUMNS)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["case"], cells["runs"], cells["green"], cells["honest"]), ("alpha", "2", "0", "0"))
+        self.assertIn("the model exploded", err)
+        self.assert_root_untouched()
+
+    def test_a_line_per_finished_run_on_stderr(self):
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 2))
+        self.assertEqual(code, 0)
+        progress = [line for line in err.splitlines() if line.startswith("alpha ")]
+        self.assertEqual(len(progress), 2, err)
+        stamps = sorted(r.name for r in self.records())
+        self.assertTrue(progress[0].startswith("alpha 1/2 answer green "), progress[0])
+        self.assertTrue(progress[1].startswith("alpha 2/2 answer green "), progress[1])
+        self.assertEqual([line.split()[-1] for line in progress], stamps)
+
+    def test_a_case_name_is_one_path_segment_and_a_stray_directory_is_skipped(self):
+        for bad in ("../outside", "alpha/../alpha", "group/sub", ".", ".."):
+            code, rows, err = run(self.root, "--runs", "1", bad, model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 3))
+            self.assertEqual(code, 2, bad)
+            self.assertIn("usage", err, bad)
+            self.assertEqual(rows, [], bad)
+        write(self.root, "cases/notes/README.md", "not a case\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "notes")
+        self.status_before = git(self.root, "status", "--porcelain")
+        self.head_before = git(self.root, "rev-parse", "HEAD").strip()
+        code, rows, err = run(self.root, "--runs", "1", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        self.assertEqual([row[0] for row in rows[1:]], ["alpha"])
+        self.assertIn("notes", err)
+        self.assert_root_untouched()
+
+    def test_stale_worktrees_are_pruned_once_the_temporary_directory_is_gone(self):
+        stale = Path(self.tmp.name) / "stale"
+        git(self.root, "worktree", "add", "--detach", "-q", str(stale), "HEAD")
+        shutil.rmtree(stale)
+        self.assertEqual(git(self.root, "worktree", "list", "--porcelain").count("worktree "), 2)
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
         self.assert_root_untouched()
 
 
