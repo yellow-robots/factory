@@ -626,6 +626,37 @@ class MainTest(unittest.TestCase):
         self.assertIn("git", err.getvalue())
         self.assertFalse(self.runs.exists())
 
+    def test_a_checkout_without_a_commit_or_with_a_stray_dot_git_is_refused(self):
+        """seed: terms-checkout-and-tools. A git checkout with no commit has nothing to pin a run
+        to, and a directory whose .git is not git's is no checkout: both are usage errors that
+        say which, before any run directory exists."""
+        fresh = Path(self.tmp.name) / "fresh"
+        fresh.mkdir()
+        git(fresh, "init", "-q")
+        stray = Path(self.tmp.name) / "stray"
+        stray.mkdir()
+        (stray / ".git").write_text("not a gitdir pointer\n")
+        for checkout, words in ((fresh, "no commit"), (stray, "not a git checkout")):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = builder.main(["builder.py", str(checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+            self.assertEqual(code, 2, checkout)
+            self.assertIn("usage", err.getvalue())
+            self.assertIn(words, err.getvalue())
+        self.assertFalse(self.runs.exists())
+
+    def test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so(self):
+        """seed: terms-checkout-and-tools. record_diff writes diff.patch only when the run changed
+        something, and the code's own text says so."""
+        run_dir = Path(self.tmp.name) / "r"
+        run_dir.mkdir()
+        self.assertEqual(builder.record_diff(self.checkout, run_dir), {"files_changed": 0, "insertions": 0, "deletions": 0})
+        self.assertFalse((run_dir / "diff.patch").exists())
+        self.assertIn("diff.patch (what the run left in the checkout; absent when it left nothing)", builder.__doc__)
+        self.assertIn("absent when the run left nothing", builder.record_diff.__doc__)
+        self.assertIn("the five tools", builder.build_agent.__doc__)
+        self.assertIn("not one of the tools", builder.git.__doc__)
+
     def test_a_provider_error_is_recorded_and_returns_one(self):
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelAPIError("deepseek-flash", "boom")
