@@ -1,0 +1,47 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+ERROR: test_git_that_cannot_run_before_the_run_is_a_usage_error (test_builder.MainTest.test_git_that_cannot_run_before_the_run_is_a_usage_error)
+seed: terms-checkout-and-tools. No git on PATH is a usage error naming git, exit 2, no
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 684, in test_git_that_cannot_run_before_the_run_is_a_usage_error
+    code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(), sandbox=FakeSandbox([]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/w/builder.py", line 571, in main
+    if not (checkout / ".git").exists() or not git(checkout, "rev-parse", "--git-dir").strip():
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/w/builder.py", line 501, in git
+    done = subprocess.run(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/usr/local/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'git'
+
+======================================================================
+FAIL: test_a_checkout_is_the_root_of_its_own_repository (test_builder.MainTest.test_a_checkout_is_the_root_of_its_own_repository)
+seed: terms-checkout-and-tools. A subdirectory of a repository, with or without a stray
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 668, in test_a_checkout_is_the_root_of_its_own_repository
+    self.assertEqual(code, 2, (checkout, env))
+AssertionError: 0 != 2 : (PosixPath('/tmp/tmpqplq93qo/checkout/bogus'), {})
+
+======================================================================
+FAIL: test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so (test_builder.MainTest.test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so)
+seed: terms-checkout-and-tools. record_diff writes diff.patch only when the run changed
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_builder.py", line 701, in test_the_record_leaves_no_patch_when_the_run_left_nothing_and_the_text_says_so
+    self.assertIn("reachable only through five tools", builder.__doc__)
+AssertionError: 'reachable only through five tools' not found in 'The builder: a cold session that changes a checkout until its tests pass. Factory v0.3.\n\n    uv run builder.py <checkout> "<goal>"\n\nThe checkout is the directory named on the command line, reachable only through five functions:\nlist, read, write, edit and check. Writes are confined to the checkout and refused on the goal\'s\ntests and the toolchain; check runs the checkout\'s tests in a container with no network and the\ncheckout mounted read-only, so code the model writes never runs on the host and cannot reach the\nkey. The loop is pydantic-ai, pinned; the provider is DeepSeek\'s chat completions API, the key\nread from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves\nruns/<utc-stamp>/ under the factory itself, never in the checkout, with goal.txt, wire.jsonl\n(every HTTP attempt as it happened), messages.json (the library\'s messages), check-<n>.log per\ncheck, diff.patch (what the run left in the checkout; absent when it left nothing), report.json,\nresponse.md (the report rendered) and numbers.json.\n'
+
+----------------------------------------------------------------------
+Ran 73 tests in 6.802s
+
+FAILED (failures=2, errors=1)
