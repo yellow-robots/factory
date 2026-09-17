@@ -457,15 +457,23 @@ def _seed_problems(
     return problems
 
 
+def _segment(name: str) -> bool:
+    """Whether `name` is one path segment: not empty, not `.` or `..`, with no `/` or `\\`, so it
+    is never a path joined to a directory and looked up."""
+    return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
+
+
 def _review_runs_problems(rel: str, path: Path, fm: dict[str, str], root: Path) -> list[str]:
-    """The run stamps the review names: each a record `runs/<stamp>` of the repository, at least
-    one, and the note named after one of them, `<stamp>.md`."""
+    """The run stamps the review names: each one path segment and a record `runs/<stamp>` of the
+    repository, at least one, and the note named after one of them, `<stamp>.md`."""
     stamps = fm.get("runs", "").split()
     if not stamps:
         return [f"{rel}: review has no runs"]
     problems: list[str] = []
     for stamp in stamps:
-        if not (root / "runs" / stamp).is_dir():
+        if not _segment(stamp):
+            problems.append(f"{rel}: run {stamp} is not one path segment")
+        elif not (root / "runs" / stamp).is_dir():
             problems.append(f"{rel}: run {stamp} has no record runs/{stamp}")
     if path.stem not in stamps:
         problems.append(f"{rel}: review is not named after a run ({path.name})")
@@ -505,7 +513,10 @@ def _review_findings(text: str) -> list[tuple[str, str]]:
 def _judged_problems(
     rel: str, title: str, judged: str, root: Path, test_names: set[str]
 ) -> list[str]:
-    """Every `judged:` entry that does not name what exists, or `none:` without a reason."""
+    """Every `judged:` entry that does not name what exists, `none:` without a reason, or a line
+    with nothing after it or an empty piece between commas."""
+    if not judged.strip():
+        return [f"{rel}: finding {title} has no judged"]
     if judged.startswith("none:"):
         if not judged[len("none:"):].strip():
             return [f"{rel}: finding {title} judged none: has no reason"]
@@ -513,9 +524,15 @@ def _judged_problems(
     problems: list[str] = []
     for piece in judged.split(","):
         piece = piece.strip()
+        if not piece:
+            return [f"{rel}: finding {title} has no judged"]
         kind, _, name = piece.partition(" ")
         name = name.strip()
-        if kind == "test":
+        if kind in ("test", "case", "seed") and not _segment(name):
+            problems.append(
+                f"{rel}: finding {title} judged {piece!r} names {name!r}, not one path segment"
+            )
+        elif kind == "test":
             if name not in test_names:
                 problems.append(
                     f"{rel}: finding {title} is judged by test {name}, which no test*.py names"
@@ -537,12 +554,32 @@ def _judged_problems(
     return problems
 
 
+def _prose_lines(section: str) -> list[str]:
+    """A finding section's prose lines: a fenced code block, as `builder.note_text` reads one, and
+    an indented code block (four spaces or more) belong whole and are no line of the prose."""
+    lines: list[str] = []
+    fence: tuple[str, int] | None = None
+    for line in section.split("\n"):
+        if fence is not None:
+            if builder.closing_fence(line, fence):
+                fence = None
+            continue
+        opened = builder.opening_fence(line)
+        if opened is not None:
+            fence = opened
+            continue
+        if line.startswith(("    ", "\t")):
+            continue
+        lines.append(line)
+    return lines
+
+
 def _finding_problems(
     rel: str, title: str, section: str, root: Path, test_names: set[str]
 ) -> list[str]:
-    """A finding's `severity:`, `verified:` and `judged:` lines, read anywhere in its section."""
+    """A finding's `severity:`, `verified:` and `judged:` lines, read anywhere in its prose."""
     lines: dict[str, str] = {}
-    for line in section.split("\n"):
+    for line in _prose_lines(section):
         key, sep, value = line.partition(":")
         key = key.strip()
         if sep and key in ("severity", "verified", "judged") and key not in lines:
