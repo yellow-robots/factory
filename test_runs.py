@@ -172,9 +172,6 @@ class RunsTest(unittest.TestCase):
             self.assertEqual(len(row), len(COLUMNS), row)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ToolErrorsTest(unittest.TestCase):
     """seed: tool-errors-column. `tool_errors`, right after `checks`: the record's tool returns
@@ -188,7 +185,9 @@ class ToolErrorsTest(unittest.TestCase):
         self.base.mkdir()
         lapses = record(self.base, "20260917T000001Z", BUILDER_V05, "two of the model's\n")
         messages(lapses, "dir\t0\tsub", "error: not a directory: builder.py", "error: protected: test_x.py", "exit 1\nFAIL",
-                 "error: old text not found in f.py", "error: not part of the checkout: runs", "error: outside the checkout: ..")
+                 "error: old text not found in f.py", "error: not part of the checkout: runs", "error: outside the checkout: ..",
+                 "error: cap reached (30 writes and edits); report now", "error: cap reached (8 checks); report now",
+                 "error: no sandbox; check is not available in this run")  # from the review: the walls' returns, three refusals and three more
         clean = record(self.base, "20260917T000002Z", BUILDER_V05, "none\n")
         messages(clean, "1\tx = 1", "exit 0\nOK")
         record(self.base, "20260917T000003Z", BUILDER_V05, "no messages\n")
@@ -206,3 +205,7 @@ class ToolErrorsTest(unittest.TestCase):
 
     def test_the_module_docstring_names_the_column(self):
         self.assertIn("tool_errors", runs.__doc__)
+
+
+if __name__ == "__main__":
+    unittest.main()

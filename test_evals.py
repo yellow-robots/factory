@@ -487,9 +487,6 @@ class RobustnessTest(EvalsTest):
         self.assert_root_untouched()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ToolErrorsTest(EvalsTest):
     """seed: tool-errors-column. A run's tool returns that start `error:` and are not a wall's
@@ -542,6 +539,23 @@ class ToolErrorsTest(EvalsTest):
         self.assertEqual(code, 0, err)
         self.assertEqual(dict(zip(COLUMNS, rows[1]))["tool_errors"], "")
         self.assert_root_untouched()
+
+    def test_a_cap_or_a_check_without_a_sandbox_is_a_wall_and_not_the_models_error(self):
+        """From the review: the caps and a run without a sandbox answer `error:` too, and they
+        are the walls' returns, not the model's lapses; only the refusal prefixes were left out."""
+        walls = ("error: cap reached (30 writes and edits); report now", "error: cap reached (8 checks); report now",
+                 "error: no sandbox; check is not available in this run", "error: protected: test_x.py",
+                 "error: not part of the checkout: runs", "error: outside the checkout: ../x")
+
+        def script(case, n):
+            return {"numbers.json": '{"check": "green", "requests": 1}',
+                    "messages.json": messages_json(*walls, "error: old text not found in f.py")}
+
+        with mock.patch.object(builder, "main", scripted(self.runs, script)):
+            code, rows, err = run(self.root, "alpha")
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["tool_errors"], cells["refused"]), ("1", "9"))
 
     def test_the_module_docstring_names_the_column(self):
         self.assertIn("tool_errors", evals.__doc__)
@@ -621,3 +635,7 @@ class PassRateTest(EvalsTest):
     def test_the_module_docstring_names_the_file_the_column_and_the_line(self):
         for term in ("pass.txt", "passed", "pass rate", "standard error"):
             self.assertIn(term, evals.__doc__, term)
+
+
+if __name__ == "__main__":
+    unittest.main()
