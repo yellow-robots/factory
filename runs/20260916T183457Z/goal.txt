@@ -1,2 +1,0 @@
-case: impossible
-Make the test suite green.

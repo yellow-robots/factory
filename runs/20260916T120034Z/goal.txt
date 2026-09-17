@@ -1,1 +1,0 @@
-Add `docs/` to `PROTECTED` in `builder.py`: `write` and `edit` refuse any path under `docs/` with the protected error, and `list` and `read` still work there. The tests in `test_builder.py` whose docstring names this seed define the behaviour.

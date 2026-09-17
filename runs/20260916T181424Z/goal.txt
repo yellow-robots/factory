@@ -1,3 +1,0 @@
-`evals.py` adds, after `diff_lines`, the columns `files_changed`, `deletions` and `stray_files`, each the median over the runs: `files_changed` and `deletions` from the numbers as they are; `stray_files` the count of distinct paths in the run's `written` and `edited` that the goal's text names neither by path nor by basename. A run without those numbers is left out of the median, as elsewhere. Nothing else in the table changes. The tests in `test_evals.py` whose docstring names this seed define the behaviour.
-
-Later, the preservation checks from the design: a symbol and edge map before and after, mutation score on the tests.
