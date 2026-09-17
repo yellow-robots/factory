@@ -6,7 +6,10 @@
 `runs` is the records directory (by default `runs/` beside this file). Every subdirectory is one
 record and becomes one row in stamp order; each value comes from the record's `numbers.json` as
 it is there, `goal` is the first line of `goal.txt` with tabs as spaces, a key the record lacks is
-an empty cell, and `head` reads `head` and, before v0.5, `world_head`. A record without
+an empty cell, and `head` reads `head` and, before v0.5, `world_head`. Two cells are derived when
+the table is printed and stored nowhere: `input_per_request`, `input_tokens` over `requests`, and
+`tool_errors`, right after `checks`, a record's tool returns in `messages.json` that start `error:`
+and are not a wall's refusal, empty for a record without messages to read. A record without
 `numbers.json` is a row with its stamp and goal alone. Nothing is written. Any argument is a
 usage error on stderr, exit 2.
 """
@@ -22,9 +25,11 @@ RUNS = Path(__file__).resolve().parent / "runs"  # the factory's record, beside 
 
 COLUMNS = (
     "stamp", "head", "stopped", "check", "requests", "tool_calls", "lists", "reads", "writes", "edits",
-    "checks", "input_tokens", "input_per_request", "cache_read_tokens", "output_tokens",
+    "checks", "tool_errors", "input_tokens", "input_per_request", "cache_read_tokens", "output_tokens",
     "reasoning_tokens", "cost_usd", "seconds", "files_changed", "insertions", "deletions", "goal",
 )  # fmt: skip
+# The refusals a wall gives, shared with the evaluation table so neither counts the other's returns.
+REFUSED = ("error: protected", "error: not part of", "error: outside")
 
 
 def usage_error(reason: str = "") -> int:
@@ -73,7 +78,36 @@ def _per_request(numbers: dict[str, Any]) -> str:
     return _field(round(tokens / requests))
 
 
-def _cell(numbers: dict[str, Any], column: str) -> str:
+def tool_errors(record: Path | None) -> int | None:
+    """The record's tool returns that start `error:` and are not a wall's refusal, in its
+    `messages.json`; None when there are no messages to read. One function's count, and the
+    evaluation table reads it through here so the two never disagree on a record."""
+    if record is None:
+        return None
+    try:
+        messages = json.loads((record / "messages.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(messages, list):
+        return None
+    total = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        parts = message.get("parts")
+        for part in parts if isinstance(parts, list) else []:
+            if not isinstance(part, dict) or part.get("part_kind") != "tool-return":
+                continue
+            content = part.get("content")
+            if isinstance(content, str) and content.startswith("error:") and not content.startswith(REFUSED):
+                total += 1
+    return total
+
+
+def _cell(record: Path, numbers: dict[str, Any], column: str) -> str:
+    if column == "tool_errors":  # the model's lapses are derived, not stored
+        count = tool_errors(record)
+        return "" if count is None else _field(count)
     if column == "input_per_request":  # the cost-of-context column is derived, not stored
         return _per_request(numbers)
     keys = ("head", "world_head") if column == "head" else (column,)
@@ -95,7 +129,7 @@ def main(argv: list[str], runs: Any = None) -> int:
             "\t".join(
                 _field(record.name) if column == "stamp" else
                 _field(_first_line(record / "goal.txt")) if column == "goal" else
-                _cell(numbers, column)
+                _cell(record, numbers, column)
                 for column in COLUMNS
             )
         )

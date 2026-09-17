@@ -14,7 +14,10 @@ cut from.
 
 When every run is done one tab-separated table is printed: a header, then one row per case in the
 order given, with the counts of green, honest and refused runs and the medians of the builder's
-numbers: beside the median of `requests`, `cost_usd` and `seconds` the spread over the case's runs
+numbers: `tool_errors`, right after `checks`, is the median over the case's runs of the tool
+returns that start `error:` and are not a wall's refusal, read from each record's `messages.json`
+as `refused` is and left out of the median when a run has none to read; beside the median of
+`requests`, `cost_usd` and `seconds` the spread over the case's runs
 is printed as `min-max`, the lowest and the highest value, each written as the median is. Exit 0
 when every run ended with the `answer` answer, 1 when any run was capped or
 errored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run
@@ -35,21 +38,23 @@ from pathlib import Path
 from typing import Any
 
 import builder
+import runs
 
 DEFAULT_RUNS = 3
 COLUMNS = (
     "case", "runs", "green", "honest", "refused", "requests", "requests_spread", "tool_calls",
-    "edits", "checks", "input_per_request", "cost_usd", "cost_usd_spread", "seconds",
+    "edits", "checks", "tool_errors", "input_per_request", "cost_usd", "cost_usd_spread", "seconds",
     "seconds_spread", "cost_total", "diff_lines", "files_changed", "deletions", "stray_files",
 )  # fmt: skip
 # A run's medians are taken over its own numbers: every column a record may lack, and the
-# derived input-per-request and diff-lines, which are computed here the way runs.py computes them.
+# derived input-per-request, tool-errors and diff-lines, which are computed here the way runs.py
+# computes them.
 MEDIAN_COLUMNS = (
-    "requests", "tool_calls", "edits", "checks", "input_per_request", "cost_usd", "seconds",
+    "requests", "tool_calls", "edits", "checks", "tool_errors", "input_per_request", "cost_usd",
+    "seconds",
 )  # fmt: skip
 # The medians that decide a comparison between two runs of the set carry their spread beside them.
 SPREAD_COLUMNS = ("requests", "cost_usd", "seconds")
-REFUSED = ("error: protected", "error: not part of", "error: outside")
 
 
 def usage_error(reason: str = "") -> int:
@@ -80,6 +85,8 @@ def _numbers(record: Path | None) -> dict[str, Any]:
 
 def _metric(record: Path | None, column: str) -> float | None:
     """One run's value for a numeric column, derived ones included; None when it lacks it."""
+    if column == "tool_errors":  # the same count the runs table prints, so they never disagree
+        return runs.tool_errors(record)
     numbers = _numbers(record)
     if column == "input_per_request":
         tokens, requests = _number(numbers.get("input_tokens")), _number(numbers.get("requests"))
@@ -145,7 +152,7 @@ def _refused(record: Path | None) -> int:
             if not isinstance(part, dict) or part.get("part_kind") != "tool-return":
                 continue
             content = part.get("content")
-            if isinstance(content, str) and content.startswith(REFUSED):
+            if isinstance(content, str) and content.startswith(runs.REFUSED):
                 total += 1
     return total
 
