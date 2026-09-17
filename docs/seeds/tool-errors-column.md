@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: Tool returns that say `error:` without a wall behind them, an edit whose anchor missed or `list` on a file, are the builder's tool-use lapses; the records hold them and the table does not count them.
 value: 4
 effort: S

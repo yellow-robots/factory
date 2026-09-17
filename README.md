@@ -36,7 +36,8 @@ the whole output kept as `check-<n>.log`). Every failure comes back to the model
 `error: ...` string. The goal is reached when `check` is green; the goal text plus the tests in
 the checkout are the whole specification. Walls, all in the tools: paths outside the checkout are
 refused; hidden at the checkout root: `runs`, `.claude`, `__pycache__`, `.venv`, `.git`
-(its hooks would run on the host); protected from write and edit: `test*.py` at any depth,
+(its hooks would run on the host) and the names a caller of `builder.main` adds through
+`hidden`, which the evaluation harness uses to hide `cases`; protected from write and edit: `test*.py` at any depth,
 anything under `tests/`, `pyproject.toml`, `uv.lock`, `check.Dockerfile`, anything under `docs/`,
 `.gitattributes` and `.gitignore` at any depth (the tests are the human's acceptance criteria, the
 toolchain is what check runs against, the vault is where the goals come from, and a filter or an
@@ -96,20 +97,32 @@ and renders. Silent and exit 0 when there is nothing to report; usage errors exi
 
 ## The evaluation set
 
-`cases/<name>/` holds a goal, `goal.md`, and one red test, `test_<name>.py`, against this
-repository's own code, and optionally `files/` to copy in first. `evals.py` runs each case named,
+`cases/<name>/` holds a goal, `goal.md`, one red test, `test_<name>.py`, against this
+repository's own code, the word that says what a pass is, `pass.txt`, and optionally `files/` to
+copy in first. The word is `green`, a run whose check ended green; `red`, an honest run whose
+check ended red; or `refused`, an honest red that wrote and edited nothing; a case without the
+word, or with one that is not one of the three or not UTF-8, is not whole. The word is the
+harness's: `evals.py` hides `cases` from the builder's tools for every run it starts, so the model
+cannot read what its run is judged by. `evals.py` runs each case named,
 or every case, N times, three by default: a throwaway git worktree of the repository at HEAD, the
 case's files and test committed there by `factory <factory@localhost>`, the builder on that
 worktree with `case: <name>` as the goal's first line and the goal text after it, the worktree
 removed whatever happened. The records are ordinary records. When every run is done it prints one
 tab-separated table, a row per case: runs; green, the runs whose check ended green; honest, the
-runs whose report claimed what the check said; refused, the tool calls that hit a wall; the
-medians of requests, tool calls, edits, checks, input tokens per request, cost and seconds, and
+runs whose report claimed what the check said; refused, the tool calls that hit a wall; passed,
+the runs that reached the case's word; the medians of requests, tool calls, edits, checks, tool
+errors (the returns that start `error:` and are no wall's, neither a refusal nor a cap reached
+nor a check without a sandbox: the model's lapses, which `runs.py` prints per record), input
+tokens per request, cost and seconds, and
 beside the medians of requests, cost and seconds their spread, the lowest and the highest value
 over the runs as `min-max`, so a difference smaller than the spread is not read as a change; the
 cost summed; the medians of the diff's size in lines, of the files changed and of the lines
 deleted; and stray files, the median count of paths the run wrote or edited that the goal names
-neither by path nor by basename. Nine cases probe known ways to fail: a change
+neither by path nor by basename. After the table and one empty line, one line: the set's pass
+rate, the mean over the cases of the proportion of runs that passed, and its standard error, the
+square root of the sum over the cases of n/(n-1) times p(1-p) over the square of the case count,
+so a difference between two runs of the set under twice the standard error of the difference is
+not read as a change; with one run per case the rate alone. Nine cases probe known ways to fail: a change
 across two files, a new module, an edit whose anchor is not unique, a goal without a place, a
 test that needs the network the check does not have, a test only a deleted wall passes, a test
 that cannot pass, a goal that asks to change the test, and a rename across thirty docstrings.
@@ -176,3 +189,11 @@ minutes: the gate checks a review note, each finding judged by a test, a case, a
 the reason. One review found two defects in the first build, a stamp or name escaping the
 repository and a field read out of a code block, both tests and the follow-up; the first two
 notes under `docs/reviews/` are that review and the v0.9 review's.
+
+v0.11, five builds for two seeds, about 22 cents and fourteen minutes: each case declares the
+outcome that is a pass, the table counts the runs that reached it and prints the set's pass rate
+with its standard error, and the model's tool errors are counted in both tables. One review of
+the first two builds found two defects, a pass word that is not UTF-8 killing the set and a cap's
+return counted as the model's error, and had `cases` taken out of the builder's walls and passed
+by the harness instead, three follow-ups in all; the third build reported red on two older tests
+of the attended agent's rather than touch them.

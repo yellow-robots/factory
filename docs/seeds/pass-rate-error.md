@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: The set has no pass rate and no error bar on it, so a change in how many cases pass between two set runs cannot be told from noise; the per-case counts already hold what the estimate needs.
 value: 4
 effort: S
