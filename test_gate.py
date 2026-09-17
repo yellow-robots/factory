@@ -723,7 +723,8 @@ class ReleaseTest(GateTest):
         built_by = f"Built-By: factory at 1234567, run {STAMP}"
         apart = self.build(built_by, "Co-Authored-By: t <t@t>")
         self.assertEqual(self.built_by(), "")
-        self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
+        out = self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
+        self.assertRegex(out, rf"docs/versions/v0\.2\.md: {apart}: ")  # git's abbreviation, seven here
         one_of_two = self.build(
             f"Built-By: factory at 7654321, run {STAMP}", built_by + "\nCo-Authored-By: t <t@t>", amend=True
         )
@@ -733,11 +734,12 @@ class ReleaseTest(GateTest):
         self.assertEqual(self.release(), (0, "", ""))
 
     def test_release_refuses_a_build_that_names_no_run_or_a_run_not_committed(self):
-        """seed: built-by-trailer. A `Built-By` whose value does not end `run <stamp>`, the stamp one
-        path segment, is refused under the version's note as naming no run; one whose record is
-        missing, a file, a symbolic link, present and ignored by git, or committed and then removed
-        from HEAD's tree, is refused under `runs/<stamp>`, the commit named each time; with the
-        record a directory in HEAD's tree the version is released."""
+        """seed: built-by-trailer. A `Built-By` whose value does not end `run <stamp>`, the word `run`
+        as written and the stamp in the builder's shape, is refused under the version's note as
+        naming no run, a stamp in git's revision syntax among them; one whose record is missing, a
+        file, a symbolic link, a submodule, present and ignored by git, committed and then removed
+        from HEAD's tree, or staged and not committed, is refused under `runs/<stamp>`, the commit
+        named each time; with the record a directory in HEAD's tree the version is released."""
         self.ready()
         self.edit("feature.py", "X = 1\n")
         no_run = self.build("Built-By: factory at 1234567\nCo-Authored-By: t <t@t>")
@@ -745,6 +747,13 @@ class ReleaseTest(GateTest):
         self.assert_refused_with("docs/versions/v0.2.md:", no_run, "names no run")
         dots = self.build("Built-By: factory at 1234567, run ..\nCo-Authored-By: t <t@t>", amend=True)
         self.assert_refused_with("docs/versions/v0.2.md:", dots, "names no run")
+        capital = self.build(f"Built-By: factory at 1234567, Run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
+        self.assert_refused_with("docs/versions/v0.2.md:", capital, "names no run")
+        first = git(self.root, "rev-list", "--max-parents=0", "HEAD").strip()
+        self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/x-g{first[:7]}^{{tree}}").strip(), "tree")
+        crafted = self.build(f"Built-By: factory at 1234567, run x-g{first[:7]}^{{tree}}\nCo-Authored-By: t <t@t>",
+                             amend=True)  # fmt: skip
+        self.assert_refused_with("docs/versions/v0.2.md:", crafted, "names no run")
         missing = self.build(f"Built-By: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
         self.assert_refused_with(f"runs/{STAMP}:", missing)
         self.edit(f"runs/{STAMP}", "not a record\n")
@@ -757,6 +766,12 @@ class ReleaseTest(GateTest):
         self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/{STAMP}").strip(), "blob")
         self.assert_refused_with(f"runs/{STAMP}:", missing)
         git(self.root, "rm", "-q", f"runs/{STAMP}")
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        git(self.root, "update-index", "--add", "--cacheinfo", f"160000,{head},runs/{STAMP}")
+        git(self.root, "commit", "-q", "-m", "a submodule named like the run")
+        self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/{STAMP}").strip(), "commit")
+        self.assert_refused_with(f"runs/{STAMP}:", missing)
+        git(self.root, "rm", "-q", "--cached", f"runs/{STAMP}")
         self.edit(".gitignore", "__pycache__/\nruns/\n")
         self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
         self.commit("the runs ignored")
@@ -768,20 +783,33 @@ class ReleaseTest(GateTest):
         self.commit("the record removed")
         self.assert_refused_with(f"runs/{STAMP}:", missing)
         git(self.root, "add", "-f", f"runs/{STAMP}/numbers.json")
+        self.assert_refused_with(f"runs/{STAMP}:", missing)  # staged is not committed
         self.commit("the record again")
         self.assertEqual(self.release(), (0, "", ""))
 
     def test_release_reads_only_the_builds_since_the_previous_tag(self):
-        """seed: built-by-trailer. A build before the previous tag, the highest `v<major>.<minor>`
-        and not a lower one, is not read, whatever its `Built-By`, so the four released build
-        commits of v0.7 and v0.8 stay as they are."""
+        """seed: built-by-trailer. A build before the previous tag, the highest `v<major>.<minor>` by
+        number, v0.10 above v0.9, is not read, whatever its `Built-By`, so the four released build
+        commits of v0.7 and v0.8 stay as they are. From the final review: a release lists the
+        builds once, through check, and not again."""
         first = git(self.root, "rev-list", "--max-parents=0", "HEAD").strip()
-        git(self.root, "tag", "v0.0", first)
+        git(self.root, "tag", "v0.9", first)
         self.edit("feature.py", "X = 1\n")
         self.build("Built-By: factory at 1234567, run 20260101T000000Z", "Co-Authored-By: t <t@t>")
         git(self.root, "tag", "-f", "v0.1")
+        git(self.root, "tag", "v0.10")
         self.ready()
-        self.assertEqual(self.release(), (0, "", ""))
+        listings = []
+        real_run = subprocess.run
+
+        def counting(argv, *args, **kwargs):
+            if argv and argv[0] == "git" and "rev-list" in argv:
+                listings.append(list(argv))
+            return real_run(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", counting):
+            self.assertEqual(self.release(), (0, "", ""))
+        self.assertEqual(len(listings), 1, listings)
 
     def test_every_problem_of_every_build_is_printed_in_one_release(self):
         """seed: built-by-trailer. From the reviews: a `Built-By` git does not read is still checked
@@ -803,7 +831,8 @@ class ReleaseTest(GateTest):
         built_by = f"Built-By: factory at 1234567, run {STAMP}"
         twice = self.build(built_by, f"{built_by}\nBuilt-By: factory at 7654321, run {STAMP}\nCo-Authored-By: t <t@t>")
         self.edit("fifth.py", "V = 1\n")
-        cafe = self.build("Built-By: factory at café\nCo-Authored-By: t <t@t>")
+        cafe = self.build("Built-By: factory at café \\ x\x7fy\nCo-Authored-By: t <t@t>")
+        self.assertIn("café \\ x\x7fy", git(self.root, "log", "-1", "--format=%B"))
         out = self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
         lines = out.splitlines()
 
@@ -817,15 +846,17 @@ class ReleaseTest(GateTest):
         self.assertTrue(has("docs/versions/v0.2.md:", empty_apart, "names no run"), out)
         self.assertTrue(has("docs/versions/v0.2.md:", twice, "as a trailer"), out)
         self.assertEqual(sum(1 for line in lines if line.startswith(f"runs/{STAMP}:") and twice in line), 1, out)
-        self.assertTrue(has("docs/versions/v0.2.md:", cafe, "names no run", "café"), out)
+        self.assertTrue(has("docs/versions/v0.2.md:", cafe, "names no run", "café \\ x\\x7fy"), out)
 
     def test_the_builds_are_read_as_git_reads_trailers(self):
         """seed: built-by-trailer. From the reviews: a `Built-By` line begins with the key in ASCII
         letters of any case, spaces allowed before the colon; what git prints is read as bytes and
         split at newlines alone, so a form feed or a carriage return is part of a value, and the
         value git reads unfolded must name the run as the line's own must; a no-break space is kept
-        as git keeps it; an indented key, a key with a letter outside ASCII, a key after a carriage
-        return and `Built-By:` past a line's start are no build."""
+        as git keeps it; the whole message is read, so a `Built-By` under a title with no blank
+        line is a build git does not read; an indented key, a key with a letter outside ASCII, a
+        key after a carriage return, a form feed before the colon and `Built-By:` past a line's
+        start are no build."""
         self.ready()
         self.edit("feature.py", "X = 1\n")
         lower = self.build(f"built-by: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>")
@@ -853,10 +884,14 @@ class ReleaseTest(GateTest):
         self.assertIn(" ".encode(), self.built_by_bytes())
         out = self.assert_refused_with(f"runs/{STAMP} :", nbsp)
         self.assertNotIn("as a trailer", out)
+        titled = self.build_raw(f"feature\nBuilt-By: factory at 1234567, run {STAMP}\n".encode(), amend=True)
+        self.assertEqual(self.built_by_bytes(), b"\n")
+        self.assert_refused_with("docs/versions/v0.2.md:", titled, "as a trailer")
         self.build_raw(
             (
                 "feature\n\nnotes\n"
                 "  Built-By: factory at 1234567, run 20260101T000000Z\n"
+                "Built-By\x0c: factory at 1234567, run 20260101T000000Z\n"
                 "Buılt-By: factory at 1234567, run 20260101T000000Z\n"
                 "notes\rBuilt-By: factory at 1234567, run 20260101T000000Z\n"
                 "the words Built-By: and a run name a build only at a line's start\n\n"
@@ -867,12 +902,16 @@ class ReleaseTest(GateTest):
         self.assertEqual(self.release(), (0, "", ""))
 
     def test_a_git_failure_refuses_the_release_and_no_path_hides_the_builds(self):
-        """seed: built-by-trailer. From the review: the commits are listed as revisions whatever
-        paths the checkout holds, and a git command that fails while the builds are read refuses
-        the release under the version's note, never reads as no builds."""
+        """seed: built-by-trailer. From the reviews: the commits are listed, and each read, as
+        revisions whatever paths the checkout holds, a file named like the range or like a
+        commit's hash, and a git command that fails while the builds are read refuses the release
+        under the version's note, never reads as no builds."""
         self.ready()
         self.edit("v0.1..HEAD", "a file named like the range\n")
         apart = self.build(f"Built-By: factory at 1234567, run {STAMP}", "Co-Authored-By: t <t@t>")
+        self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
+        self.edit(git(self.root, "rev-parse", "HEAD").strip(), "a file named like the build's hash\n")
+        self.commit("a file named like the build")
         self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
         parent = git(self.root, "rev-parse", "HEAD^").strip()
         (self.root / ".git" / "objects" / parent[:2] / parent[2:]).unlink()
@@ -881,13 +920,22 @@ class ReleaseTest(GateTest):
         self.assert_refused_with("docs/versions/v0.2.md:", "git", "rev-list")
 
     def test_a_message_git_prints_in_another_encoding_does_not_end_the_release(self):
-        """seed: built-by-trailer. From the review: output git gives in an encoding other than UTF-8
-        is read with what cannot be decoded replaced, so a commit whose message git prints in
-        Latin-1 leaves the release to tag instead of raising."""
+        """seed: built-by-trailer. From the reviews: output git gives in an encoding other than UTF-8
+        is read with what cannot be decoded replaced, so a commit whose message git would print in
+        Latin-1 leaves the release to tag instead of raising; and the repository's display settings
+        do not change what is read, so a build git does not read is refused whether git would print
+        messages in Latin-1 or in UTF-16."""
         git(self.root, "config", "i18n.logOutputEncoding", "ISO-8859-1")
         self.ready()
         self.edit("notes.txt", "n\n")
         self.commit("café: a commit, not a build")
+        self.edit("feature.py", "X = 1\n")
+        apart = self.build(f"Built-By: factory at 1234567, run {STAMP}", "Co-Authored-By: t <t@t>")
+        self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
+        git(self.root, "config", "i18n.logOutputEncoding", "UTF-16")
+        self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
+        git(self.root, "config", "i18n.logOutputEncoding", "ISO-8859-1")
+        self.build("a feature, not a build", amend=True)
         self.assertEqual(self.release(), (0, "", ""))
 
 
