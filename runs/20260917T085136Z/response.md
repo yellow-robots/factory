@@ -1,0 +1,18 @@
+## Changed
+- gate.py
+
+## Did
+- gate.py: added REVIEW_FIELDS, SEVERITIES and VERIFIEDS constants for a review note's template fields and fixed words.
+- gate.py: added _test_names to collect test method/class names from root test*.py files, mirroring _test_docstrings.
+- gate.py: added _review_problems, _review_runs_problems, _review_findings, _judged_problems and _finding_problems to check a review's fields, reviewer, created, run records/naming, comment-stripped body and per-finding severity/verified/judged lines.
+- gate.py: wired kind == 'review' into problems_check (and computed test_names) so check reports review problems and release refuses a review not whole.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- Not verified against any hidden tests; only the visible test_gate.py ReviewTest and suite were run.
+- Whether review notes should derive allowed fields from docs/templates/review.md instead of the hardcoded set is not tested; I mirrored the seed's SEED_FIELDS approach.

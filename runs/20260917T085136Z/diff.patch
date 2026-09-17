@@ -1,0 +1,204 @@
+diff --git a/gate.py b/gate.py
+index 46ee0e2..dfa4a88 100644
+--- a/gate.py
++++ b/gate.py
+@@ -25,6 +25,9 @@ import builder
+ USAGE = "usage: gate.py check|render|release <version>"
+ STATUSES = ("open", "spec", "building", "done", "rejected")
+ SEED_FIELDS = {"type", "status", "summary", "value", "effort", "version", "created"}
++REVIEW_FIELDS = {"type", "created", "runs", "reviewer"}
++SEVERITIES = ("defect", "smell")
++VERIFIEDS = ("yes", "no")
+ EFFORTS = {"S", "M", "L"}
+ BASE_LANGUAGE = {"this", "file", "formula", "true", "false", "null"}
+ BASE_MEMBER_ROOTS = {"this", "file", "formula"}
+@@ -148,6 +151,25 @@ def _test_docstrings(root: Path) -> list[str]:
+     return found
+ 
+ 
++def _test_names(root: Path) -> set[str]:
++    """The name of every test method or class in a `test*.py` at the root."""
++    names: set[str] = set()
++    for path in sorted(root.glob("test*.py")):
++        if not path.is_file():
++            continue
++        try:
++            tree = ast.parse(_read(path))
++        except SyntaxError:
++            continue
++        for node in ast.walk(tree):
++            if isinstance(node, ast.ClassDef) or (
++                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
++                and node.name.startswith("test")
++            ):
++                names.add(node.name)
++    return names
++
++
+ def _named_by_a_test(root: Path, stem: str, docstrings: list[str]) -> bool:
+     pattern = re.compile(rf"seed:\s*{re.escape(stem)}(?![\w-])")
+     return any(pattern.search(doc) for doc in docstrings)
+@@ -330,6 +352,7 @@ def problems_check(root: Path) -> list[str]:
+     problems: list[str] = []
+     tags = _tags(root)
+     docstrings = _test_docstrings(root)
++    test_names = _test_names(root)
+ 
+     for path in docs.rglob("*"):
+         if not path.is_file():
+@@ -361,6 +384,8 @@ def problems_check(root: Path) -> list[str]:
+             problems.extend(_seed_problems(path, rel, fm, body, root, tags, docstrings))
+         elif kind == "version":
+             version_notes.append((path, rel, fm, body))
++        elif kind == "review":
++            problems.extend(_review_problems(path, rel, fm, body, root, test_names))
+ 
+     for path, rel, fm, body in version_notes:
+         for field in sorted(set(fm) - {"type"}):
+@@ -432,6 +457,146 @@ def _seed_problems(
+     return problems
+ 
+ 
++def _review_runs_problems(rel: str, path: Path, fm: dict[str, str], root: Path) -> list[str]:
++    """The run stamps the review names: each a record `runs/<stamp>` of the repository, at least
++    one, and the note named after one of them, `<stamp>.md`."""
++    stamps = fm.get("runs", "").split()
++    if not stamps:
++        return [f"{rel}: review has no runs"]
++    problems: list[str] = []
++    for stamp in stamps:
++        if not (root / "runs" / stamp).is_dir():
++            problems.append(f"{rel}: run {stamp} has no record runs/{stamp}")
++    if path.stem not in stamps:
++        problems.append(f"{rel}: review is not named after a run ({path.name})")
++    return problems
++
++
++def _review_findings(text: str) -> list[tuple[str, str]]:
++    """The review's findings: each level-three heading of the body with its section's text, a
++    fenced code block belonging whole."""
++    findings: list[list] = []
++    current: list | None = None
++    fence: tuple[str, int] | None = None
++    for line in text.split("\n"):
++        if fence is not None:
++            if current is not None:
++                current[1].append(line)
++            if builder.closing_fence(line, fence):
++                fence = None
++            continue
++        opened = builder.opening_fence(line)
++        if opened is not None:
++            if current is not None:
++                current[1].append(line)
++            fence = opened
++            continue
++        level, title = builder.heading(line)
++        if level == 3:
++            current = [title, []]
++            findings.append(current)
++        elif level in (1, 2):  # the next section of the note ends the finding
++            current = None
++        elif current is not None:
++            current[1].append(line)
++    return [(title, "\n".join(section)) for title, section in findings]
++
++
++def _judged_problems(
++    rel: str, title: str, judged: str, root: Path, test_names: set[str]
++) -> list[str]:
++    """Every `judged:` entry that does not name what exists, or `none:` without a reason."""
++    if judged.startswith("none:"):
++        if not judged[len("none:"):].strip():
++            return [f"{rel}: finding {title} judged none: has no reason"]
++        return []
++    problems: list[str] = []
++    for piece in judged.split(","):
++        piece = piece.strip()
++        kind, _, name = piece.partition(" ")
++        name = name.strip()
++        if kind == "test":
++            if name not in test_names:
++                problems.append(
++                    f"{rel}: finding {title} is judged by test {name}, which no test*.py names"
++                )
++        elif kind == "case":
++            if not (root / "cases" / name).is_dir():
++                problems.append(
++                    f"{rel}: finding {title} is judged by case {name}, which has no directory cases/{name}"
++                )
++        elif kind == "seed":
++            if not (root / "docs" / "seeds" / f"{name}.md").is_file():
++                problems.append(
++                    f"{rel}: finding {title} is judged by seed {name}, which has no note docs/seeds/{name}.md"
++                )
++        else:
++            problems.append(
++                f"{rel}: finding {title} has judged {piece!r}, which is not test, case, seed or none:"
++            )
++    return problems
++
++
++def _finding_problems(
++    rel: str, title: str, section: str, root: Path, test_names: set[str]
++) -> list[str]:
++    """A finding's `severity:`, `verified:` and `judged:` lines, read anywhere in its section."""
++    lines: dict[str, str] = {}
++    for line in section.split("\n"):
++        key, sep, value = line.partition(":")
++        key = key.strip()
++        if sep and key in ("severity", "verified", "judged") and key not in lines:
++            lines[key] = value.strip()
++    problems: list[str] = []
++    severity = lines.get("severity")
++    if severity is None:
++        problems.append(f"{rel}: finding {title} has no severity")
++    elif severity not in SEVERITIES:
++        problems.append(f"{rel}: finding {title} severity {severity} is not defect or smell")
++    verified = lines.get("verified")
++    if verified is None:
++        problems.append(f"{rel}: finding {title} has no verified")
++    elif verified not in VERIFIEDS:
++        problems.append(f"{rel}: finding {title} verified {verified} is not yes or no")
++    judged = lines.get("judged")
++    if judged is None:
++        if verified == "yes":
++            problems.append(f"{rel}: finding {title} has no judged")
++    else:
++        problems.extend(_judged_problems(rel, title, judged, root, test_names))
++    return problems
++
++
++def _review_problems(
++    path: Path,
++    rel: str,
++    fm: dict[str, str],
++    body: str,
++    root: Path,
++    test_names: set[str],
++) -> list[str]:
++    """A review note: the template's fields and no other, a reviewer, a created date, the runs it
++    reviewed and one of them naming it, then its findings with comments out."""
++    problems: list[str] = []
++    for field in sorted(set(fm) - REVIEW_FIELDS):
++        problems.append(f"{rel}: review has field {field}")
++    if not fm.get("reviewer", ""):
++        problems.append(f"{rel}: review has no reviewer")
++    created = fm.get("created", "")
++    if not created:
++        problems.append(f"{rel}: review has no created")
++    elif not CREATED.match(created):
++        problems.append(f"{rel}: created {created!r} is not YYYY-MM-DD")
++    problems.extend(_review_runs_problems(rel, path, fm, root))
++    try:
++        text = builder.note_text(body)
++    except ValueError:
++        return problems + [f"{rel}: review has a %% comment left open"]
++    for title, section in _review_findings(text):
++        problems.extend(_finding_problems(rel, title, section, root, test_names))
++    return problems
++
++
+ def _title(body: str) -> str:
+     for line in body.splitlines():
+         stripped = line.strip()
