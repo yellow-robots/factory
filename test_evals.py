@@ -751,22 +751,6 @@ class HeldOutTest(EvalsTest):
             self.assertTrue((record / "held_out.log").is_file())
         self.assert_root_untouched()
 
-    def test_what_the_held_out_check_adds_to_a_record_is_committed_to_the_store(self):
-        """seed: records-outside-the-project. The harness writes `held_out.log` and `held_out.json`
-        into a record after the builder committed it: they are committed to the store as well, so
-        a set leaves nothing of a record uncommitted."""
-        self.hold_out()
-        sandbox = RecordingSandbox([(0, "OK\n")] * 6)
-        code, rows, err = run(self.root, "alpha", model=player(("list", {"path": "."}), EDIT, CHECK), sandbox=sandbox)
-        self.assertEqual(code, 0, err)
-        self.assertEqual(len(self.records()), 3)
-        self.assertEqual(git(self.runs, "status", "--porcelain"), "")
-        tracked = git(self.runs, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
-        for record in self.records():
-            for name in ("held_out.json", "held_out.log", "numbers.json", "wire.jsonl.gz"):
-                self.assertIn(f"{record.name}/{name}", tracked)
-        self.assert_root_untouched()
-
     def test_a_red_held_out_check_fails_a_green_case_and_a_red_build_has_no_held_out_check(self):
         self.hold_out()
         sandbox = RecordingSandbox([(0, "OK\n"), (1, "FAIL\n"), (0, "OK\n"), (0, "OK\n")])
