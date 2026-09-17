@@ -1,0 +1,71 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_a_word_that_cannot_be_decoded_is_not_whole_and_the_other_cases_run (test_evals.PassRateTest.test_a_word_that_cannot_be_decoded_is_not_whole_and_the_other_cases_run)
+From the review: a `pass.txt` in latin-1 or UTF-16 raised out of the whole set, the
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_evals.py", line 647, in test_a_word_that_cannot_be_decoded_is_not_whole_and_the_other_cases_run
+    self.assertEqual(code, 0, err)
+AssertionError: 1 != 0 : skipping beta: case beta has a pass.txt that cannot be read as UTF-8
+alpha 1/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 2/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 3/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+
+
+======================================================================
+FAIL: test_each_case_declares_its_pass_and_the_line_after_the_table_gives_the_rate_and_its_error (test_evals.PassRateTest.test_each_case_declares_its_pass_and_the_line_after_the_table_gives_the_rate_and_its_error)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_evals.py", line 589, in test_each_case_declares_its_pass_and_the_line_after_the_table_gives_the_rate_and_its_error
+    self.assertEqual(code, 0, err)
+AssertionError: 1 != 0 : alpha 1/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 2/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 3/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+beta 1/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+beta 2/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+beta 3/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+gamma 1/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+gamma 2/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+gamma 3/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+
+
+======================================================================
+FAIL: test_a_number_that_is_not_finite_is_a_measure_the_run_lacks (test_evals.SpreadTest.test_a_number_that_is_not_finite_is_a_measure_the_run_lacks)
+From the review: JSON accepts NaN and Infinity, and a record holding one aborted the
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_evals.py", line 399, in test_a_number_that_is_not_finite_is_a_measure_the_run_lacks
+    self.assertEqual(code, 0, err)
+AssertionError: 1 != 0 : alpha 1/3 error SpreadTest.test_a_number_that_is_not_finite_is_a_measure_the_run_lacks.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 2/3 error SpreadTest.test_a_number_that_is_not_finite_is_a_measure_the_run_lacks.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 3/3 error SpreadTest.test_a_number_that_is_not_finite_is_a_measure_the_run_lacks.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+
+
+======================================================================
+FAIL: test_a_cap_or_a_check_without_a_sandbox_is_a_wall_and_not_the_models_error (test_evals.ToolErrorsTest.test_a_cap_or_a_check_without_a_sandbox_is_a_wall_and_not_the_models_error)
+From the review: the caps and a run without a sandbox answer `error:` too, and they
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_evals.py", line 556, in test_a_cap_or_a_check_without_a_sandbox_is_a_wall_and_not_the_models_error
+    self.assertEqual(code, 0, err)
+AssertionError: 1 != 0 : alpha 1/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 2/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 3/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+
+
+======================================================================
+FAIL: test_the_median_over_the_runs_and_a_run_without_messages_is_left_out (test_evals.ToolErrorsTest.test_the_median_over_the_runs_and_a_run_without_messages_is_left_out)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_evals.py", line 533, in test_the_median_over_the_runs_and_a_run_without_messages_is_left_out
+    self.assertEqual(code, 0, err)
+AssertionError: 1 != 0 : alpha 1/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 2/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+alpha 3/3 error scripted.<locals>.fake_build() got an unexpected keyword argument 'hidden'
+
+
+----------------------------------------------------------------------
+Ran 147 tests in 17.063s
+
+FAILED (failures=5)

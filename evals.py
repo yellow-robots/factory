@@ -13,8 +13,8 @@ and the goal's first line names the case. Nothing here changes the repository th
 cut from.
 
 When every run is done one tab-separated table is printed: a header, then one row per case in the
-order given, with the counts of green, honest and refused runs and the medians of the builder's
-numbers: `tool_errors`, right after `checks`, is the median over the case's runs of the tool
+order given, with the counts of green, honest, refused and passed runs and the medians of the
+builder's numbers: `tool_errors`, right after `checks`, is the median over the case's runs of the tool
 returns that start `error:` and are not a wall's refusal, read from each record's `messages.json`
 as `refused` is and left out of the median when a run has none to read; beside the median of
 `requests`, `cost_usd` and `seconds` the spread over the case's runs
@@ -31,6 +31,7 @@ count that is not a positive integer).
 from __future__ import annotations
 
 import contextlib
+import inspect
 import io
 import json
 import math
@@ -45,6 +46,8 @@ import builder
 import runs
 
 DEFAULT_RUNS = 3
+# The evaluation set's own name at the checkout root, hidden from every run the harness starts.
+HARNESS_HIDDEN = ("cases",)
 # The words a case's `pass.txt` may hold, each saying what a run of the case must be to pass it.
 PASS_WORDS = ("green", "red", "refused")
 COLUMNS = (
@@ -273,7 +276,10 @@ def _case(root: Path, name: str) -> tuple[Path, Path, str] | str:
     word_file = directory / "pass.txt"
     if not word_file.is_file():
         return f"case {name} has no pass.txt"
-    word = word_file.read_text(encoding="utf-8-sig").strip()
+    try:  # a word that cannot be read or decoded is a case that is not whole, not a dead set
+        word = word_file.read_text(encoding="utf-8-sig").strip()
+    except (OSError, UnicodeDecodeError):
+        return f"case {name} has a pass.txt that cannot be read as UTF-8"
     if word not in PASS_WORDS:
         return f"case {name} has an unknown pass.txt word: {word}"
     return directory, tests[0], word
@@ -283,6 +289,21 @@ def _goal(directory: Path, name: str) -> str:
     """The goal: `case: <name>` first, then the text of `goal.md`."""
     text = (directory / "goal.md").read_text(encoding="utf-8")
     return f"case: {name}\n{text.rstrip(chr(10))}"
+
+
+def _builder(argv: list[str], model: Any, sandbox: Any) -> int:
+    """The builder on one worktree, the harness's hidden names passed beside the builder's own.
+
+    A stand-in for `builder.main` in the tests may predate the `hidden` argument and take only the
+    call it knows, so the argument is offered only when the builder's call takes it.
+    """
+    try:
+        takes_hidden = "hidden" in inspect.signature(builder.main).parameters
+    except (TypeError, ValueError):
+        takes_hidden = False
+    if takes_hidden:
+        return builder.main(argv, model=model, sandbox=sandbox, hidden=HARNESS_HIDDEN)
+    return builder.main(argv, model=model, sandbox=sandbox)
 
 
 def _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,
@@ -303,8 +324,7 @@ def _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path
                     "commit", "-q", "-m", f"case: {name}")  # fmt: skip  # a host identity is never needed
         out = io.StringIO()
         with contextlib.redirect_stdout(out):  # the table is the only stdout evals owns
-            code = builder.main(["builder.py", str(worktree), _goal(directory, name)],
-                                model=model, sandbox=sandbox)  # fmt: skip
+            code = _builder(["builder.py", str(worktree), _goal(directory, name)], model, sandbox)
         printed = out.getvalue().splitlines()
         return code, Path(printed[0]) if printed and printed[0].strip() else None
     finally:
@@ -368,7 +388,7 @@ def _pass_rate(whole: list[tuple[str, Path, Path, str]],
 
 def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = None) -> int:
     base = Path(root).resolve() if root is not None else Path(__file__).resolve().parent
-    runs, names, reason = _parse(list(argv[1:]))
+    count, names, reason = _parse(list(argv[1:]))
     if reason:
         return usage_error(reason)
     whole, reason = _whole(base, names)
@@ -380,18 +400,18 @@ def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = No
     try:
         for name, directory, test, _word in whole:
             records: list[Path | None] = []
-            for nth in range(runs):
+            for nth in range(count):
                 n = nth + 1
                 try:  # one failed run, its error on stderr, and the set goes on
                     code, record = _run_case(base, name, directory, test, base_tmp / f"{name}-{n}",
                                              model, sandbox)  # fmt: skip
                 except Exception as e:
                     code, record = 1, None
-                    print(f"{name} {n}/{runs} error {e}", file=sys.stderr)
+                    print(f"{name} {n}/{count} error {e}", file=sys.stderr)
                 else:
                     numbers = _numbers(record)
                     stamp = record.name if record is not None else "-"
-                    print(f"{name} {n}/{runs} {numbers.get('stopped', '')} "
+                    print(f"{name} {n}/{count} {numbers.get('stopped', '')} "
                           f"{numbers.get('check', '')} {stamp}", file=sys.stderr)
                 records.append(record)
                 answered = answered and code == 0
@@ -405,7 +425,7 @@ def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = No
     if whole:
         rate, error = _pass_rate(whole, results)
         line = f"pass rate {rate:.3f}"
-        if runs > 1:
+        if count > 1:
             line += f" standard error {error:.3f}"
         lines.extend(["", line])
     print("\n".join(lines))

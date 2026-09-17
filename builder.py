@@ -73,9 +73,10 @@ CHECK_TAIL_LINES = 60  # lines of check output handed back
 CHECK_TAIL_BYTES = 8_000  # and at most this many bytes of them
 IMAGE_TIMEOUT = 600  # seconds for the one image build
 # Hidden at the root because they are what running and installing the program leave behind,
-# not the checkout; .git is the human's record and its hooks run on the host, and cases is the
-# evaluation harness's, the goals and the words that say what a pass is.
-HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git", "cases")
+# not the checkout; .git is the human's record and its hooks run on the host. A caller that
+# needs more hidden -- the evaluation harness hides its own `cases` -- names them through
+# main's `hidden` argument, so a checkout of another program keeps its ordinary names.
+HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git")
 # Refused to write and edit: the tests are the goal's acceptance criteria, the toolchain is what
 # check runs against, and a .gitattributes or .gitignore the model wrote would change what git
 # records of the run. A basename glob anywhere, a dotted basename anywhere, a prefix, or an exact
@@ -910,7 +911,8 @@ def read_seed(checkout: Path, arg: str) -> tuple[str, str | None]:
     return f"seed: {name}\n{text}", name
 
 
-def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
+def main(argv: list[str], model: Any = None, sandbox: Any = None,
+         hidden: tuple[str, ...] = ()) -> int:  # fmt: skip
     if len(argv) != 3 or not argv[1].strip() or not argv[2].strip():
         return usage_error()
     checkout = Path(argv[1]).resolve()
@@ -979,7 +981,8 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     (run_dir / "goal.txt").write_text(goal + "\n")
 
     wire = Wire(run_dir / "wire.jsonl")
-    tools = Tools(checkout, run_dir, sandbox=sandbox if sandbox is not None else Sandbox())
+    tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden),
+                  sandbox=sandbox if sandbox is not None else Sandbox())  # fmt: skip
     agent = build_agent(tools, key=key, http_client=wire.client, model=model)
     t0 = time.time()
     report, messages, usage, stopped, detail = run(agent, goal)
