@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.10: the review as a document
+
+2026-09-17
+
+A review is a note of the vault, one per review, each finding with its judgement, a test, a case, a seed, or none with the reason, checked by the gate, so the rule that every verified defect is judged twice has a step that holds it and a release cannot carry a finding nobody judged.
+
+- `gate.py check` reads a note of type `review`, one per independent review, made from `docs/templates/review.md` and named after a record it reviewed: its fields are the template's and no other, `runs` names records of `runs/`, one of them the note, `reviewer` and `created` are filled; each level-three heading is a finding whose prose carries `severity`, `defect` or `smell`, `verified`, `yes` or `no`, and, once verified, `judged`: `test <name>`, `case <name>` or `seed <name>` that exist, several with commas, or `none:` with the reason. Every stamp and name is one path segment before it is looked up; the body is read with the builder's own reader, comments out; a line inside fenced or indented code is never a field. `release` runs check first, so a version cannot carry a verified finding nobody judged. The rule the owner set on 2026-09-17, every verified defect judged twice, a test when the factory's code was wrong and a case when the model's behaviour was, has a step that holds it.
+- Two builds for one seed, both green, about five and a half cents and three and a half minutes of model time. The first, 20 requests and five edits for 165 lines, the findings cut with the builder's own fence and heading readers; one independent review, a fresh session in this harness, accepted it with two defects and four smells, all reproduced by the attended agent and on file in `docs/reviews/20260917T085136Z.md`: a stamp or a judged name joined to a path and looked up, so `/etc` was a record and the template a seed, and a field inside a fence or indented code satisfying the check, both tests and the follow-up; an empty judgement reported as an unknown one, a test in the same follow-up; the test walk written twice, judged by the quality-checks seed whose idea is clone detection; two findings of one title told apart by nothing and any level-three heading a finding, none with the reason. The first review note is the v0.9 review's five findings, judged after the fact; the five reviews of v0.7 have no note, their findings itemised only across commits.
+
 ## v0.9: the spread beside the median
 
 2026-09-17
