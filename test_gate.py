@@ -631,6 +631,80 @@ class ReleaseTest(GateTest):
         self.commit("three")
         self.assert_refused("Changelog")
 
+    def build(self, *paragraphs: str, amend: bool = False) -> str:
+        """Everything committed as a build whose message is `feature` and then each paragraph, a
+        blank line before each, or the last commit amended so; the commit's abbreviated hash."""
+        git(self.root, "add", "-A")
+        args = ["commit", "-q", *(["--amend"] if amend else []), "-m", "feature"]
+        for paragraph in paragraphs:
+            args += ["-m", paragraph]
+        git(self.root, *args)
+        return git(self.root, "rev-parse", "--short", "HEAD").strip()
+
+    def built_by(self) -> str:
+        """What git's own trailer parser reads as `Built-By` in the last commit."""
+        return git(self.root, "log", "-1", "--format=%(trailers:key=Built-By,valueonly)").strip()
+
+    def assert_refused_with(self, start: str, *words: str) -> None:
+        """Refused as the release refuses, with a problem line that starts with `start` and holds
+        every word."""
+        code, out, _ = self.release()
+        self.assertEqual(code, 1, out)
+        lines = [line for line in out.splitlines() if line.startswith(start)]
+        self.assertTrue(any(all(word in line for word in words) for line in lines), out)
+        self.assertNotIn("v0.2\n", git(self.root, "tag", "-l"))
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
+
+    def test_release_refuses_a_build_whose_built_by_git_does_not_read_as_a_trailer(self):
+        """seed: built-by-trailer. A `Built-By` line apart from the paragraph git reads as the
+        trailers is a build the version's list misses, one line of two included: the release names
+        the commit under the version's note. The same build with its trailers together is
+        released."""
+        self.ready()
+        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
+        self.edit("feature.py", "X = 1\n")
+        built_by = f"Built-By: factory at 1234567, run {STAMP}"
+        apart = self.build(built_by, "Co-Authored-By: t <t@t>")
+        self.assertEqual(self.built_by(), "")
+        self.assert_refused_with("docs/versions/v0.2.md:", apart)
+        one_of_two = self.build(
+            f"Built-By: factory at 7654321, run {STAMP}", built_by + "\nCo-Authored-By: t <t@t>", amend=True
+        )
+        self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}")
+        self.assert_refused_with("docs/versions/v0.2.md:", one_of_two)
+        self.build(built_by + "\nCo-Authored-By: t <t@t>", amend=True)
+        self.assertEqual(self.release(), (0, "", ""))
+
+    def test_release_refuses_a_build_that_names_no_run_or_a_run_not_committed(self):
+        """seed: built-by-trailer. A `Built-By` whose value does not end `run <stamp>` is refused
+        under the version's note; one whose record is missing, or present and ignored by git, is
+        refused under `runs/<stamp>`, the commit named in both; with the record committed the
+        version is released."""
+        self.ready()
+        self.edit("feature.py", "X = 1\n")
+        no_run = self.build("Built-By: factory at 1234567\nCo-Authored-By: t <t@t>")
+        self.assertEqual(self.built_by(), "factory at 1234567")
+        self.assert_refused_with("docs/versions/v0.2.md:", no_run)
+        missing = self.build(f"Built-By: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
+        self.assert_refused_with(f"runs/{STAMP}:", missing)
+        self.edit(".gitignore", "__pycache__/\nruns/\n")
+        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
+        self.commit("the runs ignored")
+        self.assertEqual(git(self.root, "status", "--porcelain"), "")
+        self.assert_refused_with(f"runs/{STAMP}:", missing)
+        git(self.root, "add", "-f", f"runs/{STAMP}/numbers.json")
+        self.commit("the record")
+        self.assertEqual(self.release(), (0, "", ""))
+
+    def test_release_reads_only_the_builds_since_the_previous_tag(self):
+        """seed: built-by-trailer. A build before the previous tag is not read, whatever its
+        `Built-By`, so the four released build commits of v0.7 and v0.8 stay as they are."""
+        self.edit("feature.py", "X = 1\n")
+        self.build("Built-By: factory at 1234567, run 20260101T000000Z", "Co-Authored-By: t <t@t>")
+        git(self.root, "tag", "-f", "v0.1")
+        self.ready()
+        self.assertEqual(self.release(), (0, "", ""))
+
 
 class UsageTest(GateTest):
     """seed: the-gate. A missing or unknown command is a usage error on stderr, exit 2."""
