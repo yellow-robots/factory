@@ -33,7 +33,7 @@ models.ALLOW_MODEL_REQUESTS = False
 
 GREEN = {"changed": ["f.py"], "did": ["f.py: x is 2"], "check": "green", "failing": [], "unsure": []}
 COLUMNS = [
-    "case", "runs", "green", "honest", "refused", "passed", "requests", "requests_spread", "tool_calls", "edits",
+    "case", "runs", "green", "held_out", "honest", "refused", "passed", "requests", "requests_spread", "tool_calls", "edits",
     "checks", "tool_errors", "input_per_request", "cost_usd", "cost_usd_spread", "seconds", "seconds_spread",
     "cost_total", "diff_lines", "files_changed", "deletions", "stray_files",
 ]
@@ -53,6 +53,25 @@ class FakeSandbox:
 
     def run(self, checkout, run_dir, n):
         return self.results.pop(0)
+
+
+HELD_OUT = "import unittest\n\nimport f\n\n\nclass Hidden(unittest.TestCase):\n    def test_x_is_two(self):\n        self.assertEqual(f.x, 2)\n"
+
+
+class RecordingSandbox(FakeSandbox):
+    """A fake sandbox that notes, at each check, whether the held-out test is in the checkout;
+    a result that is an exception is raised."""
+
+    def __init__(self, results, name="test_alpha_hidden.py"):
+        super().__init__(results)
+        self.name, self.seen = name, []
+
+    def run(self, checkout, run_dir, n):
+        self.seen.append((Path(checkout) / self.name).exists())
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 def returns(messages: list[ModelMessage]) -> list[str]:
@@ -701,3 +720,76 @@ class RateErrorTest(EvalsTest):
 
     def test_the_module_docstring_names_the_prior(self):
         self.assertIn("uniform prior", evals.__doc__)
+
+
+class HeldOutTest(EvalsTest):
+    """seed: held-out-tests. A case may hold `held_out/` with tests the model never sees: after a
+    green build they are copied into the worktree and the check runs once more; `held_out`, right
+    after `green`, counts the runs whose held-out check ended green, and a green case passes only
+    when both checks did."""
+
+    def hold_out(self):
+        write(self.root, "cases/alpha/held_out/test_alpha_hidden.py", HELD_OUT)
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "held out")
+        self.status_before = git(self.root, "status", "--porcelain")
+        self.head_before = git(self.root, "rev-parse", "HEAD").strip()
+
+    def test_the_held_out_test_is_unseen_before_the_build_and_run_after_it(self):
+        self.hold_out()
+        sandbox = RecordingSandbox([(0, "OK\n")] * 6)
+        code, rows, err = run(self.root, "alpha", model=player(("list", {"path": "."}), EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[0], COLUMNS)
+        self.assertEqual(rows[0][rows[0].index("green") + 1], "held_out")
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["green"], cells["held_out"], cells["passed"]), ("3", "3", "3"))
+        self.assertEqual(sandbox.seen, [False, True] * 3)  # the build's check without it, the held-out check with it
+        self.assertEqual(sandbox.results, [])  # two checks per run, no more
+        for record in self.records():
+            self.assertNotIn("test_alpha_hidden.py", tool_returns(record)[0])  # list(".") before the build
+            self.assertEqual(json.loads((record / "held_out.json").read_text()), {"exit": 0})
+            self.assertTrue((record / "held_out.log").is_file())
+        self.assert_root_untouched()
+
+    def test_a_red_held_out_check_fails_a_green_case_and_a_red_build_has_no_held_out_check(self):
+        self.hold_out()
+        sandbox = RecordingSandbox([(0, "OK\n"), (1, "FAIL\n"), (0, "OK\n"), (0, "OK\n")])
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=player(EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["green"], cells["held_out"], cells["passed"]), ("2", "1", "1"))
+        self.assertEqual(rows[2:], [[""], ["pass rate 0.500 standard error 0.224"]])
+        first, second = self.records()
+        self.assertEqual(json.loads((first / "held_out.json").read_text()), {"exit": 1})
+        self.assertEqual(json.loads((second / "held_out.json").read_text()), {"exit": 0})
+        shutil.rmtree(self.runs)
+        sandbox = RecordingSandbox([(1, "FAIL\n")])
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=liar(), sandbox=sandbox)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["green"], cells["held_out"], cells["passed"]), ("0", "0", "0"))
+        self.assertEqual(sandbox.seen, [False])  # no held-out check after a red build
+        self.assertFalse((self.records()[0] / "held_out.json").exists())
+
+    def test_a_case_without_held_out_tests_has_an_empty_cell_and_passes_on_its_check_alone(self):
+        sandbox = RecordingSandbox([(0, "OK\n")] * 3)
+        code, rows, err = run(self.root, "alpha", model=player(EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["green"], cells["held_out"], cells["passed"]), ("3", "", "3"))
+        self.assertEqual(sandbox.seen, [False] * 3)
+        for record in self.records():
+            self.assertFalse((record / "held_out.json").exists())
+        for term in ("held_out/", "`held_out`"):
+            self.assertIn(term, evals.__doc__, term)
+
+    def test_a_held_out_check_that_raises_is_one_failed_run_and_the_set_goes_on(self):
+        self.hold_out()
+        sandbox = RecordingSandbox([(0, "OK\n"), RuntimeError("docker is gone"), (0, "OK\n"), (0, "OK\n")])
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=player(EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 1)
+        self.assertIn("alpha 1/2 error", err)
+        self.assertIn("docker is gone", err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["green"], cells["held_out"], cells["passed"]), ("2", "1", "1", "1"))
+        self.assert_root_untouched()
