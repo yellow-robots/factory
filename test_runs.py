@@ -18,7 +18,7 @@ import runs
 
 COLUMNS = [
     "stamp", "head", "stopped", "check", "requests", "tool_calls", "lists", "reads", "writes", "edits",
-    "checks", "input_tokens", "input_per_request", "cache_read_tokens", "output_tokens", "reasoning_tokens", "cost_usd",
+    "checks", "tool_errors", "input_tokens", "input_per_request", "cache_read_tokens", "output_tokens", "reasoning_tokens", "cost_usd",
     "seconds", "files_changed", "insertions", "deletions", "goal",
 ]
 OBSERVER = {
@@ -48,6 +48,11 @@ def record(base: Path, stamp: str, numbers: dict | None, goal: str) -> Path:
     if numbers is not None:
         (d / "numbers.json").write_text(json.dumps(numbers, indent=1) + "\n")
     return d
+
+
+def messages(record: Path, *contents: str) -> None:
+    """A `messages.json` whose tool returns are `contents`, in the library's serialised shape."""
+    (record / "messages.json").write_text(json.dumps([{"parts": [{"part_kind": "tool-return", "content": c}]} for c in contents]))
 
 
 def table(base: Path, *args: str) -> tuple[int, list[list[str]], str]:
@@ -169,3 +174,35 @@ class RunsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolErrorsTest(unittest.TestCase):
+    """seed: tool-errors-column. `tool_errors`, right after `checks`: the record's tool returns
+    that start `error:` and are not a wall's refusal, read from `messages.json` when the table is
+    printed and stored nowhere; empty for a record without messages to read."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name) / "runs"
+        self.base.mkdir()
+        lapses = record(self.base, "20260917T000001Z", BUILDER_V05, "two of the model's\n")
+        messages(lapses, "dir\t0\tsub", "error: not a directory: builder.py", "error: protected: test_x.py", "exit 1\nFAIL",
+                 "error: old text not found in f.py", "error: not part of the checkout: runs", "error: outside the checkout: ..")
+        clean = record(self.base, "20260917T000002Z", BUILDER_V05, "none\n")
+        messages(clean, "1\tx = 1", "exit 0\nOK")
+        record(self.base, "20260917T000003Z", BUILDER_V05, "no messages\n")
+        broken = record(self.base, "20260917T000004Z", BUILDER_V05, "messages unreadable\n")
+        (broken / "messages.json").write_text("{not json")
+
+    def test_the_count_per_record_refusals_apart_and_empty_without_messages(self):
+        code, rows, err = table(self.base)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(rows[0], COLUMNS)
+        self.assertEqual(rows[0][rows[0].index("checks") + 1], "tool_errors")
+        by_stamp = {row[0]: dict(zip(COLUMNS, row))["tool_errors"] for row in rows[1:]}
+        self.assertEqual(by_stamp, {"20260917T000001Z": "2", "20260917T000002Z": "0", "20260917T000003Z": "", "20260917T000004Z": ""})
+        self.assertFalse((self.base / "20260917T000003Z" / "messages.json").exists())  # nothing written
+
+    def test_the_module_docstring_names_the_column(self):
+        self.assertIn("tool_errors", runs.__doc__)

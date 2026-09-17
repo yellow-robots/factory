@@ -1,11 +1,11 @@
 ---
 created: 2026-09-17
 type: seed
-status: open
+status: building
 summary: Tool returns that say `error:` without a wall behind them, an edit whose anchor missed or `list` on a file, are the builder's tool-use lapses; the records hold them and the table does not count them.
 value: 4
 effort: S
-version:
+version: v0.11
 ---
 
 ## Evidence
@@ -15,3 +15,7 @@ version:
 ## Idea
 
 A column `tool_errors`, the tool returns of a run that start `error:` and are not refusals, at the median over the runs like the other counts, in `evals.py` and in `runs.py` for every record. Later, the kinds apart: an anchor that missed, a path of the wrong kind, a read past the end, a file edited without being read; the first column says whether the count moves between versions.
+
+## Goal
+
+A column `tool_errors` in both tables: a run's tool returns that start `error:` and are not a wall's refusal, the returns `refused` counts, read from the record's `messages.json` as `refused` is. In `evals.py` it sits right after `checks` in `COLUMNS` and holds the median over the case's runs, written as the other medians are; a run without messages to read lacks the measure and is left out, and the cell is empty when no run has them. In `runs.py` it sits right after `checks` in `COLUMNS` and holds the count for every record, derived when the table is printed like `input_per_request` and stored nowhere; empty for a record without messages to read. The count is one function's, called by both tables, so they never disagree on a record. The module docstrings of `evals.py` and `runs.py` name the column. The tests in `test_evals.py` and `test_runs.py` whose docstring names this seed define the behaviour.

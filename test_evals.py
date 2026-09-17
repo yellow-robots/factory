@@ -27,17 +27,21 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 import builder
 import evals
+import runs
 
 models.ALLOW_MODEL_REQUESTS = False
 
 GREEN = {"changed": ["f.py"], "did": ["f.py: x is 2"], "check": "green", "failing": [], "unsure": []}
 COLUMNS = [
     "case", "runs", "green", "honest", "refused", "requests", "requests_spread", "tool_calls", "edits",
-    "checks", "input_per_request", "cost_usd", "cost_usd_spread", "seconds", "seconds_spread", "cost_total",
-    "diff_lines", "files_changed", "deletions", "stray_files",
+    "checks", "tool_errors", "input_per_request", "cost_usd", "cost_usd_spread", "seconds", "seconds_spread",
+    "cost_total", "diff_lines", "files_changed", "deletions", "stray_files",
 ]
 EDIT = ("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"})
 CHECK = ("check", {})
+BAD_LIST = ("list", {"path": "f.py"})  # a path of the wrong kind: the model's error, not a wall's
+BAD_EDIT = ("edit", {"path": "f.py", "old": "nope", "new": "x = 2"})  # an anchor that misses
+REFUSE = ("read", {"path": "runs/x"})  # a wall's refusal
 
 
 class FakeSandbox:
@@ -125,6 +129,40 @@ def run(root: Path, *args: str, model=None, sandbox=None) -> tuple[int, list[lis
         code = evals.main(["evals.py", *args], root=root, model=model, sandbox=sandbox)
     rows = [line.split("\t") for line in out.getvalue().splitlines()]
     return code, rows, err.getvalue()
+
+
+def tool_returns(record: Path) -> list[str]:
+    """The tool returns of a record's messages, in order."""
+    messages = json.loads((record / "messages.json").read_text())
+    return [p["content"] for m in messages for p in m.get("parts", []) if p.get("part_kind") == "tool-return" and isinstance(p.get("content"), str)]
+
+
+def messages_json(*contents: str) -> str:
+    """A `messages.json` whose tool returns are `contents`, in the library's serialised shape."""
+    return json.dumps([{"parts": [{"part_kind": "tool-return", "content": c}]} for c in contents])
+
+
+def scripted(runs_dir: Path, script):
+    """A stand-in for builder.main: `script(case, n)` gives the files of the case's n-th record,
+    name to text, or None for a run that died before its record; the record is written under
+    `runs_dir` and its path printed first, as the builder prints it."""
+    counts: dict[str, int] = {}
+    ordinal = itertools.count(1)
+
+    def fake_build(argv, model=None, sandbox=None):
+        case = argv[2].splitlines()[0].removeprefix("case: ")
+        counts[case] = counts.get(case, 0) + 1
+        files = script(case, counts[case])
+        if files is None:
+            return 1
+        record = runs_dir / f"20260917T{next(ordinal):06d}Z"
+        record.mkdir(parents=True)
+        for name, text in files.items():
+            (record / name).write_text(text)
+        print(record)
+        return 0
+
+    return fake_build
 
 
 def number_text(value: float) -> str:
@@ -443,3 +481,60 @@ class RobustnessTest(EvalsTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolErrorsTest(EvalsTest):
+    """seed: tool-errors-column. A run's tool returns that start `error:` and are not a wall's
+    refusal, counted from the record's messages: the median over the runs in the evaluation table,
+    right after checks, and the count per record in the runs table, the same count in both."""
+
+    def test_the_errors_that_are_the_models_are_counted_apart_from_refusals_in_both_tables(self):
+        sandbox = FakeSandbox([(0, "OK\n")] * 3)
+        code, rows, err = run(self.root, "alpha", model=player(BAD_LIST, BAD_EDIT, REFUSE, EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[0], COLUMNS)
+        self.assertEqual(rows[0][rows[0].index("checks") + 1], "tool_errors")
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["tool_errors"], cells["refused"]), ("3", "2", "3"))
+        for record in self.records():
+            returns = tool_returns(record)
+            self.assertTrue(returns[0].startswith("error: not a directory"), returns[0])
+            self.assertTrue(returns[1].startswith("error: old text not found"), returns[1])
+            self.assertTrue(returns[2].startswith("error: not part of"), returns[2])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(runs.main(["runs.py"], runs=self.runs), 0)
+        table = [line.split("\t") for line in out.getvalue().splitlines()]
+        self.assertEqual(table[0][table[0].index("checks") + 1], "tool_errors")
+        self.assertEqual([dict(zip(table[0], row))["tool_errors"] for row in table[1:]], ["2", "2", "2"])
+        self.assert_root_untouched()
+
+    def test_the_median_over_the_runs_and_a_run_without_messages_is_left_out(self):
+        numbers = '{"check": "green", "requests": 1}'
+        second = ("error: not a directory: f.py", "exit 1\nFAIL", "error: protected: test_x.py", "error: not a file: cases",
+                  "error: old text found 2 times in f.py; include more context", "error: outside the checkout: ../x",
+                  "error: the pattern is empty", "1\tx = 1")  # four of the model's, two refusals, a check and a read
+
+        def script(case, n):
+            files = {"numbers.json": numbers}
+            if n == 1:
+                files["messages.json"] = messages_json("error: old text not found in f.py")
+            if n == 2:
+                files["messages.json"] = messages_json(*second)
+            return files  # the third run has no messages.json
+
+        with mock.patch.object(builder, "main", scripted(self.runs, script)):
+            code, rows, err = run(self.root, "alpha")
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["tool_errors"], cells["refused"]), ("3", "2.5", "2"))
+        shutil.rmtree(self.runs)
+        with mock.patch.object(builder, "main", scripted(self.runs, lambda case, n: {"numbers.json": numbers})):
+            code, rows, err = run(self.root, "alpha")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(dict(zip(COLUMNS, rows[1]))["tool_errors"], "")
+        self.assert_root_untouched()
+
+    def test_the_module_docstring_names_the_column(self):
+        self.assertIn("tool_errors", evals.__doc__)
+
