@@ -86,11 +86,15 @@ from building; rejected needs only what open needs) or carries a field with no c
 version note without a tag, a tagged version with a seed not done or rejected, a property the
 backlog names in a filter, formula, column, sort, group or summary that is no field of the seed
 template, read as Obsidian writes the base, a committed record whose wire is not
-compressed, and a review note, one per review under `docs/reviews/`, whose runs are not records
+compressed, a build since the highest tag git cannot list, and a review note, one per review under `docs/reviews/`, whose runs are not records
 or do not name it, whose reviewer or date is missing, or whose findings, one per level-three
 heading, lack a severity of `defect` or `smell`, a `verified` of `yes` or `no`, or, once
 verified, a judgement: `test <name>`, `case <name>` or `seed <name>` that exist, or `none:` with
-the reason. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
+the reason. A build git cannot list is a commit with a line beginning `Built-By` that git's own
+trailer parser does not return as a trailer, one whose value does not end `run <stamp>` with the
+stamp in the shape the builder names records with, or one whose record is not a tree
+`runs/<stamp>` in HEAD's tree; the problem stands under the note of the version in flight, so a
+build is seen in the version's worktree before main moves. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
 note's title, first paragraph and `## Changelog` bullets. `release <version>` refuses unless check
 passes, the note exists and the tag does not, its seeds are done or rejected, the note has
 changelog bullets, the tree is clean, `AGENTS.md` changed since the previous tag and the suite is
@@ -216,3 +220,14 @@ nothing, and the record showed three edits in one response with the first lost. 
 the three builds found three defects in the held-out step, a nested test never run, the copy
 replacing what the worktree had, and a raising check dropping a green record, all tests and one
 follow-up. The set at the version's head, eleven cases three times each, 33 of 33 passed, pass rate 1.000 with standard error 0.049, 33 cents and 34 minutes: both held-out cases green on both checks in every run, the docstrings followed and the parser's sign restored at its root, and the tempted test refused three of three where v0.7 had two. The 33 records are in `runs/`, the first set run since v0.7.
+
+v0.13, five builds for one seed, about 25 cents and sixteen minutes, each green on the tests it
+was given: `check` and `release` read the builds since the highest tag from git alone and refuse
+one git cannot list. Three independent reviews and one of the attended agent's found eight
+defects and nineteen smells, all reproduced and judged in four notes under `docs/reviews/`: the
+first problem of a build printed alone, a failing git command reading as no builds, a value git
+reads over two lines, a carriage return splitting a message, an empty value every commit seemed
+to hold, a stamp in git's revision syntax passing as a record, and a display setting hiding a
+build. The Goal was rewritten whole after the second review; one defect was the attended agent's,
+a test that contradicted the amended Goal and a build that kept both green. No set run: the
+version changes the gate, not what the model sees.
