@@ -488,6 +488,38 @@ class ReviewTest(GateTest):
         self.assertIn("test_zz", out)
         self.assertNotIn("v0.2", git(self.root, "tag", "-l"))
 
+    def test_a_stamp_or_a_judged_name_is_one_path_segment(self):
+        """From the review: a stamp or a name was joined to a path and looked up, so `/etc` was a
+        record and `../templates/review` a seed."""
+        for stamp in ("/etc", "../docs", "..", "a/b", "a\\b"):
+            self.review(REVIEW.replace(f"runs: {STAMP}", f"runs: {STAMP} {stamp}"))
+            self.assert_problem(self.note, stamp)
+        self.edit("cases/zz/goal.md", "goal\n")
+        for judged, word in (
+            ("judged: seed ../templates/review", "../templates/review"),
+            ("judged: case /etc", "/etc"),
+            ("judged: case ../cases/zz", "../cases/zz"),
+            ("judged: seed .", "judged"),
+            ("judged: test ../test_repo", "../test_repo"),
+        ):
+            self.review(REVIEW.replace("judged: test test_d", judged))
+            self.assert_problem(self.note, "The first thing misses an edge", word)
+
+    def test_the_lines_are_read_outside_code_and_an_empty_judgement_is_none(self):
+        """From the review: a `severity:` inside a fence or indented code satisfied the check, and
+        `judged:` left empty, as the template ships it, was reported as an unknown judgement."""
+        self.review(REVIEW.replace("severity: defect\n", "") + "\n```\nseverity: defect\n```\n")
+        self.assert_problem(self.note, "The first thing misses an edge", "severity")
+        self.review(REVIEW.replace("severity: defect\n", "") + "\n    severity: defect\n")
+        self.assert_problem(self.note, "The first thing misses an edge", "severity")
+        self.review(REVIEW.replace("severity: defect", "```\nseverity: nit\njudged: test test_zz\n```\nseverity: defect"))
+        self.assertEqual(self.check(), (0, "", ""))
+        self.review(REVIEW.replace("severity: defect", "~~~\nseverity: nit\n~~~\n\n    judged: none\n\nseverity: defect"))
+        self.assertEqual(self.check(), (0, "", ""))
+        for judged in ("judged:", "judged: test test_d,", "judged: test test_d, , seed a"):
+            self.review(REVIEW.replace("judged: test test_d", judged))
+            self.assert_problem(self.note, "The first thing misses an edge", "no judged")
+
 
 class RenderTest(GateTest):
     """seed: the-gate. render writes CHANGELOG.md from the tags, newest first."""
