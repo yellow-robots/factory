@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: spec
+status: done
 summary: A review's findings live in the attended agent's session and are narrated in commit messages; whether each became a test, a case or nothing is not derivable, so the growth rule has no step to hold it.
 value: 5
 effort: M

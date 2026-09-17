@@ -170,3 +170,9 @@ evaluation table prints the spread beside the medians of requests, cost and seco
 build, 12 requests and six edits for a 27-line diff; one review accepted it with five smells, two
 of them the follow-up's tests, a `NaN` in a record aborting the table and the module docstring
 naming medians alone.
+
+v0.10, two builds for one seed, both green, about five and a half cents and three and a half
+minutes: the gate checks a review note, each finding judged by a test, a case, a seed or none with
+the reason. One review found two defects in the first build, a stamp or name escaping the
+repository and a field read out of a code block, both tests and the follow-up; the first two
+notes under `docs/reviews/` are that review and the v0.9 review's.
