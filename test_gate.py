@@ -754,6 +754,10 @@ class ReleaseTest(GateTest):
         crafted = self.build(f"Built-By: factory at 1234567, run x-g{first[:7]}^{{tree}}\nCo-Authored-By: t <t@t>",
                              amend=True)  # fmt: skip
         self.assert_refused_with("docs/versions/v0.2.md:", crafted, "names no run")
+        prefixed = f"{STAMP}x-g{first[:7]}^{{tree}}"
+        self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/{prefixed}").strip(), "tree")
+        shaped = self.build(f"Built-By: factory at 1234567, run {prefixed}\nCo-Authored-By: t <t@t>", amend=True)
+        self.assert_refused_with("docs/versions/v0.2.md:", shaped, "names no run")  # the whole stamp has the shape
         missing = self.build(f"Built-By: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
         self.assert_refused_with(f"runs/{STAMP}:", missing)
         self.edit(f"runs/{STAMP}", "not a record\n")
@@ -882,7 +886,7 @@ class ReleaseTest(GateTest):
         self.assert_refused_with("docs/versions/v0.2.md:", folded, "names no run")
         nbsp = self.build(f"Built-By: factory at 1234567, run {STAMP} \nCo-Authored-By: t <t@t>", amend=True)
         self.assertIn(" ".encode(), self.built_by_bytes())
-        out = self.assert_refused_with(f"runs/{STAMP} :", nbsp)
+        out = self.assert_refused_with("docs/versions/v0.2.md:", nbsp, "names no run")  # not the builder's shape
         self.assertNotIn("as a trailer", out)
         titled = self.build_raw(f"feature\nBuilt-By: factory at 1234567, run {STAMP}\n".encode(), amend=True)
         self.assertEqual(self.built_by_bytes(), b"\n")
