@@ -790,7 +790,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             sorted(p.name for p in run_dir.iterdir()),
-            ["check-1.log", "diff.patch", "goal.txt", "messages.json", "numbers.json", "report.json", "response.md", "wire.jsonl"],
+            ["check-1.log", "diff.patch", "goal.txt", "messages.json", "numbers.json", "report.json", "response.md", "wire.jsonl.gz"],
         )
         patch = (run_dir / "diff.patch").read_text()
         self.assertIn("+x = 2", patch)
@@ -1272,7 +1272,7 @@ class MainTest(unittest.TestCase):
 
         code, lines, run_dir = self.main(FunctionModel(model), FakeSandbox([]))
         self.assertEqual(code, 1)
-        self.assertEqual(sorted(p.name for p in run_dir.iterdir()), ["goal.txt", "messages.json", "numbers.json", "wire.jsonl"])
+        self.assertEqual(sorted(p.name for p in run_dir.iterdir()), ["goal.txt", "messages.json", "numbers.json", "wire.jsonl.gz"])
         numbers = json.loads((run_dir / "numbers.json").read_text())
         self.assertEqual(numbers["stopped"], "error")
         self.assertIn("boom", numbers["detail"])
@@ -1307,6 +1307,76 @@ class MainTest(unittest.TestCase):
         self.assertIn("f.py", err.getvalue())
         self.assertIn("stray.txt", err.getvalue())
         self.assertFalse(self.runs.exists())
+
+    def store(self, *args: str) -> str:
+        return git(self.runs, *args)
+
+    def test_a_record_is_committed_to_the_instance_s_store_with_its_wire_compressed(self):
+        """seed: records-outside-the-project. seed: compress-the-wire. The store is the directory the
+        instance's configuration names, a git repository of its own made on the first record; when
+        a run ends its record is committed there, the one record and nothing else, the message the
+        stamp, by the factory's own identity whatever the host has; the wire is compressed before
+        the commit; and the first line printed is still the record's path."""
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg")}))
+        model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+                         [call("check", {}, "c2")], [call("final_result", REPORT, "c3")])  # fmt: skip
+        self.assertFalse(self.runs.exists())
+        code, lines, run_dir = self.main(model, FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0)
+        self.assertEqual(Path(lines[0]), run_dir)
+        self.assertEqual(run_dir.parent, self.runs)
+        self.assertEqual(Path(self.store("rev-parse", "--show-toplevel").strip()), self.runs.resolve())
+        names = sorted(p.name for p in run_dir.iterdir())
+        self.assertIn("wire.jsonl.gz", names)
+        self.assertNotIn("wire.jsonl", names)
+        gzip.open(run_dir / "wire.jsonl.gz").read()  # a gzip file, whatever it holds
+        self.assertEqual(self.store("log", "--format=%s|%an <%ae>").splitlines(), [f"{run_dir.name}|factory <factory@localhost>"])
+        tracked = self.store("ls-tree", "-r", "--name-only", "HEAD").splitlines()
+        self.assertEqual(sorted(tracked), [f"{run_dir.name}/{name}" for name in names])
+        self.assertEqual(self.store("status", "--porcelain"), "")
+        self.assertEqual(git(self.checkout, "status", "--porcelain").strip(), "M f.py")  # the project holds no record
+
+        git(self.checkout, "checkout", "-q", "--", "f.py")
+        (self.runs / "stray.txt").write_text("not a record\n")
+        time.sleep(1.1)  # a stamp of its own
+        code, _, _ = self.main(scripted([call("final_result", REPORT, "c1")]), FakeSandbox([]))
+        self.assertEqual(code, 0)
+        second = self.records()[-1]
+        self.assertNotEqual(second, run_dir)
+        self.assertEqual(self.store("log", "--format=%s").splitlines(), [second.name, run_dir.name])
+        changed = self.store("show", "--format=", "--name-only", "HEAD").splitlines()
+        self.assertTrue(changed and all(name.startswith(f"{second.name}/") for name in changed), changed)
+        self.assertEqual(self.store("status", "--porcelain").strip(), "?? stray.txt")  # nothing else is committed
+
+    def test_a_run_that_ends_in_an_error_is_committed_too(self):
+        """seed: records-outside-the-project. Whatever ended the run, its record is the factory's log."""
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError("deepseek-flash", "boom")
+
+        code, _, run_dir = self.main(FunctionModel(model), FakeSandbox([]))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.store("log", "--format=%s").splitlines(), [run_dir.name])
+        self.assertEqual(self.store("status", "--porcelain"), "")
+
+    def test_a_record_that_holds_the_key_s_value_is_not_committed(self):
+        """seed: records-outside-the-project. Every file of the record is searched for the key's value
+        before the commit: found, nothing of the record is committed, the run exits 1, stderr names
+        the file and never the value, and the record stays on disk."""
+        leak = dict(REPORT, did=["f.py: changed, and the key is not-a-key"])
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                model=scripted([call("final_result", leak, "c1")]), sandbox=FakeSandbox([]))  # fmt: skip
+        self.assertEqual(code, 1)
+        (run_dir,) = self.records()
+        self.assertIn("not-a-key", (run_dir / "report.json").read_text())
+        self.assertNotIn("not-a-key", err.getvalue())
+        self.assertNotIn("not-a-key", out.getvalue().splitlines()[0])
+        self.assertTrue(any(name in err.getvalue() for name in ("report.json", "messages.json", "response.md")), err.getvalue())
+        if (self.runs / ".git").exists():
+            self.assertEqual(self.store("ls-files").strip(), "")
 
     def test_a_run_without_a_store_is_a_usage_error(self):
         """seed: records-outside-the-project. The store is the instance's and no constant of the
