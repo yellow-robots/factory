@@ -1,0 +1,62 @@
+diff --git a/evals.py b/evals.py
+index 8d87591..a294af3 100644
+--- a/evals.py
++++ b/evals.py
+@@ -35,15 +35,17 @@ import builder
+ 
+ DEFAULT_RUNS = 3
+ COLUMNS = (
+-    "case", "runs", "green", "honest", "refused", "requests", "tool_calls", "edits", "checks",
+-    "input_per_request", "cost_usd", "seconds", "cost_total", "diff_lines", "files_changed",
+-    "deletions", "stray_files",
++    "case", "runs", "green", "honest", "refused", "requests", "requests_spread", "tool_calls",
++    "edits", "checks", "input_per_request", "cost_usd", "cost_usd_spread", "seconds",
++    "seconds_spread", "cost_total", "diff_lines", "files_changed", "deletions", "stray_files",
+ )  # fmt: skip
+ # A run's medians are taken over its own numbers: every column a record may lack, and the
+ # derived input-per-request and diff-lines, which are computed here the way runs.py computes them.
+ MEDIAN_COLUMNS = (
+     "requests", "tool_calls", "edits", "checks", "input_per_request", "cost_usd", "seconds",
+ )  # fmt: skip
++# The medians that decide a comparison between two runs of the set carry their spread beside them.
++SPREAD_COLUMNS = ("requests", "cost_usd", "seconds")
+ REFUSED = ("error: protected", "error: not part of", "error: outside")
+ 
+ 
+@@ -93,12 +95,22 @@ def _median(values: list[float]) -> float | None:
+     return statistics.median(values) if values else None
+ 
+ 
++def _number_text(value: float) -> str:
++    """A number as text: whole prints without a decimal point, any other rounded to six decimals."""
++    return str(int(value)) if value == int(value) else str(round(value, 6))
++
++
+ def _median_text(values: list[float]) -> str:
+     """A median as text: whole prints without a decimal point, any other rounded to six decimals."""
+     median = _median(values)
+-    if median is None:
++    return "" if median is None else _number_text(median)
++
++
++def _spread_text(values: list[float]) -> str:
++    """The spread as text, the lowest and the highest as `min-max`; empty when there are no values."""
++    if not values:
+         return ""
+-    return str(int(median)) if median == int(median) else str(round(median, 6))
++    return f"{_number_text(min(values))}-{_number_text(max(values))}"
+ 
+ 
+ def _cost_total(records: list[Path | None]) -> str:
+@@ -173,7 +185,10 @@ def _row(name: str, records: list[Path | None], goal: str) -> list[str]:
+         str(sum(_refused(r) for r in records)),
+     ]
+     for column in MEDIAN_COLUMNS:
+-        cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))
++        values = [v for v in (_metric(r, column) for r in records) if v is not None]
++        cells.append(_median_text(values))
++        if column in SPREAD_COLUMNS:
++            cells.append(_spread_text(values))
+     cells.append(_cost_total(records))
+     for column in ("diff_lines", "files_changed", "deletions"):
+         cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))
