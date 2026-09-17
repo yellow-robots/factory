@@ -43,6 +43,7 @@ The owner and the attended agent choose seeds from the backlog and promote them 
 ## Not derivable from the repository
 
 - `docs/` is an Obsidian vault the owner keeps open. `backlog.base` changes whenever the owner adjusts a view, a filter or an order there, and a note's frontmatter is re-serialised when a property is edited there, in Obsidian's own shape; a frontmatter value that is not valid YAML, such as a bare `{{date}}`, does not survive that. A dirty `docs/` is the owner's content: read the diff and commit it as theirs.
+- Four build commits of v0.7 and v0.8, cea0753, 5f7349f, 92191cc and 2a13022, wrote `Built-By` with a blank line between the trailers, which git's trailer parser does not read: `git log --format='%h %b' | grep '^Built-By:'` finds every build, `%(trailers:key=Built-By)` misses those four.
 - A version exists only as a tag. Commit 48cbbe4 is titled `v0.4`; it is one change released in v0.4, not the version.
 - The notes of v0.1 to v0.4, their changelog and the records before v0.5 say world for the checkout and plane for the tools; those were the observer's words.
 - Branches `bootstrap` and `v0.1` to `v0.3` are leftovers of past worktrees and share their names with the tags, so git warns and prefers the tag. Write `tags/v0.3` where it matters.
