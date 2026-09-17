@@ -1,12 +1,14 @@
 ---
 created: 2026-09-17
 type: seed
-status: open
+status: rejected
 summary: A run of the set can read the notes that describe its case and how the builder did on it before, so a pass may be the model reading its answer; the harness hides the notes as it hides `cases`.
 value: 4
 effort: S
 version:
 ---
+
+Rejected 2026-09-17: hiding the notes from the tools leaves them, and the set's pass words and held-out tests, readable by code the model has `check` run, since the container mounts the whole checkout; set-world-outside-the-repository takes its place and removes them instead.
 
 ## Evidence
 
