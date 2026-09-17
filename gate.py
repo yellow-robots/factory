@@ -876,7 +876,7 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
         text = _line_text(value)
         words = _ascii_words(value)
         stamp = words[-1] if len(words) >= 2 and words[-2] == "run" else ""
-        if not _segment(stamp) or not STAMP_SHAPE.match(stamp):
+        if not _segment(stamp) or not STAMP_SHAPE.fullmatch(stamp):
             add(f"{rel_note}: {short}: `Built-By: {text}` names no run")
             continue
         if stamp in reported:
