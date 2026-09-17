@@ -1,0 +1,24 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_every_problem_of_every_build_is_printed_in_one_release (test_gate.ReleaseTest.test_every_problem_of_every_build_is_printed_in_one_release)
+seed: built-by-trailer. From the reviews: a `Built-By` git does not read is still checked
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 819, in test_every_problem_of_every_build_is_printed_in_one_release
+    self.assertEqual(sum(1 for line in lines if line.startswith(f"runs/{STAMP}:") and twice in line), 1, out)
+AssertionError: 2 != 1 : docs/versions/v0.2.md: 95339c0: `Built-By: factory at café` names no run
+docs/versions/v0.2.md: 589a8da: git does not read 1 of 3 `Built-By` lines as a trailer
+runs/20260917T000000Z: 589a8da: `Built-By: factory at 1234567, run 20260917T000000Z` names a run with no committed record
+runs/20260917T000000Z: 589a8da: `Built-By: factory at 7654321, run 20260917T000000Z` names a run with no committed record
+docs/versions/v0.2.md: 36cd4ab: git does not read 1 of 1 `Built-By` lines as a trailer
+docs/versions/v0.2.md: 36cd4ab: `Built-By: ` names no run
+docs/versions/v0.2.md: 101b705: `Built-By: ` names no run
+docs/versions/v0.2.md: 2a3bf3f: git does not read 1 of 1 `Built-By` lines as a trailer
+runs/20260917T000000Z: 2a3bf3f: `Built-By: factory at 1234567, run 20260917T000000Z` names a run with no committed record
+
+
+----------------------------------------------------------------------
+Ran 167 tests in 23.516s
+
+FAILED (failures=1)

@@ -6,10 +6,10 @@
     uv run gate.py release <version>
 
 `check` validates `docs/` and the repository against it, `render` writes `CHANGELOG.md` from
-the tags, and `release` refuses until everything derived agrees, then tags and renders. Before
-it tags, `release` reads the builds since the previous tag, every commit whose message carries
-a `Built-By` line, and refuses when git's trailer parser does not read one or the run it names
-is not a committed record. Each command prints one line per problem on stdout, starting with
+the tags, and `release` refuses until everything derived agrees, then tags and renders. `check`
+and `release` read the builds since the highest tag, every commit whose message carries a
+`Built-By` line, and refuse when git's trailer parser does not read one or the run it names is
+not a committed record. Each command prints one line per problem on stdout, starting with
 the path relative to the root, and exits 1 if there is any; with nothing to report it prints
 nothing and exits 0. Usage errors go to stderr and exit 2.
 """
@@ -43,7 +43,9 @@ CREATED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 VERSION_NAME = re.compile(r"^v(\d+)\.(\d+)\.md$")
 VERSION = re.compile(r"^v(\d+)\.(\d+)$")
 WIKILINK = re.compile(r"\[\[([^\[\]]+)\]\]")
-BUILT_BY = re.compile(r"^Built-By[ \t]*:", re.IGNORECASE)
+BUILT_BY = re.compile(r"^Built-By[ \t]*:", re.IGNORECASE | re.ASCII)
+ASCII_WHITESPACE = " \t\n\r\x0b\x0c"
+ASCII_RUN = re.compile(r"[^ \t\n\r\x0b\x0c]+")
 
 
 def _read(path: Path) -> str:
@@ -91,9 +93,43 @@ def _git(root: Path, *args: str) -> str:
     return _git_out(root, *args)[1]
 
 
+def _git_bytes(root: Path, *args: str) -> tuple[int, bytes]:
+    """git's exit status and stdout as bytes, status 1 and no output when git cannot run. Nothing
+    git prints is turned into text before it is decoded, so a carriage return stays a carriage
+    return."""
+    try:
+        done = subprocess.run(["git", *args], cwd=str(root), capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        return 1, b""
+    return done.returncode, done.stdout
+
+
+def _utf8(data: bytes) -> str:
+    """The bytes decoded as UTF-8 with what cannot be decoded replaced; never raises."""
+    return data.decode("utf-8", "replace")
+
+
 def _line_text(value: str) -> str:
-    """A value with its control characters escaped, so a problem that quotes it stays one line."""
-    return value.encode("unicode_escape").decode("ascii", "replace")
+    """A value with its control characters escaped, so a problem that quotes it stays one line and
+    nothing but a control character changes."""
+    out: list[str] = []
+    for ch in value:
+        if ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ord(ch) < 32 or 0x7F <= ord(ch) <= 0x9F:
+            out.append(f"\\x{ord(ch):02x}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _ascii_words(value: str) -> list[str]:
+    """The value split at ASCII whitespace alone, so a no-break space stays part of a word."""
+    return ASCII_RUN.findall(value)
 
 
 def _tags(root: Path) -> set[str]:
@@ -747,6 +783,17 @@ def _suite_green(root: Path) -> bool:
     return done.returncode == 0
 
 
+def _short_hash(root: Path, commit: str) -> str:
+    """git's unique abbreviation of `commit`, at least seven characters whatever `core.abbrev`
+    says, never the full hash; the first seven characters of the hash when git cannot say."""
+    code, out = _git_bytes(root, "rev-parse", "--short=7", commit)
+    if code == 0:
+        short = _utf8(out).strip()
+        if short:
+            return short
+    return commit[:7]
+
+
 def _builds(root: Path, previous: str | None) -> tuple[list[str], str | None]:
     """The full hashes of the commits reachable from HEAD and not from `previous`, or every commit
     reachable from HEAD when there is no previous tag. They are listed as revisions, `--` ending
@@ -754,69 +801,85 @@ def _builds(root: Path, previous: str | None) -> tuple[list[str], str | None]:
     command that failed, never an empty list of builds."""
     revision = f"{previous}..HEAD" if previous is not None else "HEAD"
     command = f"git rev-list {revision} --"
-    code, out = _git_out(root, "rev-list", revision, "--")
+    code, out = _git_bytes(root, "rev-list", revision, "--")
     if code != 0:
         return [], command
-    return out.split(), None
+    return _utf8(out).split(), None
+
+
+TRAILERS_FORMAT = "%(trailers:key=Built-By,unfold,separator=%x00)"
 
 
 def _build_trailers(root: Path, commit: str) -> list[str] | None:
-    """What git's own trailer parser reads as `Built-By` for `commit`: one value per line, an empty
-    value kept, `valueonly` printing a blank line for it; `None` when the git command fails."""
-    code, out = _git_out(
-        root, "log", "-1", "--format=%(trailers:key=Built-By,valueonly)", commit
-    )
+    """The entries git's own trailer parser reads as `Built-By` for `commit`, each `<key>:
+    <value>` and never empty, the format's one final newline removed and the rest split at NUL;
+    `None` when the git command fails."""
+    code, out = _git_bytes(root, "log", "-1", f"--format={TRAILERS_FORMAT}", commit)
     if code != 0:
         return None
-    values = out.split("\n")
-    if values and values[-1] == "":
-        values.pop()
-    return values
+    text = _utf8(out)
+    if text.endswith("\n"):
+        text = text[:-1]
+    if not text:
+        return []
+    return text.split("\x00")
+
+
+def _entry_value(entry: str) -> str:
+    """An entry's value: what follows its first colon, stripped of ASCII whitespace alone."""
+    return entry.partition(":")[2].strip(ASCII_WHITESPACE)
 
 
 def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
-    """Every problem of one build: a `Built-By` line git's trailer parser does not return for the
-    commit, a value that does not end `run <stamp>` with the stamp one path segment, or a stamp
-    whose record `runs/<stamp>` is not a tree in HEAD's tree. Every value is checked for its run
-    and its record whether git reads it or not; each problem names the commit's abbreviated hash."""
-    code, message = _git_out(root, "log", "-1", "--format=%B", commit)
+    """Every problem of one build, each once: how many `Built-By` lines git's trailer parser does
+    not read as a trailer, a value that does not end `run <stamp>` with the stamp one path segment,
+    or a stamp whose record `runs/<stamp>` is not a tree in HEAD's tree. Every value, of a line and
+    of an entry, is checked whether git reads it or not; every problem names the commit's
+    abbreviated hash."""
+    short = _short_hash(root, commit)
+    code, message_bytes = _git_bytes(root, "log", "-1", "--format=%B", commit)
     if code != 0:
-        return [f"{rel_note}: git log -1 --format=%B failed"]
-    values = [
-        line[match.end():].strip()
+        return [f"{rel_note}: git log -1 --format=%B failed for {short}"]
+    message = _utf8(message_bytes)
+    lines = [
+        line[match.end():].strip(ASCII_WHITESPACE)
         for line in message.split("\n")
         if (match := BUILT_BY.match(line))
     ]
-    if not values:
+    if not lines:
         return []
-    _, short = _git_out(root, "rev-parse", "--short", commit)
-    short = short.strip() or commit[:7]
-    trailers = _build_trailers(root, commit)
-    if trailers is None:
-        return [
-            f"{rel_note}: git log -1 --format=%(trailers:key=Built-By,valueonly) failed"
-        ]
+    entries = _build_trailers(root, commit)
+    if entries is None:
+        return [f"{rel_note}: git log -1 --format={TRAILERS_FORMAT} failed for {short}"]
+    values = [*lines, *(_entry_value(entry) for entry in entries)]
     problems: list[str] = []
-    unmatched = list(trailers)
+    seen: set[str] = set()
+
+    def add(problem: str) -> None:
+        if problem not in seen:
+            seen.add(problem)
+            problems.append(problem)
+
+    unread = len(lines) - len(entries)
+    if unread > 0:
+        add(
+            f"{rel_note}: {short}: git does not read {unread} of {len(lines)} "
+            f"`Built-By` lines as a trailer"
+        )
+    reported: set[str] = set()
     for value in values:
         text = _line_text(value)
-        read = value in unmatched
-        if read:
-            unmatched.remove(value)
-        if not read:
-            problems.append(
-                f"{rel_note}: {short}: git does not read `Built-By: {text}` as a trailer"
-            )
-        words = value.split()
+        words = _ascii_words(value)
         stamp = words[-1] if len(words) >= 2 and words[-2] == "run" else ""
         if not _segment(stamp):
-            problems.append(f"{rel_note}: {short}: `Built-By: {text}` names no run")
+            add(f"{rel_note}: {short}: `Built-By: {text}` names no run")
             continue
-        code, kind = _git_out(root, "cat-file", "-t", f"HEAD:runs/{stamp}")
-        if code != 0 or kind.strip() != "tree":
-            problems.append(
-                f"runs/{stamp}: {short}: `Built-By: {text}` names a run with no committed record"
-            )
+        if stamp in reported:
+            continue
+        code, kind = _git_bytes(root, "cat-file", "-t", f"HEAD:runs/{stamp}")
+        if code != 0 or _utf8(kind).strip() != "tree":
+            reported.add(stamp)
+            add(f"runs/{stamp}: {short}: `Built-By: {text}` names a run with no committed record")
     return problems
 
 
