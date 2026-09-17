@@ -1,0 +1,19 @@
+## Changed
+- builder.py
+
+## Did
+- builder.py: replaced `checkout` with `tree` in `BuildReport.__doc__` and `Tools.__doc__`, the class docstrings, per the goal.
+- builder.py: replaced `checkout` with `tree` in the `Tools` method docstrings: `list`, `read`, `_files`, `search`, `write`, `edit`, `check` (each now says 'the tree' / 'the tree root').
+- builder.py: replaced `checkout` with `tree` in the `Sandbox` class docstring and its `image` and `run` method docstrings.
+- builder.py: replaced `checkout` with `tree` in the git-helper docstrings of `git`, `head`, `dirty_paths` and `record_diff` (keeping the pinned phrases `not one of the tools` and `absent when the run left nothing`).
+- builder.py: left the module docstring, `ROLE`, all code (parameter names, `numbers` keys, error messages) and all comments saying `checkout`, as the goal requires.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- The docstring of the module-level `read_seed` also contains `checkout`; it is neither a class nor a method nor one of the four git helpers, so I left it, matching the goal's split and the test's list.
+- Whether the goal intended class/method docstrings beyond the ones test_rename_many.py names (e.g. `BuildReport`, `Tools._files`, `Tools.search`) to change too; I changed them since the goal says class and method docstrings become `tree`, and the full suite stayed green.

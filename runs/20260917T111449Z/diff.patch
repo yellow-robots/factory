@@ -1,0 +1,12 @@
+diff --git a/builder.py b/builder.py
+index cd00572..da76cc9 100644
+--- a/builder.py
++++ b/builder.py
+@@ -707,6 +707,7 @@ def sha256(data: str) -> str:
+ 
+ def usage_error(reason: str = "") -> int:
+     print('usage: builder.py <checkout> "<goal>"', file=sys.stderr)
++    print("needs the DeepSeek key in ~/.config/factory/deepseek.key and docker", file=sys.stderr)
+     if reason:
+         print(reason, file=sys.stderr)
+     return 2

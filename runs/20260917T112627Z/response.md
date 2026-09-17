@@ -1,0 +1,14 @@
+## Changed
+- record.py
+
+## Did
+- Added record.py at the repository root defining FILES as the tuple of files a run leaves in README's order (goal.txt, wire.jsonl, messages.json, check-<n>.log, diff.patch, report.json, response.md, numbers.json) and FIRST as "numbers.json", satisfying test_new_file.py.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- Whether the module should expose anything else; the test only asserts FILES and FIRST.

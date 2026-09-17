@@ -1,0 +1,11 @@
+{
+ "changed": [
+  "ledger.py"
+ ],
+ "did": [
+  "In ledger.py, parse() detected a leading '-' but never set the sign to -1, so debits were added instead of subtracted; I set sign = -1 when the first character is '-' so balance([\"+5\",\"-3\"]) is 2."
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": []
+}

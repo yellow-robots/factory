@@ -1,0 +1,14 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_a_debit_lowers_the_balance (test_symptom_not_root.Balance.test_a_debit_lowers_the_balance)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_symptom_not_root.py", line 10, in test_a_debit_lowers_the_balance
+    self.assertEqual(ledger.balance(["+5", "-3"]), 2)
+AssertionError: 8 != 2
+
+----------------------------------------------------------------------
+Ran 160 tests in 19.015s
+
+FAILED (failures=1)

@@ -1,0 +1,16 @@
+{
+ "changed": [
+  "builder.py"
+ ],
+ "did": [
+  "Replaced both occurrences of 'relative to the checkout root' in Tools.list's docstring (summary line and Args entry) with 'relative to the checkout's root' in builder.py, so list.__doc__ no longer contains the old phrase.",
+  "Replaced 'relative to the checkout root' with 'relative to the checkout's root' in Tools.read's docstring Args in builder.py to satisfy the assertion for Tools.read.",
+  "Replaced 'relative to the checkout root' with 'relative to the checkout's root' in Tools.write's docstring Args in builder.py to satisfy the assertion for Tools.write.",
+  "Replaced 'relative to the checkout root' with 'relative to the checkout's root' in Tools.edit's docstring Args in builder.py to satisfy the assertion for Tools.edit."
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": [
+  "Tools.search also takes a path and still says 'relative to the checkout root' in its docstring; test_anchor_not_unique.py does not check search, and the goal names only list, read, write and edit, so it was left unchanged."
+ ]
+}

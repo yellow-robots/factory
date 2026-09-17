@@ -1,0 +1,14 @@
+{
+ "changed": [
+  "builder.py"
+ ],
+ "did": [
+  "builder.py: added a KEY_HINT constant derived from KEY_FILE and Path.home() so the key file can be named as ~/.config/factory/deepseek.key without hardcoding a machine's home",
+  "builder.py: usage_error now prints 'the DeepSeek key is read from ~/.config/factory/deepseek.key' alongside the usage line, so a first-time user is told what the run needs and where it lives"
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": [
+  "Could not verify whether other (non-test) consumers depend on the exact stderr of usage_error beyond the 'usage' substring the existing tests assert."
+ ]
+}

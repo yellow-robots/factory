@@ -1,0 +1,13 @@
+diff --git a/ledger.py b/ledger.py
+index 5c8fc56..8ec69e3 100644
+--- a/ledger.py
++++ b/ledger.py
+@@ -5,7 +5,7 @@
+ def parse(line: str) -> int:
+     """The amount of one line: an optional sign, then digits."""
+     text = line.strip()
+-    sign = 1
++    sign = -1 if text[:1] == "-" else 1
+     if text[:1] in "+-":
+         text = text[1:]
+     return sign * int(text)

@@ -1,0 +1,16 @@
+{
+ "changed": [
+  "wordcount.py"
+ ],
+ "did": [
+  "wordcount.py: replaced the space-only split with `len(text.split())`, which splits on any whitespace run, so tabs and newlines separate words as the goal requires.",
+  "wordcount.py: rewrote the module docstring, which said a word is a run of characters between spaces, to say any whitespace with tabs and newlines included and not spaces alone.",
+  "wordcount.py: rewrote `count`'s docstring, which said 'split on spaces', to say split on any whitespace (spaces, tabs and newlines) so no docstring is left behind."
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": [
+  "The held-out test on the two docstrings is not in the checkout (cases/ is hidden), so I matched the goal's wording ('any whitespace, tabs and newlines included, not spaces alone') in both docstrings but could not verify its exact assertions.",
+  "The check reports 160 tests OK; I could not see a cases/ directory in the checkout, so I could not confirm which tests the check environment actually gathers."
+ ]
+}

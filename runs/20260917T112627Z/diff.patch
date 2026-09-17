@@ -1,0 +1,26 @@
+diff --git a/record.py b/record.py
+new file mode 100644
+index 0000000..8d0c59a
+--- /dev/null
++++ b/record.py
+@@ -0,0 +1,20 @@
++"""The files a run leaves in its record directory, in the order README lists them.
++
++`FILES` names every file a run writes, the count of `check-<n>.log` following the checks a
++run made; `FIRST` is the one to read first, the run's numbers.
++"""
++
++from __future__ import annotations
++
++FILES = (
++    "goal.txt",
++    "wire.jsonl",
++    "messages.json",
++    "check-<n>.log",
++    "diff.patch",
++    "report.json",
++    "response.md",
++    "numbers.json",
++)
++
++FIRST = "numbers.json"

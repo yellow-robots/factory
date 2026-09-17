@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: A case's only test is the one the model sees, so the set measures whether the builder built the tested thing; a second test it never sees, run after the build, measures whether it built the thing.
 value: 4
 effort: M

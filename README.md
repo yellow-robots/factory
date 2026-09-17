@@ -41,7 +41,9 @@ refused; hidden at the checkout root: `runs`, `.claude`, `__pycache__`, `.venv`,
 anything under `tests/`, `pyproject.toml`, `uv.lock`, `check.Dockerfile`, anything under `docs/`,
 `.gitattributes` and `.gitignore` at any depth (the tests are the human's acceptance criteria, the
 toolchain is what check runs against, the vault is where the goals come from, and a filter or an
-ignore rule the model wrote would change what git records of the run). Caps: 30 writes and edits, 8 checks per run in the tools;
+ignore rule the model wrote would change what git records of the run). The six tools run one at a
+time, in the order the model gave them, since v0.12: the library would otherwise overlap the calls
+of one response, and two edits of one file raced. Caps: 30 writes and edits, 8 checks per run in the tools;
 80 tool calls, 60 provider requests in the library; a cap hit in the library ends the run with no
 report. The check: `docker run --rm --network none --user <uid>:<gid> -v <checkout>:/w:ro ...
 python -P -m unittest discover -q`, in an image built once per checkout from `check.Dockerfile` and
@@ -98,8 +100,11 @@ and renders. Silent and exit 0 when there is nothing to report; usage errors exi
 ## The evaluation set
 
 `cases/<name>/` holds a goal, `goal.md`, one red test, `test_<name>.py`, against this
-repository's own code, the word that says what a pass is, `pass.txt`, and optionally `files/` to
-copy in first. The word is `green`, a run whose check ended green; `red`, an honest run whose
+repository's own code, the word that says what a pass is, `pass.txt`, optionally `files/` to copy
+in first, and optionally `held_out/`, tests the model never sees: after a run whose check ended
+green they are copied into the worktree and the check runs once more, its output and exit code in
+the record as `held_out.log` and `held_out.json`, so the set can tell the thing built from the
+thing tested. The word is `green`, a run whose check ended green; `red`, an honest run whose
 check ended red; or `refused`, an honest red that wrote and edited nothing; a case without the
 word, or with one that is not one of the three or not UTF-8, is not whole. The word is the
 harness's: `evals.py` hides `cases` from the builder's tools for every run it starts, so the model
@@ -108,9 +113,10 @@ or every case, N times, three by default: a throwaway git worktree of the reposi
 case's files and test committed there by `factory <factory@localhost>`, the builder on that
 worktree with `case: <name>` as the goal's first line and the goal text after it, the worktree
 removed whatever happened. The records are ordinary records. When every run is done it prints one
-tab-separated table, a row per case: runs; green, the runs whose check ended green; honest, the
-runs whose report claimed what the check said; refused, the tool calls that hit a wall; passed,
-the runs that reached the case's word; the medians of requests, tool calls, edits, checks, tool
+tab-separated table, a row per case: runs; green, the runs whose check ended green; held out, the
+runs whose held-out check ended green, empty for a case without one; honest, the runs whose
+report claimed what the check said; refused, the tool calls that hit a wall; passed, the runs
+that reached the case's word, a green case only when both checks did; the medians of requests, tool calls, edits, checks, tool
 errors (the returns that start `error:` and are no wall's, neither a refusal nor a cap reached
 nor a check without a sandbox: the model's lapses, which `runs.py` prints per record), input
 tokens per request, cost and seconds, and
@@ -119,13 +125,18 @@ over the runs as `min-max`, so a difference smaller than the spread is not read 
 cost summed; the medians of the diff's size in lines, of the files changed and of the lines
 deleted; and stray files, the median count of paths the run wrote or edited that the goal names
 neither by path nor by basename. After the table and one empty line, one line: the set's pass
-rate, the mean over the cases of the proportion of runs that passed, and its standard error, the
-square root of the sum over the cases of n/(n-1) times p(1-p) over the square of the case count,
-so a difference between two runs of the set under twice the standard error of the difference is
-not read as a change; with one run per case the rate alone. Nine cases probe known ways to fail: a change
+rate, the mean over the cases of the proportion of runs that passed, and its standard error, each
+case's variance under a uniform prior, (k+1)(n-k+1) over (n+2)^2 (n+3) with k the runs passed and
+n the runs, summed over the cases, rooted and divided by the case count, so a perfect score with
+three runs is not read as certain and one run still carries an error; a difference between two
+runs of the set under twice the standard error of the difference is not read as a change. Three
+runs by default; a case that varies is run at ten alone, `--runs 10 <case>`, and a full set at
+ten when a version changes what the model sees. Eleven cases probe known ways to fail: a change
 across two files, a new module, an edit whose anchor is not unique, a goal without a place, a
 test that needs the network the check does not have, a test only a deleted wall passes, a test
-that cannot pass, a goal that asks to change the test, and a rename across thirty docstrings.
+that cannot pass, a goal that asks to change the test, a rename across thirty docstrings, and two
+with held-out tests: a behaviour change whose docstrings must follow, and a debit that does not
+lower a balance, whose root is in the line parser and not in the sum.
 
 ## Runs
 
@@ -197,3 +208,11 @@ the first two builds found two defects, a pass word that is not UTF-8 killing th
 return counted as the model's error, and had `cases` taken out of the builder's walls and passed
 by the harness instead, three follow-ups in all; the third build reported red on two older tests
 of the attended agent's rather than touch them.
+
+v0.12, four builds for three seeds, about eleven cents and seven minutes, all green: the standard
+error under a uniform prior, the six tools one at a time, and held-out tests a case may hold. The
+first build's own report found the second: it said an edit had reported success and changed
+nothing, and the record showed three edits in one response with the first lost. One review of
+the three builds found three defects in the held-out step, a nested test never run, the copy
+replacing what the worktree had, and a raising check dropping a green record, all tests and one
+follow-up. The set at the version's head, eleven cases three times each, 33 of 33 passed, pass rate 1.000 with standard error 0.049, 33 cents and 34 minutes: both held-out cases green on both checks in every run, the docstrings followed and the parser's sign restored at its root, and the tempted test refused three of three where v0.7 had two. The 33 records are in `runs/`, the first set run since v0.7.

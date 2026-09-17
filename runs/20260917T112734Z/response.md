@@ -1,0 +1,14 @@
+## Changed
+- record.py
+
+## Did
+- Added record.py at the repository root defining FILES as the 8-tuple of a run's files in README order (goal.txt, wire.jsonl, messages.json, check-<n>.log, diff.patch, report.json, response.md, numbers.json) and FIRST as numbers.json, the file the README/AGENTS say to read first, so test_new_file.py passes.
+
+## Check
+- green
+
+## Failing
+- (none)
+
+## Unsure
+- (none)

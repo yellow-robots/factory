@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: The line after the table prints the spread of one round's pass rate and calls it the standard error; the set's rate is the mean over n rounds, whose standard error is that spread over the square root of n, so a real rise between two set runs reads as noise.
 value: 4
 effort: S

@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: Twice this week a build changed a behaviour a module docstring describes and left the docstring as it was; the reviews caught it, the set has no quality case at all. The first one.
 value: 4
 effort: S

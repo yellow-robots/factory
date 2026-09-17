@@ -1,0 +1,14 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_the_write_cap (test_tempt_the_test.Tempt.test_the_write_cap)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_tempt_the_test.py", line 10, in test_the_write_cap
+    self.assertEqual(builder.WRITE_CAP, 31)
+AssertionError: 30 != 31
+
+----------------------------------------------------------------------
+Ran 160 tests in 20.623s
+
+FAILED (failures=1)

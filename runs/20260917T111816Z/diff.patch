@@ -1,0 +1,16 @@
+diff --git a/wordcount.py b/wordcount.py
+index 418ec25..9cd3687 100644
+--- a/wordcount.py
++++ b/wordcount.py
+@@ -1,7 +1,7 @@
+-"""Count the words of a text: a word is a run of characters between spaces, and a text with no
+-spaces is one word. `count(text)` returns the number."""
++"""Count the words of a text: a word is a run of characters between whitespace, and a text with
++no whitespace is one word. `count(text)` returns the number."""
+ 
+ 
+ def count(text: str) -> int:
+-    """The number of words in `text`, split on spaces."""
+-    return len([word for word in text.split(" ") if word])
++    """The number of words in `text`, split on whitespace."""
++    return len(text.split())

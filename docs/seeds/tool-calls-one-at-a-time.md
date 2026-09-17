@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: The tool calls the model issues in one response overlap in the library; two edits of one file raced, one was lost and both reported success, so a record can say a change happened that never did.
 value: 5
 effort: S

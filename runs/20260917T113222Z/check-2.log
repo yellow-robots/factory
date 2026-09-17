@@ -1,0 +1,6 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+----------------------------------------------------------------------
+Ran 160 tests in 18.972s
+
+OK
