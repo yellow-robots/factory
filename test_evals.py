@@ -681,11 +681,8 @@ class PassRateTest(EvalsTest):
     def test_the_module_docstring_names_the_file_the_column_and_the_line(self):
         for term in ("pass.txt", "passed", "pass rate", "standard error"):
             self.assertIn(term, evals.__doc__, term)
-        self.assertIn("green, honest, refused and passed", evals.__doc__)  # from the review: the enumeration of the counts
+        self.assertIn("green, held-out, honest, refused and passed", evals.__doc__)  # from two reviews: the enumeration of the counts
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class RateErrorTest(EvalsTest):
@@ -791,5 +788,67 @@ class HeldOutTest(EvalsTest):
         self.assertIn("alpha 1/2 error", err)
         self.assertIn("docker is gone", err)
         cells = dict(zip(COLUMNS, rows[1]))
-        self.assertEqual((cells["runs"], cells["green"], cells["held_out"], cells["passed"]), ("2", "1", "1", "1"))
+        # from the review: the build ran and its record stays; the run failed and has no held-out pass
+        self.assertEqual((cells["runs"], cells["green"], cells["held_out"], cells["passed"]), ("2", "2", "1", "1"))
+        self.assertEqual(len(self.records()), 2)
+        self.assertNotEqual(cells["cost_total"], "")
+        self.assertFalse((self.records()[0] / "held_out.json").exists())
         self.assert_root_untouched()
+
+    def test_held_out_holds_test_files_at_its_top_alone_and_only_for_a_green_case(self):
+        """From the review: a nested test is never run by the check, a file that is not a test is
+        copied for nothing, one named like the case's test would replace it, and a red or refused
+        case would pay for a check nobody reads; each is a case that is not whole."""
+        held = self.root / "cases" / "alpha" / "held_out"
+        word = self.root / "cases" / "alpha" / "pass.txt"
+
+        def not_whole(reason):
+            code, rows, err = run(self.root, "alpha", model=endless(), sandbox=FakeSandbox([]))
+            self.assertEqual((code, rows, self.records()), (2, [], []), reason)
+            self.assertIn("held_out", err, reason)
+            code, rows, err = run(self.root, model=endless(), sandbox=FakeSandbox([]))
+            self.assertEqual((code, rows, self.records()), (0, [COLUMNS], []), reason)
+            self.assertIn("skipping alpha", err, reason)
+            shutil.rmtree(held)
+
+        write(self.root, "cases/alpha/held_out/sub/test_deep.py", HELD_OUT)
+        not_whole("a nested test")
+        write(self.root, "cases/alpha/held_out/notes.md", "not a test\n")
+        not_whole("no test at all")
+        write(self.root, "cases/alpha/held_out/test_alpha_hidden.py", HELD_OUT)
+        write(self.root, "cases/alpha/held_out/helper.py", "x = 1\n")
+        not_whole("a file that is not a test")
+        write(self.root, "cases/alpha/held_out/test_alpha.py", HELD_OUT)
+        not_whole("named like the case's own test")
+        write(self.root, "cases/alpha/held_out/test_alpha_hidden.py", HELD_OUT)
+        word.write_text("red\n")
+        not_whole("a red case")
+        word.write_text("green\n")
+        write(self.root, "cases/alpha/held_out/test_alpha_hidden.py", HELD_OUT)
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "whole again")
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=RecordingSandbox([(0, "OK\n"), (0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(dict(zip(COLUMNS, rows[1]))["held_out"], "1")
+
+    def test_a_held_out_file_the_worktree_already_has_is_a_failed_run_with_the_record_kept(self):
+        """From the review: the copy replaced whatever bore the name, the repository's own tests
+        included, after the record was taken; the run fails instead, and the build's record stays."""
+        write(self.root, "test_alpha_hidden.py", "import unittest\n")  # the repository's own file of that name
+        self.hold_out()
+        sandbox = RecordingSandbox([(0, "OK\n")] * 2)
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=player(EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 1)
+        self.assertIn("alpha 1/2 error", err)
+        self.assertIn("test_alpha_hidden.py", err)
+        self.assertEqual(sandbox.seen, [True, True])  # the build's checks only; no held-out check ran
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["green"], cells["held_out"], cells["passed"]), ("2", "2", "0", "0"))
+        self.assertEqual(len(self.records()), 2)
+        for record in self.records():
+            self.assertFalse((record / "held_out.json").exists())
+        self.assert_root_untouched()
+
+
+if __name__ == "__main__":
+    unittest.main()
