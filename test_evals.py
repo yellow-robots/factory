@@ -151,7 +151,8 @@ def scripted(runs_dir: Path, script):
     counts: dict[str, int] = {}
     ordinal = itertools.count(1)
 
-    def fake_build(argv, model=None, sandbox=None):
+    def fake_build(argv, model=None, sandbox=None, **options):
+        fake_build.options.append(dict(options))  # what the harness passed beside the model and the sandbox
         case = argv[2].splitlines()[0].removeprefix("case: ")
         counts[case] = counts.get(case, 0) + 1
         files = script(case, counts[case])
@@ -164,6 +165,7 @@ def scripted(runs_dir: Path, script):
         print(record)
         return 0
 
+    fake_build.options = []
     return fake_build
 
 
@@ -387,7 +389,7 @@ class SpreadTest(EvalsTest):
         spread and the summed cost alike."""
         requests, ordinal = iter(("NaN", "Infinity", "3")), itertools.count(1)
 
-        def fake_build(argv, model=None, sandbox=None):
+        def fake_build(argv, model=None, sandbox=None, **options):
             record = self.runs / f"20260917T000000Z-{next(ordinal)}"
             record.mkdir(parents=True)
             (record / "numbers.json").write_text('{"requests": %s, "cost_usd": 0.5, "seconds": 2, "check": "green"}' % next(requests))
@@ -652,6 +654,15 @@ class PassRateTest(EvalsTest):
         code, rows, err = run(root, "beta", model=endless(), sandbox=FakeSandbox([]))
         self.assertEqual((code, rows), (2, []))
         self.assertIn("pass.txt", err)
+
+    def test_the_harness_passes_cases_to_the_builder_as_the_names_to_hide(self):
+        """After the follow-up build: the harness names `cases` to the builder plainly, as the
+        stand-ins here take it, and does not inspect the builder's signature first."""
+        fake = scripted(self.runs, lambda case, n: {"numbers.json": '{"check": "green"}'})
+        with mock.patch.object(builder, "main", fake):
+            code, rows, err = run(self.root, "alpha")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(fake.options, [{"hidden": ("cases",)}] * 3)
 
     def test_the_module_docstring_names_the_file_the_column_and_the_line(self):
         for term in ("pass.txt", "passed", "pass rate", "standard error"):
