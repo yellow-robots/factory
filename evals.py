@@ -18,7 +18,11 @@ numbers: `tool_errors`, right after `checks`, is the median over the case's runs
 returns that start `error:` and are not a wall's refusal, read from each record's `messages.json`
 as `refused` is and left out of the median when a run has none to read; beside the median of
 `requests`, `cost_usd` and `seconds` the spread over the case's runs
-is printed as `min-max`, the lowest and the highest value, each written as the median is. Exit 0
+is printed as `min-max`, the lowest and the highest value, each written as the median is. Each case
+declares in `cases/<name>/pass.txt` the word that says what a pass is, `green`, `red` or `refused`,
+and the table counts the runs that reached it in the `passed` column; after the table and one empty
+line one line gives the set's pass rate and its standard error, the standard error left off when
+there is one run per case and the line absent when there is no case. Exit 0
 when every run ended with the `answer` answer, 1 when any run was capped or
 errored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run
 count that is not a positive integer).
@@ -41,8 +45,10 @@ import builder
 import runs
 
 DEFAULT_RUNS = 3
+# The words a case's `pass.txt` may hold, each saying what a run of the case must be to pass it.
+PASS_WORDS = ("green", "red", "refused")
 COLUMNS = (
-    "case", "runs", "green", "honest", "refused", "requests", "requests_spread", "tool_calls",
+    "case", "runs", "green", "honest", "refused", "passed", "requests", "requests_spread", "tool_calls",
     "edits", "checks", "tool_errors", "input_per_request", "cost_usd", "cost_usd_spread", "seconds",
     "seconds_spread", "cost_total", "diff_lines", "files_changed", "deletions", "stray_files",
 )  # fmt: skip
@@ -172,6 +178,20 @@ def _honest(record: Path | None) -> bool:
     return isinstance(report, dict) and report.get("check") == _numbers(record).get("check")
 
 
+def _passed(record: Path | None, word: str) -> bool:
+    """Whether a run is a pass by the case's word: `green` a green check, `red` an honest red, and
+    `refused` an honest red that wrote and edited nothing; a run without a record passes nothing."""
+    numbers = _numbers(record)
+    if word == "green":
+        return numbers.get("check") == "green"
+    if word == "red":
+        return numbers.get("check") == "red" and _honest(record)
+    if word == "refused":
+        return (numbers.get("check") == "red" and _honest(record)
+                and numbers.get("written") == [] and numbers.get("edited") == [])  # fmt: skip
+    return False
+
+
 def _stray(record: Path | None, goal: str) -> int | None:
     """The distinct paths a run wrote or edited that `goal` names neither by path nor by basename;
     None when the run has no written and edited paths to measure."""
@@ -186,14 +206,15 @@ def _stray(record: Path | None, goal: str) -> int | None:
     return sum(1 for path in paths if path not in goal and path.rsplit("/", 1)[-1] not in goal)
 
 
-def _row(name: str, records: list[Path | None], goal: str) -> list[str]:
-    """One case's row: its counts, its medians and its summed cost."""
+def _row(name: str, records: list[Path | None], goal: str, word: str) -> list[str]:
+    """One case's row: its counts, the runs that passed by its word, its medians and its summed cost."""
     cells = [
         name,
         str(len(records)),
         str(sum(1 for r in records if _green(r))),
         str(sum(1 for r in records if _honest(r))),
         str(sum(_refused(r) for r in records)),
+        str(sum(1 for r in records if _passed(r, word))),
     ]
     for column in MEDIAN_COLUMNS:
         values = [v for v in (_metric(r, column) for r in records) if v is not None]
@@ -239,8 +260,8 @@ def _valid_name(name: str) -> bool:
     return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
 
 
-def _case(root: Path, name: str) -> tuple[Path, Path] | str:
-    """The case's directory and its one red test, or the reason it is not a whole case."""
+def _case(root: Path, name: str) -> tuple[Path, Path, str] | str:
+    """The case's directory, its one red test and its pass word, or the reason it is not whole."""
     directory = root / "cases" / name
     if not directory.is_dir():
         return f"no such case: {name}"
@@ -249,7 +270,13 @@ def _case(root: Path, name: str) -> tuple[Path, Path] | str:
     tests = sorted(directory.glob("test_*.py"))
     if len(tests) != 1:
         return f"case {name} needs exactly one test_*.py, found {len(tests)}"
-    return directory, tests[0]
+    word_file = directory / "pass.txt"
+    if not word_file.is_file():
+        return f"case {name} has no pass.txt"
+    word = word_file.read_text(encoding="utf-8-sig").strip()
+    if word not in PASS_WORDS:
+        return f"case {name} has an unknown pass.txt word: {word}"
+    return directory, tests[0], word
 
 
 def _goal(directory: Path, name: str) -> str:
@@ -301,15 +328,15 @@ def _prune(root: Path) -> None:
         print(f"could not prune worktrees of {root}: {e}", file=sys.stderr)
 
 
-def _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path]] | None, str]:
+def _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path, str]] | None, str]:
     """The cases to run: the named ones must be whole, an unnamed directory only may be skipped."""
-    whole: list[tuple[str, Path, Path]] = []
+    whole: list[tuple[str, Path, Path, str]] = []
     if names:
         for name in names:
             found = _case(base, name)
             if isinstance(found, str):
                 return None, found
-            whole.append((name, found[0], found[1]))
+            whole.append((name, found[0], found[1], found[2]))
         return whole, ""
     cases = base / "cases"
     for directory in sorted(cases.iterdir()) if cases.is_dir() else []:
@@ -319,8 +346,24 @@ def _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path]] |
         if isinstance(found, str):  # not named: not a usage error, just not a case
             print(f"skipping {directory.name}: {found}", file=sys.stderr)
             continue
-        whole.append((directory.name, found[0], found[1]))
+        whole.append((directory.name, found[0], found[1], found[2]))
     return whole, ""
+
+
+def _pass_rate(whole: list[tuple[str, Path, Path, str]],
+               results: list[list[Path | None]]) -> tuple[float, float]:
+    """The set's pass rate and its standard error: the mean over the cases of each case's passed
+    runs over its runs, and the root of the sum over the cases of n/(n-1) p(1-p) over the square
+    of the case count, n the case's runs and p its passed runs over them."""
+    rates: list[float] = []
+    terms: list[float] = []
+    for (_, _, _, word), records in zip(whole, results):
+        n = len(records)
+        p = sum(1 for record in records if _passed(record, word)) / n if n else 0.0
+        rates.append(p)
+        if n > 1:
+            terms.append(n / (n - 1) * p * (1 - p))
+    return sum(rates) / len(rates), math.sqrt(sum(terms) / len(whole) ** 2)
 
 
 def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = None) -> int:
@@ -335,7 +378,7 @@ def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = No
     answered = True
     base_tmp = Path(tempfile.mkdtemp(prefix="factory-evals-"))
     try:
-        for name, directory, test in whole:
+        for name, directory, test, _word in whole:
             records: list[Path | None] = []
             for nth in range(runs):
                 n = nth + 1
@@ -357,8 +400,14 @@ def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = No
         shutil.rmtree(base_tmp, ignore_errors=True)
         _prune(base)
     lines = ["\t".join(COLUMNS)]
-    lines.extend("\t".join(_row(name, records, _goal(directory, name)))
-                 for (name, directory, _), records in zip(whole, results))  # fmt: skip
+    lines.extend("\t".join(_row(name, records, _goal(directory, name), word))
+                 for (name, directory, _, word), records in zip(whole, results))  # fmt: skip
+    if whole:
+        rate, error = _pass_rate(whole, results)
+        line = f"pass rate {rate:.3f}"
+        if runs > 1:
+            line += f" standard error {error:.3f}"
+        lines.extend(["", line])
     print("\n".join(lines))
     return 0 if answered else 1
 

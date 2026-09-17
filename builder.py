@@ -73,8 +73,9 @@ CHECK_TAIL_LINES = 60  # lines of check output handed back
 CHECK_TAIL_BYTES = 8_000  # and at most this many bytes of them
 IMAGE_TIMEOUT = 600  # seconds for the one image build
 # Hidden at the root because they are what running and installing the program leave behind,
-# not the checkout; .git is the human's record and its hooks run on the host.
-HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git")
+# not the checkout; .git is the human's record and its hooks run on the host, and cases is the
+# evaluation harness's, the goals and the words that say what a pass is.
+HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git", "cases")
 # Refused to write and edit: the tests are the goal's acceptance criteria, the toolchain is what
 # check runs against, and a .gitattributes or .gitignore the model wrote would change what git
 # records of the run. A basename glob anywhere, a dotted basename anywhere, a prefix, or an exact
