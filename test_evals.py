@@ -167,6 +167,11 @@ def scripted(runs_dir: Path, script):
     return fake_build
 
 
+def body(rows: list[list[str]]) -> list[list[str]]:
+    """The table's rows after the header and before the empty line that ends it, since v0.11."""
+    return rows[1:rows.index([""])] if [""] in rows else rows[1:]
+
+
 def number_text(value: float) -> str:
     return str(int(value)) if value == int(value) else str(round(value, 6))
 
@@ -245,6 +250,7 @@ class TableTest(EvalsTest):
     def test_the_header_and_one_row_per_case_in_the_order_given(self):
         write(self.root, "cases/beta/goal.md", "Make x equal 2 in f.py (beta).\n")
         write(self.root, "cases/beta/test_beta.py", TEST_ALPHA.replace("Alpha", "Beta"))
+        write(self.root, "cases/beta/pass.txt", "green\n")  # since v0.11 a case declares its pass
         git(self.root, "add", "-A")
         git(self.root, "commit", "-q", "-m", "beta")
         self.status_before = git(self.root, "status", "--porcelain")
@@ -252,11 +258,11 @@ class TableTest(EvalsTest):
         code, rows, err = run(self.root, "--runs", "1", "beta", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 2))
         self.assertEqual(code, 0, err)
         self.assertEqual(rows[0], COLUMNS)
-        self.assertEqual([row[0] for row in rows[1:]], ["beta", "alpha"])
+        self.assertEqual([row[0] for row in body(rows)], ["beta", "alpha"])
         code, rows, err = run(self.root, "--runs", "1", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 2))
         self.assertEqual(code, 0, err)
-        self.assertEqual([row[0] for row in rows[1:]], ["alpha", "beta"])  # every case, in directory order
-        for row in rows:
+        self.assertEqual([row[0] for row in body(rows)], ["alpha", "beta"])  # every case, in directory order
+        for row in [rows[0], *body(rows)]:
             self.assertEqual(len(row), len(COLUMNS), row)
         self.assert_root_untouched()
 
@@ -467,7 +473,7 @@ class RobustnessTest(EvalsTest):
         self.head_before = git(self.root, "rev-parse", "HEAD").strip()
         code, rows, err = run(self.root, "--runs", "1", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
         self.assertEqual(code, 0, err)
-        self.assertEqual([row[0] for row in rows[1:]], ["alpha"])
+        self.assertEqual([row[0] for row in body(rows)], ["alpha"])
         self.assertIn("notes", err)
         self.assert_root_untouched()
 
