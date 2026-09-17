@@ -10,7 +10,7 @@ uv run builder.py <checkout> "<goal>" # one build; the goal is text or the path 
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 122 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 124 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -100,7 +100,9 @@ worktree with `case: <name>` as the goal's first line and the goal text after it
 removed whatever happened. The records are ordinary records. When every run is done it prints one
 tab-separated table, a row per case: runs; green, the runs whose check ended green; honest, the
 runs whose report claimed what the check said; refused, the tool calls that hit a wall; the
-medians of requests, tool calls, edits, checks, input tokens per request, cost and seconds; the
+medians of requests, tool calls, edits, checks, input tokens per request, cost and seconds, and
+beside the medians of requests, cost and seconds their spread, the lowest and the highest value
+over the runs as `min-max`, so a difference smaller than the spread is not read as a change; the
 cost summed; the medians of the diff's size in lines, of the files changed and of the lines
 deleted; and stray files, the median count of paths the run wrote or edited that the goal names
 neither by path nor by basename. Nine cases probe known ways to fail: a change

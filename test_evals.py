@@ -31,9 +31,9 @@ models.ALLOW_MODEL_REQUESTS = False
 
 GREEN = {"changed": ["f.py"], "did": ["f.py: x is 2"], "check": "green", "failing": [], "unsure": []}
 COLUMNS = [
-    "case", "runs", "green", "honest", "refused", "requests", "tool_calls", "edits", "checks",
-    "input_per_request", "cost_usd", "seconds", "cost_total", "diff_lines", "files_changed", "deletions",
-    "stray_files",
+    "case", "runs", "green", "honest", "refused", "requests", "requests_spread", "tool_calls", "edits",
+    "checks", "input_per_request", "cost_usd", "cost_usd_spread", "seconds", "seconds_spread", "cost_total",
+    "diff_lines", "files_changed", "deletions", "stray_files",
 ]
 EDIT = ("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"})
 CHECK = ("check", {})
@@ -126,9 +126,16 @@ def run(root: Path, *args: str, model=None, sandbox=None) -> tuple[int, list[lis
     return code, rows, err.getvalue()
 
 
+def number_text(value: float) -> str:
+    return str(int(value)) if value == int(value) else str(round(value, 6))
+
+
 def median_text(values: list[float]) -> str:
-    m = statistics.median(values)
-    return str(int(m)) if m == int(m) else str(round(m, 6))
+    return number_text(statistics.median(values))
+
+
+def spread_text(values: list[float]) -> str:
+    return f"{number_text(min(values))}-{number_text(max(values))}"
 
 
 class EvalsTest(unittest.TestCase):
@@ -282,6 +289,50 @@ class MediansTest(EvalsTest):
         self.assertEqual(code, 0, err)
         cells = dict(zip(COLUMNS, rows[1]))
         self.assertEqual((cells["runs"], cells["checks"], cells["edits"]), ("1", "1", "1"))
+
+
+class SpreadTest(EvalsTest):
+    """seed: spread-column. Beside the median of requests, cost_usd and seconds, the lowest and the
+    highest value over the runs as `min-max`, each written as the median is; a run that lacks the
+    measure is left out, and the cell is empty when no run has it."""
+
+    def test_the_spread_sits_beside_the_medians_of_requests_cost_and_seconds(self):
+        sandbox = FakeSandbox([(1, "FAIL\n"), (1, "FAIL\n"), (0, "OK\n"), (1, "FAIL\n"), (0, "OK\n"), (0, "OK\n")])  # 3, 2, 1 checks
+        code, rows, err = run(self.root, "alpha", model=player(EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[0], COLUMNS)
+        for column in ("requests", "cost_usd", "seconds"):
+            self.assertEqual(rows[0][rows[0].index(column) + 1], f"{column}_spread")
+        self.assertEqual(len(rows[1]), len(COLUMNS), rows[1])
+        cells = dict(zip(COLUMNS, rows[1]))
+        numbers = [self.numbers(r) for r in self.records()]
+        self.assertEqual(len(numbers), 3)
+        requests = [n["requests"] for n in numbers]
+        self.assertLess(min(requests), max(requests))  # the runs did differ: 3, 2 and 1 checks
+        self.assertEqual(cells["requests_spread"], f"{min(requests)}-{max(requests)}")
+        for column in ("requests", "cost_usd", "seconds"):
+            values = [n[column] for n in numbers]
+            self.assertEqual(cells[column], median_text(values), column)
+            self.assertEqual(cells[f"{column}_spread"], spread_text(values), column)
+        self.assert_root_untouched()
+
+    def test_one_run_has_the_same_value_at_both_ends_and_no_number_leaves_the_cell_empty(self):
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        n = self.numbers(self.records()[0])
+        self.assertEqual(cells["requests_spread"], f"{n['requests']}-{n['requests']}")
+        self.assertEqual(cells["cost_usd_spread"], spread_text([n["cost_usd"]]))
+        self.assertEqual(cells["seconds_spread"], spread_text([n["seconds"]]))
+
+        def exploding(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError("the model exploded")
+
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=FunctionModel(exploding), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 1)
+        cells = dict(zip(COLUMNS, rows[1]))
+        for column in ("requests", "cost_usd", "seconds"):
+            self.assertEqual((cells[column], cells[f"{column}_spread"]), ("", ""), column)
 
 
 class UsageTest(EvalsTest):
