@@ -2,3 +2,4 @@ __pycache__/
 .claude/worktrees/
 .venv/
 docs/.obsidian/
+docs/scratchpad/
