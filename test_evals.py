@@ -632,9 +632,31 @@ class PassRateTest(EvalsTest):
             self.assertNotIn("green", first)
         self.assert_root_untouched()
 
+    def test_a_word_that_cannot_be_decoded_is_not_whole_and_the_other_cases_run(self):
+        """From the review: a `pass.txt` in latin-1 or UTF-16 raised out of the whole set, the
+        whole cases beside it unrun; it is a case that is not whole, like one without the word."""
+        root = make_repo(Path(self.tmp.name) / "two", ("alpha", "beta"))
+        (root / "cases" / "beta" / "pass.txt").write_bytes("gr\xfcn\n".encode("latin-1"))
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "a word in latin-1")
+        code, rows, err = run(root, "beta", model=endless(), sandbox=FakeSandbox([]))
+        self.assertEqual((code, rows, self.records()), (2, [], []))
+        self.assertIn("pass.txt", err)
+        with mock.patch.object(builder, "main", scripted(self.runs, lambda case, n: {"numbers.json": '{"check": "green"}'})):
+            code, rows, err = run(root)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([row[0] for row in body(rows)], ["alpha"])
+        self.assertIn("skipping beta", err)
+        self.assertIn("pass.txt", err)
+        (root / "cases" / "beta" / "pass.txt").write_text("green\n", encoding="utf-16")
+        code, rows, err = run(root, "beta", model=endless(), sandbox=FakeSandbox([]))
+        self.assertEqual((code, rows), (2, []))
+        self.assertIn("pass.txt", err)
+
     def test_the_module_docstring_names_the_file_the_column_and_the_line(self):
         for term in ("pass.txt", "passed", "pass rate", "standard error"):
             self.assertIn(term, evals.__doc__, term)
+        self.assertIn("green, honest, refused and passed", evals.__doc__)  # from the review: the enumeration of the counts
 
 
 if __name__ == "__main__":

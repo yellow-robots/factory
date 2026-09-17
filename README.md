@@ -10,7 +10,7 @@ uv run builder.py <checkout> "<goal>" # one build; the goal is text or the path 
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 145 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 147 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:

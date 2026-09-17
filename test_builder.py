@@ -134,22 +134,25 @@ class ToolsTest(unittest.TestCase):
 
     def test_the_hidden_names_are_the_record_the_harness_the_caches_and_git(self):
         """seed: terms-checkout-and-tools. plans is gone from the checkout and from the list."""
-        self.assertEqual(builder.HIDDEN, ("runs", ".claude", "__pycache__", ".venv", ".git", "cases"))  # cases since v0.11
+        self.assertEqual(builder.HIDDEN, ("runs", ".claude", "__pycache__", ".venv", ".git"))  # cases is the harness's to add, since the v0.11 review
 
-    def test_cases_are_hidden_like_the_record(self):
+    def test_a_name_the_harness_adds_is_hidden_like_the_record(self):
         """seed: pass-rate-error. The evaluation set's cases, their goals and the word that says
-        what a pass is, are the harness's: no tool lists, reads, searches, writes or edits them."""
+        what a pass is, are the harness's: it names `cases` beside the builder's own hidden names
+        and no tool lists, reads, searches, writes or edits it."""
         (self.root / "cases" / "alpha").mkdir(parents=True)
         (self.root / "cases" / "alpha" / "pass.txt").write_text("green\n")
-        self.assertIn("cases", builder.HIDDEN)
-        self.assertNotIn("cases", names_in(self.tools.list(".")))
-        self.assertTrue(self.tools.list("cases").startswith("error: not part of the checkout"))
-        self.assertTrue(self.tools.read("cases/alpha/pass.txt").startswith("error: not part of the checkout"))
-        self.assertTrue(self.tools.search("green").startswith("no matches"))
-        self.assertTrue(self.tools.write("cases/alpha/pass.txt", "red\n").startswith("error:"))
-        self.assertTrue(self.tools.edit("cases/alpha/pass.txt", "green", "red").startswith("error:"))
+        self.assertNotIn("cases", builder.HIDDEN)
+        tools = Tools(self.root, self.run_dir, hidden=(*builder.HIDDEN, "cases"), sandbox=self.sandbox)
+        self.assertNotIn("cases", names_in(tools.list(".")))
+        self.assertIn("cases", names_in(self.tools.list(".")))  # the builder alone shows it
+        self.assertTrue(tools.list("cases").startswith("error: not part of the checkout"))
+        self.assertTrue(tools.read("cases/alpha/pass.txt").startswith("error: not part of the checkout"))
+        self.assertTrue(tools.search("green").startswith("no matches"))
+        self.assertTrue(tools.write("cases/alpha/pass.txt", "red\n").startswith("error:"))
+        self.assertTrue(tools.edit("cases/alpha/pass.txt", "green", "red").startswith("error:"))
         self.assertEqual((self.root / "cases" / "alpha" / "pass.txt").read_text(), "green\n")
-        self.assertEqual(self.tools.read_paths, [])
+        self.assertEqual(tools.read_paths, [])
 
     def test_paths_cannot_leave_the_checkout(self):
         for bad in ("..", "../..", "/etc", "escape", "outside_dir/hostname", *(f"{h}/secret" for h in builder.HIDDEN)):
@@ -706,6 +709,32 @@ class MainTest(unittest.TestCase):
             code = builder.main(["builder.py", str(checkout or self.checkout), "make x bigger"], model=model, sandbox=sandbox)
         run_dirs = list(self.runs.iterdir()) if self.runs.exists() else []
         return code, out.getvalue().splitlines(), (run_dirs[0] if run_dirs else None)
+
+    def test_the_harness_names_what_else_to_hide_for_a_run(self):
+        """seed: pass-rate-error. From the review: the evaluation set's `cases/` is the harness's
+        convention, not what running the program leaves behind, so the harness hides it for the
+        runs it starts through `hidden` and the builder's own hidden names stay five."""
+        (self.checkout / "cases" / "alpha").mkdir(parents=True)
+        (self.checkout / "cases" / "alpha" / "pass.txt").write_text("green\n")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "a case")
+        peek = [call("list", {"path": "."}, "c0"), call("read", {"path": "cases/alpha/pass.txt"}, "c1")]
+
+        def returns(run_dir: Path) -> list[str]:
+            return [p["content"] for m in json.loads((run_dir / "messages.json").read_text()) for p in m["parts"] if p.get("part_kind") == "tool-return"]
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(peek), sandbox=FakeSandbox([]), hidden=("cases",))
+        self.assertEqual(code, 0)
+        hidden = returns(sorted(self.runs.iterdir())[0])
+        self.assertNotIn("cases", names_in(hidden[0]))
+        self.assertTrue(hidden[1].startswith("error: not part of the checkout"), hidden[1])
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(peek), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 0)
+        shown = returns(sorted(self.runs.iterdir())[1])
+        self.assertIn("cases", names_in(shown[0]))
+        self.assertEqual(shown[1], "1\tgreen")
 
     def test_a_green_build_in_a_git_checkout_leaves_the_full_record_and_the_diff(self):
         """seed: terms-checkout-and-tools. The numbers name the checkout and its head."""
