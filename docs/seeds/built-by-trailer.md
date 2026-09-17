@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: A build commit whose `Built-By` line git does not parse as a trailer is a build the version's derived list misses; the gate should refuse it at release.
 value: 3
 effort: S
