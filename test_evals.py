@@ -751,6 +751,39 @@ class HeldOutTest(EvalsTest):
             self.assertTrue((record / "held_out.log").is_file())
         self.assert_root_untouched()
 
+    def test_what_the_held_out_check_adds_to_a_record_is_committed_to_the_store(self):
+        """seed: records-outside-the-project. The harness writes `held_out.log` and `held_out.json`
+        into a record after the builder committed it: they are committed to the store as well, so
+        a set leaves nothing of a record uncommitted."""
+        self.hold_out()
+        sandbox = RecordingSandbox([(0, "OK\n")] * 6)
+        code, rows, err = run(self.root, "alpha", model=player(("list", {"path": "."}), EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.records()), 3)
+        self.assertEqual(git(self.runs, "status", "--porcelain"), "")
+        tracked = git(self.runs, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+        for record in self.records():
+            for name in ("held_out.json", "held_out.log", "numbers.json", "wire.jsonl.gz"):
+                self.assertIn(f"{record.name}/{name}", tracked)
+        self.assert_root_untouched()
+
+    def test_a_record_the_harness_commits_is_searched_for_the_key_s_value(self):
+        """seed: records-outside-the-project. From the attended agent's reading of e7d3eb6: the one
+        function that commits a record searches it first, whoever calls it, and a file that is not
+        what its name says, a `.gz` that is not gzip, is searched as the bytes it is; a record that
+        holds the key's value is not committed, the run fails, and stderr never says the value."""
+        self.hold_out()
+        files = {"numbers.json": '{"check": "green", "checks": 1}', "notes.gz": "plain text, and the key is not-a-key\n"}
+        with mock.patch.object(builder, "main", scripted(self.runs, lambda case, n: dict(files))):
+            code, rows, err = run(self.root, "--runs", "1", "alpha", sandbox=RecordingSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 1)
+        self.assertNotIn("not-a-key", err)
+        self.assertIn("notes.gz", err)
+        (record,) = self.records()
+        if (self.runs / ".git").exists():
+            self.assertEqual(git(self.runs, "ls-files").strip(), "")
+        self.assert_root_untouched()
+
     def test_a_red_held_out_check_fails_a_green_case_and_a_red_build_has_no_held_out_check(self):
         self.hold_out()
         sandbox = RecordingSandbox([(0, "OK\n"), (1, "FAIL\n"), (0, "OK\n"), (0, "OK\n")])

@@ -460,6 +460,9 @@ class ReviewTest(GateTest):
         self.assert_problem(self.note, "runs")
         self.review(REVIEW.replace(f"runs: {STAMP}", f"runs: {STAMP} 20260917T000001Z"))
         self.assertEqual(self.check(), (0, "", ""))
+        self.edit("runs/20260101T000000Z/numbers.json", "{}\n")  # from the review: a runs/ that lacks the stamps
+        self.commit("a runs/ of another record")
+        self.assertEqual(self.check(), (0, "", ""))
         self.review(REVIEW.replace(f"runs: {STAMP}", "runs: 20260917T000001Z"))
         self.assert_problem(self.note, "named")
 
@@ -748,6 +751,9 @@ class ReleaseTest(GateTest):
         prefixed = f"{STAMP}x-g{first[:7]}^{{tree}}"
         shaped = self.build(f"Built-By: factory at 1234567, run {prefixed}\nCo-Authored-By: t <t@t>", amend=True)
         out = self.assert_refused_with("docs/versions/v0.2.md:", shaped, "names no run")  # the whole stamp has the shape
+        arabic = "\u0662\u0660\u0662\u0666\u0660\u0669\u0661\u0667T\u0662\u0661\u0665\u0666\u0665\u0669Z"
+        indic = self.build(f"Built-By: factory at 1234567, run {arabic}\nCo-Authored-By: t <t@t>", amend=True)
+        self.assert_refused_with("docs/versions/v0.2.md:", indic, "names no run")  # from the review: the digits are ASCII's
         self.assertFalse(any(line.startswith("runs/") for line in out.splitlines()), out)
         self.build(f"Built-By: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
         self.assertFalse((self.root / "runs").exists())
