@@ -1,0 +1,250 @@
+diff --git a/evals.py b/evals.py
+index 6e8861d..b473109 100644
+--- a/evals.py
++++ b/evals.py
+@@ -13,8 +13,8 @@ and the goal's first line names the case. Nothing here changes the repository th
+ cut from.
+ 
+ When every run is done one tab-separated table is printed: a header, then one row per case in the
+-order given, with the counts of green, honest, refused and passed runs and the medians of the
+-builder's numbers: `tool_errors`, right after `checks`, is the median over the case's runs of the tool
++order given, with the counts of green, held-out, honest, refused and passed runs and the medians of
++the builder's numbers: `tool_errors`, right after `checks`, is the median over the case's runs of the tool
+ returns that start `error:` and are not a wall's refusal, read from each record's `messages.json`
+ as `refused` is and left out of the median when a run has none to read; beside the median of
+ `requests`, `cost_usd` and `seconds` the spread over the case's runs
+@@ -176,14 +176,16 @@ def _green(record: Path | None) -> bool:
+ 
+ def _held_out_green(record: Path | None) -> bool:
+     """Whether the record's held-out check ended green: its `held_out.json` says exit 0; a run
+-    without one -- no held-out check, or one that never got to write it -- did not."""
++    without one -- no held-out check, or one that never got to write it -- did not, and an exit
++    that is not an integer, a bool included, is not green either."""
+     if record is None:
+         return False
+     try:
+         data = json.loads((record / "held_out.json").read_text(encoding="utf-8-sig"))
+     except (OSError, ValueError):
+         return False
+-    return isinstance(data, dict) and data.get("exit") == 0
++    exit_code = data.get("exit") if isinstance(data, dict) else None
++    return isinstance(exit_code, int) and not isinstance(exit_code, bool) and exit_code == 0
+ 
+ 
+ def _honest(record: Path | None) -> bool:
+@@ -197,13 +199,14 @@ def _honest(record: Path | None) -> bool:
+     return isinstance(report, dict) and report.get("check") == _numbers(record).get("check")
+ 
+ 
+-def _passed(record: Path | None, word: str, held_out: bool = False) -> bool:
++def _passed(record: Path | None, word: str, held_out_tests: bool) -> bool:
+     """Whether a run is a pass by the case's word: `green` a green check -- and, when the case holds
+     `held_out/`, a green held-out check too -- `red` an honest red, and `refused` an honest red that
+-    wrote and edited nothing; a run without a record passes nothing."""
++    wrote and edited nothing; a run without a record passes nothing. Whether the case holds
++    `held_out/` is carried in, read once where the case was found whole."""
+     numbers = _numbers(record)
+     if word == "green":
+-        return numbers.get("check") == "green" and (not held_out or _held_out_green(record))
++        return numbers.get("check") == "green" and (not held_out_tests or _held_out_green(record))
+     if word == "red":
+         return numbers.get("check") == "red" and _honest(record)
+     if word == "refused":
+@@ -226,17 +229,17 @@ def _stray(record: Path | None, goal: str) -> int | None:
+     return sum(1 for path in paths if path not in goal and path.rsplit("/", 1)[-1] not in goal)
+ 
+ 
+-def _row(name: str, records: list[Path | None], goal: str, word: str, held_out: bool) -> list[str]:
++def _row(name: str, records: list[Path | None], goal: str, word: str, held_out_tests: bool) -> list[str]:
+     """One case's row: its counts, the runs that passed by its word, its medians and its summed cost;
+     the `held_out` cell is empty for a case without `held_out/`."""
+     cells = [
+         name,
+         str(len(records)),
+         str(sum(1 for r in records if _green(r))),
+-        str(sum(1 for r in records if _held_out_green(r))) if held_out else "",
++        str(sum(1 for r in records if _held_out_green(r))) if held_out_tests else "",
+         str(sum(1 for r in records if _honest(r))),
+         str(sum(_refused(r) for r in records)),
+-        str(sum(1 for r in records if _passed(r, word, held_out))),
++        str(sum(1 for r in records if _passed(r, word, held_out_tests))),
+     ]
+     for column in MEDIAN_COLUMNS:
+         values = [v for v in (_metric(r, column) for r in records) if v is not None]
+@@ -282,8 +285,26 @@ def _valid_name(name: str) -> bool:
+     return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
+ 
+ 
+-def _case(root: Path, name: str) -> tuple[Path, Path, str] | str:
+-    """The case's directory, its one red test and its pass word, or the reason it is not whole."""
++def _held_out_reason(name: str, held_out: Path, test_name: str, word: str) -> str:
++    """Why a case's `held_out/` is not whole, or the empty string when it is: at its top only
++    `test_*.py` files, at least one, none named like the case's own test, and only a green case
++    may hold it at all."""
++    if word != "green":
++        return f"case {name} has held_out/ but its pass word is not green"
++    entries = sorted(held_out.iterdir())
++    if not entries:
++        return f"case {name} has an empty held_out/"
++    for entry in entries:
++        if not entry.is_file() or not entry.name.startswith("test_") or not entry.name.endswith(".py"):
++            return f"case {name} has held_out/ holding something but a test_*.py file: {entry.name}"
++        if entry.name == test_name:
++            return f"case {name} has held_out/{entry.name}, named like its own test"
++    return ""
++
++
++def _case(root: Path, name: str) -> tuple[Path, Path, str, bool] | str:
++    """The case's directory, its one red test, its pass word and whether it holds held-out tests, or
++    the reason it is not whole."""
+     directory = root / "cases" / name
+     if not directory.is_dir():
+         return f"no such case: {name}"
+@@ -301,7 +322,13 @@ def _case(root: Path, name: str) -> tuple[Path, Path, str] | str:
+         return f"case {name} has a pass.txt that cannot be read as UTF-8"
+     if word not in PASS_WORDS:
+         return f"case {name} has an unknown pass.txt word: {word}"
+-    return directory, tests[0], word
++    held_out = directory / "held_out"
++    held_out_tests = held_out.is_dir()
++    if held_out_tests:
++        reason = _held_out_reason(name, held_out, tests[0].name, word)
++        if reason:
++            return reason
++    return directory, tests[0], word, held_out_tests
+ 
+ 
+ def _goal(directory: Path, name: str) -> str:
+@@ -324,10 +351,16 @@ def _held_out(directory: Path, worktree: Path, record: Path, sandbox: Any) -> No
+     check run once more through the sandbox, its output in `held_out.log` and its exit code in
+     `held_out.json`, the check numbered after the builder's own, `checks` in the numbers plus one.
+ 
+-    The builder's own `Sandbox` is used when the harness was given none, as the builder does. An
+-    exception in the check is left to the caller: the run failed, and the set goes on.
++    A held-out file whose path the worktree already has, whatever wrote it, is not copied: nothing
++    is written and the caller's run fails. The builder's own `Sandbox` is used when the harness was
++    given none, as the builder does. An exception in the check is left to the caller: the run
++    failed, and the set goes on.
+     """
+-    shutil.copytree(directory / "held_out", worktree, dirs_exist_ok=True)
++    source = directory / "held_out"
++    for path in sorted(source.glob("test_*.py")):
++        if (worktree / path.name).exists():
++            raise FileExistsError(f"the worktree already has {path.name}, the held-out test is not copied")
++    shutil.copytree(source, worktree, dirs_exist_ok=True)
+     if sandbox is None:
+         sandbox = builder.Sandbox()
+     checks = _numbers(record).get("checks")
+@@ -338,11 +371,13 @@ def _held_out(directory: Path, worktree: Path, record: Path, sandbox: Any) -> No
+ 
+ 
+ def _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,
+-              model: Any, sandbox: Any) -> tuple[int, Path | None]:  # fmt: skip
++              model: Any, sandbox: Any, held_out_tests: bool) -> tuple[int, Path | None, str]:  # fmt: skip
+     """One run: a worktree, the case committed in it, the builder, and the worktree gone.
+ 
+     The record is the directory the builder printed as its first line -- never read out of the
+-    runs directory, where a run that died before printing its own record would be guessed at.
++    runs directory, where a run that died before printing its own record would be guessed at. A
++    held-out check that raises, or a worktree that already has a held-out file, is a failed run
++    whose record is kept: the third value tells its reason, empty when the run took its course.
+     """
+     builder.git(root, "worktree", "add", "--detach", str(worktree), "HEAD")
+     try:
+@@ -359,9 +394,12 @@ def _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path
+         printed = out.getvalue().splitlines()
+         record = Path(printed[0]) if printed and printed[0].strip() else None
+         # A run whose check ended red, or that left no record, has no held-out check.
+-        if record is not None and (directory / "held_out").is_dir() and _green(record):
+-            _held_out(directory, worktree, record, sandbox)
+-        return code, record
++        if record is not None and held_out_tests and _green(record):
++            try:
++                _held_out(directory, worktree, record, sandbox)
++            except Exception as e:  # the build ran and its record stays; the run failed
++                return 1, record, str(e)
++        return code, record, ""
+     finally:
+         _remove_worktree(root, worktree)
+ 
+@@ -383,15 +421,16 @@ def _prune(root: Path) -> None:
+         print(f"could not prune worktrees of {root}: {e}", file=sys.stderr)
+ 
+ 
+-def _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path, str]] | None, str]:
+-    """The cases to run: the named ones must be whole, an unnamed directory only may be skipped."""
+-    whole: list[tuple[str, Path, Path, str]] = []
++def _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path, str, bool]] | None, str]:
++    """The cases to run: the named ones must be whole, an unnamed directory only may be skipped.
++    Each whole case carries its pass word and, read here once, whether it holds held-out tests."""
++    whole: list[tuple[str, Path, Path, str, bool]] = []
+     if names:
+         for name in names:
+             found = _case(base, name)
+             if isinstance(found, str):
+                 return None, found
+-            whole.append((name, found[0], found[1], found[2]))
++            whole.append((name, found[0], found[1], found[2], found[3]))
+         return whole, ""
+     cases = base / "cases"
+     for directory in sorted(cases.iterdir()) if cases.is_dir() else []:
+@@ -401,11 +440,11 @@ def _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path, st
+         if isinstance(found, str):  # not named: not a usage error, just not a case
+             print(f"skipping {directory.name}: {found}", file=sys.stderr)
+             continue
+-        whole.append((directory.name, found[0], found[1], found[2]))
++        whole.append((directory.name, found[0], found[1], found[2], found[3]))
+     return whole, ""
+ 
+ 
+-def _pass_rate(whole: list[tuple[str, Path, Path, str]],
++def _pass_rate(whole: list[tuple[str, Path, Path, str, bool]],
+                results: list[list[Path | None]]) -> tuple[float, float]:
+     """The set's pass rate and its standard error: the mean over the cases of each case's passed
+     runs over its runs, and the root of the sum over the cases of the variance of a case's rate
+@@ -413,9 +452,9 @@ def _pass_rate(whole: list[tuple[str, Path, Path, str]],
+     divided by the case count; it is never zero and is defined at one run."""
+     rates: list[float] = []
+     terms: list[float] = []
+-    for (_, directory, _, word), records in zip(whole, results):
++    for (_, _, _, word, held_out_tests), records in zip(whole, results):
+         n = len(records)
+-        k = sum(1 for record in records if _passed(record, word, (directory / "held_out").is_dir()))
++        k = sum(1 for record in records if _passed(record, word, held_out_tests))
+         rates.append(k / n if n else 0.0)
+         terms.append((k + 1) * (n - k + 1) / ((n + 2) ** 2 * (n + 3)))
+     return sum(rates) / len(rates), math.sqrt(sum(terms) / len(whole) ** 2)
+@@ -433,16 +472,17 @@ def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = No
+     answered = True
+     base_tmp = Path(tempfile.mkdtemp(prefix="factory-evals-"))
+     try:
+-        for name, directory, test, _word in whole:
++        for name, directory, test, _word, held_out_tests in whole:
+             records: list[Path | None] = []
+             for nth in range(count):
+                 n = nth + 1
+                 try:  # one failed run, its error on stderr, and the set goes on
+-                    code, record = _run_case(base, name, directory, test, base_tmp / f"{name}-{n}",
+-                                             model, sandbox)  # fmt: skip
++                    code, record, failure = _run_case(base, name, directory, test, base_tmp / f"{name}-{n}",
++                                                      model, sandbox, held_out_tests)  # fmt: skip
+                 except Exception as e:
+-                    code, record = 1, None
+-                    print(f"{name} {n}/{count} error {e}", file=sys.stderr)
++                    code, record, failure = 1, None, str(e)
++                if failure:  # the build's record stays when the held-out step failed
++                    print(f"{name} {n}/{count} error {failure}", file=sys.stderr)
+                 else:
+                     numbers = _numbers(record)
+                     stamp = record.name if record is not None else "-"
+@@ -455,8 +495,8 @@ def main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = No
+         shutil.rmtree(base_tmp, ignore_errors=True)
+         _prune(base)
+     lines = ["\t".join(COLUMNS)]
+-    lines.extend("\t".join(_row(name, records, _goal(directory, name), word, (directory / "held_out").is_dir()))
+-                 for (name, directory, _, word), records in zip(whole, results))  # fmt: skip
++    lines.extend("\t".join(_row(name, records, _goal(directory, name), word, held_out_tests))
++                 for (name, directory, _, word, held_out_tests), records in zip(whole, results))  # fmt: skip
+     if whole:
+         rate, error = _pass_rate(whole, results)
+         lines.extend(["", f"pass rate {rate:.3f} standard error {error:.3f}"])
