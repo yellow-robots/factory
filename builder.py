@@ -18,6 +18,7 @@ report.json, response.md (the report rendered) and numbers.json.
 from __future__ import annotations
 
 import fnmatch
+import gzip
 import hashlib
 import importlib.metadata
 import json
@@ -72,10 +73,12 @@ CHECK_TIMEOUT = 120  # seconds for one check, then the container is killed
 CHECK_TAIL_LINES = 60  # lines of check output handed back
 CHECK_TAIL_BYTES = 8_000  # and at most this many bytes of them
 IMAGE_TIMEOUT = 600  # seconds for the one image build
-# Hidden at the root because they are what running and installing the program leave behind,
-# not the checkout; .git is the human's record and its hooks run on the host. A caller that
-# needs more hidden -- the evaluation harness hides its own `cases` -- names them through
-# main's `hidden` argument, so a checkout of another program keeps its ordinary names.
+# Hidden at the root because they are the checkout's machinery, not its content: the caches,
+# git, and `runs`, the record's old place that a project may still have. The record itself is
+# the instance's store now, outside the checkout; .git is the human's record and its hooks run
+# on the host. A caller that needs more hidden -- the evaluation harness hides its own `cases`
+# -- names them through main's `hidden` argument, so a checkout of another program keeps its
+# ordinary names.
 HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git")
 # Refused to write and edit: the tests are the goal's acceptance criteria, the toolchain is what
 # check runs against, and a .gitattributes or .gitignore the model wrote would change what git
@@ -159,8 +162,8 @@ class Tools:
         rel = p.relative_to(self.root).as_posix() or "."
         parts = rel.split("/")
         # A .git component at any depth is git's, not the checkout's: a write there could forge a
-        # nested repository and hide a subtree from the record. The other hidden names are only
-        # the record at the root.
+        # nested repository and hide a subtree from the record. The other hidden names apply only
+        # at the root.
         if parts[0] in self.hidden or ".git" in parts or ".git" in path.split("/"):
             raise ValueError(f"not part of the checkout: {path}")
         return p, rel
@@ -955,6 +958,72 @@ def record_store(checkout: Path | None = None) -> Path:
     return store
 
 
+def store_env() -> dict[str, str]:
+    """The environment the store's git runs in: `git_env`'s, with the factory's own author and
+    committer identity, so committing a record needs nothing of the host's."""
+    env = git_env()
+    env["GIT_AUTHOR_NAME"] = env["GIT_COMMITTER_NAME"] = "factory"
+    env["GIT_AUTHOR_EMAIL"] = env["GIT_COMMITTER_EMAIL"] = "factory@localhost"
+    return env
+
+
+def _store_git(store: Path, *args: str) -> str:
+    """git in the factory's store: the environment `git_env` cleans and the factory's identity, and
+    git's own words when it fails. Read or write; never one of the model's tools."""
+    done = subprocess.run(
+        ["git", "-C", str(store), *args],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        env=store_env(),
+    )
+    if done.returncode != 0:
+        raise GitError(done.stderr.strip() or f"git exited {done.returncode}")
+    return done.stdout
+
+
+def compress_wire(run_dir: Path) -> None:
+    """The record's `wire.jsonl` compressed to `wire.jsonl.gz`, the plain file gone."""
+    wire = run_dir / "wire.jsonl"
+    if not wire.is_file():
+        return
+    (run_dir / "wire.jsonl.gz").write_bytes(gzip.compress(wire.read_bytes()))
+    wire.unlink()
+
+
+def leaked_file(run_dir: Path, key: str) -> Path | None:
+    """The first file of the record whose bytes hold the key, a `.gz` file read through its
+    compression; None when no file holds it. An empty key holds nothing."""
+    if not key:
+        return None
+    needle = key.encode()
+    for path in sorted(run_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            data = gzip.open(path, "rb").read() if path.suffix == ".gz" else path.read_bytes()
+        except OSError:  # a file that cannot be read or decompressed is not searched
+            continue
+        if needle in data:
+            return path
+    return None
+
+
+def commit_record(store: Path, run_dir: Path) -> None:
+    """The record committed to the store as one commit of its own: a store that is not yet a git
+    repository is made one now, the record and nothing else enters the commit whatever else the
+    store holds uncommitted, the message the stamp, the author and committer the factory's."""
+    try:
+        top = _store_git(store, "rev-parse", "--show-toplevel").strip()
+    except (GitError, OSError, subprocess.SubprocessError):
+        top = ""
+    if not top or Path(top).resolve() != store.resolve():
+        _store_git(store, "init", "-q")
+    _store_git(store, "add", "--", run_dir.name)
+    _store_git(store, "commit", "-q", "-m", run_dir.name, "--", run_dir.name)
+
+
 def main(argv: list[str], model: Any = None, sandbox: Any = None,
          hidden: tuple[str, ...] = ()) -> int:  # fmt: skip
     if len(argv) != 3 or not argv[1].strip() or not argv[2].strip():
@@ -1093,8 +1162,18 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     }
     recorded = numbers | {"detail": detail} if detail else numbers  # why it stopped, if not answer
     (run_dir / "numbers.json").write_text(json.dumps(recorded, indent=1) + "\n")
+    # The record is the factory's: the wire is compressed and the whole record searched for the
+    # key's value before the store takes it, whatever ended the run.
+    compress_wire(run_dir)
+    leaked = leaked_file(run_dir, key)
     print(run_dir)
-    print(" ".join(f"{k}={v}" for k, v in numbers.items()))  # the numbers line stays one line of k=v
+    numbers_line = " ".join(f"{k}={v}" for k, v in numbers.items())  # stays one line of k=v
+    if leaked is not None:
+        print(numbers_line)
+        print(f"{leaked}: the record holds the key", file=sys.stderr)
+        return 1
+    commit_record(store, run_dir)
+    print(numbers_line)
     if detail:
         print(f"{stopped}: {detail}", file=sys.stderr)
     return 0 if stopped == "answer" else 1

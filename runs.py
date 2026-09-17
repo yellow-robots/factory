@@ -4,7 +4,8 @@
     uv run runs.py
 
 `runs` is the records directory (by default the store the instance's configuration names). Every
-subdirectory is one record and becomes one row in stamp order; each value comes from the record's
+subdirectory is one record, the store's own `.git` excepted, and becomes one row in stamp order;
+each value comes from the record's
 `numbers.json` as it is there, `goal` is the first line of `goal.txt` with tabs as spaces, a key
 the record lacks is an empty cell, and `head` reads `head` and, before v0.5, `world_head`. Two
 cells are derived when
@@ -125,7 +126,8 @@ def main(argv: list[str], runs: Any = None) -> int:
     if len(argv) != 1:
         return usage_error("no arguments")
     base = Path(runs) if runs is not None else builder.record_store()
-    records = sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []
+    # A record is a directory at the store's root; the store's own .git is not one.
+    records = sorted(p for p in base.iterdir() if p.is_dir() and p.name != ".git") if base.is_dir() else []
     lines = ["\t".join(COLUMNS)]
     for record in records:
         numbers = _numbers(record)
