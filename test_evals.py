@@ -592,7 +592,7 @@ class PassRateTest(EvalsTest):
         self.assertEqual(rows[0], COLUMNS)
         self.assertEqual(rows[0][rows[0].index("refused") + 1], "passed")
         self.assertEqual([dict(zip(COLUMNS, row))["passed"] for row in rows[1:4]], ["2", "2", "1"])
-        self.assertEqual(rows[4:], [[""], ["pass rate 0.556 standard error 0.333"]])
+        self.assertEqual(rows[4:], [[""], ["pass rate 0.556 standard error 0.115"]])  # since v0.12: under a uniform prior
 
     def test_a_case_without_the_file_or_with_another_word_is_not_whole(self):
         word = self.root / "cases" / "alpha" / "pass.txt"
@@ -609,19 +609,14 @@ class PassRateTest(EvalsTest):
         self.assertEqual((code, rows, self.records()), (2, [], []))
         self.assertIn("maybe", err)
 
-    def test_one_run_per_case_gives_the_rate_alone_and_a_run_without_a_record_passes_nothing(self):
-        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
-        self.assertEqual(code, 0, err)
-        self.assertEqual(dict(zip(COLUMNS, rows[1]))["passed"], "1")
-        self.assertEqual(rows[2:], [[""], ["pass rate 1.000"]])
-
+    def test_a_run_without_a_record_passes_nothing(self):
         def exploding(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError("the model exploded")
 
         code, rows, err = run(self.root, "--runs", "2", "alpha", model=FunctionModel(exploding), sandbox=FakeSandbox([]))
         self.assertEqual(code, 1)
         self.assertEqual(dict(zip(COLUMNS, rows[1]))["passed"], "0")
-        self.assertEqual(rows[2:], [[""], ["pass rate 0.000 standard error 0.000"]])
+        self.assertTrue(rows[-1][0].startswith("pass rate 0.000 standard error "), rows[-1])
 
     def test_the_word_is_the_harness_s_and_the_builder_s_look_at_it_is_a_refusal(self):
         code, rows, err = run(self.root, "alpha", model=player(PEEK, EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 3))
@@ -672,3 +667,37 @@ class PassRateTest(EvalsTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RateErrorTest(EvalsTest):
+    """seed: standard-error-of-the-rate. The error printed is the standard error of the rate
+    printed: each case's variance under a uniform prior, (k+1)(n-k+1) over (n+2)^2 (n+3), summed
+    over the cases, rooted and divided by the case count; never zero, defined at one run."""
+
+    def test_a_perfect_score_has_an_error_that_shrinks_with_the_runs(self):
+        green = lambda case, n: {"numbers.json": '{"check": "green", "requests": 1}'}
+        with mock.patch.object(builder, "main", scripted(self.runs, green)):
+            code, rows, err = run(self.root, "--runs", "3", "alpha")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(dict(zip(COLUMNS, rows[1]))["passed"], "3")
+        self.assertEqual(rows[2:], [[""], ["pass rate 1.000 standard error 0.163"]])  # 4*1 / (25*6), rooted
+        shutil.rmtree(self.runs)
+        with mock.patch.object(builder, "main", scripted(self.runs, green)):
+            code, rows, err = run(self.root, "--runs", "10", "alpha")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[2:], [[""], ["pass rate 1.000 standard error 0.077"]])  # 11*1 / (144*13), rooted
+
+    def test_one_run_carries_the_error_too_and_no_score_is_certain(self):
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(dict(zip(COLUMNS, rows[1]))["passed"], "1")
+        self.assertEqual(rows[2:], [[""], ["pass rate 1.000 standard error 0.236"]])  # 2*1 / (9*4), rooted
+        shutil.rmtree(self.runs)
+        red = lambda case, n: {"numbers.json": '{"check": "red", "requests": 1}'}
+        with mock.patch.object(builder, "main", scripted(self.runs, red)):
+            code, rows, err = run(self.root, "--runs", "2", "alpha")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[2:], [[""], ["pass rate 0.000 standard error 0.194"]])  # 1*3 / (16*5), rooted
+
+    def test_the_module_docstring_names_the_prior(self):
+        self.assertIn("uniform prior", evals.__doc__)
