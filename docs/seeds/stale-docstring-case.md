@@ -1,11 +1,11 @@
 ---
 created: 2026-09-17
 type: seed
-status: open
+status: building
 summary: Twice this week a build changed a behaviour a module docstring describes and left the docstring as it was; the reviews caught it, the set has no quality case at all. The first one.
 value: 4
 effort: S
-version:
+version: v0.12
 ---
 
 ## Evidence
@@ -17,3 +17,7 @@ v0.7's first search build left the module docstring counting five tools, as its 
 ## Idea
 
 A case whose goal changes a behaviour the module docstring describes, the visible test on the behaviour, a held-out test on the docstring. Pass is both green. Needs held-out-tests first; until then the case can exist with its held-out test unread, its `held_out` column empty.
+
+## Goal
+
+A case `docstring_left_behind`: `wordcount.py`, whose module and function docstrings say words are split on spaces, a goal that makes any whitespace split them, the visible test on the behaviour, the held-out test on the two docstrings; pass is green. With it the second held-out case the reviews asked for, `symptom_not_root`: `ledger.py`, whose `parse` drops a debit's sign, a goal that says a debit lowers the balance, the visible test on the balance, the held-out test on `parse`. Both are the attended agent's, like the tests, and need no build; the test in `test_evals.py` whose docstring names this seed holds the repository's cases whole and the two with `held_out/` named.

@@ -1,0 +1,1 @@
+In ledger.py a debit line lowers the balance: the balance of `+5` and `-3` is 2.

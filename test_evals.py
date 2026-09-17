@@ -850,5 +850,21 @@ class HeldOutTest(EvalsTest):
         self.assert_root_untouched()
 
 
+class RepositoryCasesTest(unittest.TestCase):
+    """seed: stale-docstring-case. The repository's own cases are whole, and the two that judge
+    the thing built and not only the thing tested, a docstring left behind and a symptom fixed
+    instead of its root, hold tests the model never sees."""
+
+    def test_every_case_is_whole_and_the_held_out_cases_hold_held_out_tests(self):
+        root = Path(evals.__file__).resolve().parent
+        names = sorted(p.name for p in (root / "cases").iterdir() if p.is_dir())
+        for name in names:
+            self.assertNotIsInstance(evals._case(root, name), str, name)
+        held_out = sorted(name for name in names if (root / "cases" / name / "held_out").is_dir())
+        self.assertEqual(held_out, ["docstring_left_behind", "symptom_not_root"])
+        for name in held_out:
+            self.assertTrue(sorted((root / "cases" / name / "held_out").glob("test_*.py")), name)
+
+
 if __name__ == "__main__":
     unittest.main()
