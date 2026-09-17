@@ -9,6 +9,7 @@ patched subprocess. The interface under test is the one the plan names.
 
 import asyncio
 import contextlib
+import gzip
 import hashlib
 import io
 import json
@@ -734,15 +735,21 @@ class MainTest(unittest.TestCase):
         git(self.checkout, "add", "f.py")
         git(self.checkout, "commit", "-q", "-m", "start")
         (base / "key").write_text("DEEPSEEK_API_KEY=not-a-key\n")
-        self.runs = base / "runs"
-        self.enterContext(mock.patch.object(builder, "RUNS", self.runs))
+        self.runs = base / "runs"  # the instance's store, which its configuration names
+        self.instance = base / "instance.toml"
+        self.instance.write_text(f'records = "{self.runs}"\n')
+        self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(self.instance)}))
         self.enterContext(mock.patch.object(builder, "KEY_FILE", base / "key"))
+
+    def records(self) -> list[Path]:
+        """The store's records in stamp order; the store's own `.git` is none."""
+        return sorted(p for p in self.runs.iterdir() if p.is_dir() and p.name != ".git") if self.runs.exists() else []
 
     def main(self, model, sandbox, checkout=None):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = builder.main(["builder.py", str(checkout or self.checkout), "make x bigger"], model=model, sandbox=sandbox)
-        run_dirs = list(self.runs.iterdir()) if self.runs.exists() else []
+        run_dirs = self.records()
         return code, out.getvalue().splitlines(), (run_dirs[0] if run_dirs else None)
 
     def test_the_harness_names_what_else_to_hide_for_a_run(self):
@@ -761,13 +768,13 @@ class MainTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(peek), sandbox=FakeSandbox([]), hidden=("cases",))
         self.assertEqual(code, 0)
-        hidden = returns(sorted(self.runs.iterdir())[0])
+        hidden = returns(self.records()[0])
         self.assertNotIn("cases", names_in(hidden[0]))
         self.assertTrue(hidden[1].startswith("error: not part of the checkout"), hidden[1])
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             code = builder.main(["builder.py", str(self.checkout), "goal"], model=scripted(peek), sandbox=FakeSandbox([]))
         self.assertEqual(code, 0)
-        shown = returns(sorted(self.runs.iterdir())[1])
+        shown = returns(self.records()[1])
         self.assertIn("cases", names_in(shown[0]))
         self.assertEqual(shown[1], "1\tgreen")
 
@@ -783,7 +790,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             sorted(p.name for p in run_dir.iterdir()),
-            ["check-1.log", "diff.patch", "goal.txt", "messages.json", "numbers.json", "report.json", "response.md", "wire.jsonl"],
+            ["check-1.log", "diff.patch", "goal.txt", "messages.json", "numbers.json", "report.json", "response.md", "wire.jsonl.gz"],
         )
         patch = (run_dir / "diff.patch").read_text()
         self.assertIn("+x = 2", patch)
@@ -1029,7 +1036,7 @@ class MainTest(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = builder.main(["builder.py", str(self.checkout), "docs/seeds/make-x-two.md"], model=model, sandbox=FakeSandbox([]))
         self.assertEqual(code, 0)
-        run_dir = next(self.runs.iterdir())
+        run_dir = self.records()[0]
         goal = "seed: make-x-two\nMake x equal 2 in f.py.\nAnd nothing else."
         self.assertEqual((run_dir / "goal.txt").read_text(), goal + "\n")
         numbers = json.loads((run_dir / "numbers.json").read_text())
@@ -1071,7 +1078,7 @@ class MainTest(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = builder.main(["builder.py", str(self.checkout), goal], model=scripted([call("final_result", REPORT, "c1")]), sandbox=FakeSandbox([]))
         self.assertEqual(code, 0)
-        run_dir = next(self.runs.iterdir())
+        run_dir = self.records()[0]
         self.assertEqual((run_dir / "goal.txt").read_text(), goal + "\n")
         self.assertIsNone(json.loads((run_dir / "numbers.json").read_text())["seed"])
         with self.assertRaises(ValueError):
@@ -1265,7 +1272,7 @@ class MainTest(unittest.TestCase):
 
         code, lines, run_dir = self.main(FunctionModel(model), FakeSandbox([]))
         self.assertEqual(code, 1)
-        self.assertEqual(sorted(p.name for p in run_dir.iterdir()), ["goal.txt", "messages.json", "numbers.json", "wire.jsonl"])
+        self.assertEqual(sorted(p.name for p in run_dir.iterdir()), ["goal.txt", "messages.json", "numbers.json", "wire.jsonl.gz"])
         numbers = json.loads((run_dir / "numbers.json").read_text())
         self.assertEqual(numbers["stopped"], "error")
         self.assertIn("boom", numbers["detail"])
@@ -1300,6 +1307,125 @@ class MainTest(unittest.TestCase):
         self.assertIn("f.py", err.getvalue())
         self.assertIn("stray.txt", err.getvalue())
         self.assertFalse(self.runs.exists())
+
+    def store(self, *args: str) -> str:
+        return git(self.runs, *args)
+
+    def test_a_record_is_committed_to_the_instance_s_store_with_its_wire_compressed(self):
+        """seed: records-outside-the-project. seed: compress-the-wire. The store is the directory the
+        instance's configuration names, a git repository of its own made on the first record; when
+        a run ends its record is committed there, the one record and nothing else, the message the
+        stamp, by the factory's own identity whatever the host has; the wire is compressed before
+        the commit; and the first line printed is still the record's path."""
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg")}))
+        model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+                         [call("check", {}, "c2")], [call("final_result", REPORT, "c3")])  # fmt: skip
+        self.assertFalse(self.runs.exists())
+        code, lines, run_dir = self.main(model, FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0)
+        self.assertEqual(Path(lines[0]), run_dir)
+        self.assertEqual(run_dir.parent, self.runs)
+        self.assertEqual(Path(self.store("rev-parse", "--show-toplevel").strip()), self.runs.resolve())
+        names = sorted(p.name for p in run_dir.iterdir())
+        self.assertIn("wire.jsonl.gz", names)
+        self.assertNotIn("wire.jsonl", names)
+        gzip.open(run_dir / "wire.jsonl.gz").read()  # a gzip file, whatever it holds
+        self.assertEqual(self.store("log", "--format=%s|%an <%ae>").splitlines(), [f"{run_dir.name}|factory <factory@localhost>"])
+        tracked = self.store("ls-tree", "-r", "--name-only", "HEAD").splitlines()
+        self.assertEqual(sorted(tracked), [f"{run_dir.name}/{name}" for name in names])
+        self.assertEqual(self.store("status", "--porcelain"), "")
+        self.assertEqual(git(self.checkout, "status", "--porcelain").strip(), "M f.py")  # the project holds no record
+
+        git(self.checkout, "checkout", "-q", "--", "f.py")
+        (self.runs / "stray.txt").write_text("not a record\n")
+        time.sleep(1.1)  # a stamp of its own
+        code, _, _ = self.main(scripted([call("final_result", REPORT, "c1")]), FakeSandbox([]))
+        self.assertEqual(code, 0)
+        second = self.records()[-1]
+        self.assertNotEqual(second, run_dir)
+        self.assertEqual(self.store("log", "--format=%s").splitlines(), [second.name, run_dir.name])
+        changed = self.store("show", "--format=", "--name-only", "HEAD").splitlines()
+        self.assertTrue(changed and all(name.startswith(f"{second.name}/") for name in changed), changed)
+        self.assertEqual(self.store("status", "--porcelain").strip(), "?? stray.txt")  # nothing else is committed
+
+    def test_a_run_that_ends_in_an_error_is_committed_too(self):
+        """seed: records-outside-the-project. Whatever ended the run, its record is the factory's log."""
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError("deepseek-flash", "boom")
+
+        code, _, run_dir = self.main(FunctionModel(model), FakeSandbox([]))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.store("log", "--format=%s").splitlines(), [run_dir.name])
+        self.assertEqual(self.store("status", "--porcelain"), "")
+
+    def test_a_record_that_holds_the_key_s_value_is_not_committed(self):
+        """seed: records-outside-the-project. Every file of the record is searched for the key's value
+        before the commit: found, nothing of the record is committed, the run exits 1, stderr names
+        the file and never the value, and the record stays on disk."""
+        leak = dict(REPORT, did=["f.py: changed, and the key is not-a-key"])
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                model=scripted([call("final_result", leak, "c1")]), sandbox=FakeSandbox([]))  # fmt: skip
+        self.assertEqual(code, 1)
+        (run_dir,) = self.records()
+        self.assertIn("not-a-key", (run_dir / "report.json").read_text())
+        self.assertNotIn("not-a-key", err.getvalue())
+        self.assertNotIn("not-a-key", out.getvalue().splitlines()[0])
+        self.assertTrue(any(name in err.getvalue() for name in ("report.json", "messages.json", "response.md")), err.getvalue())
+        if (self.runs / ".git").exists():
+            self.assertEqual(self.store("ls-files").strip(), "")
+
+    def test_a_run_without_a_store_is_a_usage_error(self):
+        """seed: records-outside-the-project. The store is the instance's and no constant of the
+        program: a configuration that is missing, is not TOML, has no `records`, names a path that
+        is not absolute, or names a store inside the checkout or holding it, is a usage error that
+        names the configuration's file, exit 2, before the key is read, a model called or anything
+        made; with no `FACTORY_INSTANCE` the file is `.config/factory/instance.toml` under the home
+        of whoever runs it, read when the run starts."""
+        self.assertFalse(hasattr(builder, "RUNS"))
+        called = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[call("final_result", REPORT, "c1")])
+
+        def refused(text: str | None) -> str:
+            if text is None:
+                self.instance.unlink(missing_ok=True)
+            else:
+                self.instance.write_text(text)
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
+                    mock.patch.object(builder, "KEY_FILE", Path(self.tmp.name) / "no-key"):  # fmt: skip
+                code = builder.main(["builder.py", str(self.checkout), "make x bigger"], model=FunctionModel(model), sandbox=FakeSandbox([]))
+            self.assertEqual(code, 2, (text, err.getvalue()))
+            self.assertIn(str(self.instance), err.getvalue(), text)
+            self.assertEqual(called, [], text)
+            self.assertFalse(self.runs.exists(), text)
+            return err.getvalue()
+
+        refused(None)
+        refused("records = \n")
+        self.assertIn("records", refused('other = "x"\n'))
+        self.assertIn("records", refused('records = "runs"\n'))
+        self.assertIn("records", refused("records = 7\n"))
+        inside = self.checkout / "records"
+        self.assertIn("checkout", refused(f'records = "{inside}"\n'))
+        self.assertFalse(inside.exists())
+        self.assertIn("checkout", refused(f'records = "{self.checkout.parent}"\n'))
+        self.assertFalse((self.checkout.parent / ".git").exists())
+
+        home = Path(self.tmp.name) / "home"
+        (home / ".config" / "factory").mkdir(parents=True)
+        (home / ".config" / "factory" / "instance.toml").write_text(f'records = "{self.runs}"\n')
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            del os.environ["FACTORY_INSTANCE"]
+            code, lines, run_dir = self.main(scripted([call("final_result", REPORT, "c1")]), FakeSandbox([]))
+        self.assertEqual(code, 0)
+        self.assertEqual(run_dir.parent, self.runs)
 
     def test_usage_errors_exit_two(self):
         err = io.StringIO()

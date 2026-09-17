@@ -10,9 +10,11 @@ world and world_head) and the builder's since (checkout and head), plus a record
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import runs
 
@@ -209,3 +211,38 @@ class ToolErrorsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StoreTest(unittest.TestCase):
+    """seed: records-outside-the-project. With no directory given the table reads the store the
+    instance's configuration names, as the builder does; the store's own `.git` is no record; and
+    no configuration is a usage error, exit 2, never `runs/` beside the program."""
+
+    def test_the_table_reads_the_store_the_configuration_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            store = base / "store"
+            store.mkdir()
+            record(store, "20260917T000000Z", OBSERVER, "a goal\n")
+            (store / ".git").mkdir()
+            (store / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+            instance = base / "instance.toml"
+            instance.write_text(f'records = "{store}"\n')
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(instance)}), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):  # fmt: skip
+                code = runs.main(["runs.py"])
+            self.assertEqual(code, 0, err.getvalue())
+            rows = [line.split("\t") for line in out.getvalue().splitlines()]
+            self.assertEqual([row[0] for row in rows], ["stamp", "20260917T000000Z"])
+            code, rows, _ = table(store)
+            self.assertEqual([row[0] for row in rows], ["stamp", "20260917T000000Z"])  # given the directory too
+
+            self.assertFalse(hasattr(runs, "RUNS"))
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(base / "none.toml")}), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):  # fmt: skip
+                code = runs.main(["runs.py"])
+            self.assertEqual(code, 2)
+            self.assertIn(str(base / "none.toml"), err.getvalue())
+            self.assertEqual(out.getvalue(), "")

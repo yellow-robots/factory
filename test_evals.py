@@ -13,6 +13,7 @@ import contextlib
 import io
 import itertools
 import json
+import os
 import shutil
 import statistics
 import subprocess
@@ -211,15 +212,16 @@ class EvalsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         base = Path(self.tmp.name)
         self.root = make_repo(base)
-        self.runs = base / "runs"
+        self.runs = base / "runs"  # the instance's store, which its configuration names
         (base / "key").write_text("DEEPSEEK_API_KEY=not-a-key\n")
-        self.enterContext(mock.patch.object(builder, "RUNS", self.runs))
+        (base / "instance.toml").write_text(f'records = "{self.runs}"\n')
+        self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(base / "instance.toml")}))
         self.enterContext(mock.patch.object(builder, "KEY_FILE", base / "key"))
         self.status_before = git(self.root, "status", "--porcelain")
         self.head_before = git(self.root, "rev-parse", "HEAD").strip()
 
     def records(self) -> list[Path]:
-        return sorted(self.runs.iterdir()) if self.runs.exists() else []
+        return sorted(p for p in self.runs.iterdir() if p.is_dir() and p.name != ".git") if self.runs.exists() else []
 
     def numbers(self, record: Path) -> dict:
         return json.loads((record / "numbers.json").read_text())
@@ -747,6 +749,22 @@ class HeldOutTest(EvalsTest):
             self.assertNotIn("test_alpha_hidden.py", tool_returns(record)[0])  # list(".") before the build
             self.assertEqual(json.loads((record / "held_out.json").read_text()), {"exit": 0})
             self.assertTrue((record / "held_out.log").is_file())
+        self.assert_root_untouched()
+
+    def test_what_the_held_out_check_adds_to_a_record_is_committed_to_the_store(self):
+        """seed: records-outside-the-project. The harness writes `held_out.log` and `held_out.json`
+        into a record after the builder committed it: they are committed to the store as well, so
+        a set leaves nothing of a record uncommitted."""
+        self.hold_out()
+        sandbox = RecordingSandbox([(0, "OK\n")] * 6)
+        code, rows, err = run(self.root, "alpha", model=player(("list", {"path": "."}), EDIT, CHECK), sandbox=sandbox)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.records()), 3)
+        self.assertEqual(git(self.runs, "status", "--porcelain"), "")
+        tracked = git(self.runs, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+        for record in self.records():
+            for name in ("held_out.json", "held_out.log", "numbers.json", "wire.jsonl.gz"):
+                self.assertIn(f"{record.name}/{name}", tracked)
         self.assert_root_untouched()
 
     def test_a_red_held_out_check_fails_a_green_case_and_a_red_build_has_no_held_out_check(self):
