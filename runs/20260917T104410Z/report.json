@@ -1,0 +1,11 @@
+{
+ "changed": [
+  "builder.py"
+ ],
+ "did": [
+  "builder.py: registered all six Tool(...) entries in build_agent with sequential=True, so pydantic-ai runs one response's tool calls one at a time in the model's order and each call sees what the prior ones wrote."
+ ],
+ "check": "green",
+ "failing": [],
+ "unsure": []
+}

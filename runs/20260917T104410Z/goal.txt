@@ -1,0 +1,2 @@
+seed: tool-calls-one-at-a-time
+Every tool of the builder runs alone: the six are registered in `build_agent` as sequential, so the calls of one response run one at a time in the order the model gave them, a call started only after the one before it returned, and a call sees what the calls before it wrote. Nothing else changes: the returns, the counters and the record are as they were. The test in `test_builder.py` whose docstring names this seed defines the behaviour.

@@ -1,0 +1,1132 @@
+[
+ {
+  "parts": [
+   {
+    "content": "seed: tool-calls-one-at-a-time\nEvery tool of the builder runs alone: the six are registered in `build_agent` as sequential, so the calls of one response run one at a time in the order the model gave them, a call started only after the one before it returned, and a call sees what the calls before it wrote. Nothing else changes: the returns, the counters and the record are as they were. The test in `test_builder.py` whose docstring names this seed defines the behaviour.",
+    "timestamp": "2026-09-17T10:44:11.943606Z",
+    "part_kind": "user-prompt"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:11.944714Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me start by exploring the checkout.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "list",
+    "args": "{\"path\": \".\"}",
+    "tool_call_id": "call_00_13BhVauzRvnmoOUeiwED1642",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 1713,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1408,
+   "output_tokens": 44,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1408,
+    "prompt_cache_miss_tokens": 305,
+    "reasoning_tokens": 8
+   },
+   "cost": null,
+   "output_reasoning_tokens": 8
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:13.004516Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:12Z"
+  },
+  "provider_response_id": "1ec09139-7aff-4a52-9a2f-47d6fad6adf7",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "list",
+    "content": "dir\t0\tcases\ndir\t0\tdocs\nfile\t42\t.dockerignore\nfile\t55\t.gitignore\nfile\t9883\tAGENTS.md\nfile\t25005\tCHANGELOG.md\nfile\t11\tCLAUDE.md\nfile\t1070\tLICENSE\nfile\t16071\tREADME.md\nfile\t49607\tbuilder.py\nfile\t918\tcheck.Dockerfile\nfile\t19464\tevals.py\nfile\t30623\tgate.py\nfile\t208\tpyproject.toml\nfile\t6049\truns.py\nfile\t81021\ttest_builder.py\nfile\t38726\ttest_evals.py\nfile\t31371\ttest_gate.py\nfile\t12161\ttest_runs.py\nfile\t154742\tuv.lock",
+    "tool_call_id": "call_00_13BhVauzRvnmoOUeiwED1642",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:13.017481Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:13.018513Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me look at the key files. The seed mentions `build_agent` and `test_builder.py`. Let me search.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"build_agent\"}",
+    "tool_call_id": "call_00_vZ92w2okCCbRmllTh3fg7038",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"tool-calls-one-at-a-time\"}",
+    "tool_call_id": "call_01_vjmEwW5HknszDh3Z75g22892",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 1938,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1664,
+   "output_tokens": 99,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1664,
+    "prompt_cache_miss_tokens": 274,
+    "reasoning_tokens": 27
+   },
+   "cost": null,
+   "output_reasoning_tokens": 27
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:14.113479Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:13Z"
+  },
+  "provider_response_id": "4c61c2fa-080a-4d45-b8e1-0037f8de3592",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "docs/seeds/codebase-context.md:21:From the review of the build: the code's own text counts six tools, `reachable only through six tools: list, read, search, write, edit and check` in the module docstring and `the six tools` in `build_agent`'s, with no `five` left in the module docstring.\ndocs/seeds/tool-calls-one-at-a-time.md:13:2026-09-17, build 20260917T103739Z on the standard-error seed. Response 13 carried three `edit` calls; the first, on the module docstring of `evals.py`, returned `edited evals.py (429 -> 429 lines)`, and `check-1.log` failed the docstring test. The model read the file, found the old text still there, repeated the identical call in response 21, and it landed. The builder said it in its unsure list, an edit call reported success but did not change the file, and could not explain it. pydantic-ai 2.43.0 runs a response's tool calls overlapping unless a tool is registered `sequential=True`, a barrier that runs alone; `build_agent` registers the six without it. `edit` reads the file, replaces and writes with no lock, so two edits of one file in one response can both read the same text and the later write drops the earlier change; a `check` overlapping an `edit` tests a half-edited checkout, and a `read` overlapping a `write` reads a half-written file. The set's records show the model issuing several calls per response since v0.6; how many edits were lost before this one is not knowable from the records, since the return said edited.\ndocs/seeds/tool-calls-one-at-a-time.md:17:Every tool runs alone, one call at a time in the order the model gave them: `sequential=True` on the six in `build_agent`. A test with a slow edit, two of one file in one response, asserts the second starts after the first ends and both changes are in the file; a third in the same response, on the text the first wrote, finds it.\ndocs/seeds/tool-calls-one-at-a-time.md:21:Every tool of the builder runs alone: the six are registered in `build_agent` as sequential, so the calls of one response run one at a time in the order the model gave them, a call started only after the one before it returned, and a call sees what the calls before it wrote. Nothing else changes: the returns, the counters and the record are as they were. The test in `test_builder.py` whose docstring names this seed defines the behaviour.\ndocs/versions/v0.2.md:82:  - `build_agent(plane) -> Agent[None, Report]`: `OpenAIChatModel(MODEL, provider=DeepSeekProvider(api_key, http_client))`, `Agent(model, instructions=ROLE, output_type=Report, tools=[Tool(plane.list, takes_ctx=False), Tool(plane.read, takes_ctx=False)], model_settings=OpenAIChatModelSettings(temperature=0, thinking=False, timeout=180))`.\ndocs/versions/v0.3.md:68:- `builder.py` (evolved from `observer.py`, one file, ~480 lines): constants (`HIDDEN`, `PROTECTED`, caps, `CHECK_TIMEOUT`, `CHECK_CMD = (\"python\", \"-m\", \"unittest\", \"-q\")`, `PRICE`); `ROLE`; `BuildReport` and `render`; `Plane(root, run_dir, hidden, protected)` with `_resolve`, `list`, `read` (from v0.2), `write`, `edit`, `check`, counters (`listed`, `read_paths`, `lines_read`, `written`, `edited`, `checks: list[dict(exit, seconds)]`); `Sandbox` (image name from hashes, `ensure_image(world)`, `run(world, run_dir, n) -> (exit, tail)`); `Wire` (from v0.2); `PROFILE`, `build_agent(plane, key, http_client, model)`; `run(agent, goal)` (from v0.2); `main(argv)`: `builder.py <world> \"<goal>\"`, world resolved and required to exist, run dir under the factory's `runs/`, the record as in v0.2 plus `diff.patch` and `check-<n>.log`.\nbuilder.py:561:def build_agent(\nbuilder.py:986:    agent = build_agent(tools, key=key, http_client=wire.client, model=model)\ntest_builder.py:36:from builder import BuildReport, Tools, Sandbox, build_agent, render, run\ntest_builder.py:630:        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), \"goal\")\ntest_builder.py:647:        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), \"goal\")\ntest_builder.py:667:        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), \"goal\")\ntest_builder.py:680:        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\ntest_builder.py:692:        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\ntest_builder.py:706:        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\ntest_builder.py:719:        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\ntest_builder.py:1255:        self.assertIn(\"the six tools\", builder.build_agent.__doc__)  # seed: codebase-context\ntest_builder.py:1370:        agent = build_agent(tools, key=\"not-a-key\", http_client=wire.client)",
+    "tool_call_id": "call_00_vZ92w2okCCbRmllTh3fg7038",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:14.167146Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "search",
+    "content": "test_builder.py:621:        \"\"\"seed: tool-calls-one-at-a-time. Two edits of one file in one response and a third on",
+    "tool_call_id": "call_01_vjmEwW5HknszDh3Z75g22892",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:14.167368Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:14.168630Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"test_builder.py\", \"start\": 600}",
+    "tool_call_id": "call_00_ET_35hnTCQldIvu2GuPn7lI2659",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 3442,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1920,
+   "output_tokens": 56,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1920,
+    "prompt_cache_miss_tokens": 1522,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:15.012740Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:14Z"
+  },
+  "provider_response_id": "08bd2b68-58aa-407e-9b30-273ed7330846",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "600\t        try:\n601\t            return super().edit(path, old, new)\n602\t        finally:\n603\t            self.spans.append((start, time.monotonic()))\n604\t\n605\t\n606\tclass LoopTest(unittest.TestCase):\n607\t    def setUp(self):\n608\t        self.tmp = tempfile.TemporaryDirectory()\n609\t        self.addCleanup(self.tmp.cleanup)\n610\t        self.root = Path(self.tmp.name) / \"checkout\"\n611\t        self.root.mkdir()\n612\t        self.run_dir = Path(self.tmp.name) / \"run\"\n613\t        self.run_dir.mkdir()\n614\t        (self.root / \"f.py\").write_text(\"x = 1\\n\")\n615\t\n616\t    def tools(self, results):\n617\t        self.sandbox = FakeSandbox(results)\n618\t        return Tools(self.root, self.run_dir, sandbox=self.sandbox)\n619\t\n620\t    def test_tool_calls_in_one_response_run_one_at_a_time_in_order(self):\n621\t        \"\"\"seed: tool-calls-one-at-a-time. Two edits of one file in one response and a third on\n622\t        the text the first wrote: each starts after the one before it ended, all three land.\"\"\"\n623\t        (self.root / \"g.py\").write_text(\"a = 1\\nb = 1\\n\")\n624\t        tools = SlowTools(self.root, self.run_dir, sandbox=FakeSandbox([]))\n625\t        model = scripted([\n626\t            call(\"edit\", {\"path\": \"g.py\", \"old\": \"a = 1\", \"new\": \"a = 2\"}, \"e1\"),\n627\t            call(\"edit\", {\"path\": \"g.py\", \"old\": \"b = 1\", \"new\": \"b = 2\"}, \"e2\"),\n628\t            call(\"edit\", {\"path\": \"g.py\", \"old\": \"a = 2\", \"new\": \"a = 3\"}, \"e3\"),\n629\t        ])\n630\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), \"goal\")\n631\t        self.assertEqual(stopped, \"answer\", detail)\n632\t        self.assertEqual(returns_of(messages)[:3], [\"edited g.py (2 -> 2 lines)\"] * 3)\n633\t        self.assertEqual((self.root / \"g.py\").read_text(), \"a = 3\\nb = 2\\n\")\n634\t        self.assertEqual(len(tools.spans), 3)\n635\t        for (_, end), (start, _) in zip(tools.spans, tools.spans[1:]):\n636\t            self.assertGreaterEqual(start, end, tools.spans)\n637\t\n638\t    def test_edit_check_edit_check_then_the_report_ends_the_run(self):\n639\t        tools = self.tools([(1, \"FAIL: test_x\\n\"), (0, \"OK\\n\")])\n640\t        model = scripted(\n641\t            [call(\"edit\", {\"path\": \"f.py\", \"old\": \"x = 1\", \"new\": \"x = 2\"}, \"c1\")],\n642\t            [call(\"check\", {}, \"c2\")],\n643\t            [call(\"edit\", {\"path\": \"f.py\", \"old\": \"x = 2\", \"new\": \"x = 3\"}, \"c3\")],\n644\t            [call(\"check\", {}, \"c4\")],\n645\t            [call(\"final_result\", REPORT, \"c5\")],\n646\t        )\n647\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), \"goal\")\n648\t        self.assertEqual((stopped, detail), (\"answer\", \"\"))\n649\t        self.assertIsInstance(report, BuildReport)\n650\t        self.assertEqual(report.check, \"green\")\n651\t        self.assertEqual((self.root / \"f.py\").read_text(), \"x = 3\\n\")\n652\t        self.assertEqual(tools.edited, [\"f.py\", \"f.py\"])\n653\t        self.assertEqual([c[\"exit\"] for c in tools.checks], [1, 0])\n654\t        self.assertEqual(usage.tool_calls, 4)\n655\t        self.assertEqual(\n656\t            parts_of(messages)[:10],\n657\t            [\"UserPromptPart\"] + [\"ToolCallPart\", \"ToolReturnPart\"] * 4 + [\"ToolCallPart\"],\n658\t        )\n659\t        returns = returns_of(messages)\n660\t        self.assertTrue(returns[0].startswith(\"edited f.py (1 -> 1 lines)\"))\n661\t        self.assertTrue(returns[1].startswith(\"exit 1\\n\"))\n662\t        self.assertTrue(returns[3].startswith(\"exit 0\\n\"))\n663\t\n664\t    def test_the_write_cap_reaches_the_model_as_an_error(self):\n665\t        tools = self.tools([])\n666\t        turns = [[call(\"write\", {\"path\": f\"w{i}.txt\", \"content\": \"x\\n\"}, f\"w{i}\")] for i in range(builder.WRITE_CAP + 1)]\n667\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), \"goal\")\n668\t        self.assertEqual(stopped, \"answer\")\n669\t        self.assertEqual(len(tools.written), builder.WRITE_CAP)\n670\t        # the last tool return is the library's own for final_result; the cap error precedes it\n671\t        self.assertEqual(returns_of(messages)[-2], f\"error: cap reached ({builder.WRITE_CAP} writes and edits); report now\")\n672\t\n673\t    def test_a_model_that_never_stops_hits_the_tool_call_cap(self):\n674\t        tools = self.tools([])\n675\t\n676\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n677\t            # two calls per turn, so the tool-call cap binds before the request cap does\n678\t            return ModelResponse(parts=[call(\"list\", {\"path\": \".\"}, \"c1\"), call(\"list\", {\"path\": \".\"}, \"c2\")])\n679\t\n680\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n681\t        self.assertEqual(stopped, \"cap\")\n682\t        self.assertIsNone(report)\n683\t        self.assertEqual(len(tools.listed), builder.TOOL_CALLS_CAP)\n684\t        self.assertIn(\"tool_calls_limit\", detail)\n685\t\n686\t    def test_a_model_that_never_stops_one_call_at_a_time_hits_the_request_cap(self):\n687\t        tools = self.tools([])\n688\t\n689\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n690\t            return ModelResponse(parts=[call(\"list\", {\"path\": \".\"}, \"c\")])\n691\t\n692\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n693\t        self.assertEqual(stopped, \"cap\")\n694\t        self.assertIsNone(report)\n695\t        self.assertEqual(len(tools.listed), builder.REQUEST_CAP)\n696\t        self.assertIn(\"request_limit\", detail)\n697\t\n698\t    def test_a_plain_text_answer_is_retried_by_the_library(self):\n699\t        tools = self.tools([])\n700\t\n701\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n702\t            if len(messages) == 1:\n703\t                return ModelResponse(parts=[TextPart(\"done\")])\n704\t            return ModelResponse(parts=[call(\"final_result\", REPORT, \"c\")])\n705\t\n706\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n707\t        self.assertEqual(stopped, \"answer\")\n708\t        self.assertIsInstance(report, BuildReport)\n709\t        retries = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]\n710\t        self.assertEqual(len(retries), 1)\n711\t        self.assertIn(\"Fix the errors and try again\", retries[0].model_response())\n712\t\n713\t    def test_a_provider_error_stops_the_run_without_a_report(self):\n714\t        tools = self.tools([])\n715\t\n716\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n717\t            raise ModelAPIError(\"deepseek-flash\", \"boom\")\n718\t\n719\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n720\t        self.assertEqual(stopped, \"error\")\n721\t        self.assertIsNone(report)\n722\t        self.assertIn(\"boom\", detail)\n723\t\n724\t\n725\tclass MainTest(unittest.TestCase):\n726\t    def setUp(self):\n727\t        self.tmp = tempfile.TemporaryDirectory()\n728\t        self.addCleanup(self.tmp.cleanup)\n729\t        base = Path(self.tmp.name)\n730\t        self.checkout = base / \"checkout\"\n731\t        self.checkout.mkdir()\n732\t        (self.checkout / \"f.py\").write_text(\"x = 1\\n\")\n733\t        git(self.checkout, \"init\", \"-q\")  # a checkout is a git checkout; a plain directory is refused\n734\t        git(self.checkout, \"add\", \"f.py\")\n735\t        git(self.checkout, \"commit\", \"-q\", \"-m\", \"start\")\n736\t        (base / \"key\").write_text(\"DEEPSEEK_API_KEY=not-a-key\\n\")\n737\t        self.runs = base / \"runs\"\n738\t        self.enterContext(mock.patch.object(builder, \"RUNS\", self.runs))\n739\t        self.enterContext(mock.patch.object(builder, \"KEY_FILE\", base / \"key\"))\n740\t\n741\t    def main(self, model, sandbox, checkout=None):\n742\t        out = io.StringIO()\n743\t        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):\n744\t            code = builder.main([\"builder.py\", str(checkout or self.checkout), \"make x bigger\"], model=model, sandbox=sandbox)\n745\t        run_dirs = list(self.runs.iterdir()) if self.runs.exists() else []\n746\t        return code, out.getvalue().splitlines(), (run_dirs[0] if run_dirs else None)\n747\t\n748\t    def test_the_harness_names_what_else_to_hide_for_a_run(self):\n749\t        \"\"\"seed: pass-rate-error. From the review: the evaluation set's `cases/` is the harness's\n750\t        convention, not what running the program leaves behind, so the harness hides it for the\n751\t        runs it starts through `hidden` and the builder's own hidden names stay five.\"\"\"\n752\t        (self.checkout / \"cases\" / \"alpha\").mkdir(parents=True)\n753\t        (self.checkout / \"cases\" / \"alpha\" / \"pass.txt\").write_text(\"green\\n\")\n754\t        git(self.checkout, \"add\", \"-A\")\n755\t        git(self.checkout, \"commit\", \"-q\", \"-m\", \"a case\")\n756\t        peek = [call(\"list\", {\"path\": \".\"}, \"c0\"), call(\"read\", {\"path\": \"cases/alpha/pass.txt\"}, \"c1\")]\n757\t\n758\t        def returns(run_dir: Path) -> list[str]:\n759\t            return [p[\"content\"] for m in json.loads((run_dir / \"messages.json\").read_text()) for p in m[\"parts\"] if p.get(\"part_kind\") == \"tool-return\"]\n760\t\n761\t        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):\n762\t            code = builder.main([\"builder.py\", str(self.checkout), \"goal\"], model=scripted(peek), sandbox=FakeSandbox([]), hidden=(\"cases\",))\n763\t        self.assertEqual(code, 0)\n764\t        hidden = returns(sorted(self.runs.iterdir())[0])\n765\t        self.assertNotIn(\"cases\", names_in(hidden[0]))\n766\t        self.assertTrue(hidden[1].startswith(\"error: not part of the checkout\"), hidden[1])\n767\t        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):\n768\t            code = builder.main([\"builder.py\", str(self.checkout), \"goal\"], model=scripted(peek), sandbox=FakeSandbox([]))\n769\t        self.assertEqual(code, 0)\n770\t        shown = returns(sorted(self.runs.iterdir())[1])\n771\t        self.assertIn(\"cases\", names_in(shown[0]))\n772\t        self.assertEqual(shown[1], \"1\\tgreen\")\n773\t\n774\t    def test_a_green_build_in_a_git_checkout_leaves_the_full_record_and_the_diff(self):\n775\t        \"\"\"seed: terms-checkout-and-tools. The numbers name the checkout and its head.\"\"\"\n776\t        model = scripted(\n777\t            [call(\"edit\", {\"path\": \"f.py\", \"old\": \"x = 1\", \"new\": \"x = 2\"}, \"c1\")],\n778\t            [call(\"write\", {\"path\": \"new.txt\", \"content\": \"hello\\nworld\\n\"}, \"c2\")],\n779\t            [call(\"check\", {}, \"c3\")],\n780\t            [call(\"final_result\", REPORT, \"c4\")],\n781\t        )\n782\t        code, lines, run_dir = self.main(model, FakeSandbox([(0, \"..\\nOK\\n\")]))\n783\t        self.assertEqual(code, 0)\n784\t        self.assertEqual(\n785\t            sorted(p.name for p in run_dir.iterdir()),\n786\t            [\"check-1.log\", \"diff.patch\", \"goal.txt\", \"messages.json\", \"numbers.json\", \"report.json\", \"response.md\", \"wire.jsonl\"],\n787\t        )\n788\t        patch = (run_dir / \"diff.patch\").read_text()\n789\t        self.assertIn(\"+x = 2\", patch)\n790\t        self.assertIn(\"-x = 1\", patch)\n791\t        self.assertIn(\"new.txt\", patch)\n792\t        self.assertIn(\"+hello\", patch)\n793\t        numbers = json.loads((run_dir / \"numbers.json\").read_text())\n794\t        self.assertEqual(numbers[\"head\"], git(self.checkout, \"rev-parse\", \"HEAD\").strip())\n795\t        self.assertEqual(numbers[\"stopped\"], \"answer\")\n796\t        self.assertEqual(numbers[\"check\"], \"green\")\n797\t        self.assertEqual((numbers[\"checks\"], numbers[\"writes\"], numbers[\"edits\"]), (1, 1, 1))\n798\t        self.assertEqual(numbers[\"files_changed\"], 2)  # f.py, new.txt\n799\t        self.assertGreaterEqual(numbers[\"insertions\"], 3)\n800\t        self.assertEqual(numbers[\"deletions\"], 1)\n801\t        self.assertEqual(numbers[\"checkout\"], str(self.checkout.resolve()))\n802\t        self.assertGreaterEqual(numbers[\"check_seconds\"], 0)\n803\t        self.assertEqual(numbers[\"role\"], ROLE_SHA256)\n804\t        self.assertEqual(len(numbers[\"wrapper\"]), 16)\n805\t        self.assertNotIn(\"detail\", numbers)\n806\t        self.assertEqual(BuildReport(**json.loads((run_dir / \"report.json\").read_text())).check, \"green\")\n807\t        self.assertTrue((run_dir / \"response.md\").read_text().startswith(\"## Changed\\n\"))\n808\t        self.assertEqual(lines[0], str(run_dir))\n809\t        self.assertIn(\"check=green\", lines[1])\n810\t        self.assertIn(\"stopped=answer\", lines[1])\n811\t        self.assertEqual(len(lines), 2)\n812\t        self.assertNotIn(\"not-a-key\", (run_dir / \"messages.json\").read_text())\n813\t\n814\t    def test_the_plane_records_red_when_the_report_claims_green(self):\n815\t        model = scripted([call(\"check\", {}, \"c1\")], [call(\"final_result\", REPORT, \"c2\")])\n816\t        code, lines, run_dir = self.main(model, FakeSandbox([(1, \"FAIL: test_x\\n\")]))\n817\t        self.assertEqual(code, 0)\n818\t        numbers = json.loads((run_dir / \"numbers.json\").read_text())\n819\t        self.assertEqual(numbers[\"check\"], \"red\")\n820\t        self.assertEqual(json.loads((run_dir / \"report.json\").read_text())[\"check\"], \"green\")\n821\t        self.assertIn(\"check=red\", lines[1])\n822\t\n823\t    def test_a_directory_without_git_is_a_usage_error(self):\n824\t        \"\"\"seed: terms-checkout-and-tools. The checkout must be a git checkout: a plain directory\n825\t        is refused with a usage error naming git, exit 2, before any run directory exists.\"\"\"\n826\t        plain = Path(self.tmp.name) / \"plain\"\n827\t        plain.mkdir()\n828\t        (plain / \"f.py\").write_text(\"x = 1\\n\")\n829\t        err = io.StringIO()\n830\t        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):\n831\t            code = builder.main([\"builder.py\", str(plain), \"goal\"], model=scripted(), sandbox=FakeSandbox([]))\n832\t        self.assertEqual(code, 2)\n833\t        self.assertIn(\"usage\", err.getvalue())\n834\t        self.assertIn(\"git\", err.getvalue())\n835\t        self.assertFalse(self.runs.exists())\n836\t\n837\t    def test_a_checkout_without_a_commit_or_with_a_stray_dot_git_is_refused(self):\n838\t        \"\"\"seed: terms-checkout-and-tools. A git checkout with no commit has nothing to pin a run\n839\t        to, and a directory whose .git is not git's is no checkout: both are usage errors that\n840\t        say which, before any run directory exists.\"\"\"\n841\t        fresh = Path(self.tmp.name) / \"fresh\"\n842\t        fresh.mkdir()\n843\t        git(fresh, \"init\", \"-q\")\n844\t        stray = Path(self.tmp.name) / \"stray\"\n845\t        stray.mkdir()\n846\t        (stray / \".git\").write_text(\"not a gitdir pointer\\n\")\n847\t        for checkout, words in ((fresh, \"no commit\"), (stray, \"not a git checkout\")):\n848\t            err = io.StringIO()\n849\t            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):\n850\t                code = builder.main([\"builder.py\", str(checkout), \"goal\"], model=scripted(), sandbox=FakeSandbox([]))\n851\t            self.assertEqual(code, 2, checkout)\n852\t            self.assertIn(\"usage\", err.getvalue())\n853\t            self.assertIn(words, err.getvalue())\n854\t        self.assertFalse(self.runs.exists())\n855\t\n856\t    def test_a_checkout_is_the_root_of_its_own_repository(self):\n857\t        \"\"\"seed: terms-checkout-and-tools. A subdirectory of a repository, with or without a stray\n858\t        .git directory of its own, is not a checkout: git would answer for the repository above.\n859\t        Nor is a directory the environment points elsewhere with GIT_DIR. A worktree is one.\"\"\"\n860\t        deep = self.checkout / \"deep\"\n861\t        deep.mkdir()\n862\t        (deep / \"g.py\").write_text(\"y = 1\\n\")\n863\t        bogus = self.checkout / \"bogus\"\n864\t        (bogus / \".git\").mkdir(parents=True)\n865\t        (bogus / \"h.py\").write_text(\"z = 1\\n\")\n866\t        git(self.checkout, \"add\", \"-A\")\n867\t        git(self.checkout, \"commit\", \"-q\", \"-m\", \"more\")\n868\t        stray = Path(self.tmp.name) / \"stray\"\n869\t        stray.mkdir()\n870\t        (stray / \".git\").write_text(\"not a gitdir pointer\\n\")\n871\t        refused = [(deep, {}), (bogus, {}), (stray, {\"GIT_DIR\": str(self.checkout / \".git\")}), (stray, {\"GIT_DIR\": str(self.checkout / \".git\"), \"GIT_WORK_TREE\": str(stray)})]\n872\t        for checkout, env in refused:\n873\t            err = io.StringIO()\n874\t            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):\n875\t                code = builder.main([\"builder.py\", str(checkout), \"goal\"], model=scripted(), sandbox=FakeSandbox([]))\n876\t            self.assertEqual(code, 2, (checkout, env))\n877\t            self.assertIn(\"not a git checkout\", err.getvalue(), (checkout, env))\n878\t        self.assertFalse(self.runs.exists())\n879\t        worktree = Path(self.tmp.name) / \"wt\"\n880\t        git(self.checkout, \"worktree\", \"add\", \"-q\", str(worktree))\n881\t        code, lines, run_dir = self.main(scripted(), FakeSandbox([]), checkout=worktree)\n882\t        self.assertEqual(code, 0)\n883\t        numbers = json.loads((run_dir / \"numbers.json\").read_text())\n884\t        self.assertEqual(numbers[\"head\"], git(worktree, \"rev-parse\", \"HEAD\").strip())\n885\t        self.assertEqual(numbers[\"checkout\"], str(worktree.resolve()))\n886\t\n887\t    def test_git_that_cannot_run_before_the_run_is_a_usage_error(self):\n888\t        \"\"\"seed: terms-checkout-and-tools. No git on PATH is a usage error naming git, exit 2, no\n889\t        traceback and no run directory.\"\"\"\n890\t        err = io.StringIO()\n891\t        with mock.patch.dict(os.environ, {\"PATH\": str(Path(self.tmp.name) / \"nobin\")}), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):\n892\t            code = builder.main([\"builder.py\", str(self.checkout), \"goal\"], model=scripted(), sandbox=FakeSandbox([]))\n893\t        self.assertEqual(code, 2)\n894\t        self.assertIn(\"usage\", err.getvalue())\n895\t        self.assertIn(\"git\", err.getvalue())\n896\t        self.assertFalse(self.runs.exists())\n897\t\n898\t    def test_the_patch_is_gits_own_whatever_the_environment_or_the_attributes_say(self):\n899\t        \"\"\"seed: terms-checkout-and-tools. GIT_EXTERNAL_DIFF, a diff.external in the configuration\n...\ttruncated; continue with start=900",
+    "tool_call_id": "call_00_ET_35hnTCQldIvu2GuPn7lI2659",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:15.019430Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:15.021115Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now I need to look at the SlowTools and call helper functions, near the top of the file around line 560-605.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"test_builder.py\", \"start\": 555}",
+    "tool_call_id": "call_00_iDWv1nJgImYxFPjdXqGl4338",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 8386,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 3456,
+   "output_tokens": 83,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 3456,
+    "prompt_cache_miss_tokens": 4930,
+    "reasoning_tokens": 27
+   },
+   "cost": null,
+   "output_reasoning_tokens": 27
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:15.887718Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:15Z"
+  },
+  "provider_response_id": "e28c60c0-ab27-4b5b-915c-a684c5ae040b",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "555\t        self.assertEqual(kill, [\"docker\", \"kill\", f\"factory-check-{self.run_dir.name}-3\"])\n556\t        self.assertEqual(kw.get(\"timeout\"), 30)\n557\t\n558\t\n559\tclass RenderTest(unittest.TestCase):\n560\t    def test_five_headings_in_order_with_bullets(self):\n561\t        out = render(BuildReport(**REPORT))\n562\t        self.assertEqual(\n563\t            [line for line in out.splitlines() if line.startswith(\"## \")],\n564\t            [\"## Changed\", \"## Did\", \"## Check\", \"## Failing\", \"## Unsure\"],\n565\t        )\n566\t        self.assertIn(\"- f.py\\n\", out)\n567\t        self.assertIn(\"- green\\n\", out)\n568\t        self.assertIn(\"## Failing\\n- (none)\\n\", out)\n569\t\n570\t    def test_a_red_report_lists_the_failing_tests(self):\n571\t        out = render(BuildReport(changed=[], did=[], check=\"red\", failing=[\"test_a\", \"test_b\"], unsure=[]))\n572\t        self.assertEqual(out.count(\"- (none)\"), 3)\n573\t        self.assertIn(\"## Check\\n- red\\n\", out)\n574\t        self.assertIn(\"## Failing\\n- test_a\\n- test_b\\n\", out)\n575\t\n576\t\n577\tclass RoleTest(unittest.TestCase):\n578\t    def test_the_role_is_the_plan_text(self):\n579\t        \"\"\"seed: terms-checkout-and-tools. The role says checkout where it said world; the hash\n580\t        pins every other character.\"\"\"\n581\t        self.assertEqual(hashlib.sha256(builder.ROLE.encode()).hexdigest()[:16], ROLE_SHA256)\n582\t        self.assertIn(\"a goal and a checkout: a directory with code and tests\", builder.ROLE)\n583\t        self.assertIn(\"explore it with `list`, `read` and `search`,\", builder.ROLE)  # seed: codebase-context\n584\t        self.assertNotIn(\"world\", builder.ROLE)\n585\t        self.assertTrue(builder.ROLE.startswith(\"You are the builder.\"))\n586\t        self.assertIn(\"Work in this order:\", builder.ROLE)\n587\t        self.assertIn(\"Rules: change only what the goal needs;\", builder.ROLE)\n588\t\n589\t\n590\tclass SlowTools(Tools):\n591\t    \"\"\"Tools whose edit takes a moment and notes when it started and ended.\"\"\"\n592\t\n593\t    def __init__(self, *args, **kwargs):\n594\t        super().__init__(*args, **kwargs)\n595\t        self.spans: list[tuple[float, float]] = []\n596\t\n597\t    def edit(self, path: str, old: str, new: str) -> str:\n598\t        start = time.monotonic()\n599\t        time.sleep(0.05)  # a window in which a second call could overlap this one\n600\t        try:\n601\t            return super().edit(path, old, new)\n602\t        finally:\n603\t            self.spans.append((start, time.monotonic()))\n604\t\n605\t\n606\tclass LoopTest(unittest.TestCase):\n607\t    def setUp(self):\n608\t        self.tmp = tempfile.TemporaryDirectory()\n609\t        self.addCleanup(self.tmp.cleanup)\n610\t        self.root = Path(self.tmp.name) / \"checkout\"\n611\t        self.root.mkdir()\n612\t        self.run_dir = Path(self.tmp.name) / \"run\"\n613\t        self.run_dir.mkdir()\n614\t        (self.root / \"f.py\").write_text(\"x = 1\\n\")\n615\t\n616\t    def tools(self, results):\n617\t        self.sandbox = FakeSandbox(results)\n618\t        return Tools(self.root, self.run_dir, sandbox=self.sandbox)\n619\t\n620\t    def test_tool_calls_in_one_response_run_one_at_a_time_in_order(self):\n621\t        \"\"\"seed: tool-calls-one-at-a-time. Two edits of one file in one response and a third on\n622\t        the text the first wrote: each starts after the one before it ended, all three land.\"\"\"\n623\t        (self.root / \"g.py\").write_text(\"a = 1\\nb = 1\\n\")\n624\t        tools = SlowTools(self.root, self.run_dir, sandbox=FakeSandbox([]))\n625\t        model = scripted([\n626\t            call(\"edit\", {\"path\": \"g.py\", \"old\": \"a = 1\", \"new\": \"a = 2\"}, \"e1\"),\n627\t            call(\"edit\", {\"path\": \"g.py\", \"old\": \"b = 1\", \"new\": \"b = 2\"}, \"e2\"),\n628\t            call(\"edit\", {\"path\": \"g.py\", \"old\": \"a = 2\", \"new\": \"a = 3\"}, \"e3\"),\n629\t        ])\n630\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), \"goal\")\n631\t        self.assertEqual(stopped, \"answer\", detail)\n632\t        self.assertEqual(returns_of(messages)[:3], [\"edited g.py (2 -> 2 lines)\"] * 3)\n633\t        self.assertEqual((self.root / \"g.py\").read_text(), \"a = 3\\nb = 2\\n\")\n634\t        self.assertEqual(len(tools.spans), 3)\n635\t        for (_, end), (start, _) in zip(tools.spans, tools.spans[1:]):\n636\t            self.assertGreaterEqual(start, end, tools.spans)\n637\t\n638\t    def test_edit_check_edit_check_then_the_report_ends_the_run(self):\n639\t        tools = self.tools([(1, \"FAIL: test_x\\n\"), (0, \"OK\\n\")])\n640\t        model = scripted(\n641\t            [call(\"edit\", {\"path\": \"f.py\", \"old\": \"x = 1\", \"new\": \"x = 2\"}, \"c1\")],\n642\t            [call(\"check\", {}, \"c2\")],\n643\t            [call(\"edit\", {\"path\": \"f.py\", \"old\": \"x = 2\", \"new\": \"x = 3\"}, \"c3\")],\n644\t            [call(\"check\", {}, \"c4\")],\n645\t            [call(\"final_result\", REPORT, \"c5\")],\n646\t        )\n647\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), \"goal\")\n648\t        self.assertEqual((stopped, detail), (\"answer\", \"\"))\n649\t        self.assertIsInstance(report, BuildReport)\n650\t        self.assertEqual(report.check, \"green\")\n651\t        self.assertEqual((self.root / \"f.py\").read_text(), \"x = 3\\n\")\n652\t        self.assertEqual(tools.edited, [\"f.py\", \"f.py\"])\n653\t        self.assertEqual([c[\"exit\"] for c in tools.checks], [1, 0])\n654\t        self.assertEqual(usage.tool_calls, 4)\n655\t        self.assertEqual(\n656\t            parts_of(messages)[:10],\n657\t            [\"UserPromptPart\"] + [\"ToolCallPart\", \"ToolReturnPart\"] * 4 + [\"ToolCallPart\"],\n658\t        )\n659\t        returns = returns_of(messages)\n660\t        self.assertTrue(returns[0].startswith(\"edited f.py (1 -> 1 lines)\"))\n661\t        self.assertTrue(returns[1].startswith(\"exit 1\\n\"))\n662\t        self.assertTrue(returns[3].startswith(\"exit 0\\n\"))\n663\t\n664\t    def test_the_write_cap_reaches_the_model_as_an_error(self):\n665\t        tools = self.tools([])\n666\t        turns = [[call(\"write\", {\"path\": f\"w{i}.txt\", \"content\": \"x\\n\"}, f\"w{i}\")] for i in range(builder.WRITE_CAP + 1)]\n667\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), \"goal\")\n668\t        self.assertEqual(stopped, \"answer\")\n669\t        self.assertEqual(len(tools.written), builder.WRITE_CAP)\n670\t        # the last tool return is the library's own for final_result; the cap error precedes it\n671\t        self.assertEqual(returns_of(messages)[-2], f\"error: cap reached ({builder.WRITE_CAP} writes and edits); report now\")\n672\t\n673\t    def test_a_model_that_never_stops_hits_the_tool_call_cap(self):\n674\t        tools = self.tools([])\n675\t\n676\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n677\t            # two calls per turn, so the tool-call cap binds before the request cap does\n678\t            return ModelResponse(parts=[call(\"list\", {\"path\": \".\"}, \"c1\"), call(\"list\", {\"path\": \".\"}, \"c2\")])\n679\t\n680\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n681\t        self.assertEqual(stopped, \"cap\")\n682\t        self.assertIsNone(report)\n683\t        self.assertEqual(len(tools.listed), builder.TOOL_CALLS_CAP)\n684\t        self.assertIn(\"tool_calls_limit\", detail)\n685\t\n686\t    def test_a_model_that_never_stops_one_call_at_a_time_hits_the_request_cap(self):\n687\t        tools = self.tools([])\n688\t\n689\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n690\t            return ModelResponse(parts=[call(\"list\", {\"path\": \".\"}, \"c\")])\n691\t\n692\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n693\t        self.assertEqual(stopped, \"cap\")\n694\t        self.assertIsNone(report)\n695\t        self.assertEqual(len(tools.listed), builder.REQUEST_CAP)\n696\t        self.assertIn(\"request_limit\", detail)\n697\t\n698\t    def test_a_plain_text_answer_is_retried_by_the_library(self):\n699\t        tools = self.tools([])\n700\t\n701\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n702\t            if len(messages) == 1:\n703\t                return ModelResponse(parts=[TextPart(\"done\")])\n704\t            return ModelResponse(parts=[call(\"final_result\", REPORT, \"c\")])\n705\t\n706\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n707\t        self.assertEqual(stopped, \"answer\")\n708\t        self.assertIsInstance(report, BuildReport)\n709\t        retries = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]\n710\t        self.assertEqual(len(retries), 1)\n711\t        self.assertIn(\"Fix the errors and try again\", retries[0].model_response())\n712\t\n713\t    def test_a_provider_error_stops_the_run_without_a_report(self):\n714\t        tools = self.tools([])\n715\t\n716\t        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n717\t            raise ModelAPIError(\"deepseek-flash\", \"boom\")\n718\t\n719\t        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), \"goal\")\n720\t        self.assertEqual(stopped, \"error\")\n721\t        self.assertIsNone(report)\n722\t        self.assertIn(\"boom\", detail)\n723\t\n724\t\n725\tclass MainTest(unittest.TestCase):\n726\t    def setUp(self):\n727\t        self.tmp = tempfile.TemporaryDirectory()\n728\t        self.addCleanup(self.tmp.cleanup)\n729\t        base = Path(self.tmp.name)\n730\t        self.checkout = base / \"checkout\"\n731\t        self.checkout.mkdir()\n732\t        (self.checkout / \"f.py\").write_text(\"x = 1\\n\")\n733\t        git(self.checkout, \"init\", \"-q\")  # a checkout is a git checkout; a plain directory is refused\n734\t        git(self.checkout, \"add\", \"f.py\")\n735\t        git(self.checkout, \"commit\", \"-q\", \"-m\", \"start\")\n736\t        (base / \"key\").write_text(\"DEEPSEEK_API_KEY=not-a-key\\n\")\n737\t        self.runs = base / \"runs\"\n738\t        self.enterContext(mock.patch.object(builder, \"RUNS\", self.runs))\n739\t        self.enterContext(mock.patch.object(builder, \"KEY_FILE\", base / \"key\"))\n740\t\n741\t    def main(self, model, sandbox, checkout=None):\n742\t        out = io.StringIO()\n743\t        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):\n744\t            code = builder.main([\"builder.py\", str(checkout or self.checkout), \"make x bigger\"], model=model, sandbox=sandbox)\n745\t        run_dirs = list(self.runs.iterdir()) if self.runs.exists() else []\n746\t        return code, out.getvalue().splitlines(), (run_dirs[0] if run_dirs else None)\n747\t\n748\t    def test_the_harness_names_what_else_to_hide_for_a_run(self):\n749\t        \"\"\"seed: pass-rate-error. From the review: the evaluation set's `cases/` is the harness's\n750\t        convention, not what running the program leaves behind, so the harness hides it for the\n751\t        runs it starts through `hidden` and the builder's own hidden names stay five.\"\"\"\n752\t        (self.checkout / \"cases\" / \"alpha\").mkdir(parents=True)\n753\t        (self.checkout / \"cases\" / \"alpha\" / \"pass.txt\").write_text(\"green\\n\")\n754\t        git(self.checkout, \"add\", \"-A\")\n755\t        git(self.checkout, \"commit\", \"-q\", \"-m\", \"a case\")\n756\t        peek = [call(\"list\", {\"path\": \".\"}, \"c0\"), call(\"read\", {\"path\": \"cases/alpha/pass.txt\"}, \"c1\")]\n757\t\n758\t        def returns(run_dir: Path) -> list[str]:\n759\t            return [p[\"content\"] for m in json.loads((run_dir / \"messages.json\").read_text()) for p in m[\"parts\"] if p.get(\"part_kind\") == \"tool-return\"]\n760\t\n761\t        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):\n762\t            code = builder.main([\"builder.py\", str(self.checkout), \"goal\"], model=scripted(peek), sandbox=FakeSandbox([]), hidden=(\"cases\",))\n763\t        self.assertEqual(code, 0)\n764\t        hidden = returns(sorted(self.runs.iterdir())[0])\n765\t        self.assertNotIn(\"cases\", names_in(hidden[0]))\n766\t        self.assertTrue(hidden[1].startswith(\"error: not part of the checkout\"), hidden[1])\n767\t        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):\n768\t            code = builder.main([\"builder.py\", str(self.checkout), \"goal\"], model=scripted(peek), sandbox=FakeSandbox([]))\n769\t        self.assertEqual(code, 0)\n770\t        shown = returns(sorted(self.runs.iterdir())[1])\n771\t        self.assertIn(\"cases\", names_in(shown[0]))\n772\t        self.assertEqual(shown[1], \"1\\tgreen\")\n773\t\n774\t    def test_a_green_build_in_a_git_checkout_leaves_the_full_record_and_the_diff(self):\n775\t        \"\"\"seed: terms-checkout-and-tools. The numbers name the checkout and its head.\"\"\"\n776\t        model = scripted(\n777\t            [call(\"edit\", {\"path\": \"f.py\", \"old\": \"x = 1\", \"new\": \"x = 2\"}, \"c1\")],\n778\t            [call(\"write\", {\"path\": \"new.txt\", \"content\": \"hello\\nworld\\n\"}, \"c2\")],\n779\t            [call(\"check\", {}, \"c3\")],\n780\t            [call(\"final_result\", REPORT, \"c4\")],\n781\t        )\n782\t        code, lines, run_dir = self.main(model, FakeSandbox([(0, \"..\\nOK\\n\")]))\n783\t        self.assertEqual(code, 0)\n784\t        self.assertEqual(\n785\t            sorted(p.name for p in run_dir.iterdir()),\n786\t            [\"check-1.log\", \"diff.patch\", \"goal.txt\", \"messages.json\", \"numbers.json\", \"report.json\", \"response.md\", \"wire.jsonl\"],\n787\t        )\n788\t        patch = (run_dir / \"diff.patch\").read_text()\n789\t        self.assertIn(\"+x = 2\", patch)\n790\t        self.assertIn(\"-x = 1\", patch)\n791\t        self.assertIn(\"new.txt\", patch)\n792\t        self.assertIn(\"+hello\", patch)\n793\t        numbers = json.loads((run_dir / \"numbers.json\").read_text())\n794\t        self.assertEqual(numbers[\"head\"], git(self.checkout, \"rev-parse\", \"HEAD\").strip())\n795\t        self.assertEqual(numbers[\"stopped\"], \"answer\")\n796\t        self.assertEqual(numbers[\"check\"], \"green\")\n797\t        self.assertEqual((numbers[\"checks\"], numbers[\"writes\"], numbers[\"edits\"]), (1, 1, 1))\n798\t        self.assertEqual(numbers[\"files_changed\"], 2)  # f.py, new.txt\n799\t        self.assertGreaterEqual(numbers[\"insertions\"], 3)\n800\t        self.assertEqual(numbers[\"deletions\"], 1)\n801\t        self.assertEqual(numbers[\"checkout\"], str(self.checkout.resolve()))\n802\t        self.assertGreaterEqual(numbers[\"check_seconds\"], 0)\n803\t        self.assertEqual(numbers[\"role\"], ROLE_SHA256)\n804\t        self.assertEqual(len(numbers[\"wrapper\"]), 16)\n805\t        self.assertNotIn(\"detail\", numbers)\n806\t        self.assertEqual(BuildReport(**json.loads((run_dir / \"report.json\").read_text())).check, \"green\")\n807\t        self.assertTrue((run_dir / \"response.md\").read_text().startswith(\"## Changed\\n\"))\n808\t        self.assertEqual(lines[0], str(run_dir))\n809\t        self.assertIn(\"check=green\", lines[1])\n810\t        self.assertIn(\"stopped=answer\", lines[1])\n811\t        self.assertEqual(len(lines), 2)\n812\t        self.assertNotIn(\"not-a-key\", (run_dir / \"messages.json\").read_text())\n813\t\n814\t    def test_the_plane_records_red_when_the_report_claims_green(self):\n815\t        model = scripted([call(\"check\", {}, \"c1\")], [call(\"final_result\", REPORT, \"c2\")])\n816\t        code, lines, run_dir = self.main(model, FakeSandbox([(1, \"FAIL: test_x\\n\")]))\n817\t        self.assertEqual(code, 0)\n818\t        numbers = json.loads((run_dir / \"numbers.json\").read_text())\n819\t        self.assertEqual(numbers[\"check\"], \"red\")\n820\t        self.assertEqual(json.loads((run_dir / \"report.json\").read_text())[\"check\"], \"green\")\n821\t        self.assertIn(\"check=red\", lines[1])\n822\t\n823\t    def test_a_directory_without_git_is_a_usage_error(self):\n824\t        \"\"\"seed: terms-checkout-and-tools. The checkout must be a git checkout: a plain directory\n825\t        is refused with a usage error naming git, exit 2, before any run directory exists.\"\"\"\n826\t        plain = Path(self.tmp.name) / \"plain\"\n827\t        plain.mkdir()\n828\t        (plain / \"f.py\").write_text(\"x = 1\\n\")\n829\t        err = io.StringIO()\n830\t        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):\n831\t            code = builder.main([\"builder.py\", str(plain), \"goal\"], model=scripted(), sandbox=FakeSandbox([]))\n832\t        self.assertEqual(code, 2)\n833\t        self.assertIn(\"usage\", err.getvalue())\n834\t        self.assertIn(\"git\", err.getvalue())\n835\t        self.assertFalse(self.runs.exists())\n836\t\n837\t    def test_a_checkout_without_a_commit_or_with_a_stray_dot_git_is_refused(self):\n838\t        \"\"\"seed: terms-checkout-and-tools. A git checkout with no commit has nothing to pin a run\n839\t        to, and a directory whose .git is not git's is no checkout: both are usage errors that\n840\t        say which, before any run directory exists.\"\"\"\n841\t        fresh = Path(self.tmp.name) / \"fresh\"\n842\t        fresh.mkdir()\n843\t        git(fresh, \"init\", \"-q\")\n844\t        stray = Path(self.tmp.name) / \"stray\"\n845\t        stray.mkdir()\n846\t        (stray / \".git\").write_text(\"not a gitdir pointer\\n\")\n847\t        for checkout, words in ((fresh, \"no commit\"), (stray, \"not a git checkout\")):\n848\t            err = io.StringIO()\n849\t            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):\n850\t                code = builder.main([\"builder.py\", str(checkout), \"goal\"], model=scripted(), sandbox=FakeSandbox([]))\n851\t            self.assertEqual(code, 2, checkout)\n852\t            self.assertIn(\"usage\", err.getvalue())\n853\t            self.assertIn(words, err.getvalue())\n854\t        self.assertFalse(self.runs.exists())\n...\ttruncated; continue with start=855",
+    "tool_call_id": "call_00_iDWv1nJgImYxFPjdXqGl4338",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:15.893110Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:15.894682Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let me look at the builder.py's build_agent and Tools class.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"builder.py\", \"start\": 540}",
+    "tool_call_id": "call_00_nWyOJtbsfAimkDv5xX122547",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 13157,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 8448,
+   "output_tokens": 70,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 8448,
+    "prompt_cache_miss_tokens": 4709,
+    "reasoning_tokens": 16
+   },
+   "cost": null,
+   "output_reasoning_tokens": 16
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:17.135895Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:16Z"
+  },
+  "provider_response_id": "16b168af-f092-4cfa-858c-dbd358bdfdf7",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "540\t            dir=\"response\",\n541\t            method=req.method,\n542\t            url=str(req.url),\n543\t            status=response.status_code,\n544\t            headers=self._headers(response.headers),\n545\t            body=self._body(response.text),\n546\t        )\n547\t\n548\t\n549\t# The stock DeepSeek profile keys on the name: only `deepseek-v4-*` is treated as thinking-capable,\n550\t# so for `deepseek-flash` the library believes thinking is off and forces a tool choice, which the\n551\t# API rejects with 400 \"Thinking mode does not support this tool_choice\". Saying what the model is\n552\t# — thinking-capable, thinking on by default, no forced tool choice while it thinks — makes the\n553\t# library send `tool_choice: auto` and leaves thinking at the API default, as in v0.1.\n554\tPROFILE = OpenAIModelProfile(\n555\t    supports_thinking=True,\n556\t    openai_reasoning_enabled_by_default=True,\n557\t    openai_supports_forced_tool_choice_with_thinking=False,\n558\t)\n559\t\n560\t\n561\tdef build_agent(\n562\t    tools: Tools, key: str = \"\", http_client: Any = None, model: Any = None\n563\t) -> Agent[None, BuildReport]:\n564\t    \"\"\"The agent: the role, the six tools, a typed report, our caps.\"\"\"\n565\t    if model is None:\n566\t        model = OpenAIChatModel(\n567\t            MODEL, provider=DeepSeekProvider(api_key=key, http_client=http_client), profile=PROFILE\n568\t        )\n569\t    return Agent(\n570\t        model,\n571\t        instructions=ROLE,\n572\t        output_type=BuildReport,\n573\t        tools=[\n574\t            Tool(tools.list, takes_ctx=False),\n575\t            Tool(tools.read, takes_ctx=False),\n576\t            Tool(tools.search, takes_ctx=False),\n577\t            Tool(tools.write, takes_ctx=False),\n578\t            Tool(tools.edit, takes_ctx=False),\n579\t            Tool(tools.check, takes_ctx=False),\n580\t        ],\n581\t        # No temperature: DeepSeek ignores it in thinking mode, and the settings should say what\n582\t        # the request actually is. Thinking stays at the API default.\n583\t        model_settings=OpenAIChatModelSettings(timeout=180),\n584\t        retries={\"tools\": 1, \"output\": 2},\n585\t    )\n586\t\n587\t\n588\tdef run(agent: Agent[None, BuildReport], goal: str) -> tuple[BuildReport | None, list, RunUsage, str, str]:\n589\t    \"\"\"One run under the caps: the report if there is one, the messages either way.\"\"\"\n590\t    usage = RunUsage()\n591\t    report, stopped, detail = None, \"answer\", \"\"\n592\t    with capture_run_messages() as messages:\n593\t        try:\n594\t            result = agent.run_sync(\n595\t                goal,\n596\t                usage=usage,\n597\t                usage_limits=UsageLimits(tool_calls_limit=TOOL_CALLS_CAP, request_limit=REQUEST_CAP),\n598\t            )\n599\t            report = result.output\n600\t        except UsageLimitExceeded as e:\n601\t            stopped, detail = \"cap\", str(e)\n602\t        except (UnexpectedModelBehavior, ModelAPIError) as e:  # ModelHTTPError is one of these\n603\t            stopped, detail = \"error\", str(e)\n604\t    return report, list(messages), usage, stopped, detail\n605\t\n606\t\n607\t# The environment's own GIT_* pointers are not the checkout's: git runs without them, so it\n608\t# discovers the repository from the directory it is given and not from where the caller points.\n609\tGIT_ENV_UNSET = (\n610\t    \"GIT_DIR\", \"GIT_WORK_TREE\", \"GIT_INDEX_FILE\", \"GIT_COMMON_DIR\", \"GIT_OBJECT_DIRECTORY\",\n611\t    \"GIT_ALTERNATE_OBJECT_DIRECTORIES\",\n612\t)  # fmt: skip\n613\t\n614\t\n615\tdef git_env() -> dict[str, str]:\n616\t    \"\"\"The environment git runs in: the caller's, without its own GIT_* pointers, and in English,\n617\t    so git's refusals are the ones the code reads whatever the host's locale says.\"\"\"\n618\t    env = dict(os.environ)\n619\t    for name in GIT_ENV_UNSET:\n620\t        env.pop(name, None)\n621\t    env[\"LC_ALL\"] = \"C\"\n622\t    return env\n623\t\n624\t\n625\tclass GitError(RuntimeError):\n626\t    \"\"\"git ran and exited nonzero: the message carries git's own words.\"\"\"\n627\t\n628\t\n629\tdef git(checkout: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:\n630\t    \"\"\"Read-only git in the checkout, not one of the tools: the model never sees this. A git that\n631\t    exits outside `ok` is an error carrying git's own words; --no-index exits 1 when the files\n632\t    differ, which is the normal case here, and a checkout with no commit answers HEAD with 1.\"\"\"\n633\t    done = subprocess.run(\n634\t        [\"git\", \"-C\", str(checkout), *args],\n635\t        capture_output=True,\n636\t        encoding=\"utf-8\",\n637\t        errors=\"replace\",\n638\t        timeout=60,\n639\t        env=git_env(),\n640\t    )\n641\t    if done.returncode not in ok:\n642\t        raise GitError(done.stderr.strip() or f\"git exited {done.returncode}\")\n643\t    return done.stdout\n644\t\n645\t\n646\tdef git_refusal(stderr: str) -> str:\n647\t    \"\"\"What git said, from the first line of its stderr after `fatal: ` and nothing else: a path\n648\t    that merely contains the phrase cannot decide it, and LC_ALL keeps the phrase English.\"\"\"\n649\t    for line in stderr.splitlines():\n650\t        line = line.strip()\n651\t        if line.startswith(\"fatal:\"):\n652\t            return line[len(\"fatal:\"):].strip()\n653\t    lines = stderr.splitlines()\n654\t    return lines[0].strip() if lines else \"\"\n655\t\n656\t\n657\tdef head(checkout: Path) -> str:\n658\t    \"\"\"The checkout's HEAD commit; empty only when the checkout has no commit yet.\"\"\"\n659\t    return git(checkout, \"rev-parse\", \"--verify\", \"-q\", \"HEAD\", ok=(0, 1)).strip()\n660\t\n661\t\n662\tdef dirty_paths(checkout: Path) -> list[str]:\n663\t    \"\"\"The paths a git checkout has changed, staged or not, as git status names them. Read-only.\"\"\"\n664\t    status = git(checkout, \"status\", \"--porcelain\", \"-z\", \"--untracked-files=all\")\n665\t    # Each entry is two status characters, a space, then the path; a rename adds the old path as\n666\t    # a second NUL-separated field, which does not have that shape and is skipped.\n667\t    return [entry[3:] for entry in status.split(\"\\0\") if len(entry) > 3 and entry[2] == \" \"]\n668\t\n669\t\n670\tdef record_diff(checkout: Path, run_dir: Path) -> dict[str, Any]:\n671\t    \"\"\"What the run left in the checkout: diff.patch (absent when the run left nothing), and the\n672\t    three numbers about it.\"\"\"\n673\t    # -z so a path with a space or a quote survives; -uall so a new directory is listed as files.\n674\t    status = git(checkout, \"status\", \"--porcelain\", \"-z\", \"--untracked-files=all\")\n675\t    untracked = [entry[3:] for entry in status.split(\"\\0\") if entry.startswith(\"?? \")]\n676\t    # Against HEAD, so a change the run staged is in the patch too; the checkout is always a git\n677\t    # checkout with a commit, so there is always a HEAD. A run that left nothing leaves no patch.\n678\t    # --no-ext-diff and --no-textconv keep the patch git's own: neither the environment, nor the\n679\t    # configuration, nor a .gitattributes in the checkout can replace it with a program's output.\n680\t    # Every diff ends its options with --, so a file the run names -x.txt or HEAD is a path to git\n681\t    # and not an option or a revision.\n682\t    flags = (\"--no-ext-diff\", \"--no-textconv\", \"--text\")\n683\t    parts = [git(checkout, \"diff\", *flags, \"HEAD\", \"--\")]\n684\t    for rel in untracked:\n685\t        parts.append(git(checkout, \"diff\", *flags, \"--no-index\", \"--\", \"/dev/null\", rel, ok=(0, 1)))\n686\t    patch = \"\".join(parts)\n687\t    if patch:\n688\t        (run_dir / \"diff.patch\").write_text(patch)  # the patch first: counting can fail\n689\t    files = insertions = deletions = 0\n690\t    for line in git(checkout, \"diff\", \"HEAD\", \"--numstat\", \"--\").splitlines():\n691\t        added, removed, _path = line.split(\"\\t\", 2)\n692\t        files += 1\n693\t        insertions += int(added) if added.isdigit() else 0  # \"-\" for a binary file\n694\t        deletions += int(removed) if removed.isdigit() else 0\n695\t    for rel in untracked:\n696\t        files += 1\n697\t        p = checkout / rel  # a broken symlink or a nested checkout has no lines to count\n698\t        insertions += len(p.read_bytes().splitlines()) if p.is_file() and not p.is_symlink() else 0\n699\t    return {\"files_changed\": files, \"insertions\": insertions, \"deletions\": deletions}\n700\t\n701\t\n702\tdef sha256(data: str) -> str:\n703\t    return hashlib.sha256(data.encode()).hexdigest()[:16]\n704\t\n705\t\n706\tdef usage_error(reason: str = \"\") -> int:\n707\t    print('usage: builder.py <checkout> \"<goal>\"', file=sys.stderr)\n708\t    if reason:\n709\t        print(reason, file=sys.stderr)\n710\t    return 2\n711\t\n712\t\n713\tFENCE_OPEN = re.compile(r\"^ {0,3}(`{3,}|~{3,})(.*)$\")\n714\tFENCE_CLOSE = re.compile(r\"^ {0,3}(`{3,}|~{3,})[ \\t]*$\")\n715\tHEADING = re.compile(r\"^ {0,3}(#{1,6})(?:[ \\t]+(.*?))?[ \\t]*$\")\n716\t\n717\t\n718\tdef opening_fence(line: str) -> tuple[str, int] | None:\n719\t    \"\"\"The fence a line opens, as its character and how many marks, or None. A fence is three or\n720\t    more backticks or tildes, indented at most three spaces, with any info string; a backtick\n721\t    fence's info string holds no backtick, so a line whose rest has one is no fence.\"\"\"\n722\t    m = FENCE_OPEN.match(line)\n723\t    if not m:\n724\t        return None\n725\t    run = m.group(1)\n726\t    if run[0] == \"`\" and \"`\" in m.group(2):\n727\t        return None\n728\t    return run[0], len(run)\n729\t\n730\t\n731\tdef closing_fence(line: str, fence: tuple[str, int]) -> bool:\n732\t    \"\"\"Whether a line closes `fence`: the same character and at least as many marks, alone on the\n733\t    line, so a block of four backticks holds a block of three whole and a backtick block tildes.\"\"\"\n734\t    m = FENCE_CLOSE.match(line)\n735\t    return bool(m) and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]\n736\t\n737\t\n738\tdef heading(line: str) -> tuple[int, str]:\n739\t    \"\"\"A markdown ATX heading: its level, 0 when the line is not one, and its text. The heading is\n740\t    indented at most three spaces; a line indented four is no heading, whatever it starts with.\"\"\"\n741\t    m = HEADING.match(line)\n742\t    if not m:\n743\t        return 0, \"\"\n744\t    return len(m.group(1)), (m.group(2) or \"\").strip()\n745\t\n746\t\n747\tdef _code_span_close(line: str, start: int, run: int) -> int | None:\n748\t    \"\"\"The index of the next run of exactly `run` backticks at or after `start`, or None: only a\n749\t    run of the same length closes a code span, so the marks inside one are the note's text.\"\"\"\n750\t    i, n = start, len(line)\n751\t    while i < n:\n752\t        if line[i] == \"`\":\n753\t            j = i\n754\t            while j < n and line[j] == \"`\":\n755\t                j += 1\n756\t            if j - i == run:\n757\t                return i\n758\t            i = j\n759\t        else:\n760\t            i += 1\n761\t    return None\n762\t\n763\t\n764\tdef _scan_line(line: str, in_comment: bool) -> tuple[str, bool]:\n765\t    \"\"\"One line's text with its `%%` comments removed and its code spans kept whole, starting in\n766\t    the comment state `in_comment`; the returned bool says whether a comment is still open. A mark\n767\t    inside a code span, between backticks on the line, is the note's text, not a mark.\"\"\"\n768\t    out: list[str] = []\n769\t    i, n = 0, len(line)\n770\t    while i < n:\n771\t        if in_comment:\n772\t            j = line.find(\"%%\", i)\n773\t            if j < 0:\n774\t                return \"\".join(out), True\n775\t            in_comment = False\n776\t            i = j + 2\n777\t            continue\n778\t        if line[i] == \"`\":\n779\t            j = i\n780\t            while j < n and line[j] == \"`\":\n781\t                j += 1\n782\t            close = _code_span_close(line, j, j - i)\n783\t            if close is None:\n784\t                out.append(line[i:j])\n785\t                i = j\n786\t                continue\n787\t            end = close + (j - i)\n788\t            out.append(line[i:end])\n789\t            i = end\n790\t            continue\n791\t        if line.startswith(\"%%\", i):\n792\t            in_comment = True\n793\t            i += 2\n794\t            continue\n795\t        out.append(line[i])\n796\t        i += 1\n797\t    return \"\".join(out), in_comment\n798\t\n799\t\n800\tdef note_text(text: str) -> str:\n801\t    \"\"\"The note's text with its `%%` comments removed. A mark inside a code span, a fenced code\n802\t    block or an indented code block (four spaces or more) is the note's text, not a mark, and a\n803\t    comment left open to the end is a usage error.\"\"\"\n804\t    out: list[str] = []\n805\t    in_comment = False\n806\t    fence: tuple[str, int] | None = None\n807\t    for line in text.split(\"\\n\"):\n808\t        if fence is not None:\n809\t            out.append(line)\n810\t            if closing_fence(line, fence):\n811\t                fence = None\n812\t            continue\n813\t        if not in_comment:\n814\t            opened = opening_fence(line)\n815\t            if opened is not None:\n816\t                out.append(line)\n817\t                fence = opened\n818\t                continue\n819\t            if line.startswith((\"    \", \"\\t\")):  # an indented code block: %% here is text\n820\t                out.append(line)\n821\t                continue\n822\t        scanned, in_comment = _scan_line(line, in_comment)\n823\t        out.append(scanned)\n824\t    if in_comment:\n825\t        raise ValueError(\"a %% comment is not closed\")\n826\t    return \"\\n\".join(out)\n827\t\n828\t\n829\tdef goal_section(text: str) -> str | None:\n830\t    \"\"\"The text under the note's `## Goal`, from its heading to the next heading of level one or\n831\t    two, or None when the note has no such heading. A fenced code block belongs whole: a heading\n832\t    inside one neither starts the section nor ends it, whatever its lines start with.\"\"\"\n833\t    lines = text.split(\"\\n\")\n834\t    start = None\n835\t    fence: tuple[str, int] | None = None\n836\t    for i, line in enumerate(lines):\n837\t        if fence is not None:\n838\t            if closing_fence(line, fence):\n839\t                fence = None\n...\ttruncated; continue with start=840",
+    "tool_call_id": "call_00_nWyOJtbsfAimkDv5xX122547",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:17.141344Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:17.142602Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let me look at the Tools class definition, and the imports in builder.py. Also need to know whether `Tool` is imported from pydantic_ai, and whether `sequential=True` is supported. Let's look at the top of builder.py.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"builder.py\", \"start\": 1}",
+    "tool_call_id": "call_00_9AEtUz110zJvZCibktto2193",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 16973,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 13184,
+   "output_tokens": 107,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 13184,
+    "prompt_cache_miss_tokens": 3789,
+    "reasoning_tokens": 53
+   },
+   "cost": null,
+   "output_reasoning_tokens": 53
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:18.467627Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:17Z"
+  },
+  "provider_response_id": "457964ad-ac37-488f-8b33-d149cd393ffb",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t#!/usr/bin/env python3\n2\t\"\"\"The builder: a cold session that changes a checkout until its tests pass.\n3\t\n4\t    uv run builder.py <checkout> \"<goal>\"\n5\t\n6\tThe checkout is the directory named on the command line, reachable only through six tools:\n7\tlist, read, search, write, edit and check. Writes are confined to the checkout and refused on the goal's\n8\ttests and the toolchain; check runs the checkout's tests in a container with no network and the\n9\tcheckout mounted read-only, so code the model writes never runs on the host and cannot reach the\n10\tkey. The loop is pydantic-ai, pinned; the provider is DeepSeek's chat completions API, the key\n11\tread from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves\n12\truns/<utc-stamp>/ under the factory itself, never in the checkout, with goal.txt, wire.jsonl\n13\t(every HTTP attempt as it happened), messages.json (the library's messages), check-<n>.log per\n14\tcheck, diff.patch (what the run left in the checkout; absent when it left nothing), report.json,\n15\tresponse.md (the report rendered) and numbers.json.\n16\t\"\"\"\n17\t\n18\tfrom __future__ import annotations\n19\t\n20\timport fnmatch\n21\timport hashlib\n22\timport importlib.metadata\n23\timport json\n24\timport os\n25\timport re\n26\timport subprocess\n27\timport sys\n28\timport time\n29\tfrom datetime import UTC, datetime\n30\tfrom pathlib import Path\n31\tfrom typing import Any, Literal\n32\t\n33\t# Before the import: the library greets stderr once per process unless this is set.\n34\tos.environ.setdefault(\"PYDANTIC_AI_NO_BANNER\", \"1\")\n35\t\n36\timport httpx2  # noqa: E402\n37\tfrom pydantic import BaseModel, Field  # noqa: E402\n38\tfrom pydantic_ai import (  # noqa: E402\n39\t    Agent,\n40\t    ModelAPIError,\n41\t    ModelMessagesTypeAdapter,\n42\t    RunUsage,\n43\t    Tool,\n44\t    UnexpectedModelBehavior,\n45\t    UsageLimitExceeded,\n46\t    UsageLimits,\n47\t    capture_run_messages,\n48\t)\n49\tfrom pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings  # noqa: E402\n50\tfrom pydantic_ai.profiles.openai import OpenAIModelProfile  # noqa: E402\n51\tfrom pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402\n52\t\n53\tRUNS = Path(__file__).resolve().parent / \"runs\"  # the factory's record, never inside the checkout\n54\tKEY_FILE = Path.home() / \".config\" / \"factory\" / \"deepseek.key\"\n55\tMODEL = \"deepseek-flash\"\n56\tLIBRARY = \"pydantic-ai-slim \" + importlib.metadata.version(\"pydantic-ai-slim\")\n57\tTOOL_CALLS_CAP = 80  # tool calls per run; over it the run stops with no report\n58\tREQUEST_CAP = 60  # provider requests per run\n59\tLIST_CAP = 500  # entries per list\n60\tREAD_LINES_CAP = 300  # lines per read\n61\tREAD_BYTES_CAP = 32_000  # bytes per read\n62\tSEARCH_LINES_CAP = 100  # matches per search\n63\tSEARCH_BYTES_CAP = 32_000  # bytes per search\n64\tSEARCH_FILE_CAP = 1_000_000  # bytes of one file search will read; a larger file is not searched\n65\tWRITE_CAP = 30  # writes and edits per run, together\n66\tCHECK_CAP = 8  # checks per run\n67\t# What green means, in the checkout's own terms. -P keeps the checkout's root off sys.path while\n68\t# the runner is imported, or a file named unittest.py at the checkout root shadows the stdlib and\n69\t# turns any suite green; `discover` still finds the checkout's tests and puts the root back for them.\n70\tCHECK_CMD = (\"python\", \"-P\", \"-m\", \"unittest\", \"discover\", \"-q\")\n71\tCHECK_TIMEOUT = 120  # seconds for one check, then the container is killed\n72\tCHECK_TAIL_LINES = 60  # lines of check output handed back\n73\tCHECK_TAIL_BYTES = 8_000  # and at most this many bytes of them\n74\tIMAGE_TIMEOUT = 600  # seconds for the one image build\n75\t# Hidden at the root because they are what running and installing the program leave behind,\n76\t# not the checkout; .git is the human's record and its hooks run on the host. A caller that\n77\t# needs more hidden -- the evaluation harness hides its own `cases` -- names them through\n78\t# main's `hidden` argument, so a checkout of another program keeps its ordinary names.\n79\tHIDDEN = (\"runs\", \".claude\", \"__pycache__\", \".venv\", \".git\")\n80\t# Refused to write and edit: the tests are the goal's acceptance criteria, the toolchain is what\n81\t# check runs against, and a .gitattributes or .gitignore the model wrote would change what git\n82\t# records of the run. A basename glob anywhere, a dotted basename anywhere, a prefix, or an exact\n83\t# path at the root; the glob is unittest's own discovery pattern, so every file the check collects\n84\t# is covered.\n85\tPROTECTED = (\"test*.py\", \"tests/\", \"pyproject.toml\", \"uv.lock\", \"check.Dockerfile\", \"docs/\",\n86\t             \".gitattributes\", \".gitignore\")  # fmt: skip\n87\t# USD per 1M tokens, peak rates; api-docs.deepseek.com/quick_start/pricing read on 2026-09-15.\n88\tPRICE = {\"cache_hit\": 0.006, \"cache_miss\": 0.3, \"output\": 1.2}\n89\t\n90\tROLE = \"\"\"\\\n91\tYou are the builder. You are given a goal and a checkout: a directory with code and tests. You\n92\tcan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n93\t`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\n94\tcriteria and cannot be changed.\n95\t\n96\tWork in this order: read what the goal touches; run `check` once to see what fails; make the\n97\tsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\n98\twhen you cannot make it green within the budget, and return the report through the\n99\t`final_result` function: changed (the paths you wrote or edited, in order), did (what you\n100\tchanged and why, one fact per item, each naming a path), check (green or red), failing (test\n101\tnames if red), unsure (what you could not determine or verify).\n102\t\n103\tRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\n104\twork around a failing test by changing what it asserts; no commentary outside the report.\n105\t\"\"\"\n106\t\n107\t\n108\tclass BuildReport(BaseModel):\n109\t    \"\"\"The builder's report: what it changed in the checkout, and whether the tests pass.\"\"\"\n110\t\n111\t    changed: list[str] = Field(description=\"The paths you wrote or edited, in order.\")\n112\t    did: list[str] = Field(\n113\t        description=\"What you changed and why, one fact per item, each naming a path.\"\n114\t    )\n115\t    check: Literal[\"green\", \"red\"] = Field(description=\"Green or red: the state of the last check.\")\n116\t    failing: list[str] = Field(description=\"Test names if red.\")\n117\t    unsure: list[str] = Field(description=\"What you could not determine or verify.\")\n118\t\n119\t\n120\tSECTIONS = ((\"Changed\", \"changed\"), (\"Did\", \"did\"), (\"Check\", \"check\"),\n121\t            (\"Failing\", \"failing\"), (\"Unsure\", \"unsure\"))  # fmt: skip\n122\t\n123\t\n124\tdef render(report: BuildReport) -> str:\n125\t    \"\"\"The report in v0.1's markdown shape: five headings, one bullet per item.\"\"\"\n126\t    out: list[str] = []\n127\t    for heading, field in SECTIONS:\n128\t        out.append(f\"## {heading}\")\n129\t        items = getattr(report, field)\n130\t        if isinstance(items, str):  # check is one value, and renders as one bullet\n131\t            items = [items]\n132\t        out.extend(f\"- {item}\" for item in items or [\"(none)\"])\n133\t        out.append(\"\")\n134\t    return \"\\n\".join(out)\n135\t\n136\t\n137\tclass Tools:\n138\t    \"\"\"The tools: what the model can do to the checkout, and the record of it.\"\"\"\n139\t\n140\t    def __init__(self, root: Path, run_dir: Path, hidden: tuple[str, ...] = HIDDEN,\n141\t                 protected: tuple[str, ...] = PROTECTED, sandbox: Any = None):  # fmt: skip\n142\t        self.root = root.resolve()\n143\t        self.run_dir = run_dir\n144\t        self.hidden = hidden\n145\t        self.protected = protected\n146\t        self.sandbox = sandbox\n147\t        self.listed: list[str] = []\n148\t        self.read_paths: list[str] = []\n149\t        self.searched: list[str] = []\n150\t        self.lines_read = 0\n151\t        self.written: list[str] = []\n152\t        self.edited: list[str] = []\n153\t        self.checks: list[dict[str, Any]] = []\n154\t\n155\t    def _resolve(self, path: str) -> tuple[Path, str]:\n156\t        p = (self.root / (path or \".\")).resolve()\n157\t        if p != self.root and self.root not in p.parents:\n158\t            raise ValueError(f\"outside the checkout: {path}\")\n159\t        rel = p.relative_to(self.root).as_posix() or \".\"\n160\t        parts = rel.split(\"/\")\n161\t        # A .git component at any depth is git's, not the checkout's: a write there could forge a\n162\t        # nested repository and hide a subtree from the record. The other hidden names are only\n163\t        # the record at the root.\n164\t        if parts[0] in self.hidden or \".git\" in parts or \".git\" in path.split(\"/\"):\n165\t            raise ValueError(f\"not part of the checkout: {path}\")\n166\t        return p, rel\n167\t\n168\t    def _writable(self, rel: str) -> None:\n169\t        \"\"\"The goal's tests and the toolchain are the human's; the builder may read them only.\"\"\"\n170\t        name = rel.rsplit(\"/\", 1)[-1]\n171\t        for pattern in self.protected:\n172\t            if pattern.endswith(\"/\"):  # anything under that directory\n173\t                hit = rel == pattern[:-1] or rel.startswith(pattern)\n174\t            elif \"*\" in pattern:  # that basename glob, anywhere in the checkout\n175\t                hit = fnmatch.fnmatchcase(name, pattern)\n176\t            elif pattern.startswith(\".\"):  # that dotted basename, anywhere in the checkout\n177\t                hit = name == pattern\n178\t            else:  # that exact path at the root, not the basename anywhere\n179\t                hit = rel == pattern\n180\t            if hit:\n181\t                raise ValueError(\n182\t                    f\"protected: {rel} (not the builder's to change: the tests, the toolchain, \"\n183\t                    \"the vault and git's own files)\"\n184\t                )\n185\t\n186\t    def _capped(self) -> str:\n187\t        if len(self.written) + len(self.edited) >= WRITE_CAP:\n188\t            return f\"error: cap reached ({WRITE_CAP} writes and edits); report now\"\n189\t        return \"\"\n190\t\n191\t    def list(self, path: str = \".\") -> str:\n192\t        \"\"\"List one directory of the checkout: one entry per line as kind, size, name. Path is the\n193\t        directory to list, relative to the checkout root; '.' is the root.\n194\t\n195\t        Args:\n196\t            path: The directory to list, relative to the checkout root.\n197\t        \"\"\"\n198\t        try:\n199\t            p, rel = self._resolve(path)\n200\t            if not p.is_dir():\n201\t                raise ValueError(f\"not a directory: {path}\")\n202\t            entries = sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name))\n203\t            skip = self.hidden if rel == \".\" else (\".git\",)  # git's own files are never listed\n204\t            entries = [e for e in entries if e.name not in skip]\n205\t            lines = []\n206\t            for e in entries[:LIST_CAP]:\n207\t                kind = \"link\" if e.is_symlink() else \"dir\" if e.is_dir() else \"file\"\n208\t                size = e.lstat().st_size if kind == \"file\" else 0\n209\t                name = e.name if rel == \".\" else f\"{rel}/{e.name}\"  # paths from the checkout root\n210\t                lines.append(f\"{kind}\\t{size}\\t{name}\")\n211\t            if len(entries) > LIST_CAP:\n212\t                lines.append(f\"...\\t{len(entries) - LIST_CAP} more entries not shown\")\n213\t        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop\n214\t            return f\"error: {e}\"\n215\t        self.listed.append(rel)\n216\t        return \"\\n\".join(lines) or \"(empty)\"\n217\t\n218\t    def read(self, path: str, start: int = 1) -> str:\n219\t        \"\"\"Read a file of the checkout as numbered lines, from line `start` (1-based), at most 300\n220\t        lines or 32000 bytes per call; a truncated read says where to continue.\n221\t\n222\t        Args:\n223\t            path: The file to read, relative to the checkout root.\n224\t            start: The first line to read, 1-based.\n225\t        \"\"\"\n226\t        try:\n227\t            p, rel = self._resolve(path)\n228\t            if not p.is_file():\n229\t                raise ValueError(f\"not a file: {path}\")\n230\t            start = max(1, int(start))\n231\t            out: list[str] = []\n232\t            n = nbytes = 0\n233\t            with p.open(\"r\", encoding=\"utf-8\", errors=\"replace\") as f:\n234\t                for i, line in enumerate(f, 1):\n235\t                    if i < start:\n236\t                        continue\n237\t                    size = len(line.encode())\n238\t                    if n >= READ_LINES_CAP or nbytes + size > READ_BYTES_CAP:\n239\t                        if n:  # one line per call at least, or a long line dead-ends the read\n240\t                            out.append(f\"...\\ttruncated; continue with start={i}\")\n241\t                            break\n242\t                        cut = line.encode()[:READ_BYTES_CAP].decode(\"utf-8\", \"ignore\")\n243\t                        out.append(f\"{i}\\t{cut} …(line cut at {READ_BYTES_CAP} bytes)\")\n244\t                    else:\n245\t                        out.append(f\"{i}\\t{line.rstrip(chr(10))}\")\n246\t                    n += 1\n247\t                    nbytes += size\n248\t        except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop\n249\t            return f\"error: {e}\"\n250\t        self.read_paths.append(rel)\n251\t        self.lines_read += n\n252\t        return \"\\n\".join(out) or \"(empty)\"\n253\t\n254\t    def _files(self, directory: Path, rel: str, unlistable: list[int]):\n255\t        \"\"\"Every file under `directory`, in the order `list` gives: directories first, then files,\n256\t        each by name, hidden names at the root and any .git component skipped, symlinks not\n257\t        followed. Yields the file and its path from the checkout root. A directory that cannot be\n258\t        listed appends 1 to `unlistable`: what is under it was not searched.\"\"\"\n259\t        try:\n260\t            entries = sorted(directory.iterdir(), key=lambda e: (not e.is_dir(), e.name))\n261\t        except (OSError, RuntimeError):  # a directory that cannot be listed: nothing under it\n262\t            unlistable.append(1)\n263\t            return\n264\t        for e in entries:\n265\t            if e.is_symlink():  # a link is not a file of the checkout, whatever it points at\n266\t                continue\n267\t            if e.name == \".git\" or (rel == \".\" and e.name in self.hidden):\n268\t                continue\n269\t            child = e.name if rel == \".\" else f\"{rel}/{e.name}\"\n270\t            if e.is_dir():\n271\t                yield from self._files(e, child, unlistable)\n272\t            elif e.is_file():\n273\t                yield e, child\n274\t\n275\t    def search(self, pattern: str, path: str = \".\") -> str:\n276\t        \"\"\"Search the checkout for a pattern: every line of every file under `path` that contains\n277\t        `pattern` as plain text, case-sensitive, one match per line as `<path>:<line number>:<text>`.\n278\t        Files come in the order `list` gives and lines in order, numbered as `read` numbers them; at\n279\t        most 100 lines or 32000 bytes per search, then how many more matches were not shown. A file\n280\t        whose bytes are not UTF-8, one larger than 1000000 bytes, or one that cannot be read is\n281\t        skipped, and the result ends with how many files that was. A lone match longer than the cap\n282\t        is cut to fit and marked, as `read` cuts a long line.\n283\t\n284\t        Args:\n285\t            pattern: The plain text to find; case-sensitive, and must not be empty or have a newline\n286\t                in it.\n287\t            path: The directory to search, relative to the checkout root; '.' is the root.\n288\t        \"\"\"\n289\t        if not pattern:\n290\t            return \"error: the pattern is empty\"\n291\t        if \"\\n\" in pattern or \"\\r\" in pattern:\n292\t            return \"error: the pattern has a newline; search matches one line at a time\"\n293\t        try:\n294\t            p, rel = self._resolve(path)\n295\t            if not p.is_dir():\n296\t                raise ValueError(f\"not a directory: {path}\")\n297\t            out: list[str] = []\n298\t            shown = nbytes = total = skipped = 0\n299\t            unlistable: list[int] = []\n300\t            full = False  # the first match that does not fit ends the shown part\n...\ttruncated; continue with start=301",
+    "tool_call_id": "call_00_9AEtUz110zJvZCibktto2193",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:18.471898Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:18.472631Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let's understand the test. It uses `run(build_agent(tools, model=model), \"goal\")` where model=scripted([...three edit calls in one response...]).\n\nThe test asserts:\n- returns_of(messages)[:3] == [\"edited g.py (2 -> 2 lines)\"] * 3\n- file content is \"a = 3\\nb = 2\\n\"\n- spans: non-overlapping\n\nCurrently, without sequential=True, the three edits overlap because of the `time.sleep(0.05)` in SlowTools.edit. But wait — does pydantic-ai actually run tool calls concurrently when using `run_sync`? The seed says pydantic-ai 2.43.0 runs a response's tool calls overlapping unless a tool is registered `sequential=True`. So the fix is to add `sequential=True` to all six tools in build_agent.\n\nBut also there might be an edit race in the edit method: it reads the file, replaces and writes with no lock. Even with sequential=True, the calls run in order, so that's fine.\n\nLet me first run check to see current state. Actually, the task says run check once to see what fails. But there might be many tests failing (the checkout is probably at a state where everything else is done, and only this seed's test fails). Let me run check.\n\nActually, wait. Let me think about how `Tool` works. `Tool(tools.list, takes_ctx=False, sequential=True)`. Is `sequential` a valid parameter of `Tool`? Let me check the pydantic-ai version installed. Let me search the uv.lock or check the library.\n\nLet me first run check to see the baseline.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_3WVL86XrAFXDvX5geEoJ9047",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 21424,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 17024,
+   "output_tokens": 385,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 17024,
+    "prompt_cache_miss_tokens": 4400,
+    "reasoning_tokens": 364
+   },
+   "cost": null,
+   "output_reasoning_tokens": 364
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:20.861610Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:18Z"
+  },
+  "provider_response_id": "53f0e29a-19be-42d5-9e01-c3909736576f",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 1\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n======================================================================\nFAIL: test_tool_calls_in_one_response_run_one_at_a_time_in_order (test_builder.LoopTest.test_tool_calls_in_one_response_run_one_at_a_time_in_order)\nseed: tool-calls-one-at-a-time. Two edits of one file in one response and a third on\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_builder.py\", line 633, in test_tool_calls_in_one_response_run_one_at_a_time_in_order\n    self.assertEqual((self.root / \"g.py\").read_text(), \"a = 3\\nb = 2\\n\")\nAssertionError: 'a = 2\\nb = 2\\n' != 'a = 3\\nb = 2\\n'\n- a = 2\n?     ^\n+ a = 3\n?     ^\n  b = 2\n\n\n----------------------------------------------------------------------\nRan 152 tests in 16.733s\n\nFAILED (failures=1)",
+    "tool_call_id": "call_00_3WVL86XrAFXDvX5geEoJ9047",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:41.289621Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:41.290635Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Only that one test fails. Now let me add `sequential=True` to the six tools. Let me check the Tool signature in the installed library.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"sequential\", \"path\": \"/usr/local/lib/python3.12/site-packages/pydantic_ai/tools.py\"}",
+    "tool_call_id": "call_00_QdHCW21GAHBEAnwttXCq4289",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 22078,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 21760,
+   "output_tokens": 102,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 21760,
+    "prompt_cache_miss_tokens": 318,
+    "reasoning_tokens": 30
+   },
+   "cost": null,
+   "output_reasoning_tokens": 30
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:42.421724Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:41Z"
+  },
+  "provider_response_id": "51551e5d-a63d-4b7b-bbd3-d0458b70ace3",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "error: outside the checkout: /usr/local/lib/python3.12/site-packages/pydantic_ai/tools.py",
+    "tool_call_id": "call_00_QdHCW21GAHBEAnwttXCq4289",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:42.425651Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:42.426476Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "The search tool is confined to checkout. Let me use the read? No, read is checkout only too. Hmm. But maybe I can find the library in the checkout's uv environment? The check runs in a container. Let me just search in uv.lock for the version, and check via running python in... Actually the check tool runs tests in a container. I can't run arbitrary commands.\n\nBut I know from the seed that `sequential=True` is the mechanism. Let me verify by searching the docs/versions maybe they mention it. Let's search docs.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"sequential\"}",
+    "tool_call_id": "call_00_Rkcn33UsG9NiSwMbn7ZM5592",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 22218,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 22016,
+   "output_tokens": 153,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 22016,
+    "prompt_cache_miss_tokens": 202,
+    "reasoning_tokens": 116
+   },
+   "cost": null,
+   "output_reasoning_tokens": 116
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:43.941801Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:42Z"
+  },
+  "provider_response_id": "afdbb3f1-b7c9-4b3b-8d64-974ddfd9c410",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "docs/seeds/tool-calls-one-at-a-time.md:13:2026-09-17, build 20260917T103739Z on the standard-error seed. Response 13 carried three `edit` calls; the first, on the module docstring of `evals.py`, returned `edited evals.py (429 -> 429 lines)`, and `check-1.log` failed the docstring test. The model read the file, found the old text still there, repeated the identical call in response 21, and it landed. The builder said it in its unsure list, an edit call reported success but did not change the file, and could not explain it. pydantic-ai 2.43.0 runs a response's tool calls overlapping unless a tool is registered `sequential=True`, a barrier that runs alone; `build_agent` registers the six without it. `edit` reads the file, replaces and writes with no lock, so two edits of one file in one response can both read the same text and the later write drops the earlier change; a `check` overlapping an `edit` tests a half-edited checkout, and a `read` overlapping a `write` reads a half-written file. The set's records show the model issuing several calls per response since v0.6; how many edits were lost before this one is not knowable from the records, since the return said edited.\ndocs/seeds/tool-calls-one-at-a-time.md:17:Every tool runs alone, one call at a time in the order the model gave them: `sequential=True` on the six in `build_agent`. A test with a slow edit, two of one file in one response, asserts the second starts after the first ends and both changes are in the file; a third in the same response, on the text the first wrote, finds it.\ndocs/seeds/tool-calls-one-at-a-time.md:21:Every tool of the builder runs alone: the six are registered in `build_agent` as sequential, so the calls of one response run one at a time in the order the model gave them, a call started only after the one before it returned, and a call sees what the calls before it wrote. Nothing else changes: the returns, the counters and the record are as they were. The test in `test_builder.py` whose docstring names this seed defines the behaviour.",
+    "tool_call_id": "call_00_Rkcn33UsG9NiSwMbn7ZM5592",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:43.958381Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:43.959742Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me look at the seed doc fully and also check whether the docstring of build_agent mentions \"the six tools\" (test at line 1255 asserts it). I must not change that.\n\nLet me read the seed doc.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"docs/seeds/tool-calls-one-at-a-time.md\"}",
+    "tool_call_id": "call_00_Vmw7ncVO2rNEPiT2KNgR3466",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 22884,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 22272,
+   "output_tokens": 96,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 22272,
+    "prompt_cache_miss_tokens": 612,
+    "reasoning_tokens": 48
+   },
+   "cost": null,
+   "output_reasoning_tokens": 48
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:45.204063Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:44Z"
+  },
+  "provider_response_id": "087e8006-e22f-483f-ae41-7863c394e839",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t---\n2\tcreated: 2026-09-17\n3\ttype: seed\n4\tstatus: building\n5\tsummary: The tool calls the model issues in one response overlap in the library; two edits of one file raced, one was lost and both reported success, so a record can say a change happened that never did.\n6\tvalue: 5\n7\teffort: S\n8\tversion: v0.12\n9\t---\n10\t\n11\t## Evidence\n12\t\n13\t2026-09-17, build 20260917T103739Z on the standard-error seed. Response 13 carried three `edit` calls; the first, on the module docstring of `evals.py`, returned `edited evals.py (429 -> 429 lines)`, and `check-1.log` failed the docstring test. The model read the file, found the old text still there, repeated the identical call in response 21, and it landed. The builder said it in its unsure list, an edit call reported success but did not change the file, and could not explain it. pydantic-ai 2.43.0 runs a response's tool calls overlapping unless a tool is registered `sequential=True`, a barrier that runs alone; `build_agent` registers the six without it. `edit` reads the file, replaces and writes with no lock, so two edits of one file in one response can both read the same text and the later write drops the earlier change; a `check` overlapping an `edit` tests a half-edited checkout, and a `read` overlapping a `write` reads a half-written file. The set's records show the model issuing several calls per response since v0.6; how many edits were lost before this one is not knowable from the records, since the return said edited.\n14\t\n15\t## Idea\n16\t\n17\tEvery tool runs alone, one call at a time in the order the model gave them: `sequential=True` on the six in `build_agent`. A test with a slow edit, two of one file in one response, asserts the second starts after the first ends and both changes are in the file; a third in the same response, on the text the first wrote, finds it.\n18\t\n19\t## Goal\n20\t\n21\tEvery tool of the builder runs alone: the six are registered in `build_agent` as sequential, so the calls of one response run one at a time in the order the model gave them, a call started only after the one before it returned, and a call sees what the calls before it wrote. Nothing else changes: the returns, the counters and the record are as they were. The test in `test_builder.py` whose docstring names this seed defines the behaviour.",
+    "tool_call_id": "call_00_Vmw7ncVO2rNEPiT2KNgR3466",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:45.208198Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:45.210077Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now, the fix: add `sequential=True` to each of the six `Tool(...)` in `build_agent`.\n\nBut wait — I should verify that `Tool` supports `sequential` in this pydantic-ai version. The seed statement says so. Let me check whether the version installed supports it. Search uv.lock for pydantic-ai version.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"pydantic-ai-slim\", \"path\": \"uv.lock\"}",
+    "tool_call_id": "call_00_HvZuc2ZX5bEbxWoBnSqP7925",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 23578,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 22912,
+   "output_tokens": 137,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 22912,
+    "prompt_cache_miss_tokens": 666,
+    "reasoning_tokens": 76
+   },
+   "cost": null,
+   "output_reasoning_tokens": 76
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:46.611884Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:45Z"
+  },
+  "provider_response_id": "f4c94d40-fb85-4980-b6fa-c9249d2d870d",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "error: not a directory: uv.lock",
+    "tool_call_id": "call_00_HvZuc2ZX5bEbxWoBnSqP7925",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:46.616258Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:46.616950Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "The search tool needs a directory. Let me search \".\" for the version. Actually let me read around. Let me search for \"name = \\\"pydantic-ai-slim\\\"\".",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"name = \\\"pydantic-ai-slim\\\"\"}",
+    "tool_call_id": "call_00_XCGpGLyQAuOsFfTM0UTO6183",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 23736,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 23552,
+   "output_tokens": 85,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 23552,
+    "prompt_cache_miss_tokens": 184,
+    "reasoning_tokens": 38
+   },
+   "cost": null,
+   "output_reasoning_tokens": 38
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:47.742123Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:46Z"
+  },
+  "provider_response_id": "0ef9420b-4c4e-4a02-8d04-0472d9e30c32",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "uv.lock:172:    { name = \"pydantic-ai-slim\", extra = [\"openai\"] },\nuv.lock:176:requires-dist = [{ name = \"pydantic-ai-slim\", extras = [\"openai\"], specifier = \"==2.43.0\" }]\nuv.lock:406:name = \"pydantic-ai-slim\"",
+    "tool_call_id": "call_00_XCGpGLyQAuOsFfTM0UTO6183",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:47.757732Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:47.759332Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Version 2.43.0, as the seed states. `Tool(..., sequential=True)` is supported in pydantic-ai 2.43.0.\n\nNow let me make the edit. I'll add `sequential=True` to each Tool. Let me do it.\n\nActually, should the docstring change? The test at line 1255 asserts `\"the six tools\" in builder.build_agent.__doc__`. We keep that. The goal says \"registered in build_agent as sequential\". Let me just add the parameter.\n\nI could edit the tools list block. Let me edit each line. Since `Tool(tools.list, takes_ctx=False)` appears once, etc.\n\nLet me write the new block.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"builder.py\", \"old\": \"        tools=[\\n            Tool(tools.list, takes_ctx=False),\\n            Tool(tools.read, takes_ctx=False),\\n            Tool(tools.search, takes_ctx=False),\\n            Tool(tools.write, takes_ctx=False),\\n            Tool(tools.edit, takes_ctx=False),\\n            Tool(tools.check, takes_ctx=False),\\n        ],\", \"new\": \"        tools=[\\n            # sequential: the calls of one response run one at a time in the order the model gave\\n            # them, a barrier between them, so a later call sees what the earlier ones wrote.\\n            Tool(tools.list, takes_ctx=False, sequential=True),\\n            Tool(tools.read, takes_ctx=False, sequential=True),\\n            Tool(tools.search, takes_ctx=False, sequential=True),\\n            Tool(tools.write, takes_ctx=False, sequential=True),\\n            Tool(tools.edit, takes_ctx=False, sequential=True),\\n            Tool(tools.check, takes_ctx=False, sequential=True),\\n        ],\"}",
+    "tool_call_id": "call_00_9UuQQXJeA2QAvrzRVI1I5275",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 23916,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 23680,
+   "output_tokens": 419,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 23680,
+    "prompt_cache_miss_tokens": 236,
+    "reasoning_tokens": 150
+   },
+   "cost": null,
+   "output_reasoning_tokens": 150
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:50.099897Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:48Z"
+  },
+  "provider_response_id": "a98c10a0-458b-4a16-80f6-08f432d492d2",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "edit",
+    "content": "edited builder.py (1054 -> 1056 lines)",
+    "tool_call_id": "call_00_9UuQQXJeA2QAvrzRVI1I5275",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:44:50.106153Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:44:50.107331Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_ET_dUefsFfR0eaT8dO7D2oi0337",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 24358,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 24192,
+   "output_tokens": 21,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 24192,
+    "prompt_cache_miss_tokens": 166,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:44:51.368390Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:44:50Z"
+  },
+  "provider_response_id": "acee7251-b2cd-473f-bd6b-18988f1cda7a",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 0\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n----------------------------------------------------------------------\nRan 152 tests in 17.467s\n\nOK",
+    "tool_call_id": "call_00_ET_dUefsFfR0eaT8dO7D2oi0337",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:45:12.365757Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:45:12.367045Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Green. Let me double-check the module docstring didn't need updating and that all is consistent. The test only checks \"the six tools\" in build_agent.__doc__, which is unchanged.\n\nLet me report.\n\nChanged: builder.py.\n\ndid: added sequential=True to the six Tool registrations in build_agent so pydantic-ai runs a response's tool calls one at a time in order.\n\ncheck: green.\n\nfailing: none.\n\nunsure: nothing.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "final_result",
+    "args": "{\"changed\": [\"builder.py\"], \"did\": [\"builder.py: registered all six Tool(...) entries in build_agent with sequential=True, so pydantic-ai runs one response's tool calls one at a time in the model's order and each call sees what the prior ones wrote.\"], \"check\": \"green\", \"failing\": [], \"unsure\": []}",
+    "tool_call_id": "call_00_0pvBGOZ1jsrYgLiDbbQ92890",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 24456,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 24320,
+   "output_tokens": 254,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 24320,
+    "prompt_cache_miss_tokens": 136,
+    "reasoning_tokens": 97
+   },
+   "cost": null,
+   "output_reasoning_tokens": 97
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:45:14.022642Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:45:12Z"
+  },
+  "provider_response_id": "051a4311-36c5-4eaf-a652-49391f185b7d",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "final_result",
+    "content": "Final result processed.",
+    "tool_call_id": "call_00_0pvBGOZ1jsrYgLiDbbQ92890",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:45:14.025414Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:45:14.025529Z",
+  "instructions": null,
+  "kind": "request",
+  "run_id": "01a0aef7-8408-771b-9bc9-20d94bcb854f",
+  "conversation_id": "01a0aef7-8408-771b-9bc9-20daaad17b90",
+  "metadata": null,
+  "state": "complete"
+ }
+]
