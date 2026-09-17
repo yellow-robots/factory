@@ -11,6 +11,7 @@ that answers the checks in order.
 
 import contextlib
 import io
+import itertools
 import json
 import shutil
 import statistics
@@ -333,6 +334,34 @@ class SpreadTest(EvalsTest):
         cells = dict(zip(COLUMNS, rows[1]))
         for column in ("requests", "cost_usd", "seconds"):
             self.assertEqual((cells[column], cells[f"{column}_spread"]), ("", ""), column)
+
+    def test_a_number_that_is_not_finite_is_a_measure_the_run_lacks(self):
+        """From the review: JSON accepts NaN and Infinity, and a record holding one aborted the
+        table after every run was paid for; it is a measure the run lacks, for the median, the
+        spread and the summed cost alike."""
+        requests, ordinal = iter(("NaN", "Infinity", "3")), itertools.count(1)
+
+        def fake_build(argv, model=None, sandbox=None):
+            record = self.runs / f"20260917T000000Z-{next(ordinal)}"
+            record.mkdir(parents=True)
+            (record / "numbers.json").write_text('{"requests": %s, "cost_usd": 0.5, "seconds": 2, "check": "green"}' % next(requests))
+            print(record)
+            return 0
+
+        with mock.patch.object(builder, "main", fake_build):
+            code, rows, err = run(self.root, "--runs", "3", "alpha")
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["green"]), ("3", "3"))
+        self.assertEqual((cells["requests"], cells["requests_spread"]), ("3", "3-3"))
+        self.assertEqual((cells["cost_usd"], cells["cost_usd_spread"], cells["cost_total"]), ("0.5", "0.5-0.5", "1.5"))
+        self.assertEqual((cells["seconds"], cells["seconds_spread"]), ("2", "2-2"))
+        self.assert_root_untouched()
+
+    def test_the_module_docstring_names_the_spread(self):
+        """From the review: the docstring said medians alone while README and AGENTS.md said the spread."""
+        self.assertIn("`min-max`", evals.__doc__)
+        self.assertIn("spread", evals.__doc__)
 
 
 class UsageTest(EvalsTest):
