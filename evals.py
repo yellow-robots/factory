@@ -52,9 +52,9 @@ COLUMNS = (
     "edits", "checks", "tool_errors", "input_per_request", "cost_usd", "cost_usd_spread", "seconds",
     "seconds_spread", "cost_total", "diff_lines", "files_changed", "deletions", "stray_files",
 )  # fmt: skip
-# A run's medians are taken over its own numbers: every column a record may lack, and the
-# derived input-per-request, tool-errors and diff-lines, which are computed here the way runs.py
-# computes them.
+# A run's medians are taken over its own numbers: every column a record may lack, the derived
+# input-per-request and diff-lines, computed here the way runs.py computes them, and tool-errors,
+# read from runs.py, where the one count is computed for both tables, not computed here.
 MEDIAN_COLUMNS = (
     "requests", "tool_calls", "edits", "checks", "tool_errors", "input_per_request", "cost_usd",
     "seconds",

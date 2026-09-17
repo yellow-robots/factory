@@ -30,6 +30,8 @@ COLUMNS = (
 )  # fmt: skip
 # The refusals a wall gives, shared with the evaluation table so neither counts the other's returns.
 REFUSED = ("error: protected", "error: not part of", "error: outside")
+# The other returns a wall gives that are no refusal: a cap reached and a check without a sandbox.
+WALLS = ("error: cap reached", "error: no sandbox")
 
 
 def usage_error(reason: str = "") -> int:
@@ -99,7 +101,8 @@ def tool_errors(record: Path | None) -> int | None:
             if not isinstance(part, dict) or part.get("part_kind") != "tool-return":
                 continue
             content = part.get("content")
-            if isinstance(content, str) and content.startswith("error:") and not content.startswith(REFUSED):
+            if (isinstance(content, str) and content.startswith("error:")
+                    and not content.startswith(REFUSED) and not content.startswith(WALLS)):  # fmt: skip
                 total += 1
     return total
 
