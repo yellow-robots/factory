@@ -3,10 +3,11 @@
 
     uv run runs.py
 
-`runs` is the records directory (by default `runs/` beside this file). Every subdirectory is one
-record and becomes one row in stamp order; each value comes from the record's `numbers.json` as
-it is there, `goal` is the first line of `goal.txt` with tabs as spaces, a key the record lacks is
-an empty cell, and `head` reads `head` and, before v0.5, `world_head`. Two cells are derived when
+`runs` is the records directory (by default the store the instance's configuration names). Every
+subdirectory is one record and becomes one row in stamp order; each value comes from the record's
+`numbers.json` as it is there, `goal` is the first line of `goal.txt` with tabs as spaces, a key
+the record lacks is an empty cell, and `head` reads `head` and, before v0.5, `world_head`. Two
+cells are derived when
 the table is printed and stored nowhere: `input_per_request`, `input_tokens` over `requests`, and
 `tool_errors`, right after `checks`, a record's tool returns in `messages.json` that start `error:`
 and are not a wall's refusal, empty for a record without messages to read. A record without
@@ -21,7 +22,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-RUNS = Path(__file__).resolve().parent / "runs"  # the factory's record, beside this file
+import builder
 
 COLUMNS = (
     "stamp", "head", "stopped", "check", "requests", "tool_calls", "lists", "reads", "writes", "edits",
@@ -123,7 +124,7 @@ def _cell(record: Path, numbers: dict[str, Any], column: str) -> str:
 def main(argv: list[str], runs: Any = None) -> int:
     if len(argv) != 1:
         return usage_error("no arguments")
-    base = Path(runs) if runs is not None else RUNS
+    base = Path(runs) if runs is not None else builder.record_store()
     records = sorted(p for p in base.iterdir() if p.is_dir()) if base.is_dir() else []
     lines = ["\t".join(COLUMNS)]
     for record in records:

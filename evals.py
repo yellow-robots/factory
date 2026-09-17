@@ -8,9 +8,9 @@ A case is a directory `cases/<name>/` under the repository holding `goal.md`, ex
 run in a throwaway git worktree of the repository at HEAD: the case's `files/` and test are
 committed there as `case: <name>` by `factory <factory@localhost>`, the builder runs on that
 worktree, and the worktree is removed and pruned whether the run succeeded or not. The records
-land in the repository's `runs/`, where the builder leaves them, so every run is one more record
-and the goal's first line names the case. Nothing here changes the repository the worktrees are
-cut from.
+land in the store the instance's configuration names, where the builder leaves them, so every run
+is one more record and the goal's first line names the case. Nothing here changes the repository
+the worktrees are cut from.
 
 When every run is done one tab-separated table is printed: a header, then one row per case in the
 order given, with the counts of green, held-out, honest, refused and passed runs and the medians of
@@ -375,7 +375,7 @@ def _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path
     """One run: a worktree, the case committed in it, the builder, and the worktree gone.
 
     The record is the directory the builder printed as its first line -- never read out of the
-    runs directory, where a run that died before printing its own record would be guessed at. A
+    store, where a run that died before printing its own record would be guessed at. A
     held-out check that raises, or a worktree that already has a held-out file, is a failed run
     whose record is kept: the third value tells its reason, empty when the run took its course.
     """

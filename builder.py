@@ -8,11 +8,11 @@ list, read, search, write, edit and check. Writes are confined to the checkout a
 tests and the toolchain; check runs the checkout's tests in a container with no network and the
 checkout mounted read-only, so code the model writes never runs on the host and cannot reach the
 key. The loop is pydantic-ai, pinned; the provider is DeepSeek's chat completions API, the key
-read from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves
-runs/<utc-stamp>/ under the factory itself, never in the checkout, with goal.txt, wire.jsonl
-(every HTTP attempt as it happened), messages.json (the library's messages), check-<n>.log per
-check, diff.patch (what the run left in the checkout; absent when it left nothing), report.json,
-response.md (the report rendered) and numbers.json.
+read from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves a record
+under the store the instance's configuration names, outside the checkout, with goal.txt,
+wire.jsonl (every HTTP attempt as it happened), messages.json (the library's messages),
+check-<n>.log per check, diff.patch (what the run left in the checkout; absent when it left nothing),
+report.json, response.md (the report rendered) and numbers.json.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import time
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -50,7 +51,6 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings  
 from pydantic_ai.profiles.openai import OpenAIModelProfile  # noqa: E402
 from pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402
 
-RUNS = Path(__file__).resolve().parent / "runs"  # the factory's record, never inside the checkout
 KEY_FILE = Path.home() / ".config" / "factory" / "deepseek.key"
 MODEL = "deepseek-flash"
 LIBRARY = "pydantic-ai-slim " + importlib.metadata.version("pydantic-ai-slim")
@@ -913,6 +913,48 @@ def read_seed(checkout: Path, arg: str) -> tuple[str, str | None]:
     return f"seed: {name}\n{text}", name
 
 
+def instance_config() -> Path:
+    """The instance's configuration file: the one the environment's `FACTORY_INSTANCE` names, or
+    `.config/factory/instance.toml` under the home of whoever runs the program. Found when the
+    program runs, never when it is imported."""
+    named = os.environ.get("FACTORY_INSTANCE")
+    if named:
+        return Path(named)
+    return Path.home() / ".config" / "factory" / "instance.toml"
+
+
+def record_store(checkout: Path | None = None) -> Path:
+    """The store the instance's configuration names, its `records`, as an absolute path. A
+    configuration that is missing, is not TOML, has no `records`, or names one that is not a
+    string or not an absolute path is a usage error naming the configuration's file and which
+    fault; with a checkout, a store that is inside it or holds it is too. Nothing is made."""
+    config = instance_config()
+    try:
+        text = config.read_text(encoding="utf-8")
+    except OSError:
+        raise ValueError(f"{config}: the instance configuration cannot be read")
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        raise ValueError(f"{config}: the instance configuration is not TOML")
+    records = data.get("records")
+    if records is None:
+        raise ValueError(f"{config}: the instance configuration has no records")
+    if not isinstance(records, str):
+        raise ValueError(f"{config}: records is not a string: {records!r}")
+    store = Path(records)
+    if not store.is_absolute():
+        raise ValueError(f"{config}: records is not an absolute path: {records}")
+    store = store.resolve()
+    if checkout is not None:
+        checkout = checkout.resolve()
+        if store == checkout or checkout in store.parents:
+            raise ValueError(f"{config}: records {records} is inside the checkout")
+        if store in checkout.parents:
+            raise ValueError(f"{config}: records {records} holds the checkout")
+    return store
+
+
 def main(argv: list[str], model: Any = None, sandbox: Any = None,
          hidden: tuple[str, ...] = ()) -> int:  # fmt: skip
     if len(argv) != 3 or not argv[1].strip() or not argv[2].strip():
@@ -969,17 +1011,23 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         return usage_error(str(e))
     if not checkout_head:  # a git checkout with no commit has nothing to pin the run to
         return usage_error(f"the checkout has no commit: {argv[1]}")
+    # The store is the instance's, from its configuration; a configuration the run cannot use is a
+    # usage error before the key is read, a model called or anything made.
+    try:
+        store = record_store(checkout)
+    except (ValueError, OSError) as e:
+        return usage_error(str(e))
     # The key file holds the bare key, or one `name=value` line as in an env file.
     key = KEY_FILE.read_text().strip().rsplit("=", 1)[-1].strip().strip("'\"")
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run_dir, nth = RUNS / stamp, 1
+    run_dir, nth = store / stamp, 1
     while True:  # two runs in the same second each keep their own record
         try:
             run_dir.mkdir(parents=True)
             break
         except FileExistsError:
             nth += 1
-            run_dir = RUNS / f"{stamp}-{nth}"
+            run_dir = store / f"{stamp}-{nth}"
     (run_dir / "goal.txt").write_text(goal + "\n")
 
     wire = Wire(run_dir / "wire.jsonl")
