@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -586,6 +587,22 @@ class RoleTest(unittest.TestCase):
         self.assertIn("Rules: change only what the goal needs;", builder.ROLE)
 
 
+class SlowTools(Tools):
+    """Tools whose edit takes a moment and notes when it started and ended."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.spans: list[tuple[float, float]] = []
+
+    def edit(self, path: str, old: str, new: str) -> str:
+        start = time.monotonic()
+        time.sleep(0.05)  # a window in which a second call could overlap this one
+        try:
+            return super().edit(path, old, new)
+        finally:
+            self.spans.append((start, time.monotonic()))
+
+
 class LoopTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -599,6 +616,24 @@ class LoopTest(unittest.TestCase):
     def tools(self, results):
         self.sandbox = FakeSandbox(results)
         return Tools(self.root, self.run_dir, sandbox=self.sandbox)
+
+    def test_tool_calls_in_one_response_run_one_at_a_time_in_order(self):
+        """seed: tool-calls-one-at-a-time. Two edits of one file in one response and a third on
+        the text the first wrote: each starts after the one before it ended, all three land."""
+        (self.root / "g.py").write_text("a = 1\nb = 1\n")
+        tools = SlowTools(self.root, self.run_dir, sandbox=FakeSandbox([]))
+        model = scripted([
+            call("edit", {"path": "g.py", "old": "a = 1", "new": "a = 2"}, "e1"),
+            call("edit", {"path": "g.py", "old": "b = 1", "new": "b = 2"}, "e2"),
+            call("edit", {"path": "g.py", "old": "a = 2", "new": "a = 3"}, "e3"),
+        ])
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal")
+        self.assertEqual(stopped, "answer", detail)
+        self.assertEqual(returns_of(messages)[:3], ["edited g.py (2 -> 2 lines)"] * 3)
+        self.assertEqual((self.root / "g.py").read_text(), "a = 3\nb = 2\n")
+        self.assertEqual(len(tools.spans), 3)
+        for (_, end), (start, _) in zip(tools.spans, tools.spans[1:]):
+            self.assertGreaterEqual(start, end, tools.spans)
 
     def test_edit_check_edit_check_then_the_report_ends_the_run(self):
         tools = self.tools([(1, "FAIL: test_x\n"), (0, "OK\n")])
