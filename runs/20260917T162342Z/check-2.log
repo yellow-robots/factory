@@ -1,0 +1,18 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_the_builds_are_read_as_git_reads_trailers (test_gate.ReleaseTest.test_the_builds_are_read_as_git_reads_trailers)
+seed: built-by-trailer. From the review: a `Built-By` line begins with the key as git's
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 783, in test_the_builds_are_read_as_git_reads_trailers
+    self.assert_refused_with("docs/versions/v0.2.md:", formfeed, "names no run")
+  File "/w/test_gate.py", line 675, in assert_refused_with
+    self.assertTrue(any(line.startswith(start) and all(word in line for word in words) for line in lines), out)
+AssertionError: False is not true : docs/versions/v0.2.md: c018e81: `Built-By: factory at 1234567, run 20260917T000000Zjunk` names no run
+
+
+----------------------------------------------------------------------
+Ran 167 tests in 22.210s
+
+FAILED (failures=1)
