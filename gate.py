@@ -8,8 +8,9 @@
 `check` validates `docs/` and the repository against it, `render` writes `CHANGELOG.md` from
 the tags, and `release` refuses until everything derived agrees, then tags and renders. `check`
 and `release` read the builds since the highest tag, every commit whose message carries a
-`Built-By` line, and refuse when git's trailer parser does not read one or the run it names is
-not a committed record. Each command prints one line per problem on stdout, starting with
+`Built-By` line, and refuse when git's trailer parser does not read one or its value does not
+name a run; the record the stamp names is the factory's, kept in its store outside the project,
+so no stamp is looked up in the project. Each command prints one line per problem on stdout, starting with
 the path relative to the root, and exits 1 if there is any; with nothing to report it prints
 nothing and exits 0. Usage errors go to stderr and exit 2.
 """
@@ -386,19 +387,6 @@ def _base_problems(docs: Path) -> list[str]:
     return problems
 
 
-def _wire_problems(root: Path) -> list[str]:
-    """Every record whose wire git tracks uncompressed: the record, in `wire.jsonl`."""
-    runs = root / "runs"
-    if not runs.is_dir():
-        return []
-    problems: list[str] = []
-    for path in sorted(runs.glob("*/wire.jsonl")):
-        rel = path.relative_to(root).as_posix()
-        if _git(root, "ls-files", "--", rel).strip():
-            problems.append(f"{rel}: the wire is committed uncompressed (wire.jsonl.gz)")
-    return problems
-
-
 def problems_check(root: Path) -> list[str]:
     root = Path(root)
     docs = root / "docs"
@@ -452,7 +440,6 @@ def problems_check(root: Path) -> list[str]:
         for _, rel in untagged:
             problems.append(f"{rel}: at most one version note may not be a tag ({len(untagged)} are)")
     problems.extend(_base_problems(docs))
-    problems.extend(_wire_problems(root))
     in_flight = untagged[0][1] if len(untagged) == 1 else "docs/versions/"
     problems.extend(_build_problems(root, in_flight, _highest_tag(tags)))
     return problems
@@ -520,9 +507,10 @@ def _segment(name: str) -> bool:
     return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
 
 
-def _review_runs_problems(rel: str, path: Path, fm: dict[str, str], root: Path) -> list[str]:
-    """The run stamps the review names: each one path segment and a record `runs/<stamp>` of the
-    repository, at least one, and the note named after one of them, `<stamp>.md`."""
+def _review_runs_problems(rel: str, path: Path, fm: dict[str, str]) -> list[str]:
+    """The run stamps the review names: each one path segment, at least one, and the note named
+    after one of them, `<stamp>.md`. The records themselves are the factory's, kept in its store
+    outside the project, so no stamp needs a directory `runs/<stamp>` here."""
     stamps = fm.get("runs", "").split()
     if not stamps:
         return [f"{rel}: review has no runs"]
@@ -530,8 +518,6 @@ def _review_runs_problems(rel: str, path: Path, fm: dict[str, str], root: Path) 
     for stamp in stamps:
         if not _segment(stamp):
             problems.append(f"{rel}: run {stamp} is not one path segment")
-        elif not (root / "runs" / stamp).is_dir():
-            problems.append(f"{rel}: run {stamp} has no record runs/{stamp}")
     if path.stem not in stamps:
         problems.append(f"{rel}: review is not named after a run ({path.name})")
     return problems
@@ -681,7 +667,7 @@ def _review_problems(
         problems.append(f"{rel}: review has no created")
     elif not CREATED.match(created):
         problems.append(f"{rel}: created {created!r} is not YYYY-MM-DD")
-    problems.extend(_review_runs_problems(rel, path, fm, root))
+    problems.extend(_review_runs_problems(rel, path, fm))
     try:
         text = builder.note_text(body)
     except ValueError:
@@ -837,10 +823,10 @@ def _entry_value(entry: str) -> str:
 
 def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
     """Every problem of one build, each once: how many `Built-By` lines git's trailer parser does
-    not read as a trailer, a value that does not end `run <stamp>` with the stamp one path segment,
-    or a stamp whose record `runs/<stamp>` is not a tree in HEAD's tree. Every value, of a line and
-    of an entry, is checked whether git reads it or not; every problem names the commit's
-    abbreviated hash."""
+    not read as a trailer, or a value that does not end `run <stamp>` with the whole stamp in the
+    builder's shape. The record the stamp names is the factory's, kept in its store outside the
+    project, so no stamp is looked up here. Every value, of a line and of an entry, is checked
+    whether git reads it or not; every problem names the commit's abbreviated hash."""
     short = _short_hash(root, commit)
     code, message_bytes = _git_bytes(root, *GIT_READ, "log", "-1", "--format=%B", commit, "--")
     if code != 0:
@@ -871,20 +857,12 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
             f"{rel_note}: {short}: git does not read {unread} of {len(lines)} "
             f"`Built-By` lines as a trailer"
         )
-    reported: set[str] = set()
     for value in values:
         text = _line_text(value)
         words = _ascii_words(value)
         stamp = words[-1] if len(words) >= 2 and words[-2] == "run" else ""
         if not _segment(stamp) or not STAMP_SHAPE.fullmatch(stamp):
             add(f"{rel_note}: {short}: `Built-By: {text}` names no run")
-            continue
-        if stamp in reported:
-            continue
-        code, kind = _git_bytes(root, "cat-file", "-t", f"HEAD:runs/{stamp}")
-        if code != 0 or _utf8(kind).strip() != "tree":
-            reported.add(stamp)
-            add(f"runs/{stamp}: {short}: `Built-By: {text}` names a run with no committed record")
     return problems
 
 
