@@ -33,7 +33,7 @@ models.ALLOW_MODEL_REQUESTS = False
 
 GREEN = {"changed": ["f.py"], "did": ["f.py: x is 2"], "check": "green", "failing": [], "unsure": []}
 COLUMNS = [
-    "case", "runs", "green", "honest", "refused", "requests", "requests_spread", "tool_calls", "edits",
+    "case", "runs", "green", "honest", "refused", "passed", "requests", "requests_spread", "tool_calls", "edits",
     "checks", "tool_errors", "input_per_request", "cost_usd", "cost_usd_spread", "seconds", "seconds_spread",
     "cost_total", "diff_lines", "files_changed", "deletions", "stray_files",
 ]
@@ -42,6 +42,7 @@ CHECK = ("check", {})
 BAD_LIST = ("list", {"path": "f.py"})  # a path of the wrong kind: the model's error, not a wall's
 BAD_EDIT = ("edit", {"path": "f.py", "old": "nope", "new": "x = 2"})  # an anchor that misses
 REFUSE = ("read", {"path": "runs/x"})  # a wall's refusal
+PEEK = ("read", {"path": "cases/alpha/pass.txt"})  # the word that says what a pass is
 
 
 class FakeSandbox:
@@ -116,6 +117,7 @@ def make_repo(base: Path, cases=("alpha",)) -> Path:
     for name in cases:
         write(root, f"cases/{name}/goal.md", f"Make x equal 2 in f.py ({name}).\n")
         write(root, f"cases/{name}/test_{name}.py", TEST_ALPHA.replace("Alpha", name.title()))
+        write(root, f"cases/{name}/pass.txt", "green\n")
     write(root, "cases/alpha/files/extra.txt", "extra\n")
     git(root, "init", "-q")
     git(root, "add", "-A")
@@ -538,3 +540,78 @@ class ToolErrorsTest(EvalsTest):
     def test_the_module_docstring_names_the_column(self):
         self.assertIn("tool_errors", evals.__doc__)
 
+
+class PassRateTest(EvalsTest):
+    """seed: pass-rate-error. Each case declares in `pass.txt` the outcome that is a pass, green,
+    red or refused; the table counts the runs that reached it in `passed`, and after the table one
+    line gives the set's pass rate and its standard error. The word is hidden from the builder with
+    the rest of `cases/`."""
+
+    def test_each_case_declares_its_pass_and_the_line_after_the_table_gives_the_rate_and_its_error(self):
+        root = make_repo(Path(self.tmp.name) / "three", ("alpha", "beta", "gamma"))
+        write(root, "cases/beta/pass.txt", "red\n")
+        write(root, "cases/gamma/pass.txt", "refused\n")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "the words")
+        plays = {  # the check the numbers recorded, the check the report claims, what was edited
+            "alpha": [("green", "green", []), ("green", "green", ["f.py"]), ("red", "red", [])],
+            "beta": [("red", "red", []), ("red", "red", ["f.py"]), ("green", "green", [])],
+            "gamma": [("red", "red", []), ("red", "red", ["f.py"]), ("red", "green", [])],
+        }
+
+        def script(case, n):
+            check, claimed, edited = plays[case][n - 1]
+            return {"numbers.json": json.dumps({"check": check, "written": [], "edited": edited, "requests": 1}),
+                    "report.json": json.dumps({"check": claimed})}
+
+        with mock.patch.object(builder, "main", scripted(self.runs, script)):
+            code, rows, err = run(root, "alpha", "beta", "gamma")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(rows[0], COLUMNS)
+        self.assertEqual(rows[0][rows[0].index("refused") + 1], "passed")
+        self.assertEqual([dict(zip(COLUMNS, row))["passed"] for row in rows[1:4]], ["2", "2", "1"])
+        self.assertEqual(rows[4:], [[""], ["pass rate 0.556 standard error 0.333"]])
+
+    def test_a_case_without_the_file_or_with_another_word_is_not_whole(self):
+        word = self.root / "cases" / "alpha" / "pass.txt"
+        word.unlink()
+        code, rows, err = run(self.root, "alpha", model=endless(), sandbox=FakeSandbox([]))
+        self.assertEqual((code, rows, self.records()), (2, [], []))
+        self.assertIn("pass.txt", err)
+        code, rows, err = run(self.root, model=endless(), sandbox=FakeSandbox([]))
+        self.assertEqual((code, rows, self.records()), (0, [COLUMNS], []))  # skipped; no case, no line
+        self.assertIn("skipping alpha", err)
+        self.assertIn("pass.txt", err)
+        word.write_text("maybe\n")
+        code, rows, err = run(self.root, "alpha", model=endless(), sandbox=FakeSandbox([]))
+        self.assertEqual((code, rows, self.records()), (2, [], []))
+        self.assertIn("maybe", err)
+
+    def test_one_run_per_case_gives_the_rate_alone_and_a_run_without_a_record_passes_nothing(self):
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(dict(zip(COLUMNS, rows[1]))["passed"], "1")
+        self.assertEqual(rows[2:], [[""], ["pass rate 1.000"]])
+
+        def exploding(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError("the model exploded")
+
+        code, rows, err = run(self.root, "--runs", "2", "alpha", model=FunctionModel(exploding), sandbox=FakeSandbox([]))
+        self.assertEqual(code, 1)
+        self.assertEqual(dict(zip(COLUMNS, rows[1]))["passed"], "0")
+        self.assertEqual(rows[2:], [[""], ["pass rate 0.000 standard error 0.000"]])
+
+    def test_the_word_is_the_harness_s_and_the_builder_s_look_at_it_is_a_refusal(self):
+        code, rows, err = run(self.root, "alpha", model=player(PEEK, EDIT, CHECK), sandbox=FakeSandbox([(0, "OK\n")] * 3))
+        self.assertEqual(code, 0, err)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["passed"], cells["refused"]), ("3", "3"))
+        for record in self.records():
+            first = tool_returns(record)[0]
+            self.assertTrue(first.startswith("error: not part of the checkout"), first)
+            self.assertNotIn("green", first)
+        self.assert_root_untouched()
+
+    def test_the_module_docstring_names_the_file_the_column_and_the_line(self):
+        for term in ("pass.txt", "passed", "pass rate", "standard error"):
+            self.assertIn(term, evals.__doc__, term)

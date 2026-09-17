@@ -134,7 +134,22 @@ class ToolsTest(unittest.TestCase):
 
     def test_the_hidden_names_are_the_record_the_harness_the_caches_and_git(self):
         """seed: terms-checkout-and-tools. plans is gone from the checkout and from the list."""
-        self.assertEqual(builder.HIDDEN, ("runs", ".claude", "__pycache__", ".venv", ".git"))
+        self.assertEqual(builder.HIDDEN, ("runs", ".claude", "__pycache__", ".venv", ".git", "cases"))  # cases since v0.11
+
+    def test_cases_are_hidden_like_the_record(self):
+        """seed: pass-rate-error. The evaluation set's cases, their goals and the word that says
+        what a pass is, are the harness's: no tool lists, reads, searches, writes or edits them."""
+        (self.root / "cases" / "alpha").mkdir(parents=True)
+        (self.root / "cases" / "alpha" / "pass.txt").write_text("green\n")
+        self.assertIn("cases", builder.HIDDEN)
+        self.assertNotIn("cases", names_in(self.tools.list(".")))
+        self.assertTrue(self.tools.list("cases").startswith("error: not part of the checkout"))
+        self.assertTrue(self.tools.read("cases/alpha/pass.txt").startswith("error: not part of the checkout"))
+        self.assertTrue(self.tools.search("green").startswith("no matches"))
+        self.assertTrue(self.tools.write("cases/alpha/pass.txt", "red\n").startswith("error:"))
+        self.assertTrue(self.tools.edit("cases/alpha/pass.txt", "green", "red").startswith("error:"))
+        self.assertEqual((self.root / "cases" / "alpha" / "pass.txt").read_text(), "green\n")
+        self.assertEqual(self.tools.read_paths, [])
 
     def test_paths_cannot_leave_the_checkout(self):
         for bad in ("..", "../..", "/etc", "escape", "outside_dir/hostname", *(f"{h}/secret" for h in builder.HIDDEN)):
