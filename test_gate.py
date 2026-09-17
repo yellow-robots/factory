@@ -339,20 +339,14 @@ class CheckTest(GateTest):
         self.edit("docs/backlog.base", BASE)
         self.assertEqual(self.check(), (0, "", ""))
 
-    def test_a_committed_wire_is_compressed(self):
-        """seed: compress-the-wire. A tracked runs/<stamp>/wire.jsonl is a problem naming the
-        record; wire.jsonl.gz is the committed form; an untracked wire is a build not yet
-        reviewed and no problem."""
+    def test_a_record_in_the_project_is_not_the_gates(self):
+        """seed: compress-the-wire. seed: records-outside-the-project. A record is the factory's and
+        is kept in its store, where its wire is compressed before it is committed; the gate reads
+        no `runs/` in the project, so a wire tracked uncompressed there, as a record once was, is
+        no problem of the gate's."""
         self.edit("runs/20260916T000000Z/wire.jsonl", '{"dir": "request"}\n')
         self.edit("runs/20260916T000000Z/numbers.json", "{}\n")
-        self.assertEqual(self.check(), (0, "", ""))
-        self.commit("a record, reviewed too soon")
-        self.assert_problem("runs/20260916T000000Z", "wire")
-        git(self.root, "rm", "-q", "runs/20260916T000000Z/wire.jsonl")
-        self.edit("runs/20260916T000000Z/wire.jsonl.gz", "gz\n")
-        self.commit("the wire compressed")
-        self.assertEqual(self.check(), (0, "", ""))
-        self.edit("runs/20260917T000000Z/wire.jsonl", '{"dir": "request"}\n')
+        self.commit("a record in the project, its wire uncompressed")
         self.assertEqual(self.check(), (0, "", ""))
 
     def test_the_backlog_check_reads_what_obsidian_writes(self):
@@ -414,9 +408,7 @@ class CheckTest(GateTest):
         ), out)  # fmt: skip
         git(self.root, "commit", "-q", "--amend", "-m", "feature",
             "-m", f"Built-By: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>")  # fmt: skip
-        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
-        git(self.root, "add", "-A")
-        git(self.root, "commit", "-q", "-m", "the record")
+        self.assertFalse((self.root / "runs").exists())  # the record is in the factory's store
         self.assertEqual(self.check(), (0, "", ""))
 
         self.edit("other.py", "Y = 1\n")
@@ -436,14 +428,13 @@ class CheckTest(GateTest):
 
 class ReviewTest(GateTest):
     """seed: review-as-document. A review note, one per review from docs/templates/review.md, is
-    checked like a seed: its runs are records and one names it, its findings carry a severity and
+    checked like a seed: its runs are stamps and one names it, its findings carry a severity and
     a verified of fixed words, and a verified finding is judged by an existing test, case or seed,
     or none with a reason; read with comments out, and release refuses a review not whole."""
 
     def setUp(self):
         super().setUp()
         self.edit("docs/templates/review.md", TEMPLATE_REVIEW)
-        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
         self.edit(f"docs/reviews/{STAMP}.md", REVIEW)
         self.commit("review")
         self.note = f"docs/reviews/{STAMP}.md"
@@ -460,12 +451,14 @@ class ReviewTest(GateTest):
         self.review(REVIEW.replace("created: 2026-09-17", "created: yesterday"))
         self.assert_problem(self.note, "created")
 
-    def test_the_runs_are_records_and_one_of_them_names_the_note(self):
+    def test_the_runs_are_stamps_and_one_of_them_names_the_note(self):
+        """seed: records-outside-the-project. A review's stamps point into the factory's store as a
+        build's trailer does: the gate asks for no record `runs/<stamp>` in the project."""
+        self.assertFalse((self.root / "runs").exists())
+        self.assertEqual(self.check(), (0, "", ""))
         self.review(REVIEW.replace(f"runs: {STAMP}", "runs:"))
         self.assert_problem(self.note, "runs")
         self.review(REVIEW.replace(f"runs: {STAMP}", f"runs: {STAMP} 20260917T000001Z"))
-        self.assert_problem(self.note, "20260917T000001Z")
-        self.edit("runs/20260917T000001Z/numbers.json", "{}\n")
         self.assertEqual(self.check(), (0, "", ""))
         self.review(REVIEW.replace(f"runs: {STAMP}", "runs: 20260917T000001Z"))
         self.assert_problem(self.note, "named")
@@ -718,7 +711,6 @@ class ReleaseTest(GateTest):
         released."""
         git(self.root, "config", "core.abbrev", "40")
         self.ready()
-        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
         self.edit("feature.py", "X = 1\n")
         built_by = f"Built-By: factory at 1234567, run {STAMP}"
         apart = self.build(built_by, "Co-Authored-By: t <t@t>")
@@ -733,13 +725,13 @@ class ReleaseTest(GateTest):
         self.build(built_by + "\nCo-Authored-By: t <t@t>", amend=True)
         self.assertEqual(self.release(), (0, "", ""))
 
-    def test_release_refuses_a_build_that_names_no_run_or_a_run_not_committed(self):
-        """seed: built-by-trailer. A `Built-By` whose value does not end `run <stamp>`, the word `run`
-        as written and the stamp in the builder's shape, is refused under the version's note as
-        naming no run, a stamp in git's revision syntax among them; one whose record is missing, a
-        file, a symbolic link, a submodule, present and ignored by git, committed and then removed
-        from HEAD's tree, or staged and not committed, is refused under `runs/<stamp>`, the commit
-        named each time; with the record a directory in HEAD's tree the version is released."""
+    def test_release_refuses_a_build_that_names_no_run(self):
+        """seed: built-by-trailer. seed: records-outside-the-project. A `Built-By` whose value does
+        not end `run <stamp>`, the word `run` as written and the whole stamp in the builder's
+        shape, is refused under the version's note as naming no run, a stamp in git's revision
+        syntax among them. The record is the factory's, kept in its store: no `runs/<stamp>` is
+        asked of the project, so a build whose trailer names a run is released with no `runs/` in
+        the tree, and as well with a file there named like the run, and no problem begins `runs/`."""
         self.ready()
         self.edit("feature.py", "X = 1\n")
         no_run = self.build("Built-By: factory at 1234567\nCo-Authored-By: t <t@t>")
@@ -750,45 +742,17 @@ class ReleaseTest(GateTest):
         capital = self.build(f"Built-By: factory at 1234567, Run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
         self.assert_refused_with("docs/versions/v0.2.md:", capital, "names no run")
         first = git(self.root, "rev-list", "--max-parents=0", "HEAD").strip()
-        self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/x-g{first[:7]}^{{tree}}").strip(), "tree")
         crafted = self.build(f"Built-By: factory at 1234567, run x-g{first[:7]}^{{tree}}\nCo-Authored-By: t <t@t>",
                              amend=True)  # fmt: skip
         self.assert_refused_with("docs/versions/v0.2.md:", crafted, "names no run")
         prefixed = f"{STAMP}x-g{first[:7]}^{{tree}}"
-        self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/{prefixed}").strip(), "tree")
         shaped = self.build(f"Built-By: factory at 1234567, run {prefixed}\nCo-Authored-By: t <t@t>", amend=True)
-        self.assert_refused_with("docs/versions/v0.2.md:", shaped, "names no run")  # the whole stamp has the shape
-        missing = self.build(f"Built-By: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
-        self.assert_refused_with(f"runs/{STAMP}:", missing)
-        self.edit(f"runs/{STAMP}", "not a record\n")
+        out = self.assert_refused_with("docs/versions/v0.2.md:", shaped, "names no run")  # the whole stamp has the shape
+        self.assertFalse(any(line.startswith("runs/") for line in out.splitlines()), out)
+        self.build(f"Built-By: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
+        self.assertFalse((self.root / "runs").exists())
+        self.edit(f"runs/{STAMP}", "a file named like the run, none of the gate's\n")
         self.commit("a file named like the run")
-        self.assert_refused_with(f"runs/{STAMP}:", missing)
-        git(self.root, "rm", "-q", f"runs/{STAMP}")
-        (self.root / "runs").mkdir(exist_ok=True)
-        os.symlink("../docs", self.root / "runs" / STAMP)
-        self.commit("a link named like the run")
-        self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/{STAMP}").strip(), "blob")
-        self.assert_refused_with(f"runs/{STAMP}:", missing)
-        git(self.root, "rm", "-q", f"runs/{STAMP}")
-        head = git(self.root, "rev-parse", "HEAD").strip()
-        git(self.root, "update-index", "--add", "--cacheinfo", f"160000,{head},runs/{STAMP}")
-        git(self.root, "commit", "-q", "-m", "a submodule named like the run")
-        self.assertEqual(git(self.root, "cat-file", "-t", f"HEAD:runs/{STAMP}").strip(), "commit")
-        self.assert_refused_with(f"runs/{STAMP}:", missing)
-        git(self.root, "rm", "-q", "--cached", f"runs/{STAMP}")
-        self.edit(".gitignore", "__pycache__/\nruns/\n")
-        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
-        self.commit("the runs ignored")
-        self.assertEqual(git(self.root, "status", "--porcelain"), "")
-        self.assert_refused_with(f"runs/{STAMP}:", missing)
-        git(self.root, "add", "-f", f"runs/{STAMP}/numbers.json")
-        self.commit("the record")
-        git(self.root, "rm", "-q", "-r", "--cached", f"runs/{STAMP}")
-        self.commit("the record removed")
-        self.assert_refused_with(f"runs/{STAMP}:", missing)
-        git(self.root, "add", "-f", f"runs/{STAMP}/numbers.json")
-        self.assert_refused_with(f"runs/{STAMP}:", missing)  # staged is not committed
-        self.commit("the record again")
         self.assertEqual(self.release(), (0, "", ""))
 
     def test_release_reads_only_the_builds_since_the_previous_tag(self):
@@ -816,12 +780,12 @@ class ReleaseTest(GateTest):
         self.assertEqual(len(listings), 1, listings)
 
     def test_every_problem_of_every_build_is_printed_in_one_release(self):
-        """seed: built-by-trailer. From the reviews: a `Built-By` git does not read is still checked
-        for its run and its record; an empty `Built-By:` among the trailers is one git reads and
-        names no run, and one apart from them is one git does not read; a line apart is counted
-        unread though git reads an equal one in the trailers; a stamp several values name is one
-        problem for the commit; a value is quoted with nothing but its control characters escaped;
-        and one release prints every problem of every build, each once."""
+        """seed: built-by-trailer. seed: records-outside-the-project. From the reviews: a `Built-By`
+        git does not read is still checked for its run; an empty `Built-By:` among the trailers is
+        one git reads and names no run, and one apart from them is one git does not read; a line
+        apart is counted unread though git reads an equal one in the trailers; a value is quoted
+        with nothing but its control characters escaped; one release prints every problem of every
+        build, each once; and no problem is a record's, which is the factory's to keep."""
         self.ready()
         self.edit("feature.py", "X = 1\n")
         apart = self.build(f"Built-By: factory at 1234567, run {STAMP}", "Co-Authored-By: t <t@t>")
@@ -843,13 +807,12 @@ class ReleaseTest(GateTest):
         def has(start: str, commit: str, *words: str) -> bool:
             return any(line.startswith(start) and commit in line and all(w in line for w in words) for line in lines)
 
-        self.assertTrue(has(f"runs/{STAMP}:", apart), out)
+        self.assertFalse(any(line.startswith("runs/") for line in lines), out)
         self.assertTrue(has("docs/versions/v0.2.md:", empty, "names no run"), out)
         self.assertFalse(has("docs/versions/v0.2.md:", empty, "as a trailer"), out)
         self.assertTrue(has("docs/versions/v0.2.md:", empty_apart, "as a trailer"), out)
         self.assertTrue(has("docs/versions/v0.2.md:", empty_apart, "names no run"), out)
         self.assertTrue(has("docs/versions/v0.2.md:", twice, "as a trailer"), out)
-        self.assertEqual(sum(1 for line in lines if line.startswith(f"runs/{STAMP}:") and twice in line), 1, out)
         self.assertTrue(has("docs/versions/v0.2.md:", cafe, "names no run", "café \\ x\\x7fy"), out)
 
     def test_the_builds_are_read_as_git_reads_trailers(self):
@@ -863,14 +826,14 @@ class ReleaseTest(GateTest):
         start are no build."""
         self.ready()
         self.edit("feature.py", "X = 1\n")
-        lower = self.build(f"built-by: factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>")
-        self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}")
-        self.assert_refused_with(f"runs/{STAMP}:", lower)
-        spaced = self.build(f"Built-By : factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
-        self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}")
-        self.assert_refused_with(f"runs/{STAMP}:", spaced)
-        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
-        self.commit("the record")
+        lower = self.build("built-by: factory at 1234567\nCo-Authored-By: t <t@t>")
+        self.assertEqual(self.built_by(), "factory at 1234567")
+        self.assert_refused_with("docs/versions/v0.2.md:", lower, "names no run")
+        spaced = self.build("Built-By : factory at 1234567\nCo-Authored-By: t <t@t>", amend=True)
+        self.assertEqual(self.built_by(), "factory at 1234567")
+        self.assert_refused_with("docs/versions/v0.2.md:", spaced, "names no run")
+        self.build(f"built-by : factory at 1234567, run {STAMP}\nCo-Authored-By: t <t@t>", amend=True)
+        self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}")  # a build, and whole
         self.edit("other.py", "Y = 1\n")
         formfeed = self.build(f"Built-By: factory at 1234567, run {STAMP}\x0cjunk\nCo-Authored-By: t <t@t>")
         self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}\x0cjunk")

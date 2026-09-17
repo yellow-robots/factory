@@ -1,11 +1,11 @@
 ---
 created: 2026-09-17
 type: seed
-status: open
+status: building
 summary: A build's record is the factory's log of its own work, and the builder already writes it beside itself and never in the checkout; the attended agent copies it into the project's tree, where the gate looks for it and where code the model has `check` run can read it. The record stays in a store of the factory's and the project keeps the trailer.
 value: 5
 effort: M
-version:
+version: v0.14
 ---
 
 ## Evidence
@@ -17,3 +17,11 @@ version:
 ## Idea
 
 The record stays with the factory. The builder writes it to a store the instance's configuration names, not a constant beside the program: a directory outside every checkout it builds, a git repository of its own to which each record is committed when its run ends, so the log is kept and read as git keeps it, and no record enters it holding the key's value, scanned for in every file of the record, the compressed wire read through. `runs.py` and `evals.py` read the same store. The project keeps what it can use, the build's commit and its `Built-By` trailer, whose stamp points into the store as a commit points at a CI run. The gate stops looking for records in the project: a build's trailer is checked for its shape as today, and the three reads of `runs/` go, the tree a trailer's stamp must have in HEAD, the directory a review's stamp must have, and the wire tracked uncompressed, which is the store's to hold if it is kept. That a build has its record is held by order and not by a lookup: the record is committed to the store before the build's commit leaves the instance (build-from-a-pushed-branch). The 146 records git tracks are carried to the store as its first commit and leave this repository's tree in one commit of the attended agent's, with the owner's yes; history keeps them and nothing is rewritten. The store is a repository apart, local and with no remote for now, the owner's decision of 2026-09-17; where it lives when the instance leaves this host waits with the owner's question of what a forge is here, and one fact bears on it: a forge grants reading by repository and not by branch, so a store apart can stay closed while the code is open. A record holds the project's content, the files read, the diff, the checks' output, so records of a project that is not the owner's need the project's leave, or are cut down to what holds no content, the numbers and the shape of the tool calls; nothing of that binds while every project is the owner's, and it is a seed of its own the day one is not.
+
+## Goal
+
+The gate reads no record in the project. A build's record is the factory's and is kept in the factory's store, outside the project; what the project holds of a build is its commit and the `Built-By` trailer, whose stamp names the record where the factory keeps it.
+
+`gate.py` stops reading `runs/` in the repository it checks, in three places. A build's trailer is checked as today for how git reads it and for its value ending `run <stamp>` with the whole stamp in the builder's shape, and no stamp is looked up: no problem says a run has no committed record, and no problem of `check` or of `release` begins `runs/`. A review's `runs:` is checked as today for holding at least one stamp, each one path segment, one of them naming the note, and no stamp needs a directory `runs/<stamp>`. A wire tracked uncompressed under `runs/` is no problem, and `_wire_problems` goes. A repository with no `runs/`, with a `runs/` of any content, or with a file under it named like a stamp, is checked and released the same.
+
+The docstrings and comments of `gate.py` that say a record is looked up say what is now true. The tests are the attended agent's and are not changed.
