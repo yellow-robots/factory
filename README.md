@@ -10,7 +10,7 @@ uv run builder.py <checkout> "<goal>" # one build; the goal is text or the path 
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 126 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 131 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -82,8 +82,12 @@ with text, read as the builder reads it, from spec; a test whose docstring says 
 from building; rejected needs only what open needs) or carries a field with no consumer, a version note not named like a tag, more than one
 version note without a tag, a tagged version with a seed not done or rejected, a property the
 backlog names in a filter, formula, column, sort, group or summary that is no field of the seed
-template, read as Obsidian writes the base, and a committed record whose wire is not
-compressed. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
+template, read as Obsidian writes the base, a committed record whose wire is not
+compressed, and a review note, one per review under `docs/reviews/`, whose runs are not records
+or do not name it, whose reviewer or date is missing, or whose findings, one per level-three
+heading, lack a severity of `defect` or `smell`, a `verified` of `yes` or `no`, or, once
+verified, a judgement: `test <name>`, `case <name>` or `seed <name>` that exist, or `none:` with
+the reason. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
 note's title, first paragraph and `## Changelog` bullets. `release <version>` refuses unless check
 passes, the note exists and the tag does not, its seeds are done or rejected, the note has
 changelog bullets, the tree is clean, `AGENTS.md` changed since the previous tag and the suite is

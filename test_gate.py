@@ -101,6 +101,12 @@ V02 = fm(type="version") + (
     "## Changelog\n\n- The next thing, built.\n"
 )
 AGENTS = "# repo\n\nOrient yourself.\n"
+TEMPLATE_REVIEW = fm(created='"{{date}}"', type="review", runs="", reviewer="") + "\n## Findings\n\n### Title\n\nseverity:\nverified:\njudged:\n"
+STAMP = "20260917T000000Z"
+REVIEW = fm(created="2026-09-17", type="review", runs=STAMP, reviewer="a cold session") + (
+    "\n## Findings\n\n### The first thing misses an edge\n\nseverity: defect\nverified: yes\njudged: test test_d\n\n"
+    "What happens, and how it was reproduced.\n"
+)
 TEST_GREEN = '''\
 import unittest
 
@@ -389,6 +395,98 @@ class CheckTest(GateTest):
     def test_templates_are_exempt(self):
         self.edit("docs/templates/seed.md", TEMPLATE_SEED.replace("type: seed", "type: whatever"))
         self.assertEqual(self.check(), (0, "", ""))
+
+
+class ReviewTest(GateTest):
+    """seed: review-as-document. A review note, one per review from docs/templates/review.md, is
+    checked like a seed: its runs are records and one names it, its findings carry a severity and
+    a verified of fixed words, and a verified finding is judged by an existing test, case or seed,
+    or none with a reason; read with comments out, and release refuses a review not whole."""
+
+    def setUp(self):
+        super().setUp()
+        self.edit("docs/templates/review.md", TEMPLATE_REVIEW)
+        self.edit(f"runs/{STAMP}/numbers.json", "{}\n")
+        self.edit(f"docs/reviews/{STAMP}.md", REVIEW)
+        self.commit("review")
+        self.note = f"docs/reviews/{STAMP}.md"
+
+    def review(self, text: str) -> None:
+        self.edit(self.note, text)
+
+    def test_a_whole_review_is_silent_and_its_fields_are_the_templates(self):
+        self.assertEqual(self.check(), (0, "", ""))
+        self.review(REVIEW.replace("reviewer: a cold session", "reviewer: a cold session\nverdict: accept"))
+        self.assert_problem(self.note, "verdict")
+        self.review(REVIEW.replace("reviewer: a cold session", "reviewer:"))
+        self.assert_problem(self.note, "reviewer")
+        self.review(REVIEW.replace("created: 2026-09-17", "created: yesterday"))
+        self.assert_problem(self.note, "created")
+
+    def test_the_runs_are_records_and_one_of_them_names_the_note(self):
+        self.review(REVIEW.replace(f"runs: {STAMP}", "runs:"))
+        self.assert_problem(self.note, "runs")
+        self.review(REVIEW.replace(f"runs: {STAMP}", f"runs: {STAMP} 20260917T000001Z"))
+        self.assert_problem(self.note, "20260917T000001Z")
+        self.edit("runs/20260917T000001Z/numbers.json", "{}\n")
+        self.assertEqual(self.check(), (0, "", ""))
+        self.review(REVIEW.replace(f"runs: {STAMP}", "runs: 20260917T000001Z"))
+        self.assert_problem(self.note, "named")
+
+    def test_a_finding_has_a_severity_and_a_verified_of_fixed_words(self):
+        for old, new, word in (
+            ("severity: defect", "severity: nit", "severity"),
+            ("severity: defect\n", "", "severity"),
+            ("verified: yes", "verified: maybe", "verified"),
+            ("verified: yes\n", "", "verified"),
+        ):
+            self.review(REVIEW.replace(old, new))
+            self.assert_problem(self.note, "The first thing misses an edge", word)
+        self.review(REVIEW.replace("severity: defect", "severity: smell"))
+        self.assertEqual(self.check(), (0, "", ""))
+
+    def test_a_verified_finding_is_judged_by_what_exists_or_none_with_a_reason(self):
+        for judged, word in (
+            ("", "judged"),
+            ("judged: test test_zz", "test_zz"),
+            ("judged: case zz", "zz"),
+            ("judged: seed zz", "zz"),
+            ("judged: fixed", "judged"),
+            ("judged: none:", "judged"),
+            ("judged: none", "judged"),
+            ("judged: test test_d, case zz", "zz"),
+        ):
+            self.review(REVIEW.replace("judged: test test_d\n", judged + "\n"))
+            self.assert_problem(self.note, "The first thing misses an edge", word)
+        self.edit("cases/zz/goal.md", "goal\n")
+        self.edit("cases/zz/test_zz.py", TEST_GREEN)
+        for judged in (
+            "judged: test test_d",
+            "judged: test RepoTest",
+            "judged: case zz",
+            "judged: seed a",
+            "judged: test test_d, seed a, case zz",
+            "judged: none: the measure never takes the value",
+        ):
+            self.review(REVIEW.replace("judged: test test_d", judged))
+            self.assertEqual(self.check(), (0, "", ""), judged)
+        self.review(REVIEW.replace("verified: yes", "verified: no").replace("judged: test test_d\n", ""))
+        self.assertEqual(self.check(), (0, "", ""))
+
+    def test_the_findings_are_read_with_comments_out_and_release_refuses_a_review_not_whole(self):
+        self.review(REVIEW.replace("judged: test test_d", "%%\njudged: test test_d\n%%"))
+        self.assert_problem(self.note, "judged")
+        self.review(REVIEW + "\n%% a comment never closed\n")
+        self.assert_problem(self.note, "comment")
+        self.review(REVIEW.replace("judged: test test_d", "judged: test test_zz"))
+        self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
+        self.edit("test_repo.py", TEST_GREEN_B)
+        self.edit("AGENTS.md", AGENTS + "\nMore.\n")
+        self.commit("ready")
+        code, out, err = run(self.root, "release", "v0.2")
+        self.assertEqual(code, 1, out)
+        self.assertIn("test_zz", out)
+        self.assertNotIn("v0.2", git(self.root, "tag", "-l"))
 
 
 class RenderTest(GateTest):
