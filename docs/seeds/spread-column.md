@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: spec
+status: done
 summary: The evaluation table shows the median of three runs and hides how far apart they were; a spread column says whether a difference between two runs of the set is real.
 value: 4
 effort: S

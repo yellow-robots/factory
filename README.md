@@ -160,3 +160,9 @@ nothing to find. The table, beside v0.6's numbers, is in `docs/versions/v0.7.md`
 v0.8, one build for one seed, green, about three cents and two minutes: the gate reads the Goal
 with the builder's reader. The first build given the seed's path as its goal, the record naming
 the seed; eleven searches and four files read for a fifteen-line diff.
+
+v0.9, two builds for one seed, both green, about two and a half cents and two minutes: the
+evaluation table prints the spread beside the medians of requests, cost and seconds. The first
+build, 12 requests and six edits for a 27-line diff; one review accepted it with five smells, two
+of them the follow-up's tests, a `NaN` in a record aborting the table and the module docstring
+naming medians alone.
