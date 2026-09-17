@@ -55,6 +55,8 @@ views:
     sort:
       - property: formula.rank
         direction: DESC
+      - property: summary
+        direction: ASC
   - type: table
     name: Specs
     filters:
