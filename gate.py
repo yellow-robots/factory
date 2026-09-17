@@ -6,10 +6,12 @@
     uv run gate.py release <version>
 
 `check` validates `docs/` and the repository against it, `render` writes `CHANGELOG.md` from
-the tags, and `release` refuses until everything derived agrees, then tags and renders. Each
-command prints one line per problem on stdout, starting with the path relative to the root,
-and exits 1 if there is any; with nothing to report it prints nothing and exits 0. Usage errors
-go to stderr and exit 2.
+the tags, and `release` refuses until everything derived agrees, then tags and renders. Before
+it tags, `release` reads the builds since the previous tag, every commit whose message carries
+a `Built-By` line, and refuses when git's trailer parser does not read one or the run it names
+is not a committed record. Each command prints one line per problem on stdout, starting with
+the path relative to the root, and exits 1 if there is any; with nothing to report it prints
+nothing and exits 0. Usage errors go to stderr and exit 2.
 """
 
 from __future__ import annotations
@@ -731,6 +733,62 @@ def _suite_green(root: Path) -> bool:
     return done.returncode == 0
 
 
+def _builds(root: Path, previous: str | None) -> list[str]:
+    """The full hashes of the commits reachable from HEAD and not from `previous`, or every
+    commit reachable from HEAD when there is no previous tag."""
+    revision = f"{previous}..HEAD" if previous is not None else "HEAD"
+    return _git(root, "rev-list", revision).split()
+
+
+def _build_trailers(root: Path, commit: str) -> list[str]:
+    """What git's own trailer parser reads as `Built-By` for `commit`, one value per line."""
+    out = _git(
+        root,
+        "log",
+        "-1",
+        "--format=%(trailers:key=Built-By,valueonly)",
+        commit,
+    )
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _build_problems(root: Path, version: str, previous: str | None) -> list[str]:
+    """Every build since the previous tag git cannot list: a `Built-By` line the trailer parser
+    does not return for its commit, one that does not end `run <stamp>`, or one whose run is not
+    a committed record. Each problem names the commit by its abbreviated hash."""
+    rel_note = f"docs/versions/{version}.md"
+    problems: list[str] = []
+    for commit in _builds(root, previous):
+        message = _git(root, "log", "-1", "--format=%B", commit)
+        values = [
+            line[len("Built-By:"):].strip()
+            for line in message.splitlines()
+            if line.startswith("Built-By:")
+        ]
+        if not values:
+            continue
+        short = _git(root, "rev-parse", "--short", commit).strip()
+        trailers = _build_trailers(root, commit)
+        for value in values:
+            if value not in trailers:
+                problems.append(
+                    f"{rel_note}: {short}: git does not read `Built-By: {value}` as a trailer"
+                )
+                continue
+            words = value.split()
+            if len(words) < 2 or words[-2] != "run" or not _segment(words[-1]):
+                problems.append(
+                    f"{rel_note}: {short}: `Built-By: {value}` names no run"
+                )
+                continue
+            stamp = words[-1]
+            if not _git(root, "ls-tree", "HEAD", f"runs/{stamp}").strip():
+                problems.append(
+                    f"runs/{stamp}: {short}: `Built-By: {value}` names a run with no committed record"
+                )
+    return problems
+
+
 def _release_problems(root: Path, version: str) -> list[str]:
     root = Path(root)
     docs = root / "docs"
@@ -766,6 +824,8 @@ def _release_problems(root: Path, version: str) -> list[str]:
         changed = _git(root, "diff", "--name-only", previous, "HEAD", "--", "AGENTS.md").strip()
         if not changed:
             problems.append(f"AGENTS.md: unchanged since {previous}")
+
+    problems.extend(_build_problems(root, version, previous))
 
     if not _suite_green(root):
         problems.append("test: the unittest suite is red")
