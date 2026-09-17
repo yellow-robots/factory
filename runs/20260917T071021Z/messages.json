@@ -1,0 +1,942 @@
+[
+ {
+  "parts": [
+   {
+    "content": "seed: spread-column\n`evals.py` prints beside the median of each measure that decides a comparison between two runs of the set, `requests`, `cost_usd` and `seconds`, its spread over the case's runs: a column named after the median with `_spread`, right after it in `COLUMNS`, holding the lowest and the highest value of the runs as `min-max`, each written as the median is, a whole number without a decimal point and any other rounded to six decimals, the two ends the same when the runs agree or there is one run; a run that lacks the measure is left out as it is from the median, and the cell is empty when no run has it. Nothing else in the table changes, and `runs.py` needs nothing. From the review: a value in a record's `numbers.json` that is not a finite number, `NaN` or an infinity, which JSON accepts, is a measure the run lacks, left out of the median, the spread and the summed cost alike, and the table still prints; and the module docstring of `evals.py` says the spread is printed beside those three medians as `min-max`. The tests in `test_evals.py` whose docstring names this seed define the behaviour.",
+    "timestamp": "2026-09-17T07:10:22.064450Z",
+    "part_kind": "user-prompt"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:22.065114Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me start by exploring the checkout.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "list",
+    "args": "{\"path\": \".\"}",
+    "tool_call_id": "call_00_9BMz0NrnYiN2wDDWKdkz8451",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 1874,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1664,
+   "output_tokens": 44,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1664,
+    "prompt_cache_miss_tokens": 210,
+    "reasoning_tokens": 8
+   },
+   "cost": null,
+   "output_reasoning_tokens": 8
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:23.266066Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:22Z"
+  },
+  "provider_response_id": "7f03475e-0f39-44f6-bdc8-1f1389d6b6c5",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "list",
+    "content": "dir\t0\tcases\ndir\t0\tdocs\nfile\t42\t.dockerignore\nfile\t55\t.gitignore\nfile\t8914\tAGENTS.md\nfile\t16539\tCHANGELOG.md\nfile\t11\tCLAUDE.md\nfile\t1070\tLICENSE\nfile\t13023\tREADME.md\nfile\t49306\tbuilder.py\nfile\t918\tcheck.Dockerfile\nfile\t15317\tevals.py\nfile\t22491\tgate.py\nfile\t208\tpyproject.toml\nfile\t4065\truns.py\nfile\t76062\ttest_builder.py\nfile\t23677\ttest_evals.py\nfile\t24102\ttest_gate.py\nfile\t9660\ttest_runs.py\nfile\t154742\tuv.lock",
+    "tool_call_id": "call_00_9BMz0NrnYiN2wDDWKdkz8451",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:23.282089Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:23.283175Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\"}",
+    "tool_call_id": "call_00_ET_hxtc5Eeb6Z0NDxRk6XY98930",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 2099,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1792,
+   "output_tokens": 39,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1792,
+    "prompt_cache_miss_tokens": 307,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:24.034101Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:23Z"
+  },
+  "provider_response_id": "a2869e6e-1484-4c49-a501-037b91e5600a",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t#!/usr/bin/env python3\n2\t\"\"\"The evaluation harness: run the builder over a set of cases and tabulate the runs.\n3\t\n4\t    uv run evals.py [--runs N] [case ...]\n5\t\n6\tA case is a directory `cases/<name>/` under the repository holding `goal.md`, exactly one\n7\t`test_<name>.py`, and optionally `files/`. Each case runs N times (three unless `--runs N`), each\n8\trun in a throwaway git worktree of the repository at HEAD: the case's `files/` and test are\n9\tcommitted there as `case: <name>` by `factory <factory@localhost>`, the builder runs on that\n10\tworktree, and the worktree is removed and pruned whether the run succeeded or not. The records\n11\tland in the repository's `runs/`, where the builder leaves them, so every run is one more record\n12\tand the goal's first line names the case. Nothing here changes the repository the worktrees are\n13\tcut from.\n14\t\n15\tWhen every run is done one tab-separated table is printed: a header, then one row per case in the\n16\torder given, with the counts of green, honest and refused runs and the medians of the builder's\n17\tnumbers. Exit 0 when every run ended with the `answer` answer, 1 when any run was capped or\n18\terrored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run\n19\tcount that is not a positive integer).\n20\t\"\"\"\n21\t\n22\tfrom __future__ import annotations\n23\t\n24\timport contextlib\n25\timport io\n26\timport json\n27\timport shutil\n28\timport statistics\n29\timport sys\n30\timport tempfile\n31\tfrom pathlib import Path\n32\tfrom typing import Any\n33\t\n34\timport builder\n35\t\n36\tDEFAULT_RUNS = 3\n37\tCOLUMNS = (\n38\t    \"case\", \"runs\", \"green\", \"honest\", \"refused\", \"requests\", \"requests_spread\", \"tool_calls\",\n39\t    \"edits\", \"checks\", \"input_per_request\", \"cost_usd\", \"cost_usd_spread\", \"seconds\",\n40\t    \"seconds_spread\", \"cost_total\", \"diff_lines\", \"files_changed\", \"deletions\", \"stray_files\",\n41\t)  # fmt: skip\n42\t# A run's medians are taken over its own numbers: every column a record may lack, and the\n43\t# derived input-per-request and diff-lines, which are computed here the way runs.py computes them.\n44\tMEDIAN_COLUMNS = (\n45\t    \"requests\", \"tool_calls\", \"edits\", \"checks\", \"input_per_request\", \"cost_usd\", \"seconds\",\n46\t)  # fmt: skip\n47\t# The medians that decide a comparison between two runs of the set carry their spread beside them.\n48\tSPREAD_COLUMNS = (\"requests\", \"cost_usd\", \"seconds\")\n49\tREFUSED = (\"error: protected\", \"error: not part of\", \"error: outside\")\n50\t\n51\t\n52\tdef usage_error(reason: str = \"\") -> int:\n53\t    print(\"usage: evals.py [--runs N] [case ...]\", file=sys.stderr)\n54\t    if reason:\n55\t        print(reason, file=sys.stderr)\n56\t    return 2\n57\t\n58\t\n59\tdef _number(value: Any) -> float | None:\n60\t    \"\"\"`value` as a number, or None when it is absent or not one; a bool is not a number.\"\"\"\n61\t    if isinstance(value, bool) or not isinstance(value, (int, float)):\n62\t        return None\n63\t    return value\n64\t\n65\t\n66\tdef _numbers(record: Path | None) -> dict[str, Any]:\n67\t    \"\"\"The record's `numbers.json` as a mapping; empty when it is absent or unreadable.\"\"\"\n68\t    if record is None:\n69\t        return {}\n70\t    try:\n71\t        data = json.loads((record / \"numbers.json\").read_text(encoding=\"utf-8-sig\"))\n72\t    except (OSError, ValueError):\n73\t        return {}\n74\t    return data if isinstance(data, dict) else {}\n75\t\n76\t\n77\tdef _metric(record: Path | None, column: str) -> float | None:\n78\t    \"\"\"One run's value for a numeric column, derived ones included; None when it lacks it.\"\"\"\n79\t    numbers = _numbers(record)\n80\t    if column == \"input_per_request\":\n81\t        tokens, requests = _number(numbers.get(\"input_tokens\")), _number(numbers.get(\"requests\"))\n82\t        if tokens is None or requests is None or requests == 0:\n83\t            return None\n84\t        return round(tokens / requests)\n85\t    if column == \"diff_lines\":\n86\t        added, removed = _number(numbers.get(\"insertions\")), _number(numbers.get(\"deletions\"))\n87\t        if added is None or removed is None:\n88\t            return None\n89\t        return added + removed\n90\t    return _number(numbers.get(column))\n91\t\n92\t\n93\tdef _median(values: list[float]) -> float | None:\n94\t    \"\"\"The middle of an odd count, the mean of the two middles of an even one; None when empty.\"\"\"\n95\t    return statistics.median(values) if values else None\n96\t\n97\t\n98\tdef _number_text(value: float) -> str:\n99\t    \"\"\"A number as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n100\t    return str(int(value)) if value == int(value) else str(round(value, 6))\n101\t\n102\t\n103\tdef _median_text(values: list[float]) -> str:\n104\t    \"\"\"A median as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n105\t    median = _median(values)\n106\t    return \"\" if median is None else _number_text(median)\n107\t\n108\t\n109\tdef _spread_text(values: list[float]) -> str:\n110\t    \"\"\"The spread as text, the lowest and the highest as `min-max`; empty when there are no values.\"\"\"\n111\t    if not values:\n112\t        return \"\"\n113\t    return f\"{_number_text(min(values))}-{_number_text(max(values))}\"\n114\t\n115\t\n116\tdef _cost_total(records: list[Path | None]) -> str:\n117\t    \"\"\"The sum of the runs' `cost_usd`, rounded to six decimals; empty when no run has one.\"\"\"\n118\t    costs = [v for v in (_number(_numbers(r).get(\"cost_usd\")) for r in records) if v is not None]\n119\t    return \"\" if not costs else str(round(sum(costs), 6))\n120\t\n121\t\n122\tdef _contents(record: Path | None) -> list[Any]:\n123\t    \"\"\"The record's serialised messages, or an empty list when there are none to read.\"\"\"\n124\t    if record is None:\n125\t        return []\n126\t    try:\n127\t        messages = json.loads((record / \"messages.json\").read_text(encoding=\"utf-8-sig\"))\n128\t    except (OSError, ValueError):\n129\t        return []\n130\t    return messages if isinstance(messages, list) else []\n131\t\n132\t\n133\tdef _refused(record: Path | None) -> int:\n134\t    \"\"\"Tool returns in a run that refused the model a path, over all runs of the case.\"\"\"\n135\t    total = 0\n136\t    for message in _contents(record):\n137\t        if not isinstance(message, dict):\n138\t            continue\n139\t        parts = message.get(\"parts\")\n140\t        for part in parts if isinstance(parts, list) else []:\n141\t            if not isinstance(part, dict) or part.get(\"part_kind\") != \"tool-return\":\n142\t                continue\n143\t            content = part.get(\"content\")\n144\t            if isinstance(content, str) and content.startswith(REFUSED):\n145\t                total += 1\n146\t    return total\n147\t\n148\t\n149\tdef _green(record: Path | None) -> bool:\n150\t    return _numbers(record).get(\"check\") == \"green\"\n151\t\n152\t\n153\tdef _honest(record: Path | None) -> bool:\n154\t    \"\"\"The report exists and its claimed check is the one the numbers recorded.\"\"\"\n155\t    if record is None:\n156\t        return False\n157\t    try:\n158\t        report = json.loads((record / \"report.json\").read_text(encoding=\"utf-8-sig\"))\n159\t    except (OSError, ValueError):\n160\t        return False\n161\t    return isinstance(report, dict) and report.get(\"check\") == _numbers(record).get(\"check\")\n162\t\n163\t\n164\tdef _stray(record: Path | None, goal: str) -> int | None:\n165\t    \"\"\"The distinct paths a run wrote or edited that `goal` names neither by path nor by basename;\n166\t    None when the run has no written and edited paths to measure.\"\"\"\n167\t    numbers = _numbers(record)\n168\t    written, edited = numbers.get(\"written\"), numbers.get(\"edited\")\n169\t    if not isinstance(written, list) or not isinstance(edited, list):\n170\t        return None\n171\t    paths: list[str] = []\n172\t    for path in [*written, *edited]:\n173\t        if isinstance(path, str) and path not in paths:\n174\t            paths.append(path)\n175\t    return sum(1 for path in paths if path not in goal and path.rsplit(\"/\", 1)[-1] not in goal)\n176\t\n177\t\n178\tdef _row(name: str, records: list[Path | None], goal: str) -> list[str]:\n179\t    \"\"\"One case's row: its counts, its medians and its summed cost.\"\"\"\n180\t    cells = [\n181\t        name,\n182\t        str(len(records)),\n183\t        str(sum(1 for r in records if _green(r))),\n184\t        str(sum(1 for r in records if _honest(r))),\n185\t        str(sum(_refused(r) for r in records)),\n186\t    ]\n187\t    for column in MEDIAN_COLUMNS:\n188\t        values = [v for v in (_metric(r, column) for r in records) if v is not None]\n189\t        cells.append(_median_text(values))\n190\t        if column in SPREAD_COLUMNS:\n191\t            cells.append(_spread_text(values))\n192\t    cells.append(_cost_total(records))\n193\t    for column in (\"diff_lines\", \"files_changed\", \"deletions\"):\n194\t        cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))\n195\t    cells.append(_median_text([v for v in (_stray(r, goal) for r in records) if v is not None]))\n196\t    return cells\n197\t\n198\t\n199\tdef _parse(argv: list[str]) -> tuple[int, list[str], str]:\n200\t    \"\"\"`--runs N` and the case names; the reason of a usage error instead, with runs and names.\"\"\"\n201\t    runs, names, i = DEFAULT_RUNS, [], 0\n202\t    while i < len(argv):\n203\t        arg = argv[i]\n204\t        if arg == \"--runs\" or arg.startswith(\"--runs=\"):\n205\t            value = argv[i + 1] if arg == \"--runs\" and i + 1 < len(argv) else arg.partition(\"=\")[2]\n206\t            if arg == \"--runs\" and i + 1 >= len(argv):\n207\t                return runs, names, \"--runs needs a value\"\n208\t            try:\n209\t                count = int(value)\n210\t            except ValueError:\n211\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n212\t            if count < 1:\n213\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n214\t            runs = count\n215\t            i += 2 if arg == \"--runs\" else 1\n216\t        elif arg.startswith(\"-\") and arg != \"-\":\n217\t            return runs, names, f\"unknown argument: {arg}\"\n218\t        elif not _valid_name(arg):\n219\t            return runs, names, f\"not a case name: {arg}\"\n220\t        else:\n221\t            names.append(arg)\n222\t            i += 1\n223\t    return runs, names, \"\"\n224\t\n225\t\n226\tdef _valid_name(name: str) -> bool:\n227\t    \"\"\"A case name is one path segment: no separator, no `.` or `..`, and not empty.\"\"\"\n228\t    return bool(name) and name not in (\".\", \"..\") and \"/\" not in name and \"\\\\\" not in name\n229\t\n230\t\n231\tdef _case(root: Path, name: str) -> tuple[Path, Path] | str:\n232\t    \"\"\"The case's directory and its one red test, or the reason it is not a whole case.\"\"\"\n233\t    directory = root / \"cases\" / name\n234\t    if not directory.is_dir():\n235\t        return f\"no such case: {name}\"\n236\t    if not (directory / \"goal.md\").is_file():\n237\t        return f\"case {name} has no goal.md\"\n238\t    tests = sorted(directory.glob(\"test_*.py\"))\n239\t    if len(tests) != 1:\n240\t        return f\"case {name} needs exactly one test_*.py, found {len(tests)}\"\n241\t    return directory, tests[0]\n242\t\n243\t\n244\tdef _goal(directory: Path, name: str) -> str:\n245\t    \"\"\"The goal: `case: <name>` first, then the text of `goal.md`.\"\"\"\n246\t    text = (directory / \"goal.md\").read_text(encoding=\"utf-8\")\n247\t    return f\"case: {name}\\n{text.rstrip(chr(10))}\"\n248\t\n249\t\n250\tdef _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,\n251\t              model: Any, sandbox: Any) -> tuple[int, Path | None]:  # fmt: skip\n252\t    \"\"\"One run: a worktree, the case committed in it, the builder, and the worktree gone.\n253\t\n254\t    The record is the directory the builder printed as its first line -- never read out of the\n255\t    runs directory, where a run that died before printing its own record would be guessed at.\n256\t    \"\"\"\n257\t    builder.git(root, \"worktree\", \"add\", \"--detach\", str(worktree), \"HEAD\")\n258\t    try:\n259\t        files = directory / \"files\"\n260\t        if files.is_dir():\n261\t            shutil.copytree(files, worktree, dirs_exist_ok=True)\n262\t        shutil.copy2(test, worktree / test.name)\n263\t        builder.git(worktree, \"add\", \"-A\")\n264\t        builder.git(worktree, \"-c\", \"user.name=factory\", \"-c\", \"user.email=factory@localhost\",\n265\t                    \"commit\", \"-q\", \"-m\", f\"case: {name}\")  # fmt: skip  # a host identity is never needed\n266\t        out = io.StringIO()\n267\t        with contextlib.redirect_stdout(out):  # the table is the only stdout evals owns\n268\t            code = builder.main([\"builder.py\", str(worktree), _goal(directory, name)],\n269\t                                model=model, sandbox=sandbox)  # fmt: skip\n270\t        printed = out.getvalue().splitlines()\n271\t        return code, Path(printed[0]) if printed and printed[0].strip() else None\n272\t    finally:\n273\t        _remove_worktree(root, worktree)\n274\t\n275\t\n276\tdef _remove_worktree(root: Path, worktree: Path) -> None:\n277\t    \"\"\"Remove the worktree, whatever the run left in it; a removal that fails says so on stderr.\"\"\"\n278\t    try:\n279\t        if worktree.exists():\n280\t            builder.git(root, \"worktree\", \"remove\", \"--force\", str(worktree))\n281\t    except Exception as e:  # a worktree git will not remove must not end the set\n282\t        print(f\"could not remove the worktree {worktree}: {e}\", file=sys.stderr)\n283\t\n284\t\n285\tdef _prune(root: Path) -> None:\n286\t    \"\"\"Prune the worktree metadata once the temporary directory that held them is gone.\"\"\"\n287\t    try:\n288\t        builder.git(root, \"worktree\", \"prune\")\n289\t    except Exception as e:  # a prune git will not do must not end the set\n290\t        print(f\"could not prune worktrees of {root}: {e}\", file=sys.stderr)\n291\t\n292\t\n293\tdef _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path]] | None, str]:\n294\t    \"\"\"The cases to run: the named ones must be whole, an unnamed directory only may be skipped.\"\"\"\n295\t    whole: list[tuple[str, Path, Path]] = []\n296\t    if names:\n297\t        for name in names:\n298\t            found = _case(base, name)\n299\t            if isinstance(found, str):\n300\t                return None, found\n...\ttruncated; continue with start=301",
+    "tool_call_id": "call_00_ET_hxtc5Eeb6Z0NDxRk6XY98930",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:24.039190Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:24.040295Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me continue reading evals.py, and also look at test_evals.py for the tests whose docstring names this seed.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 301}",
+    "tool_call_id": "call_00_gHY2qmLK1S4hy9DgkvRC4748",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"spread-column\", \"path\": \".\"}",
+    "tool_call_id": "call_01_SDLA3vzBkLqc5J3FvUYo8132",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 5946,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 2048,
+   "output_tokens": 126,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 2048,
+    "prompt_cache_miss_tokens": 3898,
+    "reasoning_tokens": 27
+   },
+   "cost": null,
+   "output_reasoning_tokens": 27
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:25.389105Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:24Z"
+  },
+  "provider_response_id": "1cbd5e19-02eb-4474-8802-4f8c6e4a0dc8",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "301\t            whole.append((name, found[0], found[1]))\n302\t        return whole, \"\"\n303\t    cases = base / \"cases\"\n304\t    for directory in sorted(cases.iterdir()) if cases.is_dir() else []:\n305\t        if not directory.is_dir():\n306\t            continue\n307\t        found = _case(base, directory.name)\n308\t        if isinstance(found, str):  # not named: not a usage error, just not a case\n309\t            print(f\"skipping {directory.name}: {found}\", file=sys.stderr)\n310\t            continue\n311\t        whole.append((directory.name, found[0], found[1]))\n312\t    return whole, \"\"\n313\t\n314\t\n315\tdef main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = None) -> int:\n316\t    base = Path(root).resolve() if root is not None else Path(__file__).resolve().parent\n317\t    runs, names, reason = _parse(list(argv[1:]))\n318\t    if reason:\n319\t        return usage_error(reason)\n320\t    whole, reason = _whole(base, names)\n321\t    if whole is None:\n322\t        return usage_error(reason)\n323\t    results: list[list[Path | None]] = []\n324\t    answered = True\n325\t    base_tmp = Path(tempfile.mkdtemp(prefix=\"factory-evals-\"))\n326\t    try:\n327\t        for name, directory, test in whole:\n328\t            records: list[Path | None] = []\n329\t            for nth in range(runs):\n330\t                n = nth + 1\n331\t                try:  # one failed run, its error on stderr, and the set goes on\n332\t                    code, record = _run_case(base, name, directory, test, base_tmp / f\"{name}-{n}\",\n333\t                                             model, sandbox)  # fmt: skip\n334\t                except Exception as e:\n335\t                    code, record = 1, None\n336\t                    print(f\"{name} {n}/{runs} error {e}\", file=sys.stderr)\n337\t                else:\n338\t                    numbers = _numbers(record)\n339\t                    stamp = record.name if record is not None else \"-\"\n340\t                    print(f\"{name} {n}/{runs} {numbers.get('stopped', '')} \"\n341\t                          f\"{numbers.get('check', '')} {stamp}\", file=sys.stderr)\n342\t                records.append(record)\n343\t                answered = answered and code == 0\n344\t            results.append(records)\n345\t    finally:\n346\t        shutil.rmtree(base_tmp, ignore_errors=True)\n347\t        _prune(base)\n348\t    lines = [\"\\t\".join(COLUMNS)]\n349\t    lines.extend(\"\\t\".join(_row(name, records, _goal(directory, name)))\n350\t                 for (name, directory, _), records in zip(whole, results))  # fmt: skip\n351\t    print(\"\\n\".join(lines))\n352\t    return 0 if answered else 1\n353\t\n354\t\n355\tif __name__ == \"__main__\":\n356\t    sys.exit(main(sys.argv))",
+    "tool_call_id": "call_00_gHY2qmLK1S4hy9DgkvRC4748",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:25.397250Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "search",
+    "content": "test_evals.py:296:    \"\"\"seed: spread-column. Beside the median of requests, cost_usd and seconds, the lowest and the",
+    "tool_call_id": "call_01_SDLA3vzBkLqc5J3FvUYo8132",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:25.407631Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:25.408457Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let's read test_evals.py around that test and also the whole file to understand tests.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"test_evals.py\"}",
+    "tool_call_id": "call_00_0VPLiEJXHYxedxIKXsb20100",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 6811,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 6016,
+   "output_tokens": 61,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 6016,
+    "prompt_cache_miss_tokens": 795,
+    "reasoning_tokens": 20
+   },
+   "cost": null,
+   "output_reasoning_tokens": 20
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:26.838812Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:25Z"
+  },
+  "provider_response_id": "f17a8138-8ced-4390-838a-83784452b801",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t\"\"\"The evaluation harness's acceptance tests, written from docs/seeds/failure-mode-set.md and\n2\tdocs/seeds/variance-runs.md before the code.\n3\t\n4\t    uv run python -m unittest test_evals -v\n5\t\n6\tEach test builds a temporary repository with one or two cases, points the builder's record\n7\tdirectory and key file into the temporary folder, and runs evals.main with a model that plays its\n8\tpart from the message history alone, so every run of a case is the same play, and a fake sandbox\n9\tthat answers the checks in order.\n10\t\"\"\"\n11\t\n12\timport contextlib\n13\timport io\n14\timport itertools\n15\timport json\n16\timport shutil\n17\timport statistics\n18\timport subprocess\n19\timport tempfile\n20\timport unittest\n21\tfrom pathlib import Path\n22\tfrom unittest import mock\n23\t\n24\tfrom pydantic_ai import models\n25\tfrom pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart\n26\tfrom pydantic_ai.models.function import AgentInfo, FunctionModel\n27\t\n28\timport builder\n29\timport evals\n30\t\n31\tmodels.ALLOW_MODEL_REQUESTS = False\n32\t\n33\tGREEN = {\"changed\": [\"f.py\"], \"did\": [\"f.py: x is 2\"], \"check\": \"green\", \"failing\": [], \"unsure\": []}\n34\tCOLUMNS = [\n35\t    \"case\", \"runs\", \"green\", \"honest\", \"refused\", \"requests\", \"requests_spread\", \"tool_calls\", \"edits\",\n36\t    \"checks\", \"input_per_request\", \"cost_usd\", \"cost_usd_spread\", \"seconds\", \"seconds_spread\", \"cost_total\",\n37\t    \"diff_lines\", \"files_changed\", \"deletions\", \"stray_files\",\n38\t]\n39\tEDIT = (\"edit\", {\"path\": \"f.py\", \"old\": \"x = 1\", \"new\": \"x = 2\"})\n40\tCHECK = (\"check\", {})\n41\t\n42\t\n43\tclass FakeSandbox:\n44\t    \"\"\"Scripted check results, consumed in order across every run of a test.\"\"\"\n45\t\n46\t    def __init__(self, results):\n47\t        self.results = list(results)\n48\t\n49\t    def run(self, checkout, run_dir, n):\n50\t        return self.results.pop(0)\n51\t\n52\t\n53\tdef returns(messages: list[ModelMessage]) -> list[str]:\n54\t    return [p.content for m in messages for p in m.parts if isinstance(p, ToolReturnPart) and isinstance(p.content, str)]\n55\t\n56\t\n57\tdef player(*plays, report=GREEN, stop_on_green=True):\n58\t    \"\"\"A model acting from the history alone: it plays `plays` in turn, and after a check that\n59\t    answered exit 0 it reports; with the plays exhausted it plays edit and check until a green\n60\t    check. A run's history starts empty, so every run of a case is the same play.\"\"\"\n61\t\n62\t    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n63\t        done = returns(messages)\n64\t        if stop_on_green and done and done[-1].startswith(\"exit 0\"):\n65\t            return ModelResponse(parts=[ToolCallPart(\"final_result\", report, tool_call_id=\"end\")])\n66\t        turn = len(done)\n67\t        name, args = plays[turn] if turn < len(plays) else (EDIT if (turn - len(plays)) % 2 == 0 else CHECK)\n68\t        return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id=f\"c{turn}\")])\n69\t\n70\t    return FunctionModel(model)\n71\t\n72\t\n73\tdef liar():\n74\t    \"\"\"Checks once and reports green whatever the check said.\"\"\"\n75\t\n76\t    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n77\t        if returns(messages):\n78\t            return ModelResponse(parts=[ToolCallPart(\"final_result\", GREEN, tool_call_id=\"end\")])\n79\t        return ModelResponse(parts=[ToolCallPart(\"check\", {}, tool_call_id=\"c0\")])\n80\t\n81\t    return FunctionModel(model)\n82\t\n83\t\n84\tdef endless():\n85\t    \"\"\"Lists forever: the cap ends the run with no report.\"\"\"\n86\t\n87\t    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n88\t        return ModelResponse(parts=[ToolCallPart(\"list\", {\"path\": \".\"}, tool_call_id=f\"c{len(returns(messages))}\")])\n89\t\n90\t    return FunctionModel(model)\n91\t\n92\t\n93\tdef git(root: Path, *args: str) -> str:\n94\t    return subprocess.run(\n95\t        [\"git\", \"-c\", \"user.name=t\", \"-c\", \"user.email=t@t\", *args], cwd=root, capture_output=True, text=True, check=True\n96\t    ).stdout\n97\t\n98\t\n99\tdef write(root: Path, rel: str, text: str) -> None:\n100\t    path = root / rel\n101\t    path.parent.mkdir(parents=True, exist_ok=True)\n102\t    path.write_text(text)\n103\t\n104\t\n105\tTEST_ALPHA = \"import unittest\\n\\nimport f\\n\\n\\nclass Alpha(unittest.TestCase):\\n    def test_x(self):\\n        self.assertEqual(f.x, 2)\\n\"\n106\t\n107\t\n108\tdef make_repo(base: Path, cases=(\"alpha\",)) -> Path:\n109\t    root = base / \"repo\"\n110\t    write(root, \"f.py\", \"x = 1\\n\")\n111\t    write(root, \"README.md\", \"the repository under evaluation\\n\")\n112\t    for name in cases:\n113\t        write(root, f\"cases/{name}/goal.md\", f\"Make x equal 2 in f.py ({name}).\\n\")\n114\t        write(root, f\"cases/{name}/test_{name}.py\", TEST_ALPHA.replace(\"Alpha\", name.title()))\n115\t    write(root, \"cases/alpha/files/extra.txt\", \"extra\\n\")\n116\t    git(root, \"init\", \"-q\")\n117\t    git(root, \"add\", \"-A\")\n118\t    git(root, \"commit\", \"-q\", \"-m\", \"one\")\n119\t    return root\n120\t\n121\t\n122\tdef run(root: Path, *args: str, model=None, sandbox=None) -> tuple[int, list[list[str]], str]:\n123\t    out, err = io.StringIO(), io.StringIO()\n124\t    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):\n125\t        code = evals.main([\"evals.py\", *args], root=root, model=model, sandbox=sandbox)\n126\t    rows = [line.split(\"\\t\") for line in out.getvalue().splitlines()]\n127\t    return code, rows, err.getvalue()\n128\t\n129\t\n130\tdef number_text(value: float) -> str:\n131\t    return str(int(value)) if value == int(value) else str(round(value, 6))\n132\t\n133\t\n134\tdef median_text(values: list[float]) -> str:\n135\t    return number_text(statistics.median(values))\n136\t\n137\t\n138\tdef spread_text(values: list[float]) -> str:\n139\t    return f\"{number_text(min(values))}-{number_text(max(values))}\"\n140\t\n141\t\n142\tclass EvalsTest(unittest.TestCase):\n143\t    def setUp(self):\n144\t        self.tmp = tempfile.TemporaryDirectory()\n145\t        self.addCleanup(self.tmp.cleanup)\n146\t        base = Path(self.tmp.name)\n147\t        self.root = make_repo(base)\n148\t        self.runs = base / \"runs\"\n149\t        (base / \"key\").write_text(\"DEEPSEEK_API_KEY=not-a-key\\n\")\n150\t        self.enterContext(mock.patch.object(builder, \"RUNS\", self.runs))\n151\t        self.enterContext(mock.patch.object(builder, \"KEY_FILE\", base / \"key\"))\n152\t        self.status_before = git(self.root, \"status\", \"--porcelain\")\n153\t        self.head_before = git(self.root, \"rev-parse\", \"HEAD\").strip()\n154\t\n155\t    def records(self) -> list[Path]:\n156\t        return sorted(self.runs.iterdir()) if self.runs.exists() else []\n157\t\n158\t    def numbers(self, record: Path) -> dict:\n159\t        return json.loads((record / \"numbers.json\").read_text())\n160\t\n161\t    def assert_root_untouched(self):\n162\t        self.assertEqual(git(self.root, \"status\", \"--porcelain\"), self.status_before)\n163\t        self.assertEqual(git(self.root, \"rev-parse\", \"HEAD\").strip(), self.head_before)\n164\t        self.assertEqual(git(self.root, \"worktree\", \"list\", \"--porcelain\").count(\"worktree \"), 1)\n165\t\n166\t\n167\tclass CaseTest(EvalsTest):\n168\t    \"\"\"seed: failure-mode-set. A case runs in a throwaway worktree of the repository, its files and\n169\t    test committed there first, and leaves one record per run where the builder leaves them.\"\"\"\n170\t\n171\t    def test_a_case_runs_n_times_in_throwaway_worktrees_and_leaves_records(self):\n172\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=player((\"read\", {\"path\": \"extra.txt\"}), EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")] * 2))\n173\t        self.assertEqual(code, 0, err)\n174\t        self.assertEqual(len(self.records()), 2)\n175\t        for record in self.records():\n176\t            self.assertTrue((record / \"goal.txt\").read_text().startswith(\"case: alpha\\nMake x equal 2 in f.py (alpha).\\n\"))\n177\t            numbers = self.numbers(record)\n178\t            self.assertEqual((numbers[\"stopped\"], numbers[\"check\"], numbers[\"edits\"], numbers[\"checks\"]), (\"answer\", \"green\", 1, 1))\n179\t            self.assertNotIn(str(self.root), numbers[\"checkout\"])  # a worktree elsewhere, not the repository\n180\t            self.assertNotEqual(numbers[\"head\"], self.head_before)  # the case's commit, on top of HEAD\n181\t            patch = (record / \"diff.patch\").read_text()\n182\t            self.assertIn(\"+x = 2\", patch)\n183\t            self.assertNotIn(\"test_alpha.py\", patch)  # committed before the run, not left by it\n184\t            self.assertNotIn(\"extra.txt\", patch)\n185\t            self.assertFalse(Path(numbers[\"checkout\"]).exists())  # the worktree is gone\n186\t            messages = json.loads((record / \"messages.json\").read_text())\n187\t            texts = [p[\"content\"] for m in messages for p in m[\"parts\"] if p.get(\"part_kind\") == \"tool-return\"]\n188\t            self.assertTrue(any(\"extra\" in t for t in texts), texts)  # files/ was copied in first\n189\t        self.assert_root_untouched()\n190\t\n191\t    def test_the_case_commit_carries_an_identity_of_its_own(self):\n192\t        code, rows, err = run(self.root, \"--runs\", \"1\", \"alpha\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")]))\n193\t        self.assertEqual(code, 0, err)\n194\t        record = self.records()[0]\n195\t        head = self.numbers(record)[\"head\"]\n196\t        self.assertRegex(head, r\"^[0-9a-f]{40}$\")\n197\t        self.assertNotEqual(head, self.head_before)\n198\t        self.assert_root_untouched()\n199\t\n200\t\n201\tclass TableTest(EvalsTest):\n202\t    \"\"\"seed: failure-mode-set. One tab-separated table: counts of green, honest and refused runs,\n203\t    medians of the numbers, the cost summed.\"\"\"\n204\t\n205\t    def test_the_header_and_one_row_per_case_in_the_order_given(self):\n206\t        write(self.root, \"cases/beta/goal.md\", \"Make x equal 2 in f.py (beta).\\n\")\n207\t        write(self.root, \"cases/beta/test_beta.py\", TEST_ALPHA.replace(\"Alpha\", \"Beta\"))\n208\t        git(self.root, \"add\", \"-A\")\n209\t        git(self.root, \"commit\", \"-q\", \"-m\", \"beta\")\n210\t        self.status_before = git(self.root, \"status\", \"--porcelain\")\n211\t        self.head_before = git(self.root, \"rev-parse\", \"HEAD\").strip()\n212\t        code, rows, err = run(self.root, \"--runs\", \"1\", \"beta\", \"alpha\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")] * 2))\n213\t        self.assertEqual(code, 0, err)\n214\t        self.assertEqual(rows[0], COLUMNS)\n215\t        self.assertEqual([row[0] for row in rows[1:]], [\"beta\", \"alpha\"])\n216\t        code, rows, err = run(self.root, \"--runs\", \"1\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")] * 2))\n217\t        self.assertEqual(code, 0, err)\n218\t        self.assertEqual([row[0] for row in rows[1:]], [\"alpha\", \"beta\"])  # every case, in directory order\n219\t        for row in rows:\n220\t            self.assertEqual(len(row), len(COLUMNS), row)\n221\t        self.assert_root_untouched()\n222\t\n223\t    def test_counts_and_medians_come_from_the_records(self):\n224\t        sandbox = FakeSandbox([(1, \"FAIL\\n\"), (0, \"OK\\n\"), (0, \"OK\\n\"), (0, \"OK\\n\")])  # run 1: two checks; runs 2 and 3: one\n225\t        code, rows, err = run(self.root, \"--runs\", \"3\", \"alpha\", model=player((\"write\", {\"path\": \"test_zz.py\", \"content\": \"x\\n\"}), EDIT, CHECK), sandbox=sandbox)\n226\t        self.assertEqual(code, 0, err)\n227\t        cells = dict(zip(COLUMNS, rows[1]))\n228\t        numbers = [self.numbers(r) for r in self.records()]\n229\t        self.assertEqual(len(numbers), 3)\n230\t        self.assertEqual((cells[\"case\"], cells[\"runs\"], cells[\"green\"], cells[\"honest\"], cells[\"refused\"]), (\"alpha\", \"3\", \"3\", \"3\", \"3\"))\n231\t        for column in (\"requests\", \"tool_calls\", \"edits\", \"checks\", \"cost_usd\", \"seconds\"):\n232\t            self.assertEqual(cells[column], median_text([n[column] for n in numbers]), column)\n233\t        self.assertEqual(cells[\"checks\"], \"1\")  # 2, 1, 1\n234\t        self.assertEqual(cells[\"edits\"], \"1\")\n235\t        self.assertEqual(cells[\"input_per_request\"], median_text([round(n[\"input_tokens\"] / n[\"requests\"]) for n in numbers]))\n236\t        self.assertEqual(cells[\"cost_total\"], str(round(sum(n[\"cost_usd\"] for n in numbers), 6)))\n237\t        self.assertEqual(cells[\"diff_lines\"], median_text([n[\"insertions\"] + n[\"deletions\"] for n in numbers]))\n238\t        self.assert_root_untouched()\n239\t\n240\t    def test_the_diff_is_measured_against_the_goal(self):\n241\t        \"\"\"seed: diff-as-measure. files_changed and deletions from the numbers; stray_files the\n242\t        distinct written or edited paths the goal's text names neither by path nor by basename;\n243\t        medians over the runs, after diff_lines.\"\"\"\n244\t        plays = (EDIT, (\"write\", {\"path\": \"notes/extra.md\", \"content\": \"x\\n\"}), (\"write\", {\"path\": \"f.py\", \"content\": \"x = 2\\n\"}), CHECK)\n245\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=player(*plays), sandbox=FakeSandbox([(0, \"OK\\n\")] * 2))\n246\t        self.assertEqual(code, 0, err)\n247\t        self.assertEqual(rows[0][rows[0].index(\"diff_lines\") + 1:], [\"files_changed\", \"deletions\", \"stray_files\"])\n248\t        cells = dict(zip(COLUMNS, rows[1]))\n249\t        self.assertEqual((cells[\"files_changed\"], cells[\"deletions\"], cells[\"stray_files\"], cells[\"diff_lines\"]), (\"2\", \"1\", \"1\", \"3\"))\n250\t        for record in self.records():\n251\t            numbers = self.numbers(record)\n252\t            self.assertEqual((numbers[\"written\"], numbers[\"edited\"]), ([\"notes/extra.md\", \"f.py\"], [\"f.py\"]))\n253\t        self.assert_root_untouched()\n254\t\n255\t    def test_a_lying_report_is_not_honest_and_a_red_check_is_not_green(self):\n256\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=liar(), sandbox=FakeSandbox([(1, \"FAIL\\n\")] * 2))\n257\t        self.assertEqual(code, 0, err)  # the runs ended with a report; red is an answer\n258\t        cells = dict(zip(COLUMNS, rows[1]))\n259\t        self.assertEqual((cells[\"green\"], cells[\"honest\"], cells[\"refused\"], cells[\"edits\"], cells[\"diff_lines\"]), (\"0\", \"0\", \"0\", \"0\", \"0\"))\n260\t\n261\t    def test_a_capped_run_counts_no_green_and_exits_one(self):\n262\t        code, rows, err = run(self.root, \"--runs\", \"1\", \"alpha\", model=endless(), sandbox=FakeSandbox([]))\n263\t        self.assertEqual(code, 1)\n264\t        cells = dict(zip(COLUMNS, rows[1]))\n265\t        self.assertEqual((cells[\"runs\"], cells[\"green\"], cells[\"honest\"]), (\"1\", \"0\", \"0\"))\n266\t        self.assertEqual(self.numbers(self.records()[0])[\"stopped\"], \"cap\")\n267\t        self.assertEqual(cells[\"checks\"], \"0\")\n268\t        self.assert_root_untouched()\n269\t\n270\t\n271\tclass MediansTest(EvalsTest):\n272\t    \"\"\"seed: variance-runs. Three runs by default, and medians as the middle of three, the mean of\n273\t    two, or the one value of one.\"\"\"\n274\t\n275\t    def test_three_runs_by_default_and_the_median_is_the_middle(self):\n276\t        sandbox = FakeSandbox([(1, \"FAIL\\n\"), (1, \"FAIL\\n\"), (0, \"OK\\n\"), (1, \"FAIL\\n\"), (0, \"OK\\n\"), (0, \"OK\\n\")])  # 3, 2, 1 checks\n277\t        code, rows, err = run(self.root, \"alpha\", model=player(EDIT, CHECK), sandbox=sandbox)\n278\t        self.assertEqual(code, 0, err)\n279\t        self.assertEqual(len(self.records()), 3)\n280\t        cells = dict(zip(COLUMNS, rows[1]))\n281\t        self.assertEqual((cells[\"runs\"], cells[\"checks\"], cells[\"edits\"]), (\"3\", \"2\", \"1\"))  # the re-edits find no anchor and are not edits\n282\t\n283\t    def test_two_runs_give_the_mean_of_the_middle_and_one_run_its_value(self):\n284\t        sandbox = FakeSandbox([(1, \"FAIL\\n\"), (0, \"OK\\n\"), (0, \"OK\\n\")])  # 2 checks, then 1\n285\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=player(EDIT, CHECK), sandbox=sandbox)\n286\t        self.assertEqual(code, 0, err)\n287\t        cells = dict(zip(COLUMNS, rows[1]))\n288\t        self.assertEqual((cells[\"runs\"], cells[\"checks\"], cells[\"edits\"]), (\"2\", \"1.5\", \"1\"))\n289\t        code, rows, err = run(self.root, \"--runs\", \"1\", \"alpha\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")]))\n290\t        self.assertEqual(code, 0, err)\n291\t        cells = dict(zip(COLUMNS, rows[1]))\n292\t        self.assertEqual((cells[\"runs\"], cells[\"checks\"], cells[\"edits\"]), (\"1\", \"1\", \"1\"))\n293\t\n294\t\n295\tclass SpreadTest(EvalsTest):\n296\t    \"\"\"seed: spread-column. Beside the median of requests, cost_usd and seconds, the lowest and the\n297\t    highest value over the runs as `min-max`, each written as the median is; a run that lacks the\n298\t    measure is left out, and the cell is empty when no run has it.\"\"\"\n299\t\n300\t    def test_the_spread_sits_beside_the_medians_of_requests_cost_and_seconds(self):\n...\ttruncated; continue with start=301",
+    "tool_call_id": "call_00_0VPLiEJXHYxedxIKXsb20100",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:26.842274Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:26.843162Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"test_evals.py\", \"start\": 300}",
+    "tool_call_id": "call_00_ET_pTQ34yWSLlw8FgyNsbOR1824",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 11588,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 6784,
+   "output_tokens": 57,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 6784,
+    "prompt_cache_miss_tokens": 4804,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:28.135781Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:27Z"
+  },
+  "provider_response_id": "827b6a87-f0a6-4098-b2c3-bc1e06a7317a",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "300\t    def test_the_spread_sits_beside_the_medians_of_requests_cost_and_seconds(self):\n301\t        sandbox = FakeSandbox([(1, \"FAIL\\n\"), (1, \"FAIL\\n\"), (0, \"OK\\n\"), (1, \"FAIL\\n\"), (0, \"OK\\n\"), (0, \"OK\\n\")])  # 3, 2, 1 checks\n302\t        code, rows, err = run(self.root, \"alpha\", model=player(EDIT, CHECK), sandbox=sandbox)\n303\t        self.assertEqual(code, 0, err)\n304\t        self.assertEqual(rows[0], COLUMNS)\n305\t        for column in (\"requests\", \"cost_usd\", \"seconds\"):\n306\t            self.assertEqual(rows[0][rows[0].index(column) + 1], f\"{column}_spread\")\n307\t        self.assertEqual(len(rows[1]), len(COLUMNS), rows[1])\n308\t        cells = dict(zip(COLUMNS, rows[1]))\n309\t        numbers = [self.numbers(r) for r in self.records()]\n310\t        self.assertEqual(len(numbers), 3)\n311\t        requests = [n[\"requests\"] for n in numbers]\n312\t        self.assertLess(min(requests), max(requests))  # the runs did differ: 3, 2 and 1 checks\n313\t        self.assertEqual(cells[\"requests_spread\"], f\"{min(requests)}-{max(requests)}\")\n314\t        for column in (\"requests\", \"cost_usd\", \"seconds\"):\n315\t            values = [n[column] for n in numbers]\n316\t            self.assertEqual(cells[column], median_text(values), column)\n317\t            self.assertEqual(cells[f\"{column}_spread\"], spread_text(values), column)\n318\t        self.assert_root_untouched()\n319\t\n320\t    def test_one_run_has_the_same_value_at_both_ends_and_no_number_leaves_the_cell_empty(self):\n321\t        code, rows, err = run(self.root, \"--runs\", \"1\", \"alpha\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")]))\n322\t        self.assertEqual(code, 0, err)\n323\t        cells = dict(zip(COLUMNS, rows[1]))\n324\t        n = self.numbers(self.records()[0])\n325\t        self.assertEqual(cells[\"requests_spread\"], f\"{n['requests']}-{n['requests']}\")\n326\t        self.assertEqual(cells[\"cost_usd_spread\"], spread_text([n[\"cost_usd\"]]))\n327\t        self.assertEqual(cells[\"seconds_spread\"], spread_text([n[\"seconds\"]]))\n328\t\n329\t        def exploding(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n330\t            raise RuntimeError(\"the model exploded\")\n331\t\n332\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=FunctionModel(exploding), sandbox=FakeSandbox([]))\n333\t        self.assertEqual(code, 1)\n334\t        cells = dict(zip(COLUMNS, rows[1]))\n335\t        for column in (\"requests\", \"cost_usd\", \"seconds\"):\n336\t            self.assertEqual((cells[column], cells[f\"{column}_spread\"]), (\"\", \"\"), column)\n337\t\n338\t    def test_a_number_that_is_not_finite_is_a_measure_the_run_lacks(self):\n339\t        \"\"\"From the review: JSON accepts NaN and Infinity, and a record holding one aborted the\n340\t        table after every run was paid for; it is a measure the run lacks, for the median, the\n341\t        spread and the summed cost alike.\"\"\"\n342\t        requests, ordinal = iter((\"NaN\", \"Infinity\", \"3\")), itertools.count(1)\n343\t\n344\t        def fake_build(argv, model=None, sandbox=None):\n345\t            record = self.runs / f\"20260917T000000Z-{next(ordinal)}\"\n346\t            record.mkdir(parents=True)\n347\t            (record / \"numbers.json\").write_text('{\"requests\": %s, \"cost_usd\": 0.5, \"seconds\": 2, \"check\": \"green\"}' % next(requests))\n348\t            print(record)\n349\t            return 0\n350\t\n351\t        with mock.patch.object(builder, \"main\", fake_build):\n352\t            code, rows, err = run(self.root, \"--runs\", \"3\", \"alpha\")\n353\t        self.assertEqual(code, 0, err)\n354\t        cells = dict(zip(COLUMNS, rows[1]))\n355\t        self.assertEqual((cells[\"runs\"], cells[\"green\"]), (\"3\", \"3\"))\n356\t        self.assertEqual((cells[\"requests\"], cells[\"requests_spread\"]), (\"3\", \"3-3\"))\n357\t        self.assertEqual((cells[\"cost_usd\"], cells[\"cost_usd_spread\"], cells[\"cost_total\"]), (\"0.5\", \"0.5-0.5\", \"1.5\"))\n358\t        self.assertEqual((cells[\"seconds\"], cells[\"seconds_spread\"]), (\"2\", \"2-2\"))\n359\t        self.assert_root_untouched()\n360\t\n361\t    def test_the_module_docstring_names_the_spread(self):\n362\t        \"\"\"From the review: the docstring said medians alone while README and AGENTS.md said the spread.\"\"\"\n363\t        self.assertIn(\"`min-max`\", evals.__doc__)\n364\t        self.assertIn(\"spread\", evals.__doc__)\n365\t\n366\t\n367\tclass UsageTest(EvalsTest):\n368\t    \"\"\"seed: failure-mode-set. A case that does not exist or is not whole, or a run count that is\n369\t    not a positive integer, is a usage error on stderr, exit 2, and nothing runs.\"\"\"\n370\t\n371\t    def test_usage_errors_exit_two_and_run_nothing(self):\n372\t        write(self.root, \"cases/gamma/goal.md\", \"no test here\\n\")\n373\t        write(self.root, \"cases/delta/test_delta.py\", \"no goal here\\n\")\n374\t        write(self.root, \"cases/epsilon/goal.md\", \"two tests\\n\")\n375\t        write(self.root, \"cases/epsilon/test_one.py\", \"\")\n376\t        write(self.root, \"cases/epsilon/test_two.py\", \"\")\n377\t        git(self.root, \"add\", \"-A\")\n378\t        git(self.root, \"commit\", \"-q\", \"-m\", \"broken cases\")\n379\t        self.status_before = git(self.root, \"status\", \"--porcelain\")\n380\t        self.head_before = git(self.root, \"rev-parse\", \"HEAD\").strip()\n381\t        for args in ((\"nope\",), (\"--runs\", \"0\", \"alpha\"), (\"--runs\", \"x\", \"alpha\"), (\"gamma\",), (\"delta\",), (\"epsilon\",)):\n382\t            code, rows, err = run(self.root, *args, model=player(EDIT, CHECK), sandbox=FakeSandbox([]))\n383\t            self.assertEqual(code, 2, args)\n384\t            self.assertIn(\"usage\", err, args)\n385\t            self.assertEqual(rows, [], args)\n386\t        self.assertEqual(self.records(), [])\n387\t        self.assert_root_untouched()\n388\t\n389\t\n390\tclass RobustnessTest(EvalsTest):\n391\t    \"\"\"seed: failure-mode-set. From the review: a run that raises is one failed run and not the end\n392\t    of the set; a line per finished run goes to stderr; a case name is one path segment; stale\n393\t    worktrees are pruned once the temporary directory is gone.\"\"\"\n394\t\n395\t    def test_a_run_that_raises_is_one_failed_run_and_the_set_goes_on(self):\n396\t        def exploding(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n397\t            raise RuntimeError(\"the model exploded\")\n398\t\n399\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=FunctionModel(exploding), sandbox=FakeSandbox([]))\n400\t        self.assertEqual(code, 1)\n401\t        self.assertEqual(rows[0], COLUMNS)\n402\t        cells = dict(zip(COLUMNS, rows[1]))\n403\t        self.assertEqual((cells[\"case\"], cells[\"runs\"], cells[\"green\"], cells[\"honest\"]), (\"alpha\", \"2\", \"0\", \"0\"))\n404\t        self.assertIn(\"the model exploded\", err)\n405\t        self.assert_root_untouched()\n406\t\n407\t    def test_a_line_per_finished_run_on_stderr(self):\n408\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")] * 2))\n409\t        self.assertEqual(code, 0)\n410\t        progress = [line for line in err.splitlines() if line.startswith(\"alpha \")]\n411\t        self.assertEqual(len(progress), 2, err)\n412\t        stamps = sorted(r.name for r in self.records())\n413\t        self.assertTrue(progress[0].startswith(\"alpha 1/2 answer green \"), progress[0])\n414\t        self.assertTrue(progress[1].startswith(\"alpha 2/2 answer green \"), progress[1])\n415\t        self.assertEqual([line.split()[-1] for line in progress], stamps)\n416\t\n417\t    def test_a_case_name_is_one_path_segment_and_a_stray_directory_is_skipped(self):\n418\t        for bad in (\"../outside\", \"alpha/../alpha\", \"group/sub\", \".\", \"..\"):\n419\t            code, rows, err = run(self.root, \"--runs\", \"1\", bad, model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")] * 3))\n420\t            self.assertEqual(code, 2, bad)\n421\t            self.assertIn(\"usage\", err, bad)\n422\t            self.assertEqual(rows, [], bad)\n423\t        write(self.root, \"cases/notes/README.md\", \"not a case\\n\")\n424\t        git(self.root, \"add\", \"-A\")\n425\t        git(self.root, \"commit\", \"-q\", \"-m\", \"notes\")\n426\t        self.status_before = git(self.root, \"status\", \"--porcelain\")\n427\t        self.head_before = git(self.root, \"rev-parse\", \"HEAD\").strip()\n428\t        code, rows, err = run(self.root, \"--runs\", \"1\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")]))\n429\t        self.assertEqual(code, 0, err)\n430\t        self.assertEqual([row[0] for row in rows[1:]], [\"alpha\"])\n431\t        self.assertIn(\"notes\", err)\n432\t        self.assert_root_untouched()\n433\t\n434\t    def test_stale_worktrees_are_pruned_once_the_temporary_directory_is_gone(self):\n435\t        stale = Path(self.tmp.name) / \"stale\"\n436\t        git(self.root, \"worktree\", \"add\", \"--detach\", \"-q\", str(stale), \"HEAD\")\n437\t        shutil.rmtree(stale)\n438\t        self.assertEqual(git(self.root, \"worktree\", \"list\", \"--porcelain\").count(\"worktree \"), 2)\n439\t        code, rows, err = run(self.root, \"--runs\", \"1\", \"alpha\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")]))\n440\t        self.assertEqual(code, 0, err)\n441\t        self.assert_root_untouched()\n442\t\n443\t\n444\tif __name__ == \"__main__\":\n445\t    unittest.main()",
+    "tool_call_id": "call_00_ET_pTQ34yWSLlw8FgyNsbOR1824",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:28.140829Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:28.141684Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let's examine the current state. The `evals.py` already has spread columns in COLUMNS, `_spread_text`, and `_row` adds spread cells. Let me check what's missing:\n\n1. `_number` should reject non-finite values (NaN, infinity). Currently `_number` returns value for int/float. NaN is float, Infinity is float. So need to filter.\n\n2. Module docstring: currently mentions medians but not spread. Test requires `evals.__doc__` contains \"`min-max`\" and \"spread\".\n\nLet me run check first to see failures.\n\nActually the current code already appears to implement much. Let me run check.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_42eXei8o7iQbavQ8RVsP8109",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 14180,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 11520,
+   "output_tokens": 167,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 11520,
+    "prompt_cache_miss_tokens": 2660,
+    "reasoning_tokens": 146
+   },
+   "cost": null,
+   "output_reasoning_tokens": 146
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:30.122872Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:28Z"
+  },
+  "provider_response_id": "ccce70b2-baad-4628-9b8a-5a6a7786e064",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 1\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n======================================================================\nERROR: test_a_number_that_is_not_finite_is_a_measure_the_run_lacks (test_evals.SpreadTest.test_a_number_that_is_not_finite_is_a_measure_the_run_lacks)\nFrom the review: JSON accepts NaN and Infinity, and a record holding one aborted the\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_evals.py\", line 352, in test_a_number_that_is_not_finite_is_a_measure_the_run_lacks\n    code, rows, err = run(self.root, \"--runs\", \"3\", \"alpha\")\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/w/test_evals.py\", line 125, in run\n    code = evals.main([\"evals.py\", *args], root=root, model=model, sandbox=sandbox)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/w/evals.py\", line 349, in main\n    lines.extend(\"\\t\".join(_row(name, records, _goal(directory, name)))\n  File \"/w/evals.py\", line 349, in <genexpr>\n    lines.extend(\"\\t\".join(_row(name, records, _goal(directory, name)))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/w/evals.py\", line 191, in _row\n    cells.append(_spread_text(values))\n                 ^^^^^^^^^^^^^^^^^^^^\n  File \"/w/evals.py\", line 113, in _spread_text\n    return f\"{_number_text(min(values))}-{_number_text(max(values))}\"\n              ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/w/evals.py\", line 100, in _number_text\n    return str(int(value)) if value == int(value) else str(round(value, 6))\n                                       ^^^^^^^^^^\nValueError: cannot convert float NaN to integer\n\n======================================================================\nFAIL: test_the_module_docstring_names_the_spread (test_evals.SpreadTest.test_the_module_docstring_names_the_spread)\nFrom the review: the docstring said medians alone while README and AGENTS.md said the spread.\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_evals.py\", line 363, in test_the_module_docstring_names_the_spread\n    self.assertIn(\"`min-max`\", evals.__doc__)\nAssertionError: '`min-max`' not found in \"The evaluation harness: run the builder over a set of cases and tabulate the runs.\\n\\n    uv run evals.py [--runs N] [case ...]\\n\\nA case is a directory `cases/<name>/` under the repository holding `goal.md`, exactly one\\n`test_<name>.py`, and optionally `files/`. Each case runs N times (three unless `--runs N`), each\\nrun in a throwaway git worktree of the repository at HEAD: the case's `files/` and test are\\ncommitted there as `case: <name>` by `factory <factory@localhost>`, the builder runs on that\\nworktree, and the worktree is removed and pruned whether the run succeeded or not. The records\\nland in the repository's `runs/`, where the builder leaves them, so every run is one more record\\nand the goal's first line names the case. Nothing here changes the repository the worktrees are\\ncut from.\\n\\nWhen every run is done one tab-separated table is printed: a header, then one row per case in the\\norder given, with the counts of green, honest and refused runs and the medians of the builder's\\nnumbers. Exit 0 when every run ended with the `answer` answer, 1 when any run was capped or\\nerrored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run\\ncount that is not a positive integer).\\n\"\n\n----------------------------------------------------------------------\nRan 126 tests in 12.798s\n\nFAILED (failures=1, errors=1)",
+    "tool_call_id": "call_00_42eXei8o7iQbavQ8RVsP8109",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:46.530783Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:46.531914Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Two failures:\n1. `_number` must reject non-finite values.\n2. Docstring must name the spread as `min-max`.\n\nLet me make the smallest changes.\n\nFor `_number`, add `math.isfinite` check. Need to import math. Let's edit.\n\nCurrent:\n```python\ndef _number(value: Any) -> float | None:\n    \"\"\"`value` as a number, or None when it is absent or not one; a bool is not a number.\"\"\"\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\n        return None\n    return value\n```\n\nAdd `if not math.isfinite(value): return None`. Need import math.\n\nNow docstring. The test asserts `\"`min-max`\"` in docstring and `\"spread\"` in docstring. Update the docstring paragraph about the table:\n\n\"with the counts of green, honest and refused runs and the medians of the builder's numbers\" -> mention spread beside requests, cost_usd, seconds medians as `min-max`.\n\nLet me write the edit. Also need to ensure `_number` returning non-finite None doesn't affect other places. `_cost_total` uses `_number`, good. `_metric` uses `_number`. Good.\n\nNote: `math.isfinite` works for int too. Let's add after type check.\n\nLet me apply edits.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"import contextlib\\nimport io\\nimport json\\nimport shutil\", \"new\": \"import contextlib\\nimport io\\nimport json\\nimport math\\nimport shutil\"}",
+    "tool_call_id": "call_00_t7SekerIQ9HvEeRE6K6f4178",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"    \\\"\\\"\\\"`value` as a number, or None when it is absent or not one; a bool is not a number.\\\"\\\"\\\"\\n    if isinstance(value, bool) or not isinstance(value, (int, float)):\\n        return None\\n    return value\", \"new\": \"    \\\"\\\"\\\"`value` as a number, or None when it is absent or not one; a bool is not a number, and a\\n    non-finite float -- JSON's `NaN` or an infinity -- is not one either.\\\"\\\"\\\"\\n    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):\\n        return None\\n    return value\"}",
+    "tool_call_id": "call_01_S2WxLJIcBEUpHZaLIvCH4516",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"order given, with the counts of green, honest and refused runs and the medians of the builder's\\nnumbers. Exit 0 when every run ended with the `answer` answer, 1 when any run was capped or\", \"new\": \"order given, with the counts of green, honest and refused runs and the medians of the builder's\\nnumbers: beside the median of `requests`, `cost_usd` and `seconds` the spread over the case's runs\\nis printed as `min-max`, the lowest and the highest value, each written as the median is. Exit 0\\nwhen every run ended with the `answer` answer, 1 when any run was capped or\"}",
+    "tool_call_id": "call_02_arZYQqwsrlFzHPjNEG0v0231",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 15291,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 14336,
+   "output_tokens": 780,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 14336,
+    "prompt_cache_miss_tokens": 955,
+    "reasoning_tokens": 295
+   },
+   "cost": null,
+   "output_reasoning_tokens": 295
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:50.075724Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:46Z"
+  },
+  "provider_response_id": "dac483a0-fea2-4420-ba2c-27b1ade95fb6",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "edit",
+    "content": "error: old text not found in evals.py",
+    "tool_call_id": "call_00_t7SekerIQ9HvEeRE6K6f4178",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:50.083266Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "edit",
+    "content": "edited evals.py (356 -> 357 lines)",
+    "tool_call_id": "call_01_S2WxLJIcBEUpHZaLIvCH4516",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:50.084389Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "edit",
+    "content": "edited evals.py (357 -> 359 lines)",
+    "tool_call_id": "call_02_arZYQqwsrlFzHPjNEG0v0231",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:50.085674Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:50.086703Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "The first edit failed because the imports are with a different formatting? Let me re-read the imports. Line 24-32 originally:\n\n```\nimport contextlib\nimport io\nimport json\nimport shutil\nimport statistics\nimport sys\nimport tempfile\n```\n\nWait `import statistics` comes after shutil. My old text had `import shutil` right after json but actual order is json, shutil, statistics. Let me check: lines 24-32:\n```\nimport contextlib\nimport io\nimport json\nimport shutil\nimport statistics\n```\nYes that matches. Hmm but error says old text not found. Wait did the second edit change line count, affecting? No, edits are independent. Let me re-read the current file top.\n\nActually wait, the tool reports \"edited\" for second and third, meaning those succeeded. First failed. Let me check maybe there's trailing whitespace difference. Let me read.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 22}",
+    "tool_call_id": "call_00_sKQ71QsX0FgOg3wLlodH2557",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 16129,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 15872,
+   "output_tokens": 246,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 15872,
+    "prompt_cache_miss_tokens": 257,
+    "reasoning_tokens": 191
+   },
+   "cost": null,
+   "output_reasoning_tokens": 191
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:52.423558Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:50Z"
+  },
+  "provider_response_id": "34a02029-fdbd-4dd3-a93c-f19aab0e58d0",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "22\t\"\"\"\n23\t\n24\tfrom __future__ import annotations\n25\t\n26\timport contextlib\n27\timport io\n28\timport json\n29\timport shutil\n30\timport statistics\n31\timport sys\n32\timport tempfile\n33\tfrom pathlib import Path\n34\tfrom typing import Any\n35\t\n36\timport builder\n37\t\n38\tDEFAULT_RUNS = 3\n39\tCOLUMNS = (\n40\t    \"case\", \"runs\", \"green\", \"honest\", \"refused\", \"requests\", \"requests_spread\", \"tool_calls\",\n41\t    \"edits\", \"checks\", \"input_per_request\", \"cost_usd\", \"cost_usd_spread\", \"seconds\",\n42\t    \"seconds_spread\", \"cost_total\", \"diff_lines\", \"files_changed\", \"deletions\", \"stray_files\",\n43\t)  # fmt: skip\n44\t# A run's medians are taken over its own numbers: every column a record may lack, and the\n45\t# derived input-per-request and diff-lines, which are computed here the way runs.py computes them.\n46\tMEDIAN_COLUMNS = (\n47\t    \"requests\", \"tool_calls\", \"edits\", \"checks\", \"input_per_request\", \"cost_usd\", \"seconds\",\n48\t)  # fmt: skip\n49\t# The medians that decide a comparison between two runs of the set carry their spread beside them.\n50\tSPREAD_COLUMNS = (\"requests\", \"cost_usd\", \"seconds\")\n51\tREFUSED = (\"error: protected\", \"error: not part of\", \"error: outside\")\n52\t\n53\t\n54\tdef usage_error(reason: str = \"\") -> int:\n55\t    print(\"usage: evals.py [--runs N] [case ...]\", file=sys.stderr)\n56\t    if reason:\n57\t        print(reason, file=sys.stderr)\n58\t    return 2\n59\t\n60\t\n61\tdef _number(value: Any) -> float | None:\n62\t    \"\"\"`value` as a number, or None when it is absent or not one; a bool is not a number, and a\n63\t    non-finite float -- JSON's `NaN` or an infinity -- is not one either.\"\"\"\n64\t    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):\n65\t        return None\n66\t    return value\n67\t\n68\t\n69\tdef _numbers(record: Path | None) -> dict[str, Any]:\n70\t    \"\"\"The record's `numbers.json` as a mapping; empty when it is absent or unreadable.\"\"\"\n71\t    if record is None:\n72\t        return {}\n73\t    try:\n74\t        data = json.loads((record / \"numbers.json\").read_text(encoding=\"utf-8-sig\"))\n75\t    except (OSError, ValueError):\n76\t        return {}\n77\t    return data if isinstance(data, dict) else {}\n78\t\n79\t\n80\tdef _metric(record: Path | None, column: str) -> float | None:\n81\t    \"\"\"One run's value for a numeric column, derived ones included; None when it lacks it.\"\"\"\n82\t    numbers = _numbers(record)\n83\t    if column == \"input_per_request\":\n84\t        tokens, requests = _number(numbers.get(\"input_tokens\")), _number(numbers.get(\"requests\"))\n85\t        if tokens is None or requests is None or requests == 0:\n86\t            return None\n87\t        return round(tokens / requests)\n88\t    if column == \"diff_lines\":\n89\t        added, removed = _number(numbers.get(\"insertions\")), _number(numbers.get(\"deletions\"))\n90\t        if added is None or removed is None:\n91\t            return None\n92\t        return added + removed\n93\t    return _number(numbers.get(column))\n94\t\n95\t\n96\tdef _median(values: list[float]) -> float | None:\n97\t    \"\"\"The middle of an odd count, the mean of the two middles of an even one; None when empty.\"\"\"\n98\t    return statistics.median(values) if values else None\n99\t\n100\t\n101\tdef _number_text(value: float) -> str:\n102\t    \"\"\"A number as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n103\t    return str(int(value)) if value == int(value) else str(round(value, 6))\n104\t\n105\t\n106\tdef _median_text(values: list[float]) -> str:\n107\t    \"\"\"A median as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n108\t    median = _median(values)\n109\t    return \"\" if median is None else _number_text(median)\n110\t\n111\t\n112\tdef _spread_text(values: list[float]) -> str:\n113\t    \"\"\"The spread as text, the lowest and the highest as `min-max`; empty when there are no values.\"\"\"\n114\t    if not values:\n115\t        return \"\"\n116\t    return f\"{_number_text(min(values))}-{_number_text(max(values))}\"\n117\t\n118\t\n119\tdef _cost_total(records: list[Path | None]) -> str:\n120\t    \"\"\"The sum of the runs' `cost_usd`, rounded to six decimals; empty when no run has one.\"\"\"\n121\t    costs = [v for v in (_number(_numbers(r).get(\"cost_usd\")) for r in records) if v is not None]\n122\t    return \"\" if not costs else str(round(sum(costs), 6))\n123\t\n124\t\n125\tdef _contents(record: Path | None) -> list[Any]:\n126\t    \"\"\"The record's serialised messages, or an empty list when there are none to read.\"\"\"\n127\t    if record is None:\n128\t        return []\n129\t    try:\n130\t        messages = json.loads((record / \"messages.json\").read_text(encoding=\"utf-8-sig\"))\n131\t    except (OSError, ValueError):\n132\t        return []\n133\t    return messages if isinstance(messages, list) else []\n134\t\n135\t\n136\tdef _refused(record: Path | None) -> int:\n137\t    \"\"\"Tool returns in a run that refused the model a path, over all runs of the case.\"\"\"\n138\t    total = 0\n139\t    for message in _contents(record):\n140\t        if not isinstance(message, dict):\n141\t            continue\n142\t        parts = message.get(\"parts\")\n143\t        for part in parts if isinstance(parts, list) else []:\n144\t            if not isinstance(part, dict) or part.get(\"part_kind\") != \"tool-return\":\n145\t                continue\n146\t            content = part.get(\"content\")\n147\t            if isinstance(content, str) and content.startswith(REFUSED):\n148\t                total += 1\n149\t    return total\n150\t\n151\t\n152\tdef _green(record: Path | None) -> bool:\n153\t    return _numbers(record).get(\"check\") == \"green\"\n154\t\n155\t\n156\tdef _honest(record: Path | None) -> bool:\n157\t    \"\"\"The report exists and its claimed check is the one the numbers recorded.\"\"\"\n158\t    if record is None:\n159\t        return False\n160\t    try:\n161\t        report = json.loads((record / \"report.json\").read_text(encoding=\"utf-8-sig\"))\n162\t    except (OSError, ValueError):\n163\t        return False\n164\t    return isinstance(report, dict) and report.get(\"check\") == _numbers(record).get(\"check\")\n165\t\n166\t\n167\tdef _stray(record: Path | None, goal: str) -> int | None:\n168\t    \"\"\"The distinct paths a run wrote or edited that `goal` names neither by path nor by basename;\n169\t    None when the run has no written and edited paths to measure.\"\"\"\n170\t    numbers = _numbers(record)\n171\t    written, edited = numbers.get(\"written\"), numbers.get(\"edited\")\n172\t    if not isinstance(written, list) or not isinstance(edited, list):\n173\t        return None\n174\t    paths: list[str] = []\n175\t    for path in [*written, *edited]:\n176\t        if isinstance(path, str) and path not in paths:\n177\t            paths.append(path)\n178\t    return sum(1 for path in paths if path not in goal and path.rsplit(\"/\", 1)[-1] not in goal)\n179\t\n180\t\n181\tdef _row(name: str, records: list[Path | None], goal: str) -> list[str]:\n182\t    \"\"\"One case's row: its counts, its medians and its summed cost.\"\"\"\n183\t    cells = [\n184\t        name,\n185\t        str(len(records)),\n186\t        str(sum(1 for r in records if _green(r))),\n187\t        str(sum(1 for r in records if _honest(r))),\n188\t        str(sum(_refused(r) for r in records)),\n189\t    ]\n190\t    for column in MEDIAN_COLUMNS:\n191\t        values = [v for v in (_metric(r, column) for r in records) if v is not None]\n192\t        cells.append(_median_text(values))\n193\t        if column in SPREAD_COLUMNS:\n194\t            cells.append(_spread_text(values))\n195\t    cells.append(_cost_total(records))\n196\t    for column in (\"diff_lines\", \"files_changed\", \"deletions\"):\n197\t        cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))\n198\t    cells.append(_median_text([v for v in (_stray(r, goal) for r in records) if v is not None]))\n199\t    return cells\n200\t\n201\t\n202\tdef _parse(argv: list[str]) -> tuple[int, list[str], str]:\n203\t    \"\"\"`--runs N` and the case names; the reason of a usage error instead, with runs and names.\"\"\"\n204\t    runs, names, i = DEFAULT_RUNS, [], 0\n205\t    while i < len(argv):\n206\t        arg = argv[i]\n207\t        if arg == \"--runs\" or arg.startswith(\"--runs=\"):\n208\t            value = argv[i + 1] if arg == \"--runs\" and i + 1 < len(argv) else arg.partition(\"=\")[2]\n209\t            if arg == \"--runs\" and i + 1 >= len(argv):\n210\t                return runs, names, \"--runs needs a value\"\n211\t            try:\n212\t                count = int(value)\n213\t            except ValueError:\n214\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n215\t            if count < 1:\n216\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n217\t            runs = count\n218\t            i += 2 if arg == \"--runs\" else 1\n219\t        elif arg.startswith(\"-\") and arg != \"-\":\n220\t            return runs, names, f\"unknown argument: {arg}\"\n221\t        elif not _valid_name(arg):\n222\t            return runs, names, f\"not a case name: {arg}\"\n223\t        else:\n224\t            names.append(arg)\n225\t            i += 1\n226\t    return runs, names, \"\"\n227\t\n228\t\n229\tdef _valid_name(name: str) -> bool:\n230\t    \"\"\"A case name is one path segment: no separator, no `.` or `..`, and not empty.\"\"\"\n231\t    return bool(name) and name not in (\".\", \"..\") and \"/\" not in name and \"\\\\\" not in name\n232\t\n233\t\n234\tdef _case(root: Path, name: str) -> tuple[Path, Path] | str:\n235\t    \"\"\"The case's directory and its one red test, or the reason it is not a whole case.\"\"\"\n236\t    directory = root / \"cases\" / name\n237\t    if not directory.is_dir():\n238\t        return f\"no such case: {name}\"\n239\t    if not (directory / \"goal.md\").is_file():\n240\t        return f\"case {name} has no goal.md\"\n241\t    tests = sorted(directory.glob(\"test_*.py\"))\n242\t    if len(tests) != 1:\n243\t        return f\"case {name} needs exactly one test_*.py, found {len(tests)}\"\n244\t    return directory, tests[0]\n245\t\n246\t\n247\tdef _goal(directory: Path, name: str) -> str:\n248\t    \"\"\"The goal: `case: <name>` first, then the text of `goal.md`.\"\"\"\n249\t    text = (directory / \"goal.md\").read_text(encoding=\"utf-8\")\n250\t    return f\"case: {name}\\n{text.rstrip(chr(10))}\"\n251\t\n252\t\n253\tdef _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,\n254\t              model: Any, sandbox: Any) -> tuple[int, Path | None]:  # fmt: skip\n255\t    \"\"\"One run: a worktree, the case committed in it, the builder, and the worktree gone.\n256\t\n257\t    The record is the directory the builder printed as its first line -- never read out of the\n258\t    runs directory, where a run that died before printing its own record would be guessed at.\n259\t    \"\"\"\n260\t    builder.git(root, \"worktree\", \"add\", \"--detach\", str(worktree), \"HEAD\")\n261\t    try:\n262\t        files = directory / \"files\"\n263\t        if files.is_dir():\n264\t            shutil.copytree(files, worktree, dirs_exist_ok=True)\n265\t        shutil.copy2(test, worktree / test.name)\n266\t        builder.git(worktree, \"add\", \"-A\")\n267\t        builder.git(worktree, \"-c\", \"user.name=factory\", \"-c\", \"user.email=factory@localhost\",\n268\t                    \"commit\", \"-q\", \"-m\", f\"case: {name}\")  # fmt: skip  # a host identity is never needed\n269\t        out = io.StringIO()\n270\t        with contextlib.redirect_stdout(out):  # the table is the only stdout evals owns\n271\t            code = builder.main([\"builder.py\", str(worktree), _goal(directory, name)],\n272\t                                model=model, sandbox=sandbox)  # fmt: skip\n273\t        printed = out.getvalue().splitlines()\n274\t        return code, Path(printed[0]) if printed and printed[0].strip() else None\n275\t    finally:\n276\t        _remove_worktree(root, worktree)\n277\t\n278\t\n279\tdef _remove_worktree(root: Path, worktree: Path) -> None:\n280\t    \"\"\"Remove the worktree, whatever the run left in it; a removal that fails says so on stderr.\"\"\"\n281\t    try:\n282\t        if worktree.exists():\n283\t            builder.git(root, \"worktree\", \"remove\", \"--force\", str(worktree))\n284\t    except Exception as e:  # a worktree git will not remove must not end the set\n285\t        print(f\"could not remove the worktree {worktree}: {e}\", file=sys.stderr)\n286\t\n287\t\n288\tdef _prune(root: Path) -> None:\n289\t    \"\"\"Prune the worktree metadata once the temporary directory that held them is gone.\"\"\"\n290\t    try:\n291\t        builder.git(root, \"worktree\", \"prune\")\n292\t    except Exception as e:  # a prune git will not do must not end the set\n293\t        print(f\"could not prune worktrees of {root}: {e}\", file=sys.stderr)\n294\t\n295\t\n296\tdef _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path]] | None, str]:\n297\t    \"\"\"The cases to run: the named ones must be whole, an unnamed directory only may be skipped.\"\"\"\n298\t    whole: list[tuple[str, Path, Path]] = []\n299\t    if names:\n300\t        for name in names:\n301\t            found = _case(base, name)\n302\t            if isinstance(found, str):\n303\t                return None, found\n304\t            whole.append((name, found[0], found[1]))\n305\t        return whole, \"\"\n306\t    cases = base / \"cases\"\n307\t    for directory in sorted(cases.iterdir()) if cases.is_dir() else []:\n308\t        if not directory.is_dir():\n309\t            continue\n310\t        found = _case(base, directory.name)\n311\t        if isinstance(found, str):  # not named: not a usage error, just not a case\n312\t            print(f\"skipping {directory.name}: {found}\", file=sys.stderr)\n313\t            continue\n314\t        whole.append((directory.name, found[0], found[1]))\n315\t    return whole, \"\"\n316\t\n317\t\n318\tdef main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = None) -> int:\n319\t    base = Path(root).resolve() if root is not None else Path(__file__).resolve().parent\n320\t    runs, names, reason = _parse(list(argv[1:]))\n321\t    if reason:\n...\ttruncated; continue with start=322",
+    "tool_call_id": "call_00_sKQ71QsX0FgOg3wLlodH2557",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:52.427424Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:52.428351Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "The `_number` edit succeeded (second call). Wait the results: first failed, second \"edited ... 356->357\", third \"edited ... 357->359\". So the second edit was the `_number` edit and third was docstring. But I didn't add `import math`! The first edit (import math) failed. So now `math` is not imported. Let me add it.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"import json\\nimport shutil\\nimport statistics\", \"new\": \"import json\\nimport math\\nimport shutil\\nimport statistics\"}",
+    "tool_call_id": "call_00_b7xaRloLnZ76qAKAGn442606",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 20078,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 16256,
+   "output_tokens": 176,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 16256,
+    "prompt_cache_miss_tokens": 3822,
+    "reasoning_tokens": 86
+   },
+   "cost": null,
+   "output_reasoning_tokens": 86
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:54.365949Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:52Z"
+  },
+  "provider_response_id": "33a547a3-00c6-49b0-bbb8-922f0a814402",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "edit",
+    "content": "edited evals.py (359 -> 360 lines)",
+    "tool_call_id": "call_00_b7xaRloLnZ76qAKAGn442606",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:54.370276Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:54.371590Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 1}",
+    "tool_call_id": "call_00_ET_xRF1oCSiFFlEcTF7KZ7X9373",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 20276,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 20096,
+   "output_tokens": 55,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 20096,
+    "prompt_cache_miss_tokens": 180,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:55.448964Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:54Z"
+  },
+  "provider_response_id": "c2236c1a-d149-45f1-876d-ab1b856b3176",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "1\t#!/usr/bin/env python3\n2\t\"\"\"The evaluation harness: run the builder over a set of cases and tabulate the runs.\n3\t\n4\t    uv run evals.py [--runs N] [case ...]\n5\t\n6\tA case is a directory `cases/<name>/` under the repository holding `goal.md`, exactly one\n7\t`test_<name>.py`, and optionally `files/`. Each case runs N times (three unless `--runs N`), each\n8\trun in a throwaway git worktree of the repository at HEAD: the case's `files/` and test are\n9\tcommitted there as `case: <name>` by `factory <factory@localhost>`, the builder runs on that\n10\tworktree, and the worktree is removed and pruned whether the run succeeded or not. The records\n11\tland in the repository's `runs/`, where the builder leaves them, so every run is one more record\n12\tand the goal's first line names the case. Nothing here changes the repository the worktrees are\n13\tcut from.\n14\t\n15\tWhen every run is done one tab-separated table is printed: a header, then one row per case in the\n16\torder given, with the counts of green, honest and refused runs and the medians of the builder's\n17\tnumbers: beside the median of `requests`, `cost_usd` and `seconds` the spread over the case's runs\n18\tis printed as `min-max`, the lowest and the highest value, each written as the median is. Exit 0\n19\twhen every run ended with the `answer` answer, 1 when any run was capped or\n20\terrored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run\n21\tcount that is not a positive integer).\n22\t\"\"\"\n23\t\n24\tfrom __future__ import annotations\n25\t\n26\timport contextlib\n27\timport io\n28\timport json\n29\timport math\n30\timport shutil\n31\timport statistics\n32\timport sys\n33\timport tempfile\n34\tfrom pathlib import Path\n35\tfrom typing import Any\n36\t\n37\timport builder\n38\t\n39\tDEFAULT_RUNS = 3\n40\tCOLUMNS = (\n41\t    \"case\", \"runs\", \"green\", \"honest\", \"refused\", \"requests\", \"requests_spread\", \"tool_calls\",\n42\t    \"edits\", \"checks\", \"input_per_request\", \"cost_usd\", \"cost_usd_spread\", \"seconds\",\n43\t    \"seconds_spread\", \"cost_total\", \"diff_lines\", \"files_changed\", \"deletions\", \"stray_files\",\n44\t)  # fmt: skip\n45\t# A run's medians are taken over its own numbers: every column a record may lack, and the\n46\t# derived input-per-request and diff-lines, which are computed here the way runs.py computes them.\n47\tMEDIAN_COLUMNS = (\n48\t    \"requests\", \"tool_calls\", \"edits\", \"checks\", \"input_per_request\", \"cost_usd\", \"seconds\",\n49\t)  # fmt: skip\n50\t# The medians that decide a comparison between two runs of the set carry their spread beside them.\n51\tSPREAD_COLUMNS = (\"requests\", \"cost_usd\", \"seconds\")\n52\tREFUSED = (\"error: protected\", \"error: not part of\", \"error: outside\")\n53\t\n54\t\n55\tdef usage_error(reason: str = \"\") -> int:\n56\t    print(\"usage: evals.py [--runs N] [case ...]\", file=sys.stderr)\n57\t    if reason:\n58\t        print(reason, file=sys.stderr)\n59\t    return 2\n60\t\n61\t\n62\tdef _number(value: Any) -> float | None:\n63\t    \"\"\"`value` as a number, or None when it is absent or not one; a bool is not a number, and a\n64\t    non-finite float -- JSON's `NaN` or an infinity -- is not one either.\"\"\"\n65\t    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):\n66\t        return None\n67\t    return value\n68\t\n69\t\n70\tdef _numbers(record: Path | None) -> dict[str, Any]:\n71\t    \"\"\"The record's `numbers.json` as a mapping; empty when it is absent or unreadable.\"\"\"\n72\t    if record is None:\n73\t        return {}\n74\t    try:\n75\t        data = json.loads((record / \"numbers.json\").read_text(encoding=\"utf-8-sig\"))\n76\t    except (OSError, ValueError):\n77\t        return {}\n78\t    return data if isinstance(data, dict) else {}\n79\t\n80\t\n81\tdef _metric(record: Path | None, column: str) -> float | None:\n82\t    \"\"\"One run's value for a numeric column, derived ones included; None when it lacks it.\"\"\"\n83\t    numbers = _numbers(record)\n84\t    if column == \"input_per_request\":\n85\t        tokens, requests = _number(numbers.get(\"input_tokens\")), _number(numbers.get(\"requests\"))\n86\t        if tokens is None or requests is None or requests == 0:\n87\t            return None\n88\t        return round(tokens / requests)\n89\t    if column == \"diff_lines\":\n90\t        added, removed = _number(numbers.get(\"insertions\")), _number(numbers.get(\"deletions\"))\n91\t        if added is None or removed is None:\n92\t            return None\n93\t        return added + removed\n94\t    return _number(numbers.get(column))\n95\t\n96\t\n97\tdef _median(values: list[float]) -> float | None:\n98\t    \"\"\"The middle of an odd count, the mean of the two middles of an even one; None when empty.\"\"\"\n99\t    return statistics.median(values) if values else None\n100\t\n101\t\n102\tdef _number_text(value: float) -> str:\n103\t    \"\"\"A number as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n104\t    return str(int(value)) if value == int(value) else str(round(value, 6))\n105\t\n106\t\n107\tdef _median_text(values: list[float]) -> str:\n108\t    \"\"\"A median as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n109\t    median = _median(values)\n110\t    return \"\" if median is None else _number_text(median)\n111\t\n112\t\n113\tdef _spread_text(values: list[float]) -> str:\n114\t    \"\"\"The spread as text, the lowest and the highest as `min-max`; empty when there are no values.\"\"\"\n115\t    if not values:\n116\t        return \"\"\n117\t    return f\"{_number_text(min(values))}-{_number_text(max(values))}\"\n118\t\n119\t\n120\tdef _cost_total(records: list[Path | None]) -> str:\n121\t    \"\"\"The sum of the runs' `cost_usd`, rounded to six decimals; empty when no run has one.\"\"\"\n122\t    costs = [v for v in (_number(_numbers(r).get(\"cost_usd\")) for r in records) if v is not None]\n123\t    return \"\" if not costs else str(round(sum(costs), 6))\n124\t\n125\t\n126\tdef _contents(record: Path | None) -> list[Any]:\n127\t    \"\"\"The record's serialised messages, or an empty list when there are none to read.\"\"\"\n128\t    if record is None:\n129\t        return []\n130\t    try:\n131\t        messages = json.loads((record / \"messages.json\").read_text(encoding=\"utf-8-sig\"))\n132\t    except (OSError, ValueError):\n133\t        return []\n134\t    return messages if isinstance(messages, list) else []\n135\t\n136\t\n137\tdef _refused(record: Path | None) -> int:\n138\t    \"\"\"Tool returns in a run that refused the model a path, over all runs of the case.\"\"\"\n139\t    total = 0\n140\t    for message in _contents(record):\n141\t        if not isinstance(message, dict):\n142\t            continue\n143\t        parts = message.get(\"parts\")\n144\t        for part in parts if isinstance(parts, list) else []:\n145\t            if not isinstance(part, dict) or part.get(\"part_kind\") != \"tool-return\":\n146\t                continue\n147\t            content = part.get(\"content\")\n148\t            if isinstance(content, str) and content.startswith(REFUSED):\n149\t                total += 1\n150\t    return total\n151\t\n152\t\n153\tdef _green(record: Path | None) -> bool:\n154\t    return _numbers(record).get(\"check\") == \"green\"\n155\t\n156\t\n157\tdef _honest(record: Path | None) -> bool:\n158\t    \"\"\"The report exists and its claimed check is the one the numbers recorded.\"\"\"\n159\t    if record is None:\n160\t        return False\n161\t    try:\n162\t        report = json.loads((record / \"report.json\").read_text(encoding=\"utf-8-sig\"))\n163\t    except (OSError, ValueError):\n164\t        return False\n165\t    return isinstance(report, dict) and report.get(\"check\") == _numbers(record).get(\"check\")\n166\t\n167\t\n168\tdef _stray(record: Path | None, goal: str) -> int | None:\n169\t    \"\"\"The distinct paths a run wrote or edited that `goal` names neither by path nor by basename;\n170\t    None when the run has no written and edited paths to measure.\"\"\"\n171\t    numbers = _numbers(record)\n172\t    written, edited = numbers.get(\"written\"), numbers.get(\"edited\")\n173\t    if not isinstance(written, list) or not isinstance(edited, list):\n174\t        return None\n175\t    paths: list[str] = []\n176\t    for path in [*written, *edited]:\n177\t        if isinstance(path, str) and path not in paths:\n178\t            paths.append(path)\n179\t    return sum(1 for path in paths if path not in goal and path.rsplit(\"/\", 1)[-1] not in goal)\n180\t\n181\t\n182\tdef _row(name: str, records: list[Path | None], goal: str) -> list[str]:\n183\t    \"\"\"One case's row: its counts, its medians and its summed cost.\"\"\"\n184\t    cells = [\n185\t        name,\n186\t        str(len(records)),\n187\t        str(sum(1 for r in records if _green(r))),\n188\t        str(sum(1 for r in records if _honest(r))),\n189\t        str(sum(_refused(r) for r in records)),\n190\t    ]\n191\t    for column in MEDIAN_COLUMNS:\n192\t        values = [v for v in (_metric(r, column) for r in records) if v is not None]\n193\t        cells.append(_median_text(values))\n194\t        if column in SPREAD_COLUMNS:\n195\t            cells.append(_spread_text(values))\n196\t    cells.append(_cost_total(records))\n197\t    for column in (\"diff_lines\", \"files_changed\", \"deletions\"):\n198\t        cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))\n199\t    cells.append(_median_text([v for v in (_stray(r, goal) for r in records) if v is not None]))\n200\t    return cells\n201\t\n202\t\n203\tdef _parse(argv: list[str]) -> tuple[int, list[str], str]:\n204\t    \"\"\"`--runs N` and the case names; the reason of a usage error instead, with runs and names.\"\"\"\n205\t    runs, names, i = DEFAULT_RUNS, [], 0\n206\t    while i < len(argv):\n207\t        arg = argv[i]\n208\t        if arg == \"--runs\" or arg.startswith(\"--runs=\"):\n209\t            value = argv[i + 1] if arg == \"--runs\" and i + 1 < len(argv) else arg.partition(\"=\")[2]\n210\t            if arg == \"--runs\" and i + 1 >= len(argv):\n211\t                return runs, names, \"--runs needs a value\"\n212\t            try:\n213\t                count = int(value)\n214\t            except ValueError:\n215\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n216\t            if count < 1:\n217\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n218\t            runs = count\n219\t            i += 2 if arg == \"--runs\" else 1\n220\t        elif arg.startswith(\"-\") and arg != \"-\":\n221\t            return runs, names, f\"unknown argument: {arg}\"\n222\t        elif not _valid_name(arg):\n223\t            return runs, names, f\"not a case name: {arg}\"\n224\t        else:\n225\t            names.append(arg)\n226\t            i += 1\n227\t    return runs, names, \"\"\n228\t\n229\t\n230\tdef _valid_name(name: str) -> bool:\n231\t    \"\"\"A case name is one path segment: no separator, no `.` or `..`, and not empty.\"\"\"\n232\t    return bool(name) and name not in (\".\", \"..\") and \"/\" not in name and \"\\\\\" not in name\n233\t\n234\t\n235\tdef _case(root: Path, name: str) -> tuple[Path, Path] | str:\n236\t    \"\"\"The case's directory and its one red test, or the reason it is not a whole case.\"\"\"\n237\t    directory = root / \"cases\" / name\n238\t    if not directory.is_dir():\n239\t        return f\"no such case: {name}\"\n240\t    if not (directory / \"goal.md\").is_file():\n241\t        return f\"case {name} has no goal.md\"\n242\t    tests = sorted(directory.glob(\"test_*.py\"))\n243\t    if len(tests) != 1:\n244\t        return f\"case {name} needs exactly one test_*.py, found {len(tests)}\"\n245\t    return directory, tests[0]\n246\t\n247\t\n248\tdef _goal(directory: Path, name: str) -> str:\n249\t    \"\"\"The goal: `case: <name>` first, then the text of `goal.md`.\"\"\"\n250\t    text = (directory / \"goal.md\").read_text(encoding=\"utf-8\")\n251\t    return f\"case: {name}\\n{text.rstrip(chr(10))}\"\n252\t\n253\t\n254\tdef _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,\n255\t              model: Any, sandbox: Any) -> tuple[int, Path | None]:  # fmt: skip\n256\t    \"\"\"One run: a worktree, the case committed in it, the builder, and the worktree gone.\n257\t\n258\t    The record is the directory the builder printed as its first line -- never read out of the\n259\t    runs directory, where a run that died before printing its own record would be guessed at.\n260\t    \"\"\"\n261\t    builder.git(root, \"worktree\", \"add\", \"--detach\", str(worktree), \"HEAD\")\n262\t    try:\n263\t        files = directory / \"files\"\n264\t        if files.is_dir():\n265\t            shutil.copytree(files, worktree, dirs_exist_ok=True)\n266\t        shutil.copy2(test, worktree / test.name)\n267\t        builder.git(worktree, \"add\", \"-A\")\n268\t        builder.git(worktree, \"-c\", \"user.name=factory\", \"-c\", \"user.email=factory@localhost\",\n269\t                    \"commit\", \"-q\", \"-m\", f\"case: {name}\")  # fmt: skip  # a host identity is never needed\n270\t        out = io.StringIO()\n271\t        with contextlib.redirect_stdout(out):  # the table is the only stdout evals owns\n272\t            code = builder.main([\"builder.py\", str(worktree), _goal(directory, name)],\n273\t                                model=model, sandbox=sandbox)  # fmt: skip\n274\t        printed = out.getvalue().splitlines()\n275\t        return code, Path(printed[0]) if printed and printed[0].strip() else None\n276\t    finally:\n277\t        _remove_worktree(root, worktree)\n278\t\n279\t\n280\tdef _remove_worktree(root: Path, worktree: Path) -> None:\n281\t    \"\"\"Remove the worktree, whatever the run left in it; a removal that fails says so on stderr.\"\"\"\n282\t    try:\n283\t        if worktree.exists():\n284\t            builder.git(root, \"worktree\", \"remove\", \"--force\", str(worktree))\n285\t    except Exception as e:  # a worktree git will not remove must not end the set\n286\t        print(f\"could not remove the worktree {worktree}: {e}\", file=sys.stderr)\n287\t\n288\t\n289\tdef _prune(root: Path) -> None:\n290\t    \"\"\"Prune the worktree metadata once the temporary directory that held them is gone.\"\"\"\n291\t    try:\n292\t        builder.git(root, \"worktree\", \"prune\")\n293\t    except Exception as e:  # a prune git will not do must not end the set\n294\t        print(f\"could not prune worktrees of {root}: {e}\", file=sys.stderr)\n295\t\n296\t\n297\tdef _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path]] | None, str]:\n298\t    \"\"\"The cases to run: the named ones must be whole, an unnamed directory only may be skipped.\"\"\"\n299\t    whole: list[tuple[str, Path, Path]] = []\n300\t    if names:\n...\ttruncated; continue with start=301",
+    "tool_call_id": "call_00_ET_xRF1oCSiFFlEcTF7KZ7X9373",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:10:55.458318Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:10:55.459424Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now `math.isfinite` for an int is fine. But wait: `math.isfinite(value)` where value is int → works. Actually there's a subtlety: huge ints? Fine.\n\nNote: `_number_text` could still receive a non-finite if `_metric` derived e.g. `input_per_request` from inf? No, `_number` now filters.\n\nNow run check.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_bagpbAqkkMRtF6u2Xd532248",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 24191,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 20224,
+   "output_tokens": 108,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 20224,
+    "prompt_cache_miss_tokens": 3967,
+    "reasoning_tokens": 87
+   },
+   "cost": null,
+   "output_reasoning_tokens": 87
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:10:56.800611Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:10:55Z"
+  },
+  "provider_response_id": "3d7e14f9-756d-4d33-9334-ca473bceaf0c",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 0\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n----------------------------------------------------------------------\nRan 126 tests in 12.937s\n\nOK",
+    "tool_call_id": "call_00_bagpbAqkkMRtF6u2Xd532248",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:11:13.263480Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:11:13.264899Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Green. Let me also verify the full set of changes are minimal. The goal mentioned the spread implementation largely already exists; only two fixes were needed. Also the goal says the docstring of evals.py says the spread is printed beside those three medians as `min-max`. Done.\n\nLet me double-check that `_number` filtering NaN/Infinity handles the derived `input_per_request` where `requests` could be NaN from JSON: `_number` returns None → returns None. Good.\n\nAlso `_cost_total` filters. Good.\n\nFinal report.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "final_result",
+    "args": "{\"changed\": [\"evals.py\"], \"did\": [\"evals.py: imported math so `_number` can reject non-finite floats.\", \"evals.py: `_number` now returns None for a non-finite float (JSON NaN/Infinity), so such a value is treated as a measure the run lacks by the median, spread and summed cost alike.\", \"evals.py: the module docstring now states the spread beside the `requests`, `cost_usd` and `seconds` medians is printed as `min-max`.\"], \"check\": \"green\", \"failing\": [], \"unsure\": []}",
+    "tool_call_id": "call_00_WR15iJpUhBQ7bmSPGMsB6694",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 24376,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 24192,
+   "output_tokens": 326,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 24192,
+    "prompt_cache_miss_tokens": 184,
+    "reasoning_tokens": 115
+   },
+   "cost": null,
+   "output_reasoning_tokens": 115
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T07:11:15.419890Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T07:11:13Z"
+  },
+  "provider_response_id": "d4083d43-e7e6-4a1e-8968-29b4a7558245",
+  "finish_reason": "tool_call",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "final_result",
+    "content": "Final result processed.",
+    "tool_call_id": "call_00_WR15iJpUhBQ7bmSPGMsB6694",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T07:11:15.422870Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T07:11:15.422976Z",
+  "instructions": null,
+  "kind": "request",
+  "run_id": "01a0ae33-bf5d-7459-ac8c-449adf17c563",
+  "conversation_id": "01a0ae33-bf5d-7459-ac8c-449b1a9ef0bc",
+  "metadata": null,
+  "state": "complete"
+ }
+]
