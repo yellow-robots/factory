@@ -47,7 +47,7 @@ WIKILINK = re.compile(r"\[\[([^\[\]]+)\]\]")
 BUILT_BY = re.compile(r"^Built-By[ \t]*:", re.IGNORECASE | re.ASCII)
 ASCII_WHITESPACE = " \t\n\r\x0b\x0c"
 ASCII_RUN = re.compile(r"[^ \t\n\r\x0b\x0c]+")
-STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z")
+STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z", re.ASCII)
 # The build reads ask git for UTF-8 and for no signature whatever the repository's display
 # settings say, so a message in another log encoding is not a build git cannot read and a
 # signature is never counted as a trailer.

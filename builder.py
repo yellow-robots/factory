@@ -631,6 +631,10 @@ class GitError(RuntimeError):
     """git ran and exited nonzero: the message carries git's own words."""
 
 
+class LeakedKey(RuntimeError):
+    """A record holds the key's value, in the file this exception carries; never the value."""
+
+
 def git(checkout: Path, *args: str, ok: tuple[int, ...] = (0,)) -> str:
     """Read-only git in the checkout, not one of the tools: the model never sees this. A git that
     exits outside `ok` is an error carrying git's own words; --no-index exits 1 when the files
@@ -992,9 +996,15 @@ def compress_wire(run_dir: Path) -> None:
     wire.unlink()
 
 
+def read_key() -> str:
+    """The key from its file: the bare key, or one `name=value` line as in an env file."""
+    return KEY_FILE.read_text().strip().rsplit("=", 1)[-1].strip().strip("'\"")
+
+
 def leaked_file(run_dir: Path, key: str) -> Path | None:
     """The first file of the record whose bytes hold the key, a `.gz` file read through its
-    compression; None when no file holds it. An empty key holds nothing."""
+    compression; a `.gz` that is not gzip is searched as the bytes it is. None when no file holds
+    it; an empty key holds nothing."""
     if not key:
         return None
     needle = key.encode()
@@ -1002,18 +1012,33 @@ def leaked_file(run_dir: Path, key: str) -> Path | None:
         if not path.is_file():
             continue
         try:
-            data = gzip.open(path, "rb").read() if path.suffix == ".gz" else path.read_bytes()
-        except OSError:  # a file that cannot be read or decompressed is not searched
+            if path.suffix == ".gz":
+                try:
+                    data = gzip.open(path, "rb").read()
+                except (OSError, EOFError):  # not what its name says: the bytes it is
+                    data = path.read_bytes()
+            else:
+                data = path.read_bytes()
+        except OSError:  # a file that cannot be read is not searched
             continue
         if needle in data:
             return path
     return None
 
 
-def commit_record(store: Path, run_dir: Path) -> None:
-    """The record committed to the store as one commit of its own: a store that is not yet a git
-    repository is made one now, the record and nothing else enters the commit whatever else the
-    store holds uncommitted, the message the stamp, the author and committer the factory's."""
+def commit_record(store: Path, run_dir: Path, key: str | None = None) -> None:
+    """The record committed to the store as one commit of its own, the one place a record is
+    searched and committed. The whole record is searched for the key's value first -- a `.gz` file
+    read through its compression, a `.gz` that is not gzip read as the bytes it is -- and a record
+    that holds it is not committed: a LeakedKey names the file, never the value. A store that is
+    not yet a git repository is made one now, the record and nothing else enters the commit
+    whatever else the store holds uncommitted, the message the stamp, the author and committer the
+    factory's."""
+    if key is None:
+        key = read_key()
+    leaked = leaked_file(run_dir, key)
+    if leaked is not None:
+        raise LeakedKey(str(leaked))
     try:
         top = _store_git(store, "rev-parse", "--show-toplevel").strip()
     except (GitError, OSError, subprocess.SubprocessError):
@@ -1087,7 +1112,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     except (ValueError, OSError) as e:
         return usage_error(str(e))
     # The key file holds the bare key, or one `name=value` line as in an env file.
-    key = KEY_FILE.read_text().strip().rsplit("=", 1)[-1].strip().strip("'\"")
+    key = read_key()
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir, nth = store / stamp, 1
     while True:  # two runs in the same second each keep their own record
@@ -1163,16 +1188,16 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     recorded = numbers | {"detail": detail} if detail else numbers  # why it stopped, if not answer
     (run_dir / "numbers.json").write_text(json.dumps(recorded, indent=1) + "\n")
     # The record is the factory's: the wire is compressed and the whole record searched for the
-    # key's value before the store takes it, whatever ended the run.
+    # key's value by the one function that commits it, whatever ended the run.
     compress_wire(run_dir)
-    leaked = leaked_file(run_dir, key)
-    print(run_dir)
+    print(run_dir)  # the first line the builder prints is the record's path
     numbers_line = " ".join(f"{k}={v}" for k, v in numbers.items())  # stays one line of k=v
-    if leaked is not None:
+    try:
+        commit_record(store, run_dir, key=key)
+    except LeakedKey as e:
         print(numbers_line)
-        print(f"{leaked}: the record holds the key", file=sys.stderr)
+        print(f"{e}: the record holds the key", file=sys.stderr)  # never the value
         return 1
-    commit_record(store, run_dir)
     print(numbers_line)
     if detail:
         print(f"{stopped}: {detail}", file=sys.stderr)

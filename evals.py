@@ -22,10 +22,11 @@ is printed as `min-max`, the lowest and the highest value, each written as the m
 declares in `cases/<name>/pass.txt` the word that says what a pass is, `green`, `red` or `refused`,
 and the table counts the runs that reached it in the `passed` column. A case may also hold
 `held_out/`, `test_*.py` files the model never sees: when a run's check ended green they are copied
-into the worktree and the check runs once more, and the `held_out` column, right after `green`,
-counts the runs whose held-out check ended green, its cell empty for a case without `held_out/`; a
-case whose word is `green` passes only when its check and, when it holds `held_out/`, its held-out
-check both did. After the table and one empty
+into the worktree and the check runs once more, and `held_out.log` and `held_out.json` are
+committed to the store by the builder's one function that commits a record, searched for the key's
+value like the builder's own run; the `held_out` column, right after `green`, counts the runs whose
+held-out check ended green, its cell empty for a case without `held_out/`; a case whose word is
+`green` passes only when its check and, when it holds `held_out/`, its held-out check both did. After the table and one empty
 line one line gives the set's pass rate and its standard error under a uniform prior, carried
 whatever the run count, and the line absent when there is no case. Exit 0
 when every run ended with the `answer` answer, 1 when any run was capped or
@@ -397,6 +398,9 @@ def _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path
         if record is not None and held_out_tests and _green(record):
             try:
                 _held_out(directory, worktree, record, sandbox)
+                # The harness's own additions are committed by the builder's one function that
+                # commits a record, searched for the key's value as the builder's own run is.
+                builder.commit_record(builder.record_store(), record)
             except Exception as e:  # the build ran and its record stays; the run failed
                 return 1, record, str(e)
         return code, record, ""
