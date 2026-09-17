@@ -1,0 +1,49 @@
+/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop
+  event_loop = asyncio.get_event_loop()
+======================================================================
+FAIL: test_a_git_failure_refuses_the_release_and_no_path_hides_the_builds (test_gate.ReleaseTest.test_a_git_failure_refuses_the_release_and_no_path_hides_the_builds)
+seed: built-by-trailer. From the reviews: the commits are listed, and each read, as
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 915, in test_a_git_failure_refuses_the_release_and_no_path_hides_the_builds
+    self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
+  File "/w/test_gate.py", line 706, in assert_refused_with
+    self.assertTrue(any(line.startswith(start) and all(word in line for word in words) for line in lines), out)
+AssertionError: False is not true : docs/versions/v0.2.md: git log -1 --format=%B failed for bbf5edd
+
+
+======================================================================
+FAIL: test_a_message_git_prints_in_another_encoding_does_not_end_the_release (test_gate.ReleaseTest.test_a_message_git_prints_in_another_encoding_does_not_end_the_release)
+seed: built-by-trailer. From the reviews: output git gives in an encoding other than UTF-8
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 936, in test_a_message_git_prints_in_another_encoding_does_not_end_the_release
+    self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
+  File "/w/test_gate.py", line 704, in assert_refused_with
+    self.assertEqual(code, 1, out)
+AssertionError: 0 != 1 : 
+
+======================================================================
+FAIL: test_release_reads_only_the_builds_since_the_previous_tag (test_gate.ReleaseTest.test_release_reads_only_the_builds_since_the_previous_tag)
+seed: built-by-trailer. A build before the previous tag, the highest `v<major>.<minor>` by
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 812, in test_release_reads_only_the_builds_since_the_previous_tag
+    self.assertEqual(len(listings), 1, listings)
+AssertionError: 2 != 1 : [['git', 'rev-list', 'v0.10..HEAD', '--'], ['git', 'rev-list', 'v0.10..HEAD', '--']]
+
+======================================================================
+FAIL: test_release_refuses_a_build_that_names_no_run_or_a_run_not_committed (test_gate.ReleaseTest.test_release_refuses_a_build_that_names_no_run_or_a_run_not_committed)
+seed: built-by-trailer. A `Built-By` whose value does not end `run <stamp>`, the word `run`
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/w/test_gate.py", line 756, in test_release_refuses_a_build_that_names_no_run_or_a_run_not_committed
+    self.assert_refused_with("docs/versions/v0.2.md:", crafted, "names no run")
+  File "/w/test_gate.py", line 704, in assert_refused_with
+    self.assertEqual(code, 1, out)
+AssertionError: 0 != 1 : 
+
+----------------------------------------------------------------------
+Ran 167 tests in 23.922s
+
+FAILED (failures=4)

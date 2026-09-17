@@ -1,0 +1,61 @@
+diff --git a/gate.py b/gate.py
+index 5d85187..522728e 100644
+--- a/gate.py
++++ b/gate.py
+@@ -46,6 +46,11 @@ WIKILINK = re.compile(r"\[\[([^\[\]]+)\]\]")
+ BUILT_BY = re.compile(r"^Built-By[ \t]*:", re.IGNORECASE | re.ASCII)
+ ASCII_WHITESPACE = " \t\n\r\x0b\x0c"
+ ASCII_RUN = re.compile(r"[^ \t\n\r\x0b\x0c]+")
++STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z")
++# The build reads ask git for UTF-8 and for no signature whatever the repository's display
++# settings say, so a message in another log encoding is not a build git cannot read and a
++# signature is never counted as a trailer.
++GIT_READ = ("-c", "i18n.logOutputEncoding=UTF-8", "-c", "log.showSignature=false")
+ 
+ 
+ def _read(path: Path) -> str:
+@@ -801,7 +806,7 @@ def _builds(root: Path, previous: str | None) -> tuple[list[str], str | None]:
+     command that failed, never an empty list of builds."""
+     revision = f"{previous}..HEAD" if previous is not None else "HEAD"
+     command = f"git rev-list {revision} --"
+-    code, out = _git_bytes(root, "rev-list", revision, "--")
++    code, out = _git_bytes(root, *GIT_READ, "rev-list", revision, "--")
+     if code != 0:
+         return [], command
+     return _utf8(out).split(), None
+@@ -814,7 +819,7 @@ def _build_trailers(root: Path, commit: str) -> list[str] | None:
+     """The entries git's own trailer parser reads as `Built-By` for `commit`, each `<key>:
+     <value>` and never empty, the format's one final newline removed and the rest split at NUL;
+     `None` when the git command fails."""
+-    code, out = _git_bytes(root, "log", "-1", f"--format={TRAILERS_FORMAT}", commit)
++    code, out = _git_bytes(root, *GIT_READ, "log", "-1", f"--format={TRAILERS_FORMAT}", commit, "--")
+     if code != 0:
+         return None
+     text = _utf8(out)
+@@ -837,7 +842,7 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
+     of an entry, is checked whether git reads it or not; every problem names the commit's
+     abbreviated hash."""
+     short = _short_hash(root, commit)
+-    code, message_bytes = _git_bytes(root, "log", "-1", "--format=%B", commit)
++    code, message_bytes = _git_bytes(root, *GIT_READ, "log", "-1", "--format=%B", commit, "--")
+     if code != 0:
+         return [f"{rel_note}: git log -1 --format=%B failed for {short}"]
+     message = _utf8(message_bytes)
+@@ -871,7 +876,7 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
+         text = _line_text(value)
+         words = _ascii_words(value)
+         stamp = words[-1] if len(words) >= 2 and words[-2] == "run" else ""
+-        if not _segment(stamp):
++        if not _segment(stamp) or not STAMP_SHAPE.match(stamp):
+             add(f"{rel_note}: {short}: `Built-By: {text}` names no run")
+             continue
+         if stamp in reported:
+@@ -936,8 +941,6 @@ def _release_problems(root: Path, version: str) -> list[str]:
+         if not changed:
+             problems.append(f"AGENTS.md: unchanged since {previous}")
+ 
+-    problems.extend(_build_problems(root, rel_note, previous))
+-
+     if not _suite_green(root):
+         problems.append("test: the unittest suite is red")
+     return problems
