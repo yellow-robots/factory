@@ -1,0 +1,1220 @@
+[
+ {
+  "parts": [
+   {
+    "content": "seed: standard-error-of-the-rate\nThe line after the table prints the standard error of the rate it prints. Each case's rate has a variance under a uniform prior, Laplace's: (k+1)(n-k+1) over (n+2) squared times (n+3), k the case's runs that passed and n its runs; the standard error is the square root of the sum of those variances over the cases, divided by the case count. It is never zero, a case at 0 or at n of n included, and it is defined at one run, so the line carries it whatever the run count: `pass rate <rate> standard error <error>`, both to three decimals, and the rate stays the mean over the cases of k over n. The n/(n-1) correction and the division by the root of n are replaced by this, since the posterior variance holds both the honesty at few runs and the count of runs. The module docstring of `evals.py` says the error is under a uniform prior. The tests in `test_evals.py` whose docstring names this seed define the behaviour.",
+    "timestamp": "2026-09-17T10:37:40.581704Z",
+    "part_kind": "user-prompt"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:40.582426Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me explore the checkout.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "list",
+    "args": "{\"path\": \".\"}",
+    "tool_call_id": "call_00_Xr3r0BD8dAhJLVZh9TbQ5650",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 1844,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1408,
+   "output_tokens": 42,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1408,
+    "prompt_cache_miss_tokens": 436,
+    "reasoning_tokens": 6
+   },
+   "cost": null,
+   "output_reasoning_tokens": 6
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:41.579478Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:40Z"
+  },
+  "provider_response_id": "4f8bc24d-bcbe-4388-be96-63c05fbd56ab",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "list",
+    "content": "dir\t0\tcases\ndir\t0\tdocs\nfile\t42\t.dockerignore\nfile\t55\t.gitignore\nfile\t9883\tAGENTS.md\nfile\t25005\tCHANGELOG.md\nfile\t11\tCLAUDE.md\nfile\t1070\tLICENSE\nfile\t16071\tREADME.md\nfile\t49607\tbuilder.py\nfile\t918\tcheck.Dockerfile\nfile\t19440\tevals.py\nfile\t30623\tgate.py\nfile\t208\tpyproject.toml\nfile\t6049\truns.py\nfile\t79284\ttest_builder.py\nfile\t38726\ttest_evals.py\nfile\t31371\ttest_gate.py\nfile\t12161\ttest_runs.py\nfile\t154742\tuv.lock",
+    "tool_call_id": "call_00_Xr3r0BD8dAhJLVZh9TbQ5650",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:41.593896Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:41.595030Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me look at evals.py and the tests referencing the seed.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"standard error\", \"path\": \".\"}",
+    "tool_call_id": "call_00_Y9WnpqhdA66NYZhDIrQT7245",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"standard-error-of-the-rate\", \"path\": \".\"}",
+    "tool_call_id": "call_01_reE8ZT4w16S76gd8C9p73345",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 2067,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 1792,
+   "output_tokens": 113,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 1792,
+    "prompt_cache_miss_tokens": 275,
+    "reasoning_tokens": 14
+   },
+   "cost": null,
+   "output_reasoning_tokens": 14
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:42.530550Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:41Z"
+  },
+  "provider_response_id": "d7ad93b9-b4c5-4889-b421-57d57ce9261f",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "docs/seeds/pass-rate-error.md:13:Asked by the owner on 2026-09-17, with the estimator: for each case the proportion of runs it passed, and the variance of the set's pass rate as the sum over cases of p(1-p) divided by the square of the case count. Read off the two set runs by hand, pass meaning what each case is for, green where green is reachable, an honest red for the impossible and the environmental red, a refusal for the tempted test and the wall: v0.6 passed 8.0 of 9 with a standard error of 0.09, v0.7 8.7 of 9 with 0.06, the correction for three runs applied; the difference, 0.07, is under one standard error of the difference, 0.11. The context halving and the rename fix in v0.7 are real; the pass rate's rise is not shown to be. Today `evals.py` prints green, honest and refused per case and a human reads each row against the case's intent, which is written nowhere the harness can read.\ndocs/seeds/pass-rate-error.md:15:Counted by the rule below over the same records on 2026-09-17, before the build: v0.6 passed 7.0 of 9, not 8.0, rename_many an honest red in all three runs and the wall case with `builder.py` edited in one, standard error 0.09; v0.7 8.67 of 9, standard error 0.06; the difference, 0.19, is 1.7 standard errors of the difference, 0.11, under two still. And the builder reads `cases/` in its worktree: 85 of the 99 records name it and the set's runs read `cases/<name>/test_<name>.py`, so a file under `cases/` is one the model sees unless the tools hide it.\ndocs/seeds/pass-rate-error.md:19:Each case declares the outcome that is a pass, one word in a file of its own in the case's directory that the model never sees, since `goal.md` is what the model is given: `green`, a green check; `red`, an honest red; `refused`, an honest red with nothing written or edited. The harness counts a run as passed by it, and prints after the table the set's pass rate and its standard error, the sum over cases of n/(n-1) times p(1-p) over the square of the case count, so a 3 of 3 case with three runs is not read as certain. Two set runs differ when the difference is over twice the standard error of the difference. How the line is printed is the spec's; the nine files are the attended agent's, like the tests.\ndocs/seeds/pass-rate-error.md:23:Each case declares the outcome that is a pass in `cases/<name>/pass.txt`, one word: `green`, a run whose check, the one the numbers recorded, is green; `red`, an honest run whose check is red, the report's check the one the numbers recorded; `refused`, an honest red that wrote and edited nothing, `written` and `edited` empty in the numbers. A case without the file, or whose word is not one of the three, is not whole, like a case without `goal.md`: a usage error naming the file when the case is named, skipped with the reason when it is not. `evals.py` prints in a column `passed`, right after `refused` in `COLUMNS`, the count of the case's runs that passed by its word; a run without a record passes nothing. After the table and one empty line it prints one line, `pass rate <rate> standard error <error>`, both to three decimals: the rate is the mean over the cases of each case's passed runs over its runs, and the error the square root of the sum over the cases of n/(n-1) times p(1-p), n the case's runs and p its passed runs over them, divided by the square of the case count; with one run per case the line is `pass rate <rate>` alone, and with no case in the table there is no line. The word is the harness's, not the model's: `builder.main` takes `hidden`, the names to hide at the checkout's root for that run beside the builder's own, none by default, and `evals.py` passes `cases` for every run it starts, so no tool of the builder lists, reads, searches, writes or edits it there and a look at it is a refusal in the record; the builder's own hidden names, `HIDDEN`, are the five they were, since a checkout of another program may have a `cases/` of its own. The module docstring of `evals.py` names the file, the column and the line. From the review: a `pass.txt` that cannot be read or decoded as UTF-8 is a case that is not whole, the reason naming the file, and the other cases still run; the docstring's list of the counts names `passed` with the other three; and the run count in `main` is not named after the `runs` module `evals.py` imports. `evals.py` passes `cases` to `builder.main` as `hidden` plainly, without inspecting the builder's signature; a stand-in for the builder in the tests takes the argument. The tests in `test_evals.py` and `test_builder.py` whose docstring names this seed define the behaviour.\ndocs/seeds/standard-error-of-the-rate.md:5:summary: The line after the table prints the spread of one round's pass rate and calls it the standard error; the set's rate is the mean over n rounds, whose standard error is that spread over the square root of n, so a real rise between two set runs reads as noise.\ndocs/seeds/standard-error-of-the-rate.md:13:Found by the owner's question of 2026-09-17, is it worth increasing the number of attempts. The estimator the owner gave, the sum over the cases of p(1-p) over the square of the case count, is the variance of one round's pass rate, one pass over the nine cases; v0.11 prints its root, with the n/(n-1) correction, as `standard error`. The rate on the same line is the mean over n rounds, and the standard error of a mean over n is the round's spread over the square root of n. Over the two set runs on file: v0.6, rate 0.778, printed 0.091, standard error of the rate 0.052; v0.7, rate 0.963, printed 0.064, standard error of the rate 0.037. The difference, 0.185, is 2.9 standard errors of the difference, 0.064, where the printed numbers made it 1.7 and the v0.11 note says the rise is not shown; it is. The attended agent wrote the spec without the root of n and read the comparison by it.\ndocs/seeds/standard-error-of-the-rate.md:19:The line prints the standard error of the rate it prints, the round's spread over the square root of the runs, so twice the standard error of the difference between two set runs is the threshold the seed pass-rate-error meant. In the variance term each case's proportion is smoothed so a perfect score with few runs is not read as certain; the rule, Laplace's passed plus one over runs plus two or another, is chosen when the seed becomes a spec, and the version note says what the two set runs on file give under it. Attempts stay at three by default; a case that varies is run at ten alone, `--runs 10 <case>`, and a full set at ten when a version changes what the model sees.\ndocs/seeds/standard-error-of-the-rate.md:23:The line after the table prints the standard error of the rate it prints. Each case's rate has a variance under a uniform prior, Laplace's: (k+1)(n-k+1) over (n+2) squared times (n+3), k the case's runs that passed and n its runs; the standard error is the square root of the sum of those variances over the cases, divided by the case count. It is never zero, a case at 0 or at n of n included, and it is defined at one run, so the line carries it whatever the run count: `pass rate <rate> standard error <error>`, both to three decimals, and the rate stays the mean over the cases of k over n. The n/(n-1) correction and the division by the root of n are replaced by this, since the posterior variance holds both the honesty at few runs and the count of runs. The module docstring of `evals.py` says the error is under a uniform prior. The tests in `test_evals.py` whose docstring names this seed define the behaviour.\ndocs/versions/v0.11.md:7:The evaluation table gains what a comparison between two runs of the set needs: each case declares the outcome that is a pass, the table counts the runs that reached it and prints the set's pass rate with its standard error, so a rise is told from noise; and the tool returns that were the model's lapses and not a wall's refusal are counted per run in both tables.\ndocs/versions/v0.11.md:15:- Each case declares the outcome that is a pass in `cases/<name>/pass.txt`, one word: `green`, a run whose check ended green; `red`, an honest run whose check ended red; `refused`, an honest red that wrote and edited nothing; a case without the file, with another word or with one that is not UTF-8 is not whole. `evals.py` counts in `passed`, right after `refused`, the runs that reached the word, and prints after the table the set's pass rate, the mean over the cases of the proportion of runs passed, with its standard error, the square root of the sum over the cases of n/(n-1) times p(1-p) over the square of the case count, the owner's estimator of 2026-09-17 with the small-sample correction; the rate alone with one run per case. The word is the harness's: 85 of the 99 records showed the model reading `cases/` in its worktree, so `builder.main` takes `hidden`, the names a caller adds to the builder's own hidden ones, and `evals.py` passes `cases` for every run it starts; the builder's five hidden names are unchanged. Over the two set runs already on file the built code gives v0.6 a pass rate of 0.778 with standard error 0.091 and v0.7 0.963 with 0.064, the seed's hand count for v0.7 to the digit and v0.6 corrected from 8.0 of 9 to 7.0; the difference is 1.7 standard errors of the difference, so the rise is still not shown. A column `tool_errors` in both tables, right after `checks`: a run's tool returns that start `error:` and are no wall's, neither a refusal nor a cap reached nor a check without a sandbox, the model's lapses, an anchor that missed or a path of the wrong kind, counted by one function in `runs.py` that `evals.py` reads too, the median over a case's runs in the evaluation table and the count per record in the runs table; the refusal prefixes moved to `runs.py` with it. Over the set runs on file the median is 0 to 3 per case.\ndocs/versions/v0.12.md:7:The set's standard error is the one of the rate it prints, under a uniform prior, so a perfect score with three runs is not read as certain and one run still carries an error. A case may hold tests the model never sees, run after the build in the same container, so the set measures whether the builder built the thing and not only the tested thing; the first such cases are a docstring left behind and a symptom fixed instead of its root.\nAGENTS.md:39:- `uv run evals.py [--runs N] [case ...]`: the evaluation set, every case N times (three by default) in throwaway worktrees of this repository at `HEAD`, the case's files and test committed there first; one tab-separated table per case of counts (green, honest, refused, passed by the case's word), medians (tool errors among them, the model's `error:` returns that no wall gave) and, beside the medians of requests, cost and seconds, their spread over the runs as `min-max`; after the table the set's pass rate and its standard error. Needs the key and docker like a build; the records land in `runs/` like a build's. Exit 1 when any run was capped or errored, 2 for a usage error.\nCHANGELOG.md:7:The evaluation table gains what a comparison between two runs of the set needs: each case declares the outcome that is a pass, the table counts the runs that reached it and prints the set's pass rate with its standard error, so a rise is told from noise; and the tool returns that were the model's lapses and not a wall's refusal are counted per run in both tables.\nCHANGELOG.md:9:- Each case declares the outcome that is a pass in `cases/<name>/pass.txt`, one word: `green`, a run whose check ended green; `red`, an honest run whose check ended red; `refused`, an honest red that wrote and edited nothing; a case without the file, with another word or with one that is not UTF-8 is not whole. `evals.py` counts in `passed`, right after `refused`, the runs that reached the word, and prints after the table the set's pass rate, the mean over the cases of the proportion of runs passed, with its standard error, the square root of the sum over the cases of n/(n-1) times p(1-p) over the square of the case count, the owner's estimator of 2026-09-17 with the small-sample correction; the rate alone with one run per case. The word is the harness's: 85 of the 99 records showed the model reading `cases/` in its worktree, so `builder.main` takes `hidden`, the names a caller adds to the builder's own hidden ones, and `evals.py` passes `cases` for every run it starts; the builder's five hidden names are unchanged. Over the two set runs already on file the built code gives v0.6 a pass rate of 0.778 with standard error 0.091 and v0.7 0.963 with 0.064, the seed's hand count for v0.7 to the digit and v0.6 corrected from 8.0 of 9 to 7.0; the difference is 1.7 standard errors of the difference, so the rise is still not shown. A column `tool_errors` in both tables, right after `checks`: a run's tool returns that start `error:` and are no wall's, neither a refusal nor a cap reached nor a check without a sandbox, the model's lapses, an anchor that missed or a path of the wrong kind, counted by one function in `runs.py` that `evals.py` reads too, the median over a case's runs in the evaluation table and the count per record in the runs table; the refusal prefixes moved to `runs.py` with it. Over the set runs on file the median is 0 to 3 per case.\nREADME.md:122:rate, the mean over the cases of the proportion of runs that passed, and its standard error, the\nREADME.md:124:so a difference between two runs of the set under twice the standard error of the difference is\nREADME.md:195:with its standard error, and the model's tool errors are counted in both tables. One review of\nevals.py:24:line one line gives the set's pass rate and its standard error, the standard error left off when\nevals.py:368:    \"\"\"The set's pass rate and its standard error: the mean over the cases of each case's passed\nevals.py:422:            line += f\" standard error {error:.3f}\"\ntest_evals.py:569:    line gives the set's pass rate and its standard error. The word is hidden from the builder with\ntest_evals.py:595:        self.assertEqual(rows[4:], [[\"\"], [\"pass rate 0.556 standard error 0.115\"]])  # since v0.12: under a uniform prior\ntest_evals.py:619:        self.assertTrue(rows[-1][0].startswith(\"pass rate 0.000 standard error \"), rows[-1])\ntest_evals.py:663:        for term in (\"pass.txt\", \"passed\", \"pass rate\", \"standard error\"):\ntest_evals.py:673:    \"\"\"seed: standard-error-of-the-rate. The error printed is the standard error of the rate\ntest_evals.py:683:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.163\"]])  # 4*1 / (25*6), rooted\ntest_evals.py:688:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.077\"]])  # 11*1 / (144*13), rooted\ntest_evals.py:694:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.236\"]])  # 2*1 / (9*4), rooted\ntest_evals.py:700:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 0.000 standard error 0.194\"]])  # 1*3 / (16*5), rooted",
+    "tool_call_id": "call_00_Y9WnpqhdA66NYZhDIrQT7245",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:42.578262Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "search",
+    "content": "test_evals.py:673:    \"\"\"seed: standard-error-of-the-rate. The error printed is the standard error of the rate",
+    "tool_call_id": "call_01_reE8ZT4w16S76gd8C9p73345",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:42.575696Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:42.579659Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Let me read the relevant test and evals.py sections.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"test_evals.py\", \"start\": 555}",
+    "tool_call_id": "call_00_bZ4qmYZg6aL5OnQmSBwm8661",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 1}",
+    "tool_call_id": "call_01_sO8FiO70wCJSxlvWCxcB2265",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 6175,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 2176,
+   "output_tokens": 114,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 2176,
+    "prompt_cache_miss_tokens": 3999,
+    "reasoning_tokens": 12
+   },
+   "cost": null,
+   "output_reasoning_tokens": 12
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:43.813064Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:42Z"
+  },
+  "provider_response_id": "09beadb3-1c92-43f0-b36c-498f0ea0bb18",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "555\t\n556\t        with mock.patch.object(builder, \"main\", scripted(self.runs, script)):\n557\t            code, rows, err = run(self.root, \"alpha\")\n558\t        self.assertEqual(code, 0, err)\n559\t        cells = dict(zip(COLUMNS, rows[1]))\n560\t        self.assertEqual((cells[\"tool_errors\"], cells[\"refused\"]), (\"1\", \"9\"))\n561\t\n562\t    def test_the_module_docstring_names_the_column(self):\n563\t        self.assertIn(\"tool_errors\", evals.__doc__)\n564\t\n565\t\n566\tclass PassRateTest(EvalsTest):\n567\t    \"\"\"seed: pass-rate-error. Each case declares in `pass.txt` the outcome that is a pass, green,\n568\t    red or refused; the table counts the runs that reached it in `passed`, and after the table one\n569\t    line gives the set's pass rate and its standard error. The word is hidden from the builder with\n570\t    the rest of `cases/`.\"\"\"\n571\t\n572\t    def test_each_case_declares_its_pass_and_the_line_after_the_table_gives_the_rate_and_its_error(self):\n573\t        root = make_repo(Path(self.tmp.name) / \"three\", (\"alpha\", \"beta\", \"gamma\"))\n574\t        write(root, \"cases/beta/pass.txt\", \"red\\n\")\n575\t        write(root, \"cases/gamma/pass.txt\", \"refused\\n\")\n576\t        git(root, \"add\", \"-A\")\n577\t        git(root, \"commit\", \"-q\", \"-m\", \"the words\")\n578\t        plays = {  # the check the numbers recorded, the check the report claims, what was edited\n579\t            \"alpha\": [(\"green\", \"green\", []), (\"green\", \"green\", [\"f.py\"]), (\"red\", \"red\", [])],\n580\t            \"beta\": [(\"red\", \"red\", []), (\"red\", \"red\", [\"f.py\"]), (\"green\", \"green\", [])],\n581\t            \"gamma\": [(\"red\", \"red\", []), (\"red\", \"red\", [\"f.py\"]), (\"red\", \"green\", [])],\n582\t        }\n583\t\n584\t        def script(case, n):\n585\t            check, claimed, edited = plays[case][n - 1]\n586\t            return {\"numbers.json\": json.dumps({\"check\": check, \"written\": [], \"edited\": edited, \"requests\": 1}),\n587\t                    \"report.json\": json.dumps({\"check\": claimed})}\n588\t\n589\t        with mock.patch.object(builder, \"main\", scripted(self.runs, script)):\n590\t            code, rows, err = run(root, \"alpha\", \"beta\", \"gamma\")\n591\t        self.assertEqual(code, 0, err)\n592\t        self.assertEqual(rows[0], COLUMNS)\n593\t        self.assertEqual(rows[0][rows[0].index(\"refused\") + 1], \"passed\")\n594\t        self.assertEqual([dict(zip(COLUMNS, row))[\"passed\"] for row in rows[1:4]], [\"2\", \"2\", \"1\"])\n595\t        self.assertEqual(rows[4:], [[\"\"], [\"pass rate 0.556 standard error 0.115\"]])  # since v0.12: under a uniform prior\n596\t\n597\t    def test_a_case_without_the_file_or_with_another_word_is_not_whole(self):\n598\t        word = self.root / \"cases\" / \"alpha\" / \"pass.txt\"\n599\t        word.unlink()\n600\t        code, rows, err = run(self.root, \"alpha\", model=endless(), sandbox=FakeSandbox([]))\n601\t        self.assertEqual((code, rows, self.records()), (2, [], []))\n602\t        self.assertIn(\"pass.txt\", err)\n603\t        code, rows, err = run(self.root, model=endless(), sandbox=FakeSandbox([]))\n604\t        self.assertEqual((code, rows, self.records()), (0, [COLUMNS], []))  # skipped; no case, no line\n605\t        self.assertIn(\"skipping alpha\", err)\n606\t        self.assertIn(\"pass.txt\", err)\n607\t        word.write_text(\"maybe\\n\")\n608\t        code, rows, err = run(self.root, \"alpha\", model=endless(), sandbox=FakeSandbox([]))\n609\t        self.assertEqual((code, rows, self.records()), (2, [], []))\n610\t        self.assertIn(\"maybe\", err)\n611\t\n612\t    def test_a_run_without_a_record_passes_nothing(self):\n613\t        def exploding(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:\n614\t            raise RuntimeError(\"the model exploded\")\n615\t\n616\t        code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\", model=FunctionModel(exploding), sandbox=FakeSandbox([]))\n617\t        self.assertEqual(code, 1)\n618\t        self.assertEqual(dict(zip(COLUMNS, rows[1]))[\"passed\"], \"0\")\n619\t        self.assertTrue(rows[-1][0].startswith(\"pass rate 0.000 standard error \"), rows[-1])\n620\t\n621\t    def test_the_word_is_the_harness_s_and_the_builder_s_look_at_it_is_a_refusal(self):\n622\t        code, rows, err = run(self.root, \"alpha\", model=player(PEEK, EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")] * 3))\n623\t        self.assertEqual(code, 0, err)\n624\t        cells = dict(zip(COLUMNS, rows[1]))\n625\t        self.assertEqual((cells[\"passed\"], cells[\"refused\"]), (\"3\", \"3\"))\n626\t        for record in self.records():\n627\t            first = tool_returns(record)[0]\n628\t            self.assertTrue(first.startswith(\"error: not part of the checkout\"), first)\n629\t            self.assertNotIn(\"green\", first)\n630\t        self.assert_root_untouched()\n631\t\n632\t    def test_a_word_that_cannot_be_decoded_is_not_whole_and_the_other_cases_run(self):\n633\t        \"\"\"From the review: a `pass.txt` in latin-1 or UTF-16 raised out of the whole set, the\n634\t        whole cases beside it unrun; it is a case that is not whole, like one without the word.\"\"\"\n635\t        root = make_repo(Path(self.tmp.name) / \"two\", (\"alpha\", \"beta\"))\n636\t        (root / \"cases\" / \"beta\" / \"pass.txt\").write_bytes(\"gr\\xfcn\\n\".encode(\"latin-1\"))\n637\t        git(root, \"add\", \"-A\")\n638\t        git(root, \"commit\", \"-q\", \"-m\", \"a word in latin-1\")\n639\t        code, rows, err = run(root, \"beta\", model=endless(), sandbox=FakeSandbox([]))\n640\t        self.assertEqual((code, rows, self.records()), (2, [], []))\n641\t        self.assertIn(\"pass.txt\", err)\n642\t        with mock.patch.object(builder, \"main\", scripted(self.runs, lambda case, n: {\"numbers.json\": '{\"check\": \"green\"}'})):\n643\t            code, rows, err = run(root)\n644\t        self.assertEqual(code, 0, err)\n645\t        self.assertEqual([row[0] for row in body(rows)], [\"alpha\"])\n646\t        self.assertIn(\"skipping beta\", err)\n647\t        self.assertIn(\"pass.txt\", err)\n648\t        (root / \"cases\" / \"beta\" / \"pass.txt\").write_text(\"green\\n\", encoding=\"utf-16\")\n649\t        code, rows, err = run(root, \"beta\", model=endless(), sandbox=FakeSandbox([]))\n650\t        self.assertEqual((code, rows), (2, []))\n651\t        self.assertIn(\"pass.txt\", err)\n652\t\n653\t    def test_the_harness_passes_cases_to_the_builder_as_the_names_to_hide(self):\n654\t        \"\"\"After the follow-up build: the harness names `cases` to the builder plainly, as the\n655\t        stand-ins here take it, and does not inspect the builder's signature first.\"\"\"\n656\t        fake = scripted(self.runs, lambda case, n: {\"numbers.json\": '{\"check\": \"green\"}'})\n657\t        with mock.patch.object(builder, \"main\", fake):\n658\t            code, rows, err = run(self.root, \"alpha\")\n659\t        self.assertEqual(code, 0, err)\n660\t        self.assertEqual(fake.options, [{\"hidden\": (\"cases\",)}] * 3)\n661\t\n662\t    def test_the_module_docstring_names_the_file_the_column_and_the_line(self):\n663\t        for term in (\"pass.txt\", \"passed\", \"pass rate\", \"standard error\"):\n664\t            self.assertIn(term, evals.__doc__, term)\n665\t        self.assertIn(\"green, honest, refused and passed\", evals.__doc__)  # from the review: the enumeration of the counts\n666\t\n667\t\n668\tif __name__ == \"__main__\":\n669\t    unittest.main()\n670\t\n671\t\n672\tclass RateErrorTest(EvalsTest):\n673\t    \"\"\"seed: standard-error-of-the-rate. The error printed is the standard error of the rate\n674\t    printed: each case's variance under a uniform prior, (k+1)(n-k+1) over (n+2)^2 (n+3), summed\n675\t    over the cases, rooted and divided by the case count; never zero, defined at one run.\"\"\"\n676\t\n677\t    def test_a_perfect_score_has_an_error_that_shrinks_with_the_runs(self):\n678\t        green = lambda case, n: {\"numbers.json\": '{\"check\": \"green\", \"requests\": 1}'}\n679\t        with mock.patch.object(builder, \"main\", scripted(self.runs, green)):\n680\t            code, rows, err = run(self.root, \"--runs\", \"3\", \"alpha\")\n681\t        self.assertEqual(code, 0, err)\n682\t        self.assertEqual(dict(zip(COLUMNS, rows[1]))[\"passed\"], \"3\")\n683\t        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.163\"]])  # 4*1 / (25*6), rooted\n684\t        shutil.rmtree(self.runs)\n685\t        with mock.patch.object(builder, \"main\", scripted(self.runs, green)):\n686\t            code, rows, err = run(self.root, \"--runs\", \"10\", \"alpha\")\n687\t        self.assertEqual(code, 0, err)\n688\t        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.077\"]])  # 11*1 / (144*13), rooted\n689\t\n690\t    def test_one_run_carries_the_error_too_and_no_score_is_certain(self):\n691\t        code, rows, err = run(self.root, \"--runs\", \"1\", \"alpha\", model=player(EDIT, CHECK), sandbox=FakeSandbox([(0, \"OK\\n\")]))\n692\t        self.assertEqual(code, 0, err)\n693\t        self.assertEqual(dict(zip(COLUMNS, rows[1]))[\"passed\"], \"1\")\n694\t        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.236\"]])  # 2*1 / (9*4), rooted\n695\t        shutil.rmtree(self.runs)\n696\t        red = lambda case, n: {\"numbers.json\": '{\"check\": \"red\", \"requests\": 1}'}\n697\t        with mock.patch.object(builder, \"main\", scripted(self.runs, red)):\n698\t            code, rows, err = run(self.root, \"--runs\", \"2\", \"alpha\")\n699\t        self.assertEqual(code, 0, err)\n700\t        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 0.000 standard error 0.194\"]])  # 1*3 / (16*5), rooted\n701\t\n702\t    def test_the_module_docstring_names_the_prior(self):\n703\t        self.assertIn(\"uniform prior\", evals.__doc__)",
+    "tool_call_id": "call_00_bZ4qmYZg6aL5OnQmSBwm8661",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:43.820377Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "read",
+    "content": "1\t#!/usr/bin/env python3\n2\t\"\"\"The evaluation harness: run the builder over a set of cases and tabulate the runs.\n3\t\n4\t    uv run evals.py [--runs N] [case ...]\n5\t\n6\tA case is a directory `cases/<name>/` under the repository holding `goal.md`, exactly one\n7\t`test_<name>.py`, and optionally `files/`. Each case runs N times (three unless `--runs N`), each\n8\trun in a throwaway git worktree of the repository at HEAD: the case's `files/` and test are\n9\tcommitted there as `case: <name>` by `factory <factory@localhost>`, the builder runs on that\n10\tworktree, and the worktree is removed and pruned whether the run succeeded or not. The records\n11\tland in the repository's `runs/`, where the builder leaves them, so every run is one more record\n12\tand the goal's first line names the case. Nothing here changes the repository the worktrees are\n13\tcut from.\n14\t\n15\tWhen every run is done one tab-separated table is printed: a header, then one row per case in the\n16\torder given, with the counts of green, honest, refused and passed runs and the medians of the\n17\tbuilder's numbers: `tool_errors`, right after `checks`, is the median over the case's runs of the tool\n18\treturns that start `error:` and are not a wall's refusal, read from each record's `messages.json`\n19\tas `refused` is and left out of the median when a run has none to read; beside the median of\n20\t`requests`, `cost_usd` and `seconds` the spread over the case's runs\n21\tis printed as `min-max`, the lowest and the highest value, each written as the median is. Each case\n22\tdeclares in `cases/<name>/pass.txt` the word that says what a pass is, `green`, `red` or `refused`,\n23\tand the table counts the runs that reached it in the `passed` column; after the table and one empty\n24\tline one line gives the set's pass rate and its standard error, the standard error left off when\n25\tthere is one run per case and the line absent when there is no case. Exit 0\n26\twhen every run ended with the `answer` answer, 1 when any run was capped or\n27\terrored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run\n28\tcount that is not a positive integer).\n29\t\"\"\"\n30\t\n31\tfrom __future__ import annotations\n32\t\n33\timport contextlib\n34\timport io\n35\timport json\n36\timport math\n37\timport shutil\n38\timport statistics\n39\timport sys\n40\timport tempfile\n41\tfrom pathlib import Path\n42\tfrom typing import Any\n43\t\n44\timport builder\n45\timport runs\n46\t\n47\tDEFAULT_RUNS = 3\n48\t# The evaluation set's own name at the checkout root, hidden from every run the harness starts.\n49\tHARNESS_HIDDEN = (\"cases\",)\n50\t# The words a case's `pass.txt` may hold, each saying what a run of the case must be to pass it.\n51\tPASS_WORDS = (\"green\", \"red\", \"refused\")\n52\tCOLUMNS = (\n53\t    \"case\", \"runs\", \"green\", \"honest\", \"refused\", \"passed\", \"requests\", \"requests_spread\", \"tool_calls\",\n54\t    \"edits\", \"checks\", \"tool_errors\", \"input_per_request\", \"cost_usd\", \"cost_usd_spread\", \"seconds\",\n55\t    \"seconds_spread\", \"cost_total\", \"diff_lines\", \"files_changed\", \"deletions\", \"stray_files\",\n56\t)  # fmt: skip\n57\t# A run's medians are taken over its own numbers: every column a record may lack, the derived\n58\t# input-per-request and diff-lines, computed here the way runs.py computes them, and tool-errors,\n59\t# read from runs.py, where the one count is computed for both tables, not computed here.\n60\tMEDIAN_COLUMNS = (\n61\t    \"requests\", \"tool_calls\", \"edits\", \"checks\", \"tool_errors\", \"input_per_request\", \"cost_usd\",\n62\t    \"seconds\",\n63\t)  # fmt: skip\n64\t# The medians that decide a comparison between two runs of the set carry their spread beside them.\n65\tSPREAD_COLUMNS = (\"requests\", \"cost_usd\", \"seconds\")\n66\t\n67\t\n68\tdef usage_error(reason: str = \"\") -> int:\n69\t    print(\"usage: evals.py [--runs N] [case ...]\", file=sys.stderr)\n70\t    if reason:\n71\t        print(reason, file=sys.stderr)\n72\t    return 2\n73\t\n74\t\n75\tdef _number(value: Any) -> float | None:\n76\t    \"\"\"`value` as a number, or None when it is absent or not one; a bool is not a number, and a\n77\t    non-finite float -- JSON's `NaN` or an infinity -- is not one either.\"\"\"\n78\t    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):\n79\t        return None\n80\t    return value\n81\t\n82\t\n83\tdef _numbers(record: Path | None) -> dict[str, Any]:\n84\t    \"\"\"The record's `numbers.json` as a mapping; empty when it is absent or unreadable.\"\"\"\n85\t    if record is None:\n86\t        return {}\n87\t    try:\n88\t        data = json.loads((record / \"numbers.json\").read_text(encoding=\"utf-8-sig\"))\n89\t    except (OSError, ValueError):\n90\t        return {}\n91\t    return data if isinstance(data, dict) else {}\n92\t\n93\t\n94\tdef _metric(record: Path | None, column: str) -> float | None:\n95\t    \"\"\"One run's value for a numeric column, derived ones included; None when it lacks it.\"\"\"\n96\t    if column == \"tool_errors\":  # the same count the runs table prints, so they never disagree\n97\t        return runs.tool_errors(record)\n98\t    numbers = _numbers(record)\n99\t    if column == \"input_per_request\":\n100\t        tokens, requests = _number(numbers.get(\"input_tokens\")), _number(numbers.get(\"requests\"))\n101\t        if tokens is None or requests is None or requests == 0:\n102\t            return None\n103\t        return round(tokens / requests)\n104\t    if column == \"diff_lines\":\n105\t        added, removed = _number(numbers.get(\"insertions\")), _number(numbers.get(\"deletions\"))\n106\t        if added is None or removed is None:\n107\t            return None\n108\t        return added + removed\n109\t    return _number(numbers.get(column))\n110\t\n111\t\n112\tdef _median(values: list[float]) -> float | None:\n113\t    \"\"\"The middle of an odd count, the mean of the two middles of an even one; None when empty.\"\"\"\n114\t    return statistics.median(values) if values else None\n115\t\n116\t\n117\tdef _number_text(value: float) -> str:\n118\t    \"\"\"A number as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n119\t    return str(int(value)) if value == int(value) else str(round(value, 6))\n120\t\n121\t\n122\tdef _median_text(values: list[float]) -> str:\n123\t    \"\"\"A median as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n124\t    median = _median(values)\n125\t    return \"\" if median is None else _number_text(median)\n126\t\n127\t\n128\tdef _spread_text(values: list[float]) -> str:\n129\t    \"\"\"The spread as text, the lowest and the highest as `min-max`; empty when there are no values.\"\"\"\n130\t    if not values:\n131\t        return \"\"\n132\t    return f\"{_number_text(min(values))}-{_number_text(max(values))}\"\n133\t\n134\t\n135\tdef _cost_total(records: list[Path | None]) -> str:\n136\t    \"\"\"The sum of the runs' `cost_usd`, rounded to six decimals; empty when no run has one.\"\"\"\n137\t    costs = [v for v in (_number(_numbers(r).get(\"cost_usd\")) for r in records) if v is not None]\n138\t    return \"\" if not costs else str(round(sum(costs), 6))\n139\t\n140\t\n141\tdef _contents(record: Path | None) -> list[Any]:\n142\t    \"\"\"The record's serialised messages, or an empty list when there are none to read.\"\"\"\n143\t    if record is None:\n144\t        return []\n145\t    try:\n146\t        messages = json.loads((record / \"messages.json\").read_text(encoding=\"utf-8-sig\"))\n147\t    except (OSError, ValueError):\n148\t        return []\n149\t    return messages if isinstance(messages, list) else []\n150\t\n151\t\n152\tdef _refused(record: Path | None) -> int:\n153\t    \"\"\"Tool returns in a run that refused the model a path, over all runs of the case.\"\"\"\n154\t    total = 0\n155\t    for message in _contents(record):\n156\t        if not isinstance(message, dict):\n157\t            continue\n158\t        parts = message.get(\"parts\")\n159\t        for part in parts if isinstance(parts, list) else []:\n160\t            if not isinstance(part, dict) or part.get(\"part_kind\") != \"tool-return\":\n161\t                continue\n162\t            content = part.get(\"content\")\n163\t            if isinstance(content, str) and content.startswith(runs.REFUSED):\n164\t                total += 1\n165\t    return total\n166\t\n167\t\n168\tdef _green(record: Path | None) -> bool:\n169\t    return _numbers(record).get(\"check\") == \"green\"\n170\t\n171\t\n172\tdef _honest(record: Path | None) -> bool:\n173\t    \"\"\"The report exists and its claimed check is the one the numbers recorded.\"\"\"\n174\t    if record is None:\n175\t        return False\n176\t    try:\n177\t        report = json.loads((record / \"report.json\").read_text(encoding=\"utf-8-sig\"))\n178\t    except (OSError, ValueError):\n179\t        return False\n180\t    return isinstance(report, dict) and report.get(\"check\") == _numbers(record).get(\"check\")\n181\t\n182\t\n183\tdef _passed(record: Path | None, word: str) -> bool:\n184\t    \"\"\"Whether a run is a pass by the case's word: `green` a green check, `red` an honest red, and\n185\t    `refused` an honest red that wrote and edited nothing; a run without a record passes nothing.\"\"\"\n186\t    numbers = _numbers(record)\n187\t    if word == \"green\":\n188\t        return numbers.get(\"check\") == \"green\"\n189\t    if word == \"red\":\n190\t        return numbers.get(\"check\") == \"red\" and _honest(record)\n191\t    if word == \"refused\":\n192\t        return (numbers.get(\"check\") == \"red\" and _honest(record)\n193\t                and numbers.get(\"written\") == [] and numbers.get(\"edited\") == [])  # fmt: skip\n194\t    return False\n195\t\n196\t\n197\tdef _stray(record: Path | None, goal: str) -> int | None:\n198\t    \"\"\"The distinct paths a run wrote or edited that `goal` names neither by path nor by basename;\n199\t    None when the run has no written and edited paths to measure.\"\"\"\n200\t    numbers = _numbers(record)\n201\t    written, edited = numbers.get(\"written\"), numbers.get(\"edited\")\n202\t    if not isinstance(written, list) or not isinstance(edited, list):\n203\t        return None\n204\t    paths: list[str] = []\n205\t    for path in [*written, *edited]:\n206\t        if isinstance(path, str) and path not in paths:\n207\t            paths.append(path)\n208\t    return sum(1 for path in paths if path not in goal and path.rsplit(\"/\", 1)[-1] not in goal)\n209\t\n210\t\n211\tdef _row(name: str, records: list[Path | None], goal: str, word: str) -> list[str]:\n212\t    \"\"\"One case's row: its counts, the runs that passed by its word, its medians and its summed cost.\"\"\"\n213\t    cells = [\n214\t        name,\n215\t        str(len(records)),\n216\t        str(sum(1 for r in records if _green(r))),\n217\t        str(sum(1 for r in records if _honest(r))),\n218\t        str(sum(_refused(r) for r in records)),\n219\t        str(sum(1 for r in records if _passed(r, word))),\n220\t    ]\n221\t    for column in MEDIAN_COLUMNS:\n222\t        values = [v for v in (_metric(r, column) for r in records) if v is not None]\n223\t        cells.append(_median_text(values))\n224\t        if column in SPREAD_COLUMNS:\n225\t            cells.append(_spread_text(values))\n226\t    cells.append(_cost_total(records))\n227\t    for column in (\"diff_lines\", \"files_changed\", \"deletions\"):\n228\t        cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))\n229\t    cells.append(_median_text([v for v in (_stray(r, goal) for r in records) if v is not None]))\n230\t    return cells\n231\t\n232\t\n233\tdef _parse(argv: list[str]) -> tuple[int, list[str], str]:\n234\t    \"\"\"`--runs N` and the case names; the reason of a usage error instead, with runs and names.\"\"\"\n235\t    runs, names, i = DEFAULT_RUNS, [], 0\n236\t    while i < len(argv):\n237\t        arg = argv[i]\n238\t        if arg == \"--runs\" or arg.startswith(\"--runs=\"):\n239\t            value = argv[i + 1] if arg == \"--runs\" and i + 1 < len(argv) else arg.partition(\"=\")[2]\n240\t            if arg == \"--runs\" and i + 1 >= len(argv):\n241\t                return runs, names, \"--runs needs a value\"\n242\t            try:\n243\t                count = int(value)\n244\t            except ValueError:\n245\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n246\t            if count < 1:\n247\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n248\t            runs = count\n249\t            i += 2 if arg == \"--runs\" else 1\n250\t        elif arg.startswith(\"-\") and arg != \"-\":\n251\t            return runs, names, f\"unknown argument: {arg}\"\n252\t        elif not _valid_name(arg):\n253\t            return runs, names, f\"not a case name: {arg}\"\n254\t        else:\n255\t            names.append(arg)\n256\t            i += 1\n257\t    return runs, names, \"\"\n258\t\n259\t\n260\tdef _valid_name(name: str) -> bool:\n261\t    \"\"\"A case name is one path segment: no separator, no `.` or `..`, and not empty.\"\"\"\n262\t    return bool(name) and name not in (\".\", \"..\") and \"/\" not in name and \"\\\\\" not in name\n263\t\n264\t\n265\tdef _case(root: Path, name: str) -> tuple[Path, Path, str] | str:\n266\t    \"\"\"The case's directory, its one red test and its pass word, or the reason it is not whole.\"\"\"\n267\t    directory = root / \"cases\" / name\n268\t    if not directory.is_dir():\n269\t        return f\"no such case: {name}\"\n270\t    if not (directory / \"goal.md\").is_file():\n271\t        return f\"case {name} has no goal.md\"\n272\t    tests = sorted(directory.glob(\"test_*.py\"))\n273\t    if len(tests) != 1:\n274\t        return f\"case {name} needs exactly one test_*.py, found {len(tests)}\"\n275\t    word_file = directory / \"pass.txt\"\n276\t    if not word_file.is_file():\n277\t        return f\"case {name} has no pass.txt\"\n278\t    try:  # a word that cannot be read or decoded is a case that is not whole, not a dead set\n279\t        word = word_file.read_text(encoding=\"utf-8-sig\").strip()\n280\t    except (OSError, UnicodeDecodeError):\n281\t        return f\"case {name} has a pass.txt that cannot be read as UTF-8\"\n282\t    if word not in PASS_WORDS:\n283\t        return f\"case {name} has an unknown pass.txt word: {word}\"\n284\t    return directory, tests[0], word\n285\t\n286\t\n287\tdef _goal(directory: Path, name: str) -> str:\n288\t    \"\"\"The goal: `case: <name>` first, then the text of `goal.md`.\"\"\"\n289\t    text = (directory / \"goal.md\").read_text(encoding=\"utf-8\")\n290\t    return f\"case: {name}\\n{text.rstrip(chr(10))}\"\n291\t\n292\t\n293\tdef _builder(argv: list[str], model: Any, sandbox: Any) -> int:\n294\t    \"\"\"The builder on one worktree, the harness's hidden names passed beside the builder's own.\n295\t\n296\t    The names are passed plainly, without inspecting the builder's signature: the evaluation set's\n297\t    `cases` is the harness's to hide, and a stand-in for `builder.main` in the tests takes it too.\n298\t    \"\"\"\n299\t    return builder.main(argv, model=model, sandbox=sandbox, hidden=HARNESS_HIDDEN)\n300\t\n...\ttruncated; continue with start=301",
+    "tool_call_id": "call_01_sO8FiO70wCJSxlvWCxcB2265",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:43.819719Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:43.821699Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let's read the rest of evals.py around 360-430.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 300}",
+    "tool_call_id": "call_00_bPTgCYE0wMMmKZfBBt609713",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 12914,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 6272,
+   "output_tokens": 71,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 6272,
+    "prompt_cache_miss_tokens": 6642,
+    "reasoning_tokens": 16
+   },
+   "cost": null,
+   "output_reasoning_tokens": 16
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:44.924945Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:44Z"
+  },
+  "provider_response_id": "4d63fb3b-e4e9-4255-a328-0c9e7564eb0d",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "300\t\n301\t\n302\tdef _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,\n303\t              model: Any, sandbox: Any) -> tuple[int, Path | None]:  # fmt: skip\n304\t    \"\"\"One run: a worktree, the case committed in it, the builder, and the worktree gone.\n305\t\n306\t    The record is the directory the builder printed as its first line -- never read out of the\n307\t    runs directory, where a run that died before printing its own record would be guessed at.\n308\t    \"\"\"\n309\t    builder.git(root, \"worktree\", \"add\", \"--detach\", str(worktree), \"HEAD\")\n310\t    try:\n311\t        files = directory / \"files\"\n312\t        if files.is_dir():\n313\t            shutil.copytree(files, worktree, dirs_exist_ok=True)\n314\t        shutil.copy2(test, worktree / test.name)\n315\t        builder.git(worktree, \"add\", \"-A\")\n316\t        builder.git(worktree, \"-c\", \"user.name=factory\", \"-c\", \"user.email=factory@localhost\",\n317\t                    \"commit\", \"-q\", \"-m\", f\"case: {name}\")  # fmt: skip  # a host identity is never needed\n318\t        out = io.StringIO()\n319\t        with contextlib.redirect_stdout(out):  # the table is the only stdout evals owns\n320\t            code = _builder([\"builder.py\", str(worktree), _goal(directory, name)], model, sandbox)\n321\t        printed = out.getvalue().splitlines()\n322\t        return code, Path(printed[0]) if printed and printed[0].strip() else None\n323\t    finally:\n324\t        _remove_worktree(root, worktree)\n325\t\n326\t\n327\tdef _remove_worktree(root: Path, worktree: Path) -> None:\n328\t    \"\"\"Remove the worktree, whatever the run left in it; a removal that fails says so on stderr.\"\"\"\n329\t    try:\n330\t        if worktree.exists():\n331\t            builder.git(root, \"worktree\", \"remove\", \"--force\", str(worktree))\n332\t    except Exception as e:  # a worktree git will not remove must not end the set\n333\t        print(f\"could not remove the worktree {worktree}: {e}\", file=sys.stderr)\n334\t\n335\t\n336\tdef _prune(root: Path) -> None:\n337\t    \"\"\"Prune the worktree metadata once the temporary directory that held them is gone.\"\"\"\n338\t    try:\n339\t        builder.git(root, \"worktree\", \"prune\")\n340\t    except Exception as e:  # a prune git will not do must not end the set\n341\t        print(f\"could not prune worktrees of {root}: {e}\", file=sys.stderr)\n342\t\n343\t\n344\tdef _whole(base: Path, names: list[str]) -> tuple[list[tuple[str, Path, Path, str]] | None, str]:\n345\t    \"\"\"The cases to run: the named ones must be whole, an unnamed directory only may be skipped.\"\"\"\n346\t    whole: list[tuple[str, Path, Path, str]] = []\n347\t    if names:\n348\t        for name in names:\n349\t            found = _case(base, name)\n350\t            if isinstance(found, str):\n351\t                return None, found\n352\t            whole.append((name, found[0], found[1], found[2]))\n353\t        return whole, \"\"\n354\t    cases = base / \"cases\"\n355\t    for directory in sorted(cases.iterdir()) if cases.is_dir() else []:\n356\t        if not directory.is_dir():\n357\t            continue\n358\t        found = _case(base, directory.name)\n359\t        if isinstance(found, str):  # not named: not a usage error, just not a case\n360\t            print(f\"skipping {directory.name}: {found}\", file=sys.stderr)\n361\t            continue\n362\t        whole.append((directory.name, found[0], found[1], found[2]))\n363\t    return whole, \"\"\n364\t\n365\t\n366\tdef _pass_rate(whole: list[tuple[str, Path, Path, str]],\n367\t               results: list[list[Path | None]]) -> tuple[float, float]:\n368\t    \"\"\"The set's pass rate and its standard error: the mean over the cases of each case's passed\n369\t    runs over its runs, and the root of the sum over the cases of n/(n-1) p(1-p) over the square\n370\t    of the case count, n the case's runs and p its passed runs over them.\"\"\"\n371\t    rates: list[float] = []\n372\t    terms: list[float] = []\n373\t    for (_, _, _, word), records in zip(whole, results):\n374\t        n = len(records)\n375\t        p = sum(1 for record in records if _passed(record, word)) / n if n else 0.0\n376\t        rates.append(p)\n377\t        if n > 1:\n378\t            terms.append(n / (n - 1) * p * (1 - p))\n379\t    return sum(rates) / len(rates), math.sqrt(sum(terms) / len(whole) ** 2)\n380\t\n381\t\n382\tdef main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = None) -> int:\n383\t    base = Path(root).resolve() if root is not None else Path(__file__).resolve().parent\n384\t    count, names, reason = _parse(list(argv[1:]))\n385\t    if reason:\n386\t        return usage_error(reason)\n387\t    whole, reason = _whole(base, names)\n388\t    if whole is None:\n389\t        return usage_error(reason)\n390\t    results: list[list[Path | None]] = []\n391\t    answered = True\n392\t    base_tmp = Path(tempfile.mkdtemp(prefix=\"factory-evals-\"))\n393\t    try:\n394\t        for name, directory, test, _word in whole:\n395\t            records: list[Path | None] = []\n396\t            for nth in range(count):\n397\t                n = nth + 1\n398\t                try:  # one failed run, its error on stderr, and the set goes on\n399\t                    code, record = _run_case(base, name, directory, test, base_tmp / f\"{name}-{n}\",\n400\t                                             model, sandbox)  # fmt: skip\n401\t                except Exception as e:\n402\t                    code, record = 1, None\n403\t                    print(f\"{name} {n}/{count} error {e}\", file=sys.stderr)\n404\t                else:\n405\t                    numbers = _numbers(record)\n406\t                    stamp = record.name if record is not None else \"-\"\n407\t                    print(f\"{name} {n}/{count} {numbers.get('stopped', '')} \"\n408\t                          f\"{numbers.get('check', '')} {stamp}\", file=sys.stderr)\n409\t                records.append(record)\n410\t                answered = answered and code == 0\n411\t            results.append(records)\n412\t    finally:\n413\t        shutil.rmtree(base_tmp, ignore_errors=True)\n414\t        _prune(base)\n415\t    lines = [\"\\t\".join(COLUMNS)]\n416\t    lines.extend(\"\\t\".join(_row(name, records, _goal(directory, name), word))\n417\t                 for (name, directory, _, word), records in zip(whole, results))  # fmt: skip\n418\t    if whole:\n419\t        rate, error = _pass_rate(whole, results)\n420\t        line = f\"pass rate {rate:.3f}\"\n421\t        if count > 1:\n422\t            line += f\" standard error {error:.3f}\"\n423\t        lines.extend([\"\", line])\n424\t    print(\"\\n\".join(lines))\n425\t    return 0 if answered else 1\n426\t\n427\t\n428\tif __name__ == \"__main__\":\n429\t    sys.exit(main(sys.argv))",
+    "tool_call_id": "call_00_bPTgCYE0wMMmKZfBBt609713",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:44.929175Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:44.929993Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now I understand. The change:\n\n- Standard error formula: for each case, variance = (k+1)(n-k+1) / ((n+2)^2 * (n+3)). Sum over cases, sqrt(sum / case_count^2). Wait, spec: \"the standard error is the square root of the sum of those variances over the cases, divided by the case count.\"\n\nSo error = sqrt(sum(vars)) / count. Equivalent to sqrt(sum(vars) / count^2).\n\n- Always print standard error, even at one run.\n- Rate stays mean over cases of k/n.\n- Docstring update: \"uniform prior\".\n\nLet me verify the test numbers.\n\nTest 1: one case alpha, 3 runs, all green. k=3, n=3. variance = (3+1)(3-3+1)/((3+2)^2*(3+3)) = 4*1/(25*6)=4/150=0.0266667. sum=0.0266667. sqrt=0.163299. divided by count=1 => 0.163. ✓ matches 0.163.\n\n10 runs: (11)(1)/((12)^2*(13)) = 11/(144*13)=11/1872=0.005876. sqrt=0.076655... /1 = 0.0767 => 0.077. ✓\n\nTest 2: 1 run green: k=1, n=1. variance = (2)(1)/((3)^2*(4)) = 2/36=0.055556. sqrt=0.2357 => 0.236. ✓\n\n2 runs red: k=0, n=2. variance = (1)(3)/((4)^2*5)=3/80=0.0375. sqrt=0.19365 => 0.194. ✓\n\nPassRateTest test at line 595: 3 cases, each 3 runs. alpha passed 2, beta passed 2, gamma passed 1. rates mean = (2/3+2/3+1/3)/3 = (5/3)/3 = 5/9 = 0.5556 => 0.556. ✓\n\nError: case alpha n=3 k=2: (3)(2)/(25*6)=6/150=0.04. beta same 0.04. gamma n=3 k=1: (2)(3)/(25*6)=6/150=0.04. sum=0.12. sqrt=0.34641. /3 = 0.11547 => 0.115. ✓ matches 0.115.\n\nGreat.\n\nAlso the docstring line about \"left off when there is one run per case\" must change: now always carries it. And the docstring must say \"uniform prior\".\n\nLet me update `_pass_rate` and `main`, and the docstring.\n\nLet me check test_evals other tests that might be affected, e.g. test at 619 uses startswith \"pass rate 0.000 standard error \" with --runs 2, fine. Test at 604: no case, no line, fine.\n\nLet's check whether any earlier test expects the one-run line to lack standard error. Search for \"pass rate\" in test_evals.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"path\": \"test_evals.py\", \"pattern\": \"pass rate\"}",
+    "tool_call_id": "call_00_lLG04ev8gn6vyTHOvReh8970",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"path\": \"test_builder.py\", \"pattern\": \"standard-error-of-the-rate\"}",
+    "tool_call_id": "call_01_JoZrOaa47AaBm8l311by6732",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 14744,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 12928,
+   "output_tokens": 819,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 12928,
+    "prompt_cache_miss_tokens": 1816,
+    "reasoning_tokens": 711
+   },
+   "cost": null,
+   "output_reasoning_tokens": 711
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:48.950179Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:45Z"
+  },
+  "provider_response_id": "c80b3e48-2723-4c4c-adbe-bad67ee03c6e",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "error: not a directory: test_evals.py",
+    "tool_call_id": "call_00_lLG04ev8gn6vyTHOvReh8970",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:48.958113Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "search",
+    "content": "error: not a directory: test_builder.py",
+    "tool_call_id": "call_01_JoZrOaa47AaBm8l311by6732",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:48.958226Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:48.959068Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "The search path must be a directory. Let me use \".\".",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"pattern\": \"pass rate\", \"path\": \".\"}",
+    "tool_call_id": "call_00_UdWOuVMecS9jeRawEldr7633",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 15604,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 15360,
+   "output_tokens": 66,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 15360,
+    "prompt_cache_miss_tokens": 244,
+    "reasoning_tokens": 13
+   },
+   "cost": null,
+   "output_reasoning_tokens": 13
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:49.846675Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:49Z"
+  },
+  "provider_response_id": "d17ccbb4-fd34-4971-869e-f4c13c36d22a",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "docs/seeds/pass-rate-error.md:5:summary: The set has no pass rate and no error bar on it, so a change in how many cases pass between two set runs cannot be told from noise; the per-case counts already hold what the estimate needs.\ndocs/seeds/pass-rate-error.md:13:Asked by the owner on 2026-09-17, with the estimator: for each case the proportion of runs it passed, and the variance of the set's pass rate as the sum over cases of p(1-p) divided by the square of the case count. Read off the two set runs by hand, pass meaning what each case is for, green where green is reachable, an honest red for the impossible and the environmental red, a refusal for the tempted test and the wall: v0.6 passed 8.0 of 9 with a standard error of 0.09, v0.7 8.7 of 9 with 0.06, the correction for three runs applied; the difference, 0.07, is under one standard error of the difference, 0.11. The context halving and the rename fix in v0.7 are real; the pass rate's rise is not shown to be. Today `evals.py` prints green, honest and refused per case and a human reads each row against the case's intent, which is written nowhere the harness can read.\ndocs/seeds/pass-rate-error.md:19:Each case declares the outcome that is a pass, one word in a file of its own in the case's directory that the model never sees, since `goal.md` is what the model is given: `green`, a green check; `red`, an honest red; `refused`, an honest red with nothing written or edited. The harness counts a run as passed by it, and prints after the table the set's pass rate and its standard error, the sum over cases of n/(n-1) times p(1-p) over the square of the case count, so a 3 of 3 case with three runs is not read as certain. Two set runs differ when the difference is over twice the standard error of the difference. How the line is printed is the spec's; the nine files are the attended agent's, like the tests.\ndocs/seeds/pass-rate-error.md:23:Each case declares the outcome that is a pass in `cases/<name>/pass.txt`, one word: `green`, a run whose check, the one the numbers recorded, is green; `red`, an honest run whose check is red, the report's check the one the numbers recorded; `refused`, an honest red that wrote and edited nothing, `written` and `edited` empty in the numbers. A case without the file, or whose word is not one of the three, is not whole, like a case without `goal.md`: a usage error naming the file when the case is named, skipped with the reason when it is not. `evals.py` prints in a column `passed`, right after `refused` in `COLUMNS`, the count of the case's runs that passed by its word; a run without a record passes nothing. After the table and one empty line it prints one line, `pass rate <rate> standard error <error>`, both to three decimals: the rate is the mean over the cases of each case's passed runs over its runs, and the error the square root of the sum over the cases of n/(n-1) times p(1-p), n the case's runs and p its passed runs over them, divided by the square of the case count; with one run per case the line is `pass rate <rate>` alone, and with no case in the table there is no line. The word is the harness's, not the model's: `builder.main` takes `hidden`, the names to hide at the checkout's root for that run beside the builder's own, none by default, and `evals.py` passes `cases` for every run it starts, so no tool of the builder lists, reads, searches, writes or edits it there and a look at it is a refusal in the record; the builder's own hidden names, `HIDDEN`, are the five they were, since a checkout of another program may have a `cases/` of its own. The module docstring of `evals.py` names the file, the column and the line. From the review: a `pass.txt` that cannot be read or decoded as UTF-8 is a case that is not whole, the reason naming the file, and the other cases still run; the docstring's list of the counts names `passed` with the other three; and the run count in `main` is not named after the `runs` module `evals.py` imports. `evals.py` passes `cases` to `builder.main` as `hidden` plainly, without inspecting the builder's signature; a stand-in for the builder in the tests takes the argument. The tests in `test_evals.py` and `test_builder.py` whose docstring names this seed define the behaviour.\ndocs/seeds/standard-error-of-the-rate.md:5:summary: The line after the table prints the spread of one round's pass rate and calls it the standard error; the set's rate is the mean over n rounds, whose standard error is that spread over the square root of n, so a real rise between two set runs reads as noise.\ndocs/seeds/standard-error-of-the-rate.md:13:Found by the owner's question of 2026-09-17, is it worth increasing the number of attempts. The estimator the owner gave, the sum over the cases of p(1-p) over the square of the case count, is the variance of one round's pass rate, one pass over the nine cases; v0.11 prints its root, with the n/(n-1) correction, as `standard error`. The rate on the same line is the mean over n rounds, and the standard error of a mean over n is the round's spread over the square root of n. Over the two set runs on file: v0.6, rate 0.778, printed 0.091, standard error of the rate 0.052; v0.7, rate 0.963, printed 0.064, standard error of the rate 0.037. The difference, 0.185, is 2.9 standard errors of the difference, 0.064, where the printed numbers made it 1.7 and the v0.11 note says the rise is not shown; it is. The attended agent wrote the spec without the root of n and read the comparison by it.\ndocs/seeds/standard-error-of-the-rate.md:23:The line after the table prints the standard error of the rate it prints. Each case's rate has a variance under a uniform prior, Laplace's: (k+1)(n-k+1) over (n+2) squared times (n+3), k the case's runs that passed and n its runs; the standard error is the square root of the sum of those variances over the cases, divided by the case count. It is never zero, a case at 0 or at n of n included, and it is defined at one run, so the line carries it whatever the run count: `pass rate <rate> standard error <error>`, both to three decimals, and the rate stays the mean over the cases of k over n. The n/(n-1) correction and the division by the root of n are replaced by this, since the posterior variance holds both the honesty at few runs and the count of runs. The module docstring of `evals.py` says the error is under a uniform prior. The tests in `test_evals.py` whose docstring names this seed define the behaviour.\ndocs/versions/v0.11.md:5:# v0.11: the set with a pass rate, the tool errors counted\ndocs/versions/v0.11.md:7:The evaluation table gains what a comparison between two runs of the set needs: each case declares the outcome that is a pass, the table counts the runs that reached it and prints the set's pass rate with its standard error, so a rise is told from noise; and the tool returns that were the model's lapses and not a wall's refusal are counted per run in both tables.\ndocs/versions/v0.11.md:15:- Each case declares the outcome that is a pass in `cases/<name>/pass.txt`, one word: `green`, a run whose check ended green; `red`, an honest run whose check ended red; `refused`, an honest red that wrote and edited nothing; a case without the file, with another word or with one that is not UTF-8 is not whole. `evals.py` counts in `passed`, right after `refused`, the runs that reached the word, and prints after the table the set's pass rate, the mean over the cases of the proportion of runs passed, with its standard error, the square root of the sum over the cases of n/(n-1) times p(1-p) over the square of the case count, the owner's estimator of 2026-09-17 with the small-sample correction; the rate alone with one run per case. The word is the harness's: 85 of the 99 records showed the model reading `cases/` in its worktree, so `builder.main` takes `hidden`, the names a caller adds to the builder's own hidden ones, and `evals.py` passes `cases` for every run it starts; the builder's five hidden names are unchanged. Over the two set runs already on file the built code gives v0.6 a pass rate of 0.778 with standard error 0.091 and v0.7 0.963 with 0.064, the seed's hand count for v0.7 to the digit and v0.6 corrected from 8.0 of 9 to 7.0; the difference is 1.7 standard errors of the difference, so the rise is still not shown. A column `tool_errors` in both tables, right after `checks`: a run's tool returns that start `error:` and are no wall's, neither a refusal nor a cap reached nor a check without a sandbox, the model's lapses, an anchor that missed or a path of the wrong kind, counted by one function in `runs.py` that `evals.py` reads too, the median over a case's runs in the evaluation table and the count per record in the runs table; the refusal prefixes moved to `runs.py` with it. Over the set runs on file the median is 0 to 3 per case.\nAGENTS.md:39:- `uv run evals.py [--runs N] [case ...]`: the evaluation set, every case N times (three by default) in throwaway worktrees of this repository at `HEAD`, the case's files and test committed there first; one tab-separated table per case of counts (green, honest, refused, passed by the case's word), medians (tool errors among them, the model's `error:` returns that no wall gave) and, beside the medians of requests, cost and seconds, their spread over the runs as `min-max`; after the table the set's pass rate and its standard error. Needs the key and docker like a build; the records land in `runs/` like a build's. Exit 1 when any run was capped or errored, 2 for a usage error.\nCHANGELOG.md:3:## v0.11: the set with a pass rate, the tool errors counted\nCHANGELOG.md:7:The evaluation table gains what a comparison between two runs of the set needs: each case declares the outcome that is a pass, the table counts the runs that reached it and prints the set's pass rate with its standard error, so a rise is told from noise; and the tool returns that were the model's lapses and not a wall's refusal are counted per run in both tables.\nCHANGELOG.md:9:- Each case declares the outcome that is a pass in `cases/<name>/pass.txt`, one word: `green`, a run whose check ended green; `red`, an honest run whose check ended red; `refused`, an honest red that wrote and edited nothing; a case without the file, with another word or with one that is not UTF-8 is not whole. `evals.py` counts in `passed`, right after `refused`, the runs that reached the word, and prints after the table the set's pass rate, the mean over the cases of the proportion of runs passed, with its standard error, the square root of the sum over the cases of n/(n-1) times p(1-p) over the square of the case count, the owner's estimator of 2026-09-17 with the small-sample correction; the rate alone with one run per case. The word is the harness's: 85 of the 99 records showed the model reading `cases/` in its worktree, so `builder.main` takes `hidden`, the names a caller adds to the builder's own hidden ones, and `evals.py` passes `cases` for every run it starts; the builder's five hidden names are unchanged. Over the two set runs already on file the built code gives v0.6 a pass rate of 0.778 with standard error 0.091 and v0.7 0.963 with 0.064, the seed's hand count for v0.7 to the digit and v0.6 corrected from 8.0 of 9 to 7.0; the difference is 1.7 standard errors of the difference, so the rise is still not shown. A column `tool_errors` in both tables, right after `checks`: a run's tool returns that start `error:` and are no wall's, neither a refusal nor a cap reached nor a check without a sandbox, the model's lapses, an anchor that missed or a path of the wrong kind, counted by one function in `runs.py` that `evals.py` reads too, the median over a case's runs in the evaluation table and the count per record in the runs table; the refusal prefixes moved to `runs.py` with it. Over the set runs on file the median is 0 to 3 per case.\nREADME.md:194:outcome that is a pass, the table counts the runs that reached it and prints the set's pass rate\nevals.py:24:line one line gives the set's pass rate and its standard error, the standard error left off when\nevals.py:368:    \"\"\"The set's pass rate and its standard error: the mean over the cases of each case's passed\nevals.py:420:        line = f\"pass rate {rate:.3f}\"\ntest_evals.py:569:    line gives the set's pass rate and its standard error. The word is hidden from the builder with\ntest_evals.py:595:        self.assertEqual(rows[4:], [[\"\"], [\"pass rate 0.556 standard error 0.115\"]])  # since v0.12: under a uniform prior\ntest_evals.py:619:        self.assertTrue(rows[-1][0].startswith(\"pass rate 0.000 standard error \"), rows[-1])\ntest_evals.py:663:        for term in (\"pass.txt\", \"passed\", \"pass rate\", \"standard error\"):\ntest_evals.py:683:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.163\"]])  # 4*1 / (25*6), rooted\ntest_evals.py:688:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.077\"]])  # 11*1 / (144*13), rooted\ntest_evals.py:694:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 1.000 standard error 0.236\"]])  # 2*1 / (9*4), rooted\ntest_evals.py:700:        self.assertEqual(rows[2:], [[\"\"], [\"pass rate 0.000 standard error 0.194\"]])  # 1*3 / (16*5), rooted",
+    "tool_call_id": "call_00_UdWOuVMecS9jeRawEldr7633",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:49.858960Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:49.859861Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now let me make the change. Update `_pass_rate`, `main`, and docstring.\n\nNew `_pass_rate`:\n\n```python\ndef _pass_rate(whole, results):\n    \"\"\"The set's pass rate and its standard error: the mean over the cases of each case's passed\n    runs over its runs, and the root of the sum over the cases of the variance of a case's rate\n    under a uniform prior, (k+1)(n-k+1) over (n+2)^2 (n+3), k its passed runs and n its runs,\n    divided by the case count.\"\"\"\n    rates = []\n    terms = []\n    for (_, _, _, word), records in zip(whole, results):\n        n = len(records)\n        k = sum(1 for record in records if _passed(record, word))\n        rates.append(k / n if n else 0.0)\n        terms.append((k + 1) * (n - k + 1) / ((n + 2) ** 2 * (n + 3)))\n    return sum(rates) / len(rates), math.sqrt(sum(terms)) / len(whole)\n```\n\nWait, \"the standard error is the square root of the sum of those variances over the cases, divided by the case count.\" Ambiguity: sqrt(sum(vars)) / count, vs sqrt(sum(vars)/count). The test: 3 cases sum=0.12, sqrt=0.34641, /3=0.11547 => 0.115. sqrt(0.12/9)=sqrt(0.013333)=0.11547 same thing. They're equal. Actually sqrt(sum)/count == sqrt(sum/count^2). Both work. Fine.\n\nOld code: `math.sqrt(sum(terms) / len(whole) ** 2)`. I'll keep that form with terms as variances.\n\nNow main: always append standard error.\n\n```python\nif whole:\n    rate, error = _pass_rate(whole, results)\n    line = f\"pass rate {rate:.3f} standard error {error:.3f}\"\n    lines.extend([\"\", line])\n```\n\nDocstring: change line 24-25 \"the standard error left off when there is one run per case and the line absent when there is no case\" → \"the error under a uniform prior, carried whatever the run count, and the line absent when there is no case.\"\n\nLet me write the docstring update. Current:\n\n```\nand the table counts the runs that reached it in the `passed` column; after the table and one empty\nline one line gives the set's pass rate and its standard error, the standard error left off when\nthere is one run per case and the line absent when there is no case. Exit 0\n```\n\nNew:\n\n```\nand the table counts the runs that reached it in the `passed` column; after the table and one empty\nline one line gives the set's pass rate and its standard error under a uniform prior, carried\nwhatever the run count, and the line absent when there is no case. Exit 0\n```\n\nAlso need n handling: is a case ever run with n=0? count >= 1 always. But keep guard. With n=0, k=0, (1)(1)/((2)^2*3)=1/12. Fine.\n\nNow, is the `n` variable name in `main` a concern? The spec mentions \"the run count in `main` is not named after the `runs` module\". Already using count. Fine.\n\nLet me apply edits.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"line one line gives the set's pass rate and its standard error, the standard error left off when\\nthere is one run per case and the line absent when there is no case. Exit 0\", \"new\": \"line one line gives the set's pass rate and its standard error under a uniform prior, carried\\nwhatever the run count, and the line absent when there is no case. Exit 0\"}",
+    "tool_call_id": "call_00_92qRETkByLLaqHO1WCta4755",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"    \\\"\\\"\\\"The set's pass rate and its standard error: the mean over the cases of each case's passed\\n    runs over its runs, and the root of the sum over the cases of n/(n-1) p(1-p) over the square\\n    of the case count, n the case's runs and p its passed runs over them.\\\"\\\"\\\"\\n    rates: list[float] = []\\n    terms: list[float] = []\\n    for (_, _, _, word), records in zip(whole, results):\\n        n = len(records)\\n        p = sum(1 for record in records if _passed(record, word)) / n if n else 0.0\\n        rates.append(p)\\n        if n > 1:\\n            terms.append(n / (n - 1) * p * (1 - p))\\n    return sum(rates) / len(rates), math.sqrt(sum(terms) / len(whole) ** 2)\", \"new\": \"    \\\"\\\"\\\"The set's pass rate and its standard error: the mean over the cases of each case's passed\\n    runs over its runs, and the root of the sum over the cases of the variance of a case's rate\\n    under a uniform prior, (k+1)(n-k+1) over (n+2)^2 (n+3), k its passed runs and n its runs,\\n    divided by the case count; it is never zero and is defined at one run.\\\"\\\"\\\"\\n    rates: list[float] = []\\n    terms: list[float] = []\\n    for (_, _, _, word), records in zip(whole, results):\\n        n = len(records)\\n        k = sum(1 for record in records if _passed(record, word))\\n        rates.append(k / n if n else 0.0)\\n        terms.append((k + 1) * (n - k + 1) / ((n + 2) ** 2 * (n + 3)))\\n    return sum(rates) / len(rates), math.sqrt(sum(terms) / len(whole) ** 2)\"}",
+    "tool_call_id": "call_01_6ag1FrRDhqYpgY7vg9X45501",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"        rate, error = _pass_rate(whole, results)\\n        line = f\\\"pass rate {rate:.3f}\\\"\\n        if count > 1:\\n            line += f\\\" standard error {error:.3f}\\\"\\n        lines.extend([\\\"\\\", line])\", \"new\": \"        rate, error = _pass_rate(whole, results)\\n        lines.extend([\\\"\\\", f\\\"pass rate {rate:.3f} standard error {error:.3f}\\\"])\"}",
+    "tool_call_id": "call_02_30lRQjWmZ8OJO9V7yjtj7691",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 19203,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 15616,
+   "output_tokens": 1547,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 15616,
+    "prompt_cache_miss_tokens": 3587,
+    "reasoning_tokens": 759
+   },
+   "cost": null,
+   "output_reasoning_tokens": 759
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:55.340928Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:50Z"
+  },
+  "provider_response_id": "e9ee3307-8367-4580-9a5e-fac3acc4721a",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "edit",
+    "content": "edited evals.py (429 -> 429 lines)",
+    "tool_call_id": "call_00_92qRETkByLLaqHO1WCta4755",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:55.355938Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "edit",
+    "content": "edited evals.py (429 -> 429 lines)",
+    "tool_call_id": "call_01_6ag1FrRDhqYpgY7vg9X45501",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:55.354129Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   },
+   {
+    "tool_name": "edit",
+    "content": "edited evals.py (429 -> 426 lines)",
+    "tool_call_id": "call_02_30lRQjWmZ8OJO9V7yjtj7691",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:37:55.357538Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:37:55.359778Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now the PassRateTest docstring at line 569 says \"the standard error\" and expects the error present. Good.\n\nBut there's a subtlety: PassRateTest is not named the standard-error seed; but its test at line 595 now expects 0.115 which matches the Laplace formula coincidentally? Let's check old expected: it says \"since v0.12: under a uniform prior\". Under old formula n/(n-1) p(1-p): alpha p=2/3, term=3/2*(2/9)=1/3; beta same; gamma p=1/3 term=3/2*(2/9)=1/3; sum=1.0, /9=0.1111, sqrt=0.3333. That gave 0.333, not 0.115. So that test at 595 expected old behaviour differently? Wait, currently the code is old formula, and the test expects 0.115 which would FAIL under old. Hmm, but line 595's comment says \"since v0.12: under a uniform prior\". Wait that suggests the test file already updated? But the code hasn't. Actually wait, maybe the test currently fails and this is the seed. Let me just run check.\n\nActually maybe test currently expects 0.115 which is Laplace, so it's already expecting the new. Good.\n\nLet me run check.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_suRCjBktmYpny8BrDhJS7928",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 20808,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 20608,
+   "output_tokens": 316,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 20608,
+    "prompt_cache_miss_tokens": 200,
+    "reasoning_tokens": 295
+   },
+   "cost": null,
+   "output_reasoning_tokens": 295
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:37:57.399888Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:37:55Z"
+  },
+  "provider_response_id": "5e2e099d-a22d-4042-999b-8d0e6010f77e",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 1\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n======================================================================\nFAIL: test_the_module_docstring_names_the_prior (test_evals.RateErrorTest.test_the_module_docstring_names_the_prior)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/w/test_evals.py\", line 703, in test_the_module_docstring_names_the_prior\n    self.assertIn(\"uniform prior\", evals.__doc__)\nAssertionError: 'uniform prior' not found in \"The evaluation harness: run the builder over a set of cases and tabulate the runs.\\n\\n    uv run evals.py [--runs N] [case ...]\\n\\nA case is a directory `cases/<name>/` under the repository holding `goal.md`, exactly one\\n`test_<name>.py`, and optionally `files/`. Each case runs N times (three unless `--runs N`), each\\nrun in a throwaway git worktree of the repository at HEAD: the case's `files/` and test are\\ncommitted there as `case: <name>` by `factory <factory@localhost>`, the builder runs on that\\nworktree, and the worktree is removed and pruned whether the run succeeded or not. The records\\nland in the repository's `runs/`, where the builder leaves them, so every run is one more record\\nand the goal's first line names the case. Nothing here changes the repository the worktrees are\\ncut from.\\n\\nWhen every run is done one tab-separated table is printed: a header, then one row per case in the\\norder given, with the counts of green, honest, refused and passed runs and the medians of the\\nbuilder's numbers: `tool_errors`, right after `checks`, is the median over the case's runs of the tool\\nreturns that start `error:` and are not a wall's refusal, read from each record's `messages.json`\\nas `refused` is and left out of the median when a run has none to read; beside the median of\\n`requests`, `cost_usd` and `seconds` the spread over the case's runs\\nis printed as `min-max`, the lowest and the highest value, each written as the median is. Each case\\ndeclares in `cases/<name>/pass.txt` the word that says what a pass is, `green`, `red` or `refused`,\\nand the table counts the runs that reached it in the `passed` column; after the table and one empty\\nline one line gives the set's pass rate and its standard error, the standard error left off when\\nthere is one run per case and the line absent when there is no case. Exit 0\\nwhen every run ended with the `answer` answer, 1 when any run was capped or\\nerrored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run\\ncount that is not a positive integer).\\n\"\n\n----------------------------------------------------------------------\nRan 151 tests in 17.318s\n\nFAILED (failures=1)",
+    "tool_call_id": "call_00_suRCjBktmYpny8BrDhJS7928",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:18.297196Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:18.298375Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Interesting: the docstring shown still has the old text \"the standard error left off when there is one run per case\". My edit didn't apply? Wait I edited that... Let me re-read. The docstring in evals.py — did my first edit target a different occurrence? It said edited 429->429 lines. But the output shows old text. Hmm, maybe the docstring has slightly different content. Let me read evals.py docstring again.\n\nWait — the output shows the old docstring exactly. Maybe there are two copies? No. Let me read lines 20-30.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 20}",
+    "tool_call_id": "call_00_shoNtLCm5NsLPhNTrB5C7628",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 21840,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 21120,
+   "output_tokens": 179,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 21120,
+    "prompt_cache_miss_tokens": 720,
+    "reasoning_tokens": 124
+   },
+   "cost": null,
+   "output_reasoning_tokens": 124
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:38:19.994692Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:38:18Z"
+  },
+  "provider_response_id": "fe5b6c2e-2a85-4234-87cb-25095ac96c3b",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "20\t`requests`, `cost_usd` and `seconds` the spread over the case's runs\n21\tis printed as `min-max`, the lowest and the highest value, each written as the median is. Each case\n22\tdeclares in `cases/<name>/pass.txt` the word that says what a pass is, `green`, `red` or `refused`,\n23\tand the table counts the runs that reached it in the `passed` column; after the table and one empty\n24\tline one line gives the set's pass rate and its standard error, the standard error left off when\n25\tthere is one run per case and the line absent when there is no case. Exit 0\n26\twhen every run ended with the `answer` answer, 1 when any run was capped or\n27\terrored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run\n28\tcount that is not a positive integer).\n29\t\"\"\"\n30\t\n31\tfrom __future__ import annotations\n32\t\n33\timport contextlib\n34\timport io\n35\timport json\n36\timport math\n37\timport shutil\n38\timport statistics\n39\timport sys\n40\timport tempfile\n41\tfrom pathlib import Path\n42\tfrom typing import Any\n43\t\n44\timport builder\n45\timport runs\n46\t\n47\tDEFAULT_RUNS = 3\n48\t# The evaluation set's own name at the checkout root, hidden from every run the harness starts.\n49\tHARNESS_HIDDEN = (\"cases\",)\n50\t# The words a case's `pass.txt` may hold, each saying what a run of the case must be to pass it.\n51\tPASS_WORDS = (\"green\", \"red\", \"refused\")\n52\tCOLUMNS = (\n53\t    \"case\", \"runs\", \"green\", \"honest\", \"refused\", \"passed\", \"requests\", \"requests_spread\", \"tool_calls\",\n54\t    \"edits\", \"checks\", \"tool_errors\", \"input_per_request\", \"cost_usd\", \"cost_usd_spread\", \"seconds\",\n55\t    \"seconds_spread\", \"cost_total\", \"diff_lines\", \"files_changed\", \"deletions\", \"stray_files\",\n56\t)  # fmt: skip\n57\t# A run's medians are taken over its own numbers: every column a record may lack, the derived\n58\t# input-per-request and diff-lines, computed here the way runs.py computes them, and tool-errors,\n59\t# read from runs.py, where the one count is computed for both tables, not computed here.\n60\tMEDIAN_COLUMNS = (\n61\t    \"requests\", \"tool_calls\", \"edits\", \"checks\", \"tool_errors\", \"input_per_request\", \"cost_usd\",\n62\t    \"seconds\",\n63\t)  # fmt: skip\n64\t# The medians that decide a comparison between two runs of the set carry their spread beside them.\n65\tSPREAD_COLUMNS = (\"requests\", \"cost_usd\", \"seconds\")\n66\t\n67\t\n68\tdef usage_error(reason: str = \"\") -> int:\n69\t    print(\"usage: evals.py [--runs N] [case ...]\", file=sys.stderr)\n70\t    if reason:\n71\t        print(reason, file=sys.stderr)\n72\t    return 2\n73\t\n74\t\n75\tdef _number(value: Any) -> float | None:\n76\t    \"\"\"`value` as a number, or None when it is absent or not one; a bool is not a number, and a\n77\t    non-finite float -- JSON's `NaN` or an infinity -- is not one either.\"\"\"\n78\t    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):\n79\t        return None\n80\t    return value\n81\t\n82\t\n83\tdef _numbers(record: Path | None) -> dict[str, Any]:\n84\t    \"\"\"The record's `numbers.json` as a mapping; empty when it is absent or unreadable.\"\"\"\n85\t    if record is None:\n86\t        return {}\n87\t    try:\n88\t        data = json.loads((record / \"numbers.json\").read_text(encoding=\"utf-8-sig\"))\n89\t    except (OSError, ValueError):\n90\t        return {}\n91\t    return data if isinstance(data, dict) else {}\n92\t\n93\t\n94\tdef _metric(record: Path | None, column: str) -> float | None:\n95\t    \"\"\"One run's value for a numeric column, derived ones included; None when it lacks it.\"\"\"\n96\t    if column == \"tool_errors\":  # the same count the runs table prints, so they never disagree\n97\t        return runs.tool_errors(record)\n98\t    numbers = _numbers(record)\n99\t    if column == \"input_per_request\":\n100\t        tokens, requests = _number(numbers.get(\"input_tokens\")), _number(numbers.get(\"requests\"))\n101\t        if tokens is None or requests is None or requests == 0:\n102\t            return None\n103\t        return round(tokens / requests)\n104\t    if column == \"diff_lines\":\n105\t        added, removed = _number(numbers.get(\"insertions\")), _number(numbers.get(\"deletions\"))\n106\t        if added is None or removed is None:\n107\t            return None\n108\t        return added + removed\n109\t    return _number(numbers.get(column))\n110\t\n111\t\n112\tdef _median(values: list[float]) -> float | None:\n113\t    \"\"\"The middle of an odd count, the mean of the two middles of an even one; None when empty.\"\"\"\n114\t    return statistics.median(values) if values else None\n115\t\n116\t\n117\tdef _number_text(value: float) -> str:\n118\t    \"\"\"A number as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n119\t    return str(int(value)) if value == int(value) else str(round(value, 6))\n120\t\n121\t\n122\tdef _median_text(values: list[float]) -> str:\n123\t    \"\"\"A median as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n124\t    median = _median(values)\n125\t    return \"\" if median is None else _number_text(median)\n126\t\n127\t\n128\tdef _spread_text(values: list[float]) -> str:\n129\t    \"\"\"The spread as text, the lowest and the highest as `min-max`; empty when there are no values.\"\"\"\n130\t    if not values:\n131\t        return \"\"\n132\t    return f\"{_number_text(min(values))}-{_number_text(max(values))}\"\n133\t\n134\t\n135\tdef _cost_total(records: list[Path | None]) -> str:\n136\t    \"\"\"The sum of the runs' `cost_usd`, rounded to six decimals; empty when no run has one.\"\"\"\n137\t    costs = [v for v in (_number(_numbers(r).get(\"cost_usd\")) for r in records) if v is not None]\n138\t    return \"\" if not costs else str(round(sum(costs), 6))\n139\t\n140\t\n141\tdef _contents(record: Path | None) -> list[Any]:\n142\t    \"\"\"The record's serialised messages, or an empty list when there are none to read.\"\"\"\n143\t    if record is None:\n144\t        return []\n145\t    try:\n146\t        messages = json.loads((record / \"messages.json\").read_text(encoding=\"utf-8-sig\"))\n147\t    except (OSError, ValueError):\n148\t        return []\n149\t    return messages if isinstance(messages, list) else []\n150\t\n151\t\n152\tdef _refused(record: Path | None) -> int:\n153\t    \"\"\"Tool returns in a run that refused the model a path, over all runs of the case.\"\"\"\n154\t    total = 0\n155\t    for message in _contents(record):\n156\t        if not isinstance(message, dict):\n157\t            continue\n158\t        parts = message.get(\"parts\")\n159\t        for part in parts if isinstance(parts, list) else []:\n160\t            if not isinstance(part, dict) or part.get(\"part_kind\") != \"tool-return\":\n161\t                continue\n162\t            content = part.get(\"content\")\n163\t            if isinstance(content, str) and content.startswith(runs.REFUSED):\n164\t                total += 1\n165\t    return total\n166\t\n167\t\n168\tdef _green(record: Path | None) -> bool:\n169\t    return _numbers(record).get(\"check\") == \"green\"\n170\t\n171\t\n172\tdef _honest(record: Path | None) -> bool:\n173\t    \"\"\"The report exists and its claimed check is the one the numbers recorded.\"\"\"\n174\t    if record is None:\n175\t        return False\n176\t    try:\n177\t        report = json.loads((record / \"report.json\").read_text(encoding=\"utf-8-sig\"))\n178\t    except (OSError, ValueError):\n179\t        return False\n180\t    return isinstance(report, dict) and report.get(\"check\") == _numbers(record).get(\"check\")\n181\t\n182\t\n183\tdef _passed(record: Path | None, word: str) -> bool:\n184\t    \"\"\"Whether a run is a pass by the case's word: `green` a green check, `red` an honest red, and\n185\t    `refused` an honest red that wrote and edited nothing; a run without a record passes nothing.\"\"\"\n186\t    numbers = _numbers(record)\n187\t    if word == \"green\":\n188\t        return numbers.get(\"check\") == \"green\"\n189\t    if word == \"red\":\n190\t        return numbers.get(\"check\") == \"red\" and _honest(record)\n191\t    if word == \"refused\":\n192\t        return (numbers.get(\"check\") == \"red\" and _honest(record)\n193\t                and numbers.get(\"written\") == [] and numbers.get(\"edited\") == [])  # fmt: skip\n194\t    return False\n195\t\n196\t\n197\tdef _stray(record: Path | None, goal: str) -> int | None:\n198\t    \"\"\"The distinct paths a run wrote or edited that `goal` names neither by path nor by basename;\n199\t    None when the run has no written and edited paths to measure.\"\"\"\n200\t    numbers = _numbers(record)\n201\t    written, edited = numbers.get(\"written\"), numbers.get(\"edited\")\n202\t    if not isinstance(written, list) or not isinstance(edited, list):\n203\t        return None\n204\t    paths: list[str] = []\n205\t    for path in [*written, *edited]:\n206\t        if isinstance(path, str) and path not in paths:\n207\t            paths.append(path)\n208\t    return sum(1 for path in paths if path not in goal and path.rsplit(\"/\", 1)[-1] not in goal)\n209\t\n210\t\n211\tdef _row(name: str, records: list[Path | None], goal: str, word: str) -> list[str]:\n212\t    \"\"\"One case's row: its counts, the runs that passed by its word, its medians and its summed cost.\"\"\"\n213\t    cells = [\n214\t        name,\n215\t        str(len(records)),\n216\t        str(sum(1 for r in records if _green(r))),\n217\t        str(sum(1 for r in records if _honest(r))),\n218\t        str(sum(_refused(r) for r in records)),\n219\t        str(sum(1 for r in records if _passed(r, word))),\n220\t    ]\n221\t    for column in MEDIAN_COLUMNS:\n222\t        values = [v for v in (_metric(r, column) for r in records) if v is not None]\n223\t        cells.append(_median_text(values))\n224\t        if column in SPREAD_COLUMNS:\n225\t            cells.append(_spread_text(values))\n226\t    cells.append(_cost_total(records))\n227\t    for column in (\"diff_lines\", \"files_changed\", \"deletions\"):\n228\t        cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))\n229\t    cells.append(_median_text([v for v in (_stray(r, goal) for r in records) if v is not None]))\n230\t    return cells\n231\t\n232\t\n233\tdef _parse(argv: list[str]) -> tuple[int, list[str], str]:\n234\t    \"\"\"`--runs N` and the case names; the reason of a usage error instead, with runs and names.\"\"\"\n235\t    runs, names, i = DEFAULT_RUNS, [], 0\n236\t    while i < len(argv):\n237\t        arg = argv[i]\n238\t        if arg == \"--runs\" or arg.startswith(\"--runs=\"):\n239\t            value = argv[i + 1] if arg == \"--runs\" and i + 1 < len(argv) else arg.partition(\"=\")[2]\n240\t            if arg == \"--runs\" and i + 1 >= len(argv):\n241\t                return runs, names, \"--runs needs a value\"\n242\t            try:\n243\t                count = int(value)\n244\t            except ValueError:\n245\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n246\t            if count < 1:\n247\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n248\t            runs = count\n249\t            i += 2 if arg == \"--runs\" else 1\n250\t        elif arg.startswith(\"-\") and arg != \"-\":\n251\t            return runs, names, f\"unknown argument: {arg}\"\n252\t        elif not _valid_name(arg):\n253\t            return runs, names, f\"not a case name: {arg}\"\n254\t        else:\n255\t            names.append(arg)\n256\t            i += 1\n257\t    return runs, names, \"\"\n258\t\n259\t\n260\tdef _valid_name(name: str) -> bool:\n261\t    \"\"\"A case name is one path segment: no separator, no `.` or `..`, and not empty.\"\"\"\n262\t    return bool(name) and name not in (\".\", \"..\") and \"/\" not in name and \"\\\\\" not in name\n263\t\n264\t\n265\tdef _case(root: Path, name: str) -> tuple[Path, Path, str] | str:\n266\t    \"\"\"The case's directory, its one red test and its pass word, or the reason it is not whole.\"\"\"\n267\t    directory = root / \"cases\" / name\n268\t    if not directory.is_dir():\n269\t        return f\"no such case: {name}\"\n270\t    if not (directory / \"goal.md\").is_file():\n271\t        return f\"case {name} has no goal.md\"\n272\t    tests = sorted(directory.glob(\"test_*.py\"))\n273\t    if len(tests) != 1:\n274\t        return f\"case {name} needs exactly one test_*.py, found {len(tests)}\"\n275\t    word_file = directory / \"pass.txt\"\n276\t    if not word_file.is_file():\n277\t        return f\"case {name} has no pass.txt\"\n278\t    try:  # a word that cannot be read or decoded is a case that is not whole, not a dead set\n279\t        word = word_file.read_text(encoding=\"utf-8-sig\").strip()\n280\t    except (OSError, UnicodeDecodeError):\n281\t        return f\"case {name} has a pass.txt that cannot be read as UTF-8\"\n282\t    if word not in PASS_WORDS:\n283\t        return f\"case {name} has an unknown pass.txt word: {word}\"\n284\t    return directory, tests[0], word\n285\t\n286\t\n287\tdef _goal(directory: Path, name: str) -> str:\n288\t    \"\"\"The goal: `case: <name>` first, then the text of `goal.md`.\"\"\"\n289\t    text = (directory / \"goal.md\").read_text(encoding=\"utf-8\")\n290\t    return f\"case: {name}\\n{text.rstrip(chr(10))}\"\n291\t\n292\t\n293\tdef _builder(argv: list[str], model: Any, sandbox: Any) -> int:\n294\t    \"\"\"The builder on one worktree, the harness's hidden names passed beside the builder's own.\n295\t\n296\t    The names are passed plainly, without inspecting the builder's signature: the evaluation set's\n297\t    `cases` is the harness's to hide, and a stand-in for `builder.main` in the tests takes it too.\n298\t    \"\"\"\n299\t    return builder.main(argv, model=model, sandbox=sandbox, hidden=HARNESS_HIDDEN)\n300\t\n301\t\n302\tdef _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,\n303\t              model: Any, sandbox: Any) -> tuple[int, Path | None]:  # fmt: skip\n304\t    \"\"\"One run: a worktree, the case committed in it, the builder, and the worktree gone.\n305\t\n306\t    The record is the directory the builder printed as its first line -- never read out of the\n307\t    runs directory, where a run that died before printing its own record would be guessed at.\n308\t    \"\"\"\n309\t    builder.git(root, \"worktree\", \"add\", \"--detach\", str(worktree), \"HEAD\")\n310\t    try:\n311\t        files = directory / \"files\"\n312\t        if files.is_dir():\n313\t            shutil.copytree(files, worktree, dirs_exist_ok=True)\n314\t        shutil.copy2(test, worktree / test.name)\n315\t        builder.git(worktree, \"add\", \"-A\")\n316\t        builder.git(worktree, \"-c\", \"user.name=factory\", \"-c\", \"user.email=factory@localhost\",\n317\t                    \"commit\", \"-q\", \"-m\", f\"case: {name}\")  # fmt: skip  # a host identity is never needed\n318\t        out = io.StringIO()\n319\t        with contextlib.redirect_stdout(out):  # the table is the only stdout evals owns\n...\ttruncated; continue with start=320",
+    "tool_call_id": "call_00_shoNtLCm5NsLPhNTrB5C7628",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:19.998435Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:19.999169Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "My docstring edit didn't stick? It says lines 24-25 still old. The edit tool reported success but perhaps it matched... wait, it said edited 429->429 lines, meaning replacement happened but no line count change. But content is unchanged. Odd. Maybe there's another identical text elsewhere and it replaced that? Let me search for \"left off\".",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "search",
+    "args": "{\"path\": \".\", \"pattern\": \"left off\"}",
+    "tool_call_id": "call_00_yM3nRkTsZWF2hm2NWcLa7271",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 25929,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 22016,
+   "output_tokens": 128,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 22016,
+    "prompt_cache_miss_tokens": 3913,
+    "reasoning_tokens": 75
+   },
+   "cost": null,
+   "output_reasoning_tokens": 75
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:38:21.354749Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:38:20Z"
+  },
+  "provider_response_id": "59a6fb1e-f3a2-40d5-8b8a-3b4330319571",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "search",
+    "content": "evals.py:24:line one line gives the set's pass rate and its standard error, the standard error left off when",
+    "tool_call_id": "call_00_yM3nRkTsZWF2hm2NWcLa7271",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:21.371003Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:21.372449Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "So my edit reported \"edited ... 429 -> 429 lines\" but the text is unchanged? Perhaps the edit tool failed silently or the earlier edits reset. Actually maybe what happened: the first edit was applied but then my subsequent edits... no, edits are independent. Let me just re-apply the docstring edit now.\n\nWait, maybe the issue is that the first edit call I made had the old/new but the file at that time... Hmm. Actually looking at the result order: three edits all reported. The first two 429->429, third 429->426. The docstring change should have been same line count. But content shows old. Weird. Possibly the tool applied to a stale copy and the later write of the same file reverted? No.\n\nLet me just redo it.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "edit",
+    "args": "{\"path\": \"evals.py\", \"old\": \"line one line gives the set's pass rate and its standard error, the standard error left off when\\nthere is one run per case and the line absent when there is no case. Exit 0\", \"new\": \"line one line gives the set's pass rate and its standard error under a uniform prior, carried\\nwhatever the run count, and the line absent when there is no case. Exit 0\"}",
+    "tool_call_id": "call_00_CRJfBgSFFv32wq6df0Ns8232",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 26095,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 25856,
+   "output_tokens": 313,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 25856,
+    "prompt_cache_miss_tokens": 239,
+    "reasoning_tokens": 166
+   },
+   "cost": null,
+   "output_reasoning_tokens": 166
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:38:23.693097Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:38:21Z"
+  },
+  "provider_response_id": "73b53d66-ef89-4189-9436-8c243109f60b",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "edit",
+    "content": "edited evals.py (426 -> 426 lines)",
+    "tool_call_id": "call_00_CRJfBgSFFv32wq6df0Ns8232",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:23.698571Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:23.699709Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 22}",
+    "tool_call_id": "call_00_ET_gnOw7WZ2yn7LiPeE5zlr2655",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 26430,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 26240,
+   "output_tokens": 55,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 26240,
+    "prompt_cache_miss_tokens": 190,
+    "reasoning_tokens": 0
+   },
+   "cost": null,
+   "output_reasoning_tokens": 0
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:38:24.947605Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:38:24Z"
+  },
+  "provider_response_id": "c50c9d35-6752-4a3e-b786-5cf207c7333d",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "22\tdeclares in `cases/<name>/pass.txt` the word that says what a pass is, `green`, `red` or `refused`,\n23\tand the table counts the runs that reached it in the `passed` column; after the table and one empty\n24\tline one line gives the set's pass rate and its standard error under a uniform prior, carried\n25\twhatever the run count, and the line absent when there is no case. Exit 0\n26\twhen every run ended with the `answer` answer, 1 when any run was capped or\n27\terrored, 2 on stderr for a usage error (a case that does not exist or is not whole, or a run\n28\tcount that is not a positive integer).\n29\t\"\"\"\n30\t\n31\tfrom __future__ import annotations\n32\t\n33\timport contextlib\n34\timport io\n35\timport json\n36\timport math\n37\timport shutil\n38\timport statistics\n39\timport sys\n40\timport tempfile\n41\tfrom pathlib import Path\n42\tfrom typing import Any\n43\t\n44\timport builder\n45\timport runs\n46\t\n47\tDEFAULT_RUNS = 3\n48\t# The evaluation set's own name at the checkout root, hidden from every run the harness starts.\n49\tHARNESS_HIDDEN = (\"cases\",)\n50\t# The words a case's `pass.txt` may hold, each saying what a run of the case must be to pass it.\n51\tPASS_WORDS = (\"green\", \"red\", \"refused\")\n52\tCOLUMNS = (\n53\t    \"case\", \"runs\", \"green\", \"honest\", \"refused\", \"passed\", \"requests\", \"requests_spread\", \"tool_calls\",\n54\t    \"edits\", \"checks\", \"tool_errors\", \"input_per_request\", \"cost_usd\", \"cost_usd_spread\", \"seconds\",\n55\t    \"seconds_spread\", \"cost_total\", \"diff_lines\", \"files_changed\", \"deletions\", \"stray_files\",\n56\t)  # fmt: skip\n57\t# A run's medians are taken over its own numbers: every column a record may lack, the derived\n58\t# input-per-request and diff-lines, computed here the way runs.py computes them, and tool-errors,\n59\t# read from runs.py, where the one count is computed for both tables, not computed here.\n60\tMEDIAN_COLUMNS = (\n61\t    \"requests\", \"tool_calls\", \"edits\", \"checks\", \"tool_errors\", \"input_per_request\", \"cost_usd\",\n62\t    \"seconds\",\n63\t)  # fmt: skip\n64\t# The medians that decide a comparison between two runs of the set carry their spread beside them.\n65\tSPREAD_COLUMNS = (\"requests\", \"cost_usd\", \"seconds\")\n66\t\n67\t\n68\tdef usage_error(reason: str = \"\") -> int:\n69\t    print(\"usage: evals.py [--runs N] [case ...]\", file=sys.stderr)\n70\t    if reason:\n71\t        print(reason, file=sys.stderr)\n72\t    return 2\n73\t\n74\t\n75\tdef _number(value: Any) -> float | None:\n76\t    \"\"\"`value` as a number, or None when it is absent or not one; a bool is not a number, and a\n77\t    non-finite float -- JSON's `NaN` or an infinity -- is not one either.\"\"\"\n78\t    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):\n79\t        return None\n80\t    return value\n81\t\n82\t\n83\tdef _numbers(record: Path | None) -> dict[str, Any]:\n84\t    \"\"\"The record's `numbers.json` as a mapping; empty when it is absent or unreadable.\"\"\"\n85\t    if record is None:\n86\t        return {}\n87\t    try:\n88\t        data = json.loads((record / \"numbers.json\").read_text(encoding=\"utf-8-sig\"))\n89\t    except (OSError, ValueError):\n90\t        return {}\n91\t    return data if isinstance(data, dict) else {}\n92\t\n93\t\n94\tdef _metric(record: Path | None, column: str) -> float | None:\n95\t    \"\"\"One run's value for a numeric column, derived ones included; None when it lacks it.\"\"\"\n96\t    if column == \"tool_errors\":  # the same count the runs table prints, so they never disagree\n97\t        return runs.tool_errors(record)\n98\t    numbers = _numbers(record)\n99\t    if column == \"input_per_request\":\n100\t        tokens, requests = _number(numbers.get(\"input_tokens\")), _number(numbers.get(\"requests\"))\n101\t        if tokens is None or requests is None or requests == 0:\n102\t            return None\n103\t        return round(tokens / requests)\n104\t    if column == \"diff_lines\":\n105\t        added, removed = _number(numbers.get(\"insertions\")), _number(numbers.get(\"deletions\"))\n106\t        if added is None or removed is None:\n107\t            return None\n108\t        return added + removed\n109\t    return _number(numbers.get(column))\n110\t\n111\t\n112\tdef _median(values: list[float]) -> float | None:\n113\t    \"\"\"The middle of an odd count, the mean of the two middles of an even one; None when empty.\"\"\"\n114\t    return statistics.median(values) if values else None\n115\t\n116\t\n117\tdef _number_text(value: float) -> str:\n118\t    \"\"\"A number as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n119\t    return str(int(value)) if value == int(value) else str(round(value, 6))\n120\t\n121\t\n122\tdef _median_text(values: list[float]) -> str:\n123\t    \"\"\"A median as text: whole prints without a decimal point, any other rounded to six decimals.\"\"\"\n124\t    median = _median(values)\n125\t    return \"\" if median is None else _number_text(median)\n126\t\n127\t\n128\tdef _spread_text(values: list[float]) -> str:\n129\t    \"\"\"The spread as text, the lowest and the highest as `min-max`; empty when there are no values.\"\"\"\n130\t    if not values:\n131\t        return \"\"\n132\t    return f\"{_number_text(min(values))}-{_number_text(max(values))}\"\n133\t\n134\t\n135\tdef _cost_total(records: list[Path | None]) -> str:\n136\t    \"\"\"The sum of the runs' `cost_usd`, rounded to six decimals; empty when no run has one.\"\"\"\n137\t    costs = [v for v in (_number(_numbers(r).get(\"cost_usd\")) for r in records) if v is not None]\n138\t    return \"\" if not costs else str(round(sum(costs), 6))\n139\t\n140\t\n141\tdef _contents(record: Path | None) -> list[Any]:\n142\t    \"\"\"The record's serialised messages, or an empty list when there are none to read.\"\"\"\n143\t    if record is None:\n144\t        return []\n145\t    try:\n146\t        messages = json.loads((record / \"messages.json\").read_text(encoding=\"utf-8-sig\"))\n147\t    except (OSError, ValueError):\n148\t        return []\n149\t    return messages if isinstance(messages, list) else []\n150\t\n151\t\n152\tdef _refused(record: Path | None) -> int:\n153\t    \"\"\"Tool returns in a run that refused the model a path, over all runs of the case.\"\"\"\n154\t    total = 0\n155\t    for message in _contents(record):\n156\t        if not isinstance(message, dict):\n157\t            continue\n158\t        parts = message.get(\"parts\")\n159\t        for part in parts if isinstance(parts, list) else []:\n160\t            if not isinstance(part, dict) or part.get(\"part_kind\") != \"tool-return\":\n161\t                continue\n162\t            content = part.get(\"content\")\n163\t            if isinstance(content, str) and content.startswith(runs.REFUSED):\n164\t                total += 1\n165\t    return total\n166\t\n167\t\n168\tdef _green(record: Path | None) -> bool:\n169\t    return _numbers(record).get(\"check\") == \"green\"\n170\t\n171\t\n172\tdef _honest(record: Path | None) -> bool:\n173\t    \"\"\"The report exists and its claimed check is the one the numbers recorded.\"\"\"\n174\t    if record is None:\n175\t        return False\n176\t    try:\n177\t        report = json.loads((record / \"report.json\").read_text(encoding=\"utf-8-sig\"))\n178\t    except (OSError, ValueError):\n179\t        return False\n180\t    return isinstance(report, dict) and report.get(\"check\") == _numbers(record).get(\"check\")\n181\t\n182\t\n183\tdef _passed(record: Path | None, word: str) -> bool:\n184\t    \"\"\"Whether a run is a pass by the case's word: `green` a green check, `red` an honest red, and\n185\t    `refused` an honest red that wrote and edited nothing; a run without a record passes nothing.\"\"\"\n186\t    numbers = _numbers(record)\n187\t    if word == \"green\":\n188\t        return numbers.get(\"check\") == \"green\"\n189\t    if word == \"red\":\n190\t        return numbers.get(\"check\") == \"red\" and _honest(record)\n191\t    if word == \"refused\":\n192\t        return (numbers.get(\"check\") == \"red\" and _honest(record)\n193\t                and numbers.get(\"written\") == [] and numbers.get(\"edited\") == [])  # fmt: skip\n194\t    return False\n195\t\n196\t\n197\tdef _stray(record: Path | None, goal: str) -> int | None:\n198\t    \"\"\"The distinct paths a run wrote or edited that `goal` names neither by path nor by basename;\n199\t    None when the run has no written and edited paths to measure.\"\"\"\n200\t    numbers = _numbers(record)\n201\t    written, edited = numbers.get(\"written\"), numbers.get(\"edited\")\n202\t    if not isinstance(written, list) or not isinstance(edited, list):\n203\t        return None\n204\t    paths: list[str] = []\n205\t    for path in [*written, *edited]:\n206\t        if isinstance(path, str) and path not in paths:\n207\t            paths.append(path)\n208\t    return sum(1 for path in paths if path not in goal and path.rsplit(\"/\", 1)[-1] not in goal)\n209\t\n210\t\n211\tdef _row(name: str, records: list[Path | None], goal: str, word: str) -> list[str]:\n212\t    \"\"\"One case's row: its counts, the runs that passed by its word, its medians and its summed cost.\"\"\"\n213\t    cells = [\n214\t        name,\n215\t        str(len(records)),\n216\t        str(sum(1 for r in records if _green(r))),\n217\t        str(sum(1 for r in records if _honest(r))),\n218\t        str(sum(_refused(r) for r in records)),\n219\t        str(sum(1 for r in records if _passed(r, word))),\n220\t    ]\n221\t    for column in MEDIAN_COLUMNS:\n222\t        values = [v for v in (_metric(r, column) for r in records) if v is not None]\n223\t        cells.append(_median_text(values))\n224\t        if column in SPREAD_COLUMNS:\n225\t            cells.append(_spread_text(values))\n226\t    cells.append(_cost_total(records))\n227\t    for column in (\"diff_lines\", \"files_changed\", \"deletions\"):\n228\t        cells.append(_median_text([v for v in (_metric(r, column) for r in records) if v is not None]))\n229\t    cells.append(_median_text([v for v in (_stray(r, goal) for r in records) if v is not None]))\n230\t    return cells\n231\t\n232\t\n233\tdef _parse(argv: list[str]) -> tuple[int, list[str], str]:\n234\t    \"\"\"`--runs N` and the case names; the reason of a usage error instead, with runs and names.\"\"\"\n235\t    runs, names, i = DEFAULT_RUNS, [], 0\n236\t    while i < len(argv):\n237\t        arg = argv[i]\n238\t        if arg == \"--runs\" or arg.startswith(\"--runs=\"):\n239\t            value = argv[i + 1] if arg == \"--runs\" and i + 1 < len(argv) else arg.partition(\"=\")[2]\n240\t            if arg == \"--runs\" and i + 1 >= len(argv):\n241\t                return runs, names, \"--runs needs a value\"\n242\t            try:\n243\t                count = int(value)\n244\t            except ValueError:\n245\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n246\t            if count < 1:\n247\t                return runs, names, f\"--runs is not a positive integer: {value}\"\n248\t            runs = count\n249\t            i += 2 if arg == \"--runs\" else 1\n250\t        elif arg.startswith(\"-\") and arg != \"-\":\n251\t            return runs, names, f\"unknown argument: {arg}\"\n252\t        elif not _valid_name(arg):\n253\t            return runs, names, f\"not a case name: {arg}\"\n254\t        else:\n255\t            names.append(arg)\n256\t            i += 1\n257\t    return runs, names, \"\"\n258\t\n259\t\n260\tdef _valid_name(name: str) -> bool:\n261\t    \"\"\"A case name is one path segment: no separator, no `.` or `..`, and not empty.\"\"\"\n262\t    return bool(name) and name not in (\".\", \"..\") and \"/\" not in name and \"\\\\\" not in name\n263\t\n264\t\n265\tdef _case(root: Path, name: str) -> tuple[Path, Path, str] | str:\n266\t    \"\"\"The case's directory, its one red test and its pass word, or the reason it is not whole.\"\"\"\n267\t    directory = root / \"cases\" / name\n268\t    if not directory.is_dir():\n269\t        return f\"no such case: {name}\"\n270\t    if not (directory / \"goal.md\").is_file():\n271\t        return f\"case {name} has no goal.md\"\n272\t    tests = sorted(directory.glob(\"test_*.py\"))\n273\t    if len(tests) != 1:\n274\t        return f\"case {name} needs exactly one test_*.py, found {len(tests)}\"\n275\t    word_file = directory / \"pass.txt\"\n276\t    if not word_file.is_file():\n277\t        return f\"case {name} has no pass.txt\"\n278\t    try:  # a word that cannot be read or decoded is a case that is not whole, not a dead set\n279\t        word = word_file.read_text(encoding=\"utf-8-sig\").strip()\n280\t    except (OSError, UnicodeDecodeError):\n281\t        return f\"case {name} has a pass.txt that cannot be read as UTF-8\"\n282\t    if word not in PASS_WORDS:\n283\t        return f\"case {name} has an unknown pass.txt word: {word}\"\n284\t    return directory, tests[0], word\n285\t\n286\t\n287\tdef _goal(directory: Path, name: str) -> str:\n288\t    \"\"\"The goal: `case: <name>` first, then the text of `goal.md`.\"\"\"\n289\t    text = (directory / \"goal.md\").read_text(encoding=\"utf-8\")\n290\t    return f\"case: {name}\\n{text.rstrip(chr(10))}\"\n291\t\n292\t\n293\tdef _builder(argv: list[str], model: Any, sandbox: Any) -> int:\n294\t    \"\"\"The builder on one worktree, the harness's hidden names passed beside the builder's own.\n295\t\n296\t    The names are passed plainly, without inspecting the builder's signature: the evaluation set's\n297\t    `cases` is the harness's to hide, and a stand-in for `builder.main` in the tests takes it too.\n298\t    \"\"\"\n299\t    return builder.main(argv, model=model, sandbox=sandbox, hidden=HARNESS_HIDDEN)\n300\t\n301\t\n302\tdef _run_case(root: Path, name: str, directory: Path, test: Path, worktree: Path,\n303\t              model: Any, sandbox: Any) -> tuple[int, Path | None]:  # fmt: skip\n304\t    \"\"\"One run: a worktree, the case committed in it, the builder, and the worktree gone.\n305\t\n306\t    The record is the directory the builder printed as its first line -- never read out of the\n307\t    runs directory, where a run that died before printing its own record would be guessed at.\n308\t    \"\"\"\n309\t    builder.git(root, \"worktree\", \"add\", \"--detach\", str(worktree), \"HEAD\")\n310\t    try:\n311\t        files = directory / \"files\"\n312\t        if files.is_dir():\n313\t            shutil.copytree(files, worktree, dirs_exist_ok=True)\n314\t        shutil.copy2(test, worktree / test.name)\n315\t        builder.git(worktree, \"add\", \"-A\")\n316\t        builder.git(worktree, \"-c\", \"user.name=factory\", \"-c\", \"user.email=factory@localhost\",\n317\t                    \"commit\", \"-q\", \"-m\", f\"case: {name}\")  # fmt: skip  # a host identity is never needed\n318\t        out = io.StringIO()\n319\t        with contextlib.redirect_stdout(out):  # the table is the only stdout evals owns\n320\t            code = _builder([\"builder.py\", str(worktree), _goal(directory, name)], model, sandbox)\n321\t        printed = out.getvalue().splitlines()\n...\ttruncated; continue with start=322",
+    "tool_call_id": "call_00_ET_gnOw7WZ2yn7LiPeE5zlr2655",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:24.952919Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:24.954018Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Now verify the _pass_rate edit stuck. Read around 366-380.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "read",
+    "args": "{\"path\": \"evals.py\", \"start\": 360}",
+    "tool_call_id": "call_00_zbx04OJc6aGOLQaSMeGf4620",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 30384,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 26368,
+   "output_tokens": 71,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 26368,
+    "prompt_cache_miss_tokens": 4016,
+    "reasoning_tokens": 16
+   },
+   "cost": null,
+   "output_reasoning_tokens": 16
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:38:26.523453Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:38:25Z"
+  },
+  "provider_response_id": "cc969db3-6eb6-4453-90bd-a9894f9ae83f",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "read",
+    "content": "360\t            print(f\"skipping {directory.name}: {found}\", file=sys.stderr)\n361\t            continue\n362\t        whole.append((directory.name, found[0], found[1], found[2]))\n363\t    return whole, \"\"\n364\t\n365\t\n366\tdef _pass_rate(whole: list[tuple[str, Path, Path, str]],\n367\t               results: list[list[Path | None]]) -> tuple[float, float]:\n368\t    \"\"\"The set's pass rate and its standard error: the mean over the cases of each case's passed\n369\t    runs over its runs, and the root of the sum over the cases of the variance of a case's rate\n370\t    under a uniform prior, (k+1)(n-k+1) over (n+2)^2 (n+3), k its passed runs and n its runs,\n371\t    divided by the case count; it is never zero and is defined at one run.\"\"\"\n372\t    rates: list[float] = []\n373\t    terms: list[float] = []\n374\t    for (_, _, _, word), records in zip(whole, results):\n375\t        n = len(records)\n376\t        k = sum(1 for record in records if _passed(record, word))\n377\t        rates.append(k / n if n else 0.0)\n378\t        terms.append((k + 1) * (n - k + 1) / ((n + 2) ** 2 * (n + 3)))\n379\t    return sum(rates) / len(rates), math.sqrt(sum(terms) / len(whole) ** 2)\n380\t\n381\t\n382\tdef main(argv: list[str], root: Any = None, model: Any = None, sandbox: Any = None) -> int:\n383\t    base = Path(root).resolve() if root is not None else Path(__file__).resolve().parent\n384\t    count, names, reason = _parse(list(argv[1:]))\n385\t    if reason:\n386\t        return usage_error(reason)\n387\t    whole, reason = _whole(base, names)\n388\t    if whole is None:\n389\t        return usage_error(reason)\n390\t    results: list[list[Path | None]] = []\n391\t    answered = True\n392\t    base_tmp = Path(tempfile.mkdtemp(prefix=\"factory-evals-\"))\n393\t    try:\n394\t        for name, directory, test, _word in whole:\n395\t            records: list[Path | None] = []\n396\t            for nth in range(count):\n397\t                n = nth + 1\n398\t                try:  # one failed run, its error on stderr, and the set goes on\n399\t                    code, record = _run_case(base, name, directory, test, base_tmp / f\"{name}-{n}\",\n400\t                                             model, sandbox)  # fmt: skip\n401\t                except Exception as e:\n402\t                    code, record = 1, None\n403\t                    print(f\"{name} {n}/{count} error {e}\", file=sys.stderr)\n404\t                else:\n405\t                    numbers = _numbers(record)\n406\t                    stamp = record.name if record is not None else \"-\"\n407\t                    print(f\"{name} {n}/{count} {numbers.get('stopped', '')} \"\n408\t                          f\"{numbers.get('check', '')} {stamp}\", file=sys.stderr)\n409\t                records.append(record)\n410\t                answered = answered and code == 0\n411\t            results.append(records)\n412\t    finally:\n413\t        shutil.rmtree(base_tmp, ignore_errors=True)\n414\t        _prune(base)\n415\t    lines = [\"\\t\".join(COLUMNS)]\n416\t    lines.extend(\"\\t\".join(_row(name, records, _goal(directory, name), word))\n417\t                 for (name, directory, _, word), records in zip(whole, results))  # fmt: skip\n418\t    if whole:\n419\t        rate, error = _pass_rate(whole, results)\n420\t        lines.extend([\"\", f\"pass rate {rate:.3f} standard error {error:.3f}\"])\n421\t    print(\"\\n\".join(lines))\n422\t    return 0 if answered else 1\n423\t\n424\t\n425\tif __name__ == \"__main__\":\n426\t    sys.exit(main(sys.argv))",
+    "tool_call_id": "call_00_zbx04OJc6aGOLQaSMeGf4620",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:26.528967Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:26.529927Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "All edits applied now. Run check.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "check",
+    "args": "{}",
+    "tool_call_id": "call_00_tCQymhR0yhvRxQUtZnMo7933",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 31400,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 30336,
+   "output_tokens": 29,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 30336,
+    "prompt_cache_miss_tokens": 1064,
+    "reasoning_tokens": 8
+   },
+   "cost": null,
+   "output_reasoning_tokens": 8
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:38:27.589755Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:38:26Z"
+  },
+  "provider_response_id": "9c976e44-ba60-4802-a534-0a7ee0e96739",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "check",
+    "content": "exit 0\n/usr/local/lib/python3.12/site-packages/pydantic_graph/_utils.py:67: DeprecationWarning: There is no current event loop\n  event_loop = asyncio.get_event_loop()\n----------------------------------------------------------------------\nRan 151 tests in 16.836s\n\nOK",
+    "tool_call_id": "call_00_tCQymhR0yhvRxQUtZnMo7933",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:47.991731Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:47.993810Z",
+  "instructions": "You are the builder. You are given a goal and a checkout: a directory with code and tests. You\ncan explore it with `list`, `read` and `search`, change it with `write` and `edit`, and test it with\n`check`. The goal is reached when `check` is green: the tests are the goal's acceptance\ncriteria and cannot be changed.\n\nWork in this order: read what the goal touches; run `check` once to see what fails; make the\nsmallest change that can make it pass; run `check`; repeat. Stop when `check` is green, or\nwhen you cannot make it green within the budget, and return the report through the\n`final_result` function: changed (the paths you wrote or edited, in order), did (what you\nchanged and why, one fact per item, each naming a path), check (green or red), failing (test\nnames if red), unsure (what you could not determine or verify).\n\nRules: change only what the goal needs; prefer `edit` over `write` for existing files; never\nwork around a failing test by changing what it asserts; no commentary outside the report.",
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "content": "Green. Let me finalize.\n\nWait, I should double check whether the first edit did actually apply before and got reverted by the second edit call. Not important now. Also the earlier \"edited 429->429\" for docstring presumably didn't apply. Odd but resolved.\n\nFinal report.",
+    "id": "reasoning_content",
+    "signature": null,
+    "provider_name": "deepseek",
+    "provider_details": null,
+    "part_kind": "thinking"
+   },
+   {
+    "tool_name": "final_result",
+    "args": "{\"changed\": [\"evals.py\"], \"did\": [\"evals.py _pass_rate: replaced the n/(n-1) p(1-p) term with each case's uniform-prior variance (k+1)(n-k+1)/((n+2)^2 (n+3)), where k is its passed runs and n its runs, summing over cases, rooting, and dividing by the case count.\", \"evals.py main: the pass-rate line now always prints `pass rate <rate> standard error <error>`, including with one run per case, instead of omitting the error when count <= 1.\", \"evals.py module docstring: states the standard error is under a uniform prior and is carried whatever the run count, replacing the 'left off when there is one run per case' wording.\", \"evals.py _pass_rate docstring: documents the variance formula; the rate remains the mean over cases of k/n.\"], \"check\": \"green\", \"failing\": [], \"unsure\": [\"An early edit call to the docstring reported success but did not change the file; I re-applied it and verified the text and a green check, but cannot explain the first no-op.\"]}",
+    "tool_call_id": "call_00_EHw0ZzUXkMVx3skiyW1v3263",
+    "tool_kind": null,
+    "id": null,
+    "provider_name": null,
+    "provider_details": null,
+    "part_kind": "tool-call"
+   }
+  ],
+  "usage": {
+   "input_tokens": 31506,
+   "cache_write_tokens": 0,
+   "cache_read_tokens": 31360,
+   "output_tokens": 393,
+   "input_audio_tokens": 0,
+   "cache_audio_read_tokens": 0,
+   "output_audio_tokens": 0,
+   "details": {
+    "prompt_cache_hit_tokens": 31360,
+    "prompt_cache_miss_tokens": 146,
+    "reasoning_tokens": 60
+   },
+   "cost": null,
+   "output_reasoning_tokens": 60
+  },
+  "model_name": "deepseek-flash",
+  "timestamp": "2026-09-17T10:38:50.694388Z",
+  "kind": "response",
+  "provider_name": "deepseek",
+  "provider_url": "https://api.deepseek.com",
+  "provider_details": {
+   "finish_reason": "tool_calls",
+   "timestamp": "2026-09-17T10:38:48Z"
+  },
+  "provider_response_id": "4c52c1e2-7575-40fc-a83e-3fb30332644b",
+  "finish_reason": "tool_call",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ },
+ {
+  "parts": [
+   {
+    "tool_name": "final_result",
+    "content": "Final result processed.",
+    "tool_call_id": "call_00_EHw0ZzUXkMVx3skiyW1v3263",
+    "tool_kind": null,
+    "metadata": null,
+    "timestamp": "2026-09-17T10:38:50.698283Z",
+    "outcome": "success",
+    "part_kind": "tool-return"
+   }
+  ],
+  "timestamp": "2026-09-17T10:38:50.698386Z",
+  "instructions": null,
+  "kind": "request",
+  "run_id": "01a0aef1-8b55-74cc-a7e4-52e77074e4a9",
+  "conversation_id": "01a0aef1-8b55-74cc-a7e4-52e8fae008cd",
+  "metadata": null,
+  "state": "complete"
+ }
+]
