@@ -18,8 +18,11 @@ The instance's configuration already names `records` and `work`, read by `instan
 
 ## Goal
 
-There is one place a run's model and the place of its key come from, and it is the instance's configuration. `MODEL` and `KEY_FILE` are gone from `builder.py`, and with them the fallback an earlier goal left behind: a configuration that holds no `roles` at all, or holds others but not `builder`, is a usage error naming the configuration's file and the role, refused before the model is called and before a record is made, in the shape a configuration a run cannot use is already refused.
+There is one place a run's model and the place of its key come from, and it is the instance's configuration. The change is small and every part of it is named below; nothing else in `builder.py` and nothing at all in any other file needs to move, so there is nothing to go looking for.
 
-The name stays gone rather than hidden: a module that keeps the attribute and refuses to answer for it is the same two places to look, told apart only by a trick, and the point of the goal is that there is one place.
+- The two module constants `KEY_FILE` and `MODEL`, just below the imports, are deleted. The names stay gone rather than hidden: a module that keeps an attribute and refuses to answer for it is the same two places to look, told apart by a trick, and the point of the goal is that there is one place.
+- `read_key` takes the path of the key file and no longer defaults it: the parameter is required, the branch that falls back when it is None goes, and the docstring says the file is the role's.
+- `build_agent`'s `model_name` no longer defaults to the constant: it is required, and every caller already passes one.
+- In `main`, the block that reads `instance_role("builder")` inside a `try` and falls back when it is missing or malformed becomes a usage error: a configuration holding no `roles`, holding others but not `builder`, or holding a malformed one, is refused in the words `instance.py` already raises, naming the configuration's file and the role, before the model is called and before a record is made. The `else` branch that used the constants goes with it, and the comment above the block says what is now true.
 
-The suite's fixtures already name a role, so no test file needs changing, and none may be: `test*.py` is protected from write and edit, and what the tests ask for is not a build's to alter.
+The suite's fixtures already name a role, so no test file changes, and none may: `test*.py` is protected from write and edit, and what the tests ask for is not a build's to alter. Two tests are red and both are in `test_builder.py`'s `NoFallbackTest`.
