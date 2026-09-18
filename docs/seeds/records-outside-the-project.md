@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: A build's record is the factory's log of its own work, and the builder already writes it beside itself and never in the checkout; the attended agent copies it into the project's tree, where the gate looks for it and where code the model has `check` run can read it. The record stays in a store of the factory's and the project keeps the trailer.
 value: 5
 effort: M
