@@ -1,9 +1,10 @@
 # factory
 
-v0.7: the builder that takes a seed of its own vault as its goal, searches the checkout instead of
-reading it whole, and is measured by an evaluation set that runs cases against the factory's own
-code, with the gate that keeps its documents honest and the table of its records. Every line of
-code since v0.3 was written by the factory itself, from tests written before each build.
+v0.14: the factory as a deployment that is sent a seed of a project. `build.py` takes a repository,
+a branch and a seed's path and answers with one commit pushed to that branch, or leaves the branch
+alone and a note on the head it was asked of; a build's record is the factory's own log and lives in
+its store, a git repository outside every project. Every line of code since v0.3 was written by the
+factory itself, from tests written before each build.
 
 ```sh
 uv run build.py <repository> <branch> <seed>  # one build asked through git: a pushed branch in, a commit on it out
@@ -80,6 +81,28 @@ baseline of every measurement, and `runs.py` prints its records as one table, a 
 record in stamp order, every value as `numbers.json` has it, an empty cell for a key a record
 lacks, `head` read from `head` or, in records before v0.5, `world_head`, and the goal's first
 line.
+
+## The instance
+
+An instance is a checkout of the factory's code apart from every project it builds, pinned at a
+released tag, with a configuration of its own. Installing one is two commands and a file:
+
+```sh
+git clone --branch <tag> <repository> <path>   # the code, at a released tag
+cd <path> && uv sync                           # its environment, from the pinned uv.lock
+```
+
+`~/.config/factory/instance.toml`, or the file `FACTORY_INSTANCE` names, holds `records` and `work`
+as absolute paths and a `roles` table: one entry per role the instance runs, each naming the `model`
+that role runs on and the `key` file it reads, and a `base_url` for a model served somewhere other
+than the provider used by default. `builder` is the role a build runs as. A configuration a run
+cannot use, a role it does not hold, and a key file with no key in it are usage errors before
+anything is made or read. `instance.py` is what reads it, and it answers with a key's place and
+never with its value.
+
+Deploying a version is an act: after a release the instance is moved to the new tag, so a version is
+built by the one before it, as a compiler's stage builds the next. The trailer of every commit a
+build pushes names the tag the instance stood at, which is how a commit says which factory made it.
 
 ## The gate
 
