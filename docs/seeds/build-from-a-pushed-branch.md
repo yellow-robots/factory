@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: A build is asked for by the attended agent calling a script on a worktree of its own making, and every step from the model's return to the branch is the attended agent's hand and scratch; the factory takes a repository, a branch and a seed's path and answers with a commit pushed to that branch, so it builds a project it is sent, its own among them.
 value: 5
 effort: M

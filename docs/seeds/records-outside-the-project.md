@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: A build's record is the factory's log of its own work, and the builder already writes it beside itself and never in the checkout; the attended agent copies it into the project's tree, where the gate looks for it and where code the model has `check` run can read it. The record stays in a store of the factory's and the project keeps the trailer.
 value: 5
 effort: M
@@ -42,4 +42,4 @@ From the third review, reproduced by the attended agent on 2026-09-18: the shape
 
 From the same review: every git the factory runs reads no configuration of the host's, neither the system's file nor the global one, as the store's git already did. The record's diff and the commit a build pushes must see the same tree, and they did not: a global ignore rule kept a file the model wrote out of the record's diff and out of `files_changed` while `add -A` in the clone put it in the commit, and a run whose only change was such a file was reported as one that changed nothing. What a record says of a run is now the same whatever the host is set up to ignore, and the repository's own rules are the only ones either of them reads. No identity of the host's is needed for that: every commit the factory makes names its own.
 
-The docstrings that describe a record's `check`, the report's field among them, say what is now true: the tools' verdict on the tree the run left, which the builder checks itself when the model wrote after its last check. The role the model reads is not changed here.
+The docstrings that describe a record's `check` say what is now true: the tools' verdict on the tree the run left, which the builder checks itself when the model wrote after its last check. What the model reads is not changed here, the role and the report's own field descriptions among it: they are the prompt's surface, and a version that changes them changes every measurement and says so.

@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: The gate reads every `.md` under `docs/` from the filesystem, so a note git ignores refuses `check` and with it every release; the gate reads the vault as git tracks it.
 value: 3
 effort: S
