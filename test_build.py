@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pydantic_ai import models
+from pydantic_ai import ModelAPIError, models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -35,6 +35,7 @@ SEED_PATH = "docs/seeds/make-x-two.md"
 SEED = "---\ntype: seed\nstatus: building\n---\n\n## Evidence\n\nSome.\n\n## Goal\n\nMake x equal 2 in f.py.\n"
 TEST = "import unittest\n\nimport f\n\n\nclass X(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(f.x, 2)\n"
 REPORT = {"changed": ["f.py"], "did": ["f.py: x is 2"], "check": "green", "failing": [], "unsure": []}
+RED_REPORT = {"changed": [], "did": [], "check": "red", "failing": ["test_f"], "unsure": []}
 EDIT = ("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"})
 CHECK = ("check", {})
 
@@ -226,6 +227,128 @@ class BuildTest(unittest.TestCase):
         no_work = refused()
         self.assertIn(str(self.instance), no_work)
         self.assertIn("work", no_work)
+
+    def note(self, commit: str) -> str:
+        """The factory's note on a commit of the project's repository, empty when it has none."""
+        shown = subprocess.run(["git", "notes", "--ref=factory", "show", commit], cwd=self.origin,
+                               capture_output=True, text=True)  # fmt: skip
+        return shown.stdout if shown.returncode == 0 else ""
+
+    def test_a_build_that_is_not_green_leaves_the_branch_alone_and_says_why(self):
+        """A red check, a green check that changed nothing, a run that was capped and one that ended
+        in an error each leave the branch where it was: exit 1, one line on stderr naming the
+        record and how the run ended, the record in the store, and nothing pushed. The command
+        returns an error and never a commit that might be read as work."""
+        red = self.build(scripted(EDIT, CHECK, report=RED_REPORT), FakeSandbox([(1, "FAILED\n")]))
+        code, lines, err = red
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), self.requested)
+        (record,) = self.records()
+        self.assertEqual(Path(lines[0]), record)
+        self.assertEqual(len(lines), 1)  # no commit named
+        self.assertIn(record.name, err)
+        self.assertIn("red", err)
+        self.assert_the_work_is_empty()
+
+        code, lines, err = self.build(scripted(CHECK), FakeSandbox([(0, "OK\n")]))  # green, nothing changed
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), self.requested)
+        self.assertIn(self.records()[-1].name, err)
+        self.assertIn("nothing", err)
+
+        with mock.patch.object(builder, "TOOL_CALLS_CAP", 1):
+            code, lines, err = self.build(scripted(EDIT, EDIT, EDIT, CHECK), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), self.requested)
+        self.assertIn(self.records()[-1].name, err)
+        self.assertIn("cap", err)
+
+        def falls_over(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError("deepseek-flash", "the provider fell over")
+
+        code, lines, err = self.build(FunctionModel(falls_over), FakeSandbox([]))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), self.requested)
+        self.assertIn(self.records()[-1].name, err)
+        self.assertIn("error", err)
+        self.assertEqual(len(self.records()), 4)
+        self.assert_the_work_is_empty()
+
+    def test_what_a_failed_build_leaves_in_the_repository_is_a_note_on_the_head_it_was_asked_of(self):
+        """git keeps what a build failed to do where a requester with no command to read can find
+        it: a note of the factory's, `refs/notes/factory`, on the head the build was asked of,
+        saying how the run ended and naming the record, pushed to the repository and never a
+        branch or a tag of it; a second failure on the same head is added to the first, both kept,
+        and a build that ends green leaves no note."""
+        self.assertEqual(self.build(scripted(EDIT, CHECK, report=RED_REPORT), FakeSandbox([(1, "FAILED\n")]))[0], 1)
+        (first,) = self.records()
+        note = self.note(self.requested)
+        self.assertIn(first.name, note)
+        self.assertIn("red", note)
+        self.assertEqual(git(self.origin, "rev-parse", "refs/heads/" + BRANCH).strip(), self.requested)
+        refs = git(self.origin, "for-each-ref", "--format=%(refname)").split()
+        self.assertIn("refs/notes/factory", refs)
+        self.assertEqual([ref for ref in refs if ref.startswith("refs/heads/")],
+                         ["refs/heads/" + BRANCH, "refs/heads/main"])  # fmt: skip
+        self.assertEqual([ref for ref in refs if ref.startswith("refs/tags/")], [])
+
+        self.assertEqual(self.build(scripted(CHECK), FakeSandbox([(0, "OK\n")]))[0], 1)
+        second = self.note(self.requested)
+        self.assertIn(first.name, second)  # the first is kept
+        self.assertIn(self.records()[-1].name, second)
+        self.assertGreater(len(second.splitlines()), len(note.splitlines()))
+
+        self.assertEqual(self.build(scripted(EDIT, CHECK), FakeSandbox([(0, "OK\n")]))[0], 0)
+        built = self.head()
+        self.assertEqual(self.note(built), "")  # a green build leaves none
+        self.assertEqual(self.note(self.requested), second)  # and does not touch the one there
+
+    def test_a_branch_that_moved_while_the_build_ran_is_not_overwritten(self):
+        """The push is never forced: a branch that moved while the build ran keeps the mover's
+        commit, the build is refused and said with the record named, exit 1, and the record stays
+        in the store."""
+        moved = []
+
+        def move(checkout, run_dir, n):
+            if not moved:
+                git(self.project, "checkout", "-q", BRANCH)
+                (self.project / "other.py").write_text("y = 1\n")
+                git(self.project, "add", "-A")
+                git(self.project, "commit", "-q", "-m", "meanwhile")
+                git(self.project, "push", "-q", "origin", BRANCH)
+                moved.append(git(self.project, "rev-parse", "HEAD").strip())
+            return 0, "OK\n"
+
+        sandbox = FakeSandbox([])
+        sandbox.run = move
+        code, lines, err = self.build(scripted(EDIT, CHECK), sandbox)
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), moved[0])
+        self.assertEqual(git(self.origin, "show", f"{moved[0]}:f.py"), "x = 1\n")
+        (record,) = self.records()
+        self.assertIn(record.name, err)
+        self.assertIn("moved", err)
+        self.assert_the_work_is_empty()
+
+    def test_nothing_leaves_the_instance_holding_the_key_s_value(self):
+        """A record the store would not take is a build that pushes nothing, whatever kept it out.
+        A change holding the key's value is in the record's own `diff.patch`, so the builder's
+        search refuses the record and names that file: the command pushes no commit, the branch
+        stays where it was, it exits 1, and no ref of the repository and no note of the factory's
+        holds the value, nor does anything said on stderr."""
+        leak = ("write", {"path": "leak.py", "content": "TOKEN = 'not-a-key'\n"})
+        code, lines, err = self.build(scripted(leak, EDIT, CHECK), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), self.requested)
+        self.assertNotIn("not-a-key", err)
+        self.assertIn("diff.patch", err)
+        (record,) = self.records()
+        self.assertIn(record.name, err)
+        self.assertNotIn("not-a-key", self.note(self.requested))
+        self.assertIn(record.name, self.note(self.requested))
+        for ref in git(self.origin, "for-each-ref", "--format=%(refname)").split():
+            self.assertNotIn("not-a-key", git(self.origin, "log", "-p", "--format=%B", ref))
+        self.assert_the_work_is_empty()
 
 
 class VersionTest(unittest.TestCase):
