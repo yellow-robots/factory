@@ -221,6 +221,45 @@ class InstanceTest(unittest.TestCase):
     configuration from a module of its own, so printing a table of numbers does not import the
     builder's model stack."""
 
+    def test_a_work_a_run_cannot_use_is_refused_in_its_own_words(self):
+        """seed: build-from-a-pushed-branch. The `work` of a configuration is read as `records` is: a
+        configuration without it, with one that is not a string, with one that is not absolute, or
+        with one the process cannot make, each refused naming the configuration's file and which
+        fault, and nothing made by a refusal."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            config = base / "instance.toml"
+            said = []
+
+            def refused(text: str) -> str:
+                config.write_text(f'records = "{base / "records"}"\n' + text)
+                with mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(config)}):
+                    with self.assertRaises(ValueError) as raised:
+                        instance.work_dir()
+                message = str(raised.exception)
+                self.assertIn(str(config), message)
+                said.append(message)
+                return message
+
+            self.assertIn("work", refused(""))
+            self.assertIn("work", refused("work = 7\n"))
+            self.assertIn("work", refused('work = "work"\n'))
+            locked = base / "locked"
+            locked.mkdir()
+            locked.chmod(0o500)
+            try:
+                self.assertIn(str(locked / "w"), refused(f'work = "{locked / "w"}"\n'))
+                self.assertFalse((locked / "w").exists())
+            finally:
+                locked.chmod(0o700)  # inside the temporary directory, which is gone at cleanup
+            self.assertEqual(len(set(said)), 4)  # its own words for each fault
+
+            good = base / "work"
+            config.write_text(f'records = "{base / "records"}"\nwork = "{good}"\n')
+            with mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(config)}):
+                self.assertEqual(instance.work_dir(), good.resolve())
+            self.assertTrue(good.is_dir())  # made when it is read
+
     def test_the_configuration_is_read_without_the_builder(self):
         self.assertFalse(hasattr(runs, "builder"))
         source = Path(runs.__file__).read_text(encoding="utf-8")

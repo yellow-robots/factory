@@ -1463,6 +1463,47 @@ class MainTest(unittest.TestCase):
         self.assertEqual((numbers["checks"], numbers["check"]), (2, "red"))
         self.assertIn("FAILED on the tree left", (run_dir / "check-2.log").read_text())
 
+    def test_the_host_s_git_configuration_changes_no_record(self):
+        """seed: records-outside-the-project. From the review: the store's git read no configuration of
+        the host's while the builder's own git read all of it, so a global ignore rule kept a file
+        the model wrote out of the record's diff and out of `files_changed` while the commit a
+        build pushes held it. Every git the factory runs reads neither the system's configuration
+        nor the global one, so what a record says of a run is the same whatever the host ignores."""
+        home = Path(self.tmp.name) / "home"
+        home.mkdir(exist_ok=True)
+        (home / "ignore").write_text("*.log\n")
+        (home / ".gitconfig").write_text(f"[core]\n\texcludesFile = {home / 'ignore'}\n")
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg")}))
+        model = scripted(
+            [call("write", {"path": "notes.log", "content": "the model's own note\n"}, "c1")],
+            [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c2")],
+            [call("check", {}, "c3")],
+            [call("final_result", REPORT, "c4")],
+        )
+        code, lines, run_dir = self.main(model, FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0)
+        patch = (run_dir / "diff.patch").read_text()
+        self.assertIn("notes.log", patch)
+        self.assertIn("f.py", patch)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["files_changed"], 2)
+        self.assertEqual(numbers["written"], ["notes.log"])
+
+    def test_the_final_check_is_not_bound_by_the_model_s_cap(self):
+        """seed: the-check-on-the-final-tree. The cap of eight checks binds the model's own: a run that
+        spent them all and then wrote is still recorded on the tree it left, a ninth check of the
+        builder's numbered after the model's and logged beside them."""
+        tools = Tools(self.checkout, self.runs / "record", sandbox=FakeSandbox([(0, "OK\n")] * 9))
+        (self.runs / "record").mkdir(parents=True)
+        for n in range(builder.CHECK_CAP):
+            self.assertTrue(tools.check().startswith("exit 0"), n)
+        self.assertIn("cap reached", tools.check())
+        self.assertEqual(len(tools.checks), builder.CHECK_CAP)
+        tools.write("after.txt", "written after the model's last check\n")
+        tools.check_final()
+        self.assertEqual(len(tools.checks), builder.CHECK_CAP + 1)
+        self.assertTrue((self.runs / "record" / f"check-{builder.CHECK_CAP + 1}.log").is_file())
+
     def test_the_store_s_git_is_the_factory_s_alone(self):
         """seed: records-outside-the-project. From the review: the host's git configuration does not
         reach the store and the store's own hooks do not run, and a record's files are added
