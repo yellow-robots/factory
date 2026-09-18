@@ -434,6 +434,66 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(git(self.origin, "log", "-1", "--format=%s", self.head()).strip(), "make-x-two")
         self.assert_the_work_is_empty()
 
+    def test_a_configuration_the_command_cannot_use_is_refused_in_the_command_s_words(self):
+        """seed: build-from-a-pushed-branch. From the review: half the configuration's faults spoke as
+        the command and half as the builder, since only `work` was read before the build. The
+        command reads the whole configuration first, `records` and `work` alike, so every fault of
+        it is the command's usage error, exit 2, naming the configuration's file, with no clone
+        made and nothing of the builder's said."""
+        called = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[ToolCallPart("final_result", REPORT, tool_call_id="c")])
+
+        self.instance.write_text(f'work = "{self.work}"\n')  # no records
+        code, lines, err = self.build(FunctionModel(model), FakeSandbox([]))
+        self.assertEqual(code, 2, err)
+        self.assertIn(str(self.instance), err)
+        self.assertIn("usage: build.py", err)
+        self.assertNotIn("usage: builder.py", err)
+        self.assertEqual(called, [])
+        self.assertFalse(self.store.exists())
+        self.assert_the_work_is_empty()
+
+    def test_a_work_the_command_cannot_write_is_a_usage_error(self):
+        """seed: build-from-a-pushed-branch. From the review: the build's own directory was made
+        outside every guard, so a `work` the command cannot write was a traceback. It is a usage
+        error naming the work, exit 2, and nothing is pushed."""
+        self.work.mkdir(parents=True)
+        self.work.chmod(0o500)
+        self.addCleanup(self.work.chmod, 0o700)
+        code, lines, err = self.build(scripted(EDIT, CHECK), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 2, err)
+        self.assertIn(str(self.work), err)
+        self.assertEqual(self.head(), self.requested)
+        self.assertEqual(self.records(), [])
+
+    def test_a_build_directory_an_earlier_run_left_is_gone(self):
+        """seed: build-from-a-pushed-branch. From the review: nothing swept a build's directory that an
+        earlier run left behind, a run killed before it could remove its own. A build removes what
+        earlier builds left in the working directory when it starts, and what is not a build's
+        directory is left alone."""
+        stale = self.work / "build-older"
+        (stale / "checkout").mkdir(parents=True)
+        (stale / "checkout" / "f.py").write_text("x = 1\n")
+        keep = self.work / "notes.txt"
+        keep.write_text("not a build's\n")
+        code, lines, err = self.build(scripted(EDIT, CHECK), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        self.assertFalse(stale.exists())
+        self.assertTrue(keep.is_file())
+        self.assertEqual(sorted(p.name for p in self.work.iterdir()), ["notes.txt"])
+
+    def test_the_command_s_docstring_says_what_a_failed_build_leaves(self):
+        """seed: build-from-a-pushed-branch. The module docstring is where a reader looks first, and it
+        stopped at the green ending: it says what a build that is not green leaves, the note git
+        keeps beside the branch, the branch that moved, and the exit codes. The builder's error is
+        the builder's, named once."""
+        for word in ("refs/notes/factory", "moved", "exit 1", "not green"):
+            self.assertIn(word, build.__doc__, word)
+        self.assertFalse(hasattr(build, "GitFailed"))  # builder.GitError is the one name for it
+
 
 class VersionTest(unittest.TestCase):
     """seed: build-from-a-pushed-branch. The version a trailer names is the instance's own, read
