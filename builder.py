@@ -923,9 +923,12 @@ def read_seed(checkout: Path, arg: str) -> tuple[str, str | None]:
 def instance_config() -> Path:
     """The instance's configuration file: the one the environment's `FACTORY_INSTANCE` names, or
     `.config/factory/instance.toml` under the home of whoever runs the program. Found when the
-    program runs, never when it is imported."""
-    named = os.environ.get("FACTORY_INSTANCE")
-    if named:
+    program runs, never when it is imported. A `FACTORY_INSTANCE` that is set and empty names no
+    file and is a ValueError: only an unset variable falls back to the home's configuration."""
+    if "FACTORY_INSTANCE" in os.environ:
+        named = os.environ["FACTORY_INSTANCE"]
+        if not named:
+            raise ValueError("FACTORY_INSTANCE: set and empty names no instance configuration")
         return Path(named)
     return Path.home() / ".config" / "factory" / "instance.toml"
 
@@ -938,6 +941,8 @@ def record_store(checkout: Path | None = None) -> Path:
     config = instance_config()
     try:
         text = config.read_text(encoding="utf-8")
+    except UnicodeDecodeError:  # bytes that are not UTF-8 are not TOML either
+        raise ValueError(f"{config}: the instance configuration is not TOML")
     except OSError:
         raise ValueError(f"{config}: the instance configuration cannot be read")
     try:
@@ -1014,16 +1019,24 @@ def compress_wire(run_dir: Path) -> None:
 
 
 def read_key() -> str:
-    """The key from its file: the bare key, or one `name=value` line as in an env file."""
-    return KEY_FILE.read_text().strip().rsplit("=", 1)[-1].strip().strip("'\"")
+    """The key from its file: the bare key, or one `name=value` line as in an env file. A key file
+    that cannot be read, or one that holds no key -- empty, or a name with nothing after the `=` --
+    is a ValueError naming the file: an empty key is a key no record can be searched for, and that
+    search is the wall that keeps the key out of the store."""
+    try:
+        text = KEY_FILE.read_text()
+    except OSError:
+        raise ValueError(f"{KEY_FILE}: the key file cannot be read")
+    key = text.strip().rsplit("=", 1)[-1].strip().strip("'\"")
+    if not key:
+        raise ValueError(f"{KEY_FILE}: the key file holds no key")
+    return key
 
 
 def leaked_file(run_dir: Path, key: str) -> Path | None:
     """The first file of the record whose bytes hold the key, a `.gz` file read through its
     compression; a `.gz` that is not gzip is searched as the bytes it is. None when no file holds
-    it; an empty key holds nothing."""
-    if not key:
-        return None
+    it."""
     needle = key.encode()
     for path in sorted(run_dir.rglob("*")):
         if not path.is_file():
@@ -1045,23 +1058,23 @@ def leaked_file(run_dir: Path, key: str) -> Path | None:
 
 def commit_record(store: Path, run_dir: Path, key: str | None = None) -> None:
     """The record committed to the store as one commit of its own, the one place a record is
-    searched and committed. The whole record is searched for the key's value first -- a `.gz` file
-    read through its compression, a `.gz` that is not gzip read as the bytes it is -- and a record
-    that holds it is not committed: a LeakedKey names the file, never the value. A store that is
-    not yet a git repository is made one now, the record and nothing else enters the commit
+    searched and committed. A store that is not yet a git repository is made one now; the whole
+    record is searched for the key's value -- a `.gz` file read through its compression, a `.gz`
+    that is not gzip read as the bytes it is -- and a record that holds it is not committed: a
+    LeakedKey names the file, never the value. The record and nothing else enters the commit
     whatever else the store holds uncommitted, the message the stamp, the author and committer the
     factory's."""
     if key is None:
         key = read_key()
-    leaked = leaked_file(run_dir, key)
-    if leaked is not None:
-        raise LeakedKey(str(leaked))
     try:
         top = _store_git(store, "rev-parse", "--show-toplevel").strip()
     except (GitError, OSError, subprocess.SubprocessError):
         top = ""
     if not top or Path(top).resolve() != store.resolve():
-        _store_git(store, "init", "-q")
+        _store_git(store, "init", "-q")  # a store that is not a git repository is made one now
+    leaked = leaked_file(run_dir, key)
+    if leaked is not None:
+        raise LeakedKey(str(leaked))
     try:
         # -f: an ignore file of the host's or of the store's does not keep any file of the record
         # out, so the commit holds every file of the record.
@@ -1129,13 +1142,26 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     if not checkout_head:  # a git checkout with no commit has nothing to pin the run to
         return usage_error(f"the checkout has no commit: {argv[1]}")
     # The store is the instance's, from its configuration; a configuration the run cannot use is a
-    # usage error before the key is read, a model called or anything made.
+    # usage error before the key is read, a model called or anything made. The configuration's own
+    # faults come first, then the key, then the store's directory.
     try:
+        config = instance_config()
         store = record_store(checkout)
     except (ValueError, OSError) as e:
         return usage_error(str(e))
-    # The key file holds the bare key, or one `name=value` line as in an env file.
-    key = read_key()
+    # The key file holds the bare key, or one `name=value` line as in an env file; one that cannot
+    # be read or holds no key is a usage error too, before anything is made.
+    try:
+        key = read_key()
+    except (ValueError, OSError) as e:
+        return usage_error(str(e))
+    # The store's directory is made once the configuration is read and the key is a key; a plain
+    # file or a path the run cannot make is a usage error naming both the configuration and the
+    # store.
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return usage_error(f"{config}: records {store} cannot be made")
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir, nth = store / stamp, 1
     while True:  # two runs in the same second each keep their own record
