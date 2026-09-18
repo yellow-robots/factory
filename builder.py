@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from instance import instance_config, record_store
+from instance import instance_config, record_store, role as instance_role
 
 # Before the import: the library greets stderr once per process unless this is set.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -593,12 +593,14 @@ PROFILE = OpenAIModelProfile(
 
 
 def build_agent(
-    tools: Tools, key: str = "", http_client: Any = None, model: Any = None
+    tools: Tools, key: str = "", http_client: Any = None, model: Any = None, model_name: str = MODEL
 ) -> Agent[None, BuildReport]:
-    """The agent: the role, the six tools, a typed report, our caps."""
+    """The agent: the role, the six tools, a typed report, our caps. The model is the caller's, or
+    the one `model_name` names -- the instance's `builder` role when it holds one, the program's
+    constant otherwise."""
     if model is None:
         model = OpenAIChatModel(
-            MODEL, provider=DeepSeekProvider(api_key=key, http_client=http_client), profile=PROFILE
+            model_name, provider=DeepSeekProvider(api_key=key, http_client=http_client), profile=PROFILE
         )
     return Agent(
         model,
@@ -1006,18 +1008,22 @@ def compress_wire(run_dir: Path) -> None:
     wire.unlink()
 
 
-def read_key() -> str:
-    """The key from its file: the bare key, or one `name=value` line as in an env file. A key file
-    that cannot be read, or one that holds no key -- empty, or a name with nothing after the `=` --
-    is a ValueError naming the file: an empty key is a key no record can be searched for, and that
-    search is the wall that keeps the key out of the store."""
+def read_key(path: Path | None = None) -> str:
+    """The key from its file: the bare key, or one `name=value` line as in an env file. The file is
+    `path` -- the instance's `builder` role names it when it holds one, the program's constant
+    otherwise, read at the call so a patch of `KEY_FILE` still answers. A key file that cannot be
+    read, or one that holds no key -- empty, or a name with nothing after the `=` -- is a ValueError
+    naming the file: an empty key is a key no record can be searched for, and that search is the
+    wall that keeps the key out of the store."""
+    if path is None:
+        path = KEY_FILE
     try:
-        text = KEY_FILE.read_text()
+        text = path.read_text()
     except OSError:
-        raise ValueError(f"{KEY_FILE}: the key file cannot be read")
+        raise ValueError(f"{path}: the key file cannot be read")
     key = text.strip().rsplit("=", 1)[-1].strip().strip("'\"")
     if not key:
-        raise ValueError(f"{KEY_FILE}: the key file holds no key")
+        raise ValueError(f"{path}: the key file holds no key")
     return key
 
 
@@ -1170,10 +1176,21 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         store = record_store(checkout)
     except (ValueError, OSError) as e:
         return usage_error(str(e))
+    # The run is the instance's `builder` role when its configuration holds one: that role's model
+    # and key file are used. A configuration that holds no such role changes nothing: the program's
+    # own constants still answer, so every fixture that patches the key's place keeps working. A
+    # configuration whose roles are malformed is no role to run as either, so it falls back the same
+    # way rather than turning the run into a usage error the goal does not ask for.
+    try:
+        builder_role = instance_role("builder")
+    except (ValueError, OSError):
+        builder_role = None
+    model_name = builder_role.model if builder_role is not None else MODEL
+    key_file = builder_role.key if builder_role is not None else KEY_FILE
     # The key file holds the bare key, or one `name=value` line as in an env file; one that cannot
     # be read or holds no key is a usage error too, before anything is made.
     try:
-        key = read_key()
+        key = read_key(key_file)
     except (ValueError, OSError) as e:
         return usage_error(str(e))
     # The store's directory is made once the configuration is read and the key is a key; a plain
@@ -1197,7 +1214,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     wire = Wire(run_dir / "wire.jsonl")
     tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden),
                   sandbox=sandbox if sandbox is not None else Sandbox())  # fmt: skip
-    agent = build_agent(tools, key=key, http_client=wire.client, model=model)
+    agent = build_agent(tools, key=key, http_client=wire.client, model=model, model_name=model_name)
     t0 = time.time()
     report, messages, usage, stopped, detail = run(agent, goal)
     seconds = round(time.time() - t0, 1)
@@ -1225,7 +1242,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     cost_usd = round(float(usage.cost) if priced else table, 5)
     checks = [c["exit"] for c in tools.checks]
     numbers = {
-        "model": MODEL,
+        "model": model_name,
         "role": sha256(ROLE),
         "wrapper": sha256(Path(__file__).read_text()),
         "library": LIBRARY,
