@@ -2,6 +2,7 @@ filters:
   and:
     - file.inFolder("seeds")
     - type == "seed"
+    - status != "rejected"
 formulas:
   rank: if(value && effort, (value - if(effort == "S", 0, if(effort == "M", 0.5, 1))).round(1), "")
 properties:
