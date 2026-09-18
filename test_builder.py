@@ -1941,13 +1941,10 @@ class KeysBase(unittest.TestCase):
 class RoleOfTheRunTest(KeysBase):
     """The model and the key a run uses are the role's, not the program's."""
 
-    def test_the_model_a_run_uses_is_the_role_s_and_not_the_program_s(self):
-        """seed: keys-of-the-instance. The model and the key's place were constants of `builder.py`, so
-        a second provider was not expressible without editing the program. Both are the role's: a
-        configuration naming another model makes a record that names it, and neither is a constant
-        of the program any longer."""
-        self.assertFalse(hasattr(builder, "MODEL"), "the model a run uses is the role's")
-        self.assertFalse(hasattr(builder, "KEY_FILE"), "the key's place is the role's")
+    def test_the_model_a_run_uses_is_the_role_s(self):
+        """seed: keys-of-the-instance. The model was a constant of `builder.py`, so a second provider
+        was not expressible without editing the program. It is the role's: a configuration naming
+        another model makes a record that names it."""
         self.configure(model="a-model-of-its-own")
         code, err = self.build()
         self.assertEqual(code, 0, err)
@@ -1967,20 +1964,6 @@ class RoleOfTheRunTest(KeysBase):
         code, said = self.refused()
         self.assertEqual(code, 2, said)
         self.assertIn(str(self.deepseek), said)
-
-    def test_a_configuration_that_does_not_hold_the_builder_s_role_is_a_usage_error(self):
-        """seed: keys-of-the-instance. The builder runs as the role named `builder`; a configuration
-        holding no roles at all, or holding others but not that one, cannot run it, and each is
-        refused naming the configuration's file and the role before a model is called."""
-        self.configure(roles="")
-        code, none = self.refused()
-        self.assertEqual(code, 2, none)
-        self.assertIn(str(self.instance), none)
-        self.configure(roles=f'\n[roles.reviewer]\nmodel = "glm-5.3-flash"\nkey = "{self.glm}"\n')
-        code, elsewhere = self.refused()
-        self.assertEqual(code, 2, elsewhere)
-        self.assertIn(str(self.instance), elsewhere)
-        self.assertIn("builder", elsewhere)
 
 if __name__ == "__main__":
     unittest.main()

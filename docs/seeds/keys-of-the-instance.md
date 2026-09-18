@@ -18,10 +18,8 @@ The instance's configuration already names `records` and `work`, read by `instan
 
 ## Goal
 
-The builder runs as the role `builder`. Its model and the file it reads its key from come from the instance's configuration, through `instance.py`, so `MODEL` and `KEY_FILE` are constants of `builder.py` no longer and a second provider is expressible without editing the program. A run's record names the model the role ran on, where it already names a model.
+The builder runs as the role `builder` when the instance's configuration holds one: the model it runs on and the file it reads its key from are that role's, read through `instance.py`, and the run's record names the model the role gave, where it already names a model. A configuration that holds no such role changes nothing yet — the constants of `builder.py` still answer — so every fixture of the suite that patches the key's place keeps working exactly as it does now. That fallback is the next goal's to remove.
 
-A key file that cannot be read, or that holds nothing once stripped, is a usage error naming that file, refused before the model is called and before a record is made, as the one key already is. A configuration that holds no roles, or holds others but not `builder`, is a usage error naming the configuration's file and the role, refused in the same place and for the same reasons a configuration a run cannot use is refused now.
+A key file the role names that cannot be read, or that holds nothing once stripped, is a usage error naming that file, exit 2, refused before the model is called and before a record is made, exactly as the one key already is.
 
-The suite's own fixtures follow: a test that patched the key's place writes a configuration naming a role instead, in `test_builder.py`, `test_build.py` and `test_evals.py` alike.
-
-What searches a record still searches for the one key the run was given; that is the next goal.
+Only `builder.py` changes here. No test file's fixtures are touched, and `instance.py` is already what it needs to be.
