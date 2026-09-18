@@ -18,11 +18,46 @@ The instance's configuration already names `records` and `work`, read by `instan
 
 ## Goal
 
-There is one place a run's model and the place of its key come from, and it is the instance's configuration. The change is small and every part of it is named below; nothing else in `builder.py` and nothing at all in any other file needs to move, so there is nothing to go looking for.
+There is one place a run's model and the place of its key come from, and it is the instance's configuration. The change is four small edits in `builder.py` and nothing else moves, in that file or any other. Each is quoted below as it stands now, so none of it has to be found.
 
-- The two module constants `KEY_FILE` and `MODEL`, just below the imports, are deleted. The names stay gone rather than hidden: a module that keeps an attribute and refuses to answer for it is the same two places to look, told apart by a trick, and the point of the goal is that there is one place.
-- `read_key` takes the path of the key file and no longer defaults it: the parameter is required, the branch that falls back when it is None goes, and the docstring says the file is the role's.
-- `build_agent`'s `model_name` no longer defaults to the constant: it is required, and every caller already passes one.
-- In `main`, the block that reads `instance_role("builder")` inside a `try` and falls back when it is missing or malformed becomes a usage error: a configuration holding no `roles`, holding others but not `builder`, or holding a malformed one, is refused in the words `instance.py` already raises, naming the configuration's file and the role, before the model is called and before a record is made. The `else` branch that used the constants goes with it, and the comment above the block says what is now true.
+**One.** These two lines, below the imports, are deleted:
 
-The suite's fixtures already name a role, so no test file changes, and none may: `test*.py` is protected from write and edit, and what the tests ask for is not a build's to alter. Two tests are red, both in `test_keys.py`, which is two hundred lines and holds this seed's tests and nothing else.
+```
+KEY_FILE = Path.home() / ".config" / "factory" / "deepseek.key"
+MODEL = "deepseek-flash"
+```
+
+The names stay gone rather than hidden. A module that keeps an attribute and refuses to answer for it is the same two places to look, told apart by a trick, and the point of the goal is that there is one place.
+
+**Two.** In `build_agent`'s signature, `model_name` stops defaulting: the parameter is required, since every caller already passes one.
+
+```
+    tools: Tools, key: str = "", http_client: Any = None, model: Any = None, model_name: str = MODEL
+```
+
+**Three.** In `read_key`, these two lines go and the parameter becomes required, `path: Path`; its docstring says the file is the one the role names.
+
+```
+    if path is None:
+        path = KEY_FILE
+```
+
+**Four.** In `main`, this block becomes a usage error instead of a fallback:
+
+```
+    try:
+        builder_role = instance_role("builder")
+    except (ValueError, OSError):
+        builder_role = None
+```
+
+and with it the `else` branch below that used the constants:
+
+```
+    else:
+        model_name, key = MODEL, ""
+```
+
+A configuration holding no `roles`, holding others but not `builder`, or holding a malformed one, is refused in the words `instance.py` already raises for it, naming the configuration's file and the role, before the model is called and before a record is made, in the shape a configuration a run cannot use is already refused. The comment above the block says what is now true.
+
+Two tests are red, both in `test_keys.py`, which is a hundred and ninety lines and holds this seed's tests and nothing else. No test file changes and none may: `test*.py` is protected from write and edit, and what the tests ask for is not a build's to alter.
