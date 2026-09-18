@@ -1498,6 +1498,96 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(run_dir.parent, self.runs)
 
+    def test_a_configuration_a_run_cannot_use_is_a_usage_error_before_anything(self):
+        """seed: records-outside-the-project. From the review: three configurations the run reads as
+        usable and then falls over on, each now refused in its own words, exit 2, with no model
+        called and nothing made. `FACTORY_INSTANCE` set and empty names no file, and the home's
+        configuration is not read in its place, so only an unset variable falls back; a
+        configuration whose bytes are not UTF-8 is not TOML and its refusal names the file: both
+        are read before the key, so both are refused with no key file at all. A `records` that
+        cannot hold a record, a plain file or a path the run cannot make, is refused once the key
+        is a key, naming the configuration's file and the store's path."""
+        home = Path(self.tmp.name) / "home"
+        (home / ".config" / "factory").mkdir(parents=True, exist_ok=True)
+        elsewhere = Path(self.tmp.name) / "elsewhere"
+        (home / ".config" / "factory" / "instance.toml").write_text(f'records = "{elsewhere}"\n')
+        called = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[call("final_result", REPORT, "c1")])
+
+        def refused(key: Path, **environ) -> str:
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
+                    mock.patch.dict(os.environ, {"HOME": str(home), **environ}), \
+                    mock.patch.object(builder, "KEY_FILE", key):  # fmt: skip
+                code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                    model=FunctionModel(model), sandbox=FakeSandbox([]))  # fmt: skip
+            self.assertEqual(code, 2, err.getvalue())
+            self.assertEqual(called, [])
+            self.assertFalse(self.runs.exists())
+            self.assertFalse(elsewhere.exists())  # never the home's store
+            return err.getvalue()
+
+        no_key = Path(self.tmp.name) / "no-key"
+        good_key = Path(self.tmp.name) / "key"
+        empty = refused(no_key, FACTORY_INSTANCE="")
+        self.assertIn("FACTORY_INSTANCE", empty)
+
+        self.instance.write_bytes(b'records = "/tmp/\xff\xfe"\n')
+        not_utf8 = refused(no_key)
+        self.assertIn(str(self.instance), not_utf8)
+
+        plain = Path(self.tmp.name) / "a-file"
+        plain.write_text("not a store\n")
+        self.instance.write_text(f'records = "{plain}"\n')
+        file_store = refused(good_key)
+        self.assertIn(str(self.instance), file_store)
+        self.assertIn(str(plain), file_store)
+
+        locked = Path(self.tmp.name) / "locked"
+        locked.mkdir()
+        locked.chmod(0o500)
+        self.addCleanup(locked.chmod, 0o700)
+        self.instance.write_text(f'records = "{locked / "store"}"\n')
+        cannot_make = refused(good_key)
+        self.assertIn(str(self.instance), cannot_make)
+        self.assertIn(str(locked / "store"), cannot_make)
+        self.assertFalse((locked / "store").exists())
+        self.assertEqual(len({empty, not_utf8, file_store, cannot_make}), 4)  # its own words for each fault
+
+    def test_a_key_file_with_no_value_is_a_usage_error(self):
+        """seed: records-outside-the-project. From the review: an empty key is a key no record can be
+        searched for, and that search is the wall that keeps the key out of the store, so a key
+        file that is empty or holds a name with nothing after it is a usage error naming the key's
+        file, exit 2, with no model called and the store not made, and the search has no case for
+        an empty key. A key of one character is a key: it appears in the record, and refusing to
+        commit the record is the search working."""
+        called = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[call("final_result", REPORT, "c1")])
+
+        key = Path(self.tmp.name) / "key"
+        for text in ("", "\n", "   \n", "DEEPSEEK_API_KEY=\n", "DEEPSEEK_API_KEY=''\n"):
+            key.write_text(text)
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                    model=FunctionModel(model), sandbox=FakeSandbox([]))  # fmt: skip
+            self.assertEqual(code, 2, repr(text))
+            self.assertIn(str(key), err.getvalue(), repr(text))
+            self.assertEqual(called, [], repr(text))
+            self.assertFalse(self.runs.exists(), repr(text))
+
+        key.write_text("a\n")  # a key of one character is a key
+        code, lines, run_dir = self.main(scripted([call("final_result", REPORT, "c1")]), FakeSandbox([]))
+        self.assertEqual(code, 1)
+        self.assertTrue(run_dir.is_dir())
+        self.assertEqual(self.store("for-each-ref", "--format=%(refname)").strip(), "")
+
     def test_usage_errors_exit_two(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
