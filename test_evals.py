@@ -784,6 +784,23 @@ class HeldOutTest(EvalsTest):
             self.assertEqual(git(self.runs, "ls-files").strip(), "")
         self.assert_root_untouched()
 
+    def test_a_run_whose_record_the_store_refuses_is_scored_from_its_record(self):
+        """seed: records-outside-the-project. From the review: a store that cannot take a record is no
+        run without one. The row counts the check the record holds, the set exits 1, and the failed
+        commit is a line of stderr naming the record."""
+        self.runs.mkdir()
+        git(self.runs, "init", "-q")
+        (self.runs / ".git" / "index.lock").write_text("")
+        code, rows, err = run(self.root, "--runs", "1", "alpha", model=player(EDIT, CHECK),
+                              sandbox=FakeSandbox([(0, "OK\n")]))  # fmt: skip
+        self.assertEqual(code, 1)
+        cells = dict(zip(COLUMNS, rows[1]))
+        self.assertEqual((cells["runs"], cells["green"], cells["passed"]), ("1", "1", "1"))
+        (record,) = self.records()
+        self.assertIn(record.name, err)
+        self.assertEqual(git(self.runs, "diff", "--cached", "--name-only"), "")
+        self.assert_root_untouched()
+
     def test_a_red_held_out_check_fails_a_green_case_and_a_red_build_has_no_held_out_check(self):
         self.hold_out()
         sandbox = RecordingSandbox([(0, "OK\n"), (1, "FAIL\n"), (0, "OK\n"), (0, "OK\n")])

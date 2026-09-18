@@ -1378,6 +1378,75 @@ class MainTest(unittest.TestCase):
         if (self.runs / ".git").exists():
             self.assertEqual(self.store("ls-files").strip(), "")
 
+    def test_the_store_s_git_is_the_factory_s_alone(self):
+        """seed: records-outside-the-project. From the review: the host's git configuration does not
+        reach the store and the store's own hooks do not run, and a record's files are added
+        whatever an ignore file says, so the commit holds every file of the record: a global
+        `core.excludesFile` naming the log and the wire, `commit.gpgsign`, a `pre-commit` that
+        refuses and an ignore file of the store's own leave the commit as it is without them."""
+        self.runs.mkdir()
+        git(self.runs, "init", "-q")
+        (self.runs / ".gitignore").write_text("*.log\n")
+        git(self.runs, "add", "-A")
+        git(self.runs, "commit", "-q", "-m", "the store's own ignore file")
+        hooks = self.runs / ".git" / "hooks"  # after the store's own commit, which the hook would refuse
+        hooks.mkdir(exist_ok=True)
+        (hooks / "pre-commit").write_text("#!/bin/sh\necho 'the hook says no' >&2\nexit 1\n")
+        (hooks / "pre-commit").chmod(0o755)
+        home = Path(self.tmp.name) / "home"
+        home.mkdir(exist_ok=True)
+        (home / "ignore").write_text("*.log\n*.gz\n")
+        (home / ".gitconfig").write_text(f"[core]\n\texcludesFile = {home / 'ignore'}\n[commit]\n\tgpgsign = true\n")
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg")}))
+        model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+                         [call("check", {}, "c2")], [call("final_result", REPORT, "c3")])  # fmt: skip
+        code, lines, run_dir = self.main(model, FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0)
+        committed = sorted(name.split("/")[-1] for name in self.store("ls-tree", "-r", "--name-only", "HEAD").split())
+        self.assertEqual(committed, sorted(p.name for p in run_dir.iterdir()))  # every file of the record
+        self.assertIn("check-1.log", committed)
+        self.assertIn("wire.jsonl.gz", committed)
+        self.assertEqual(self.store("diff", "--cached", "--name-only"), "")
+
+    def test_a_commit_the_store_refuses_is_reported_and_the_record_stays(self):
+        """seed: records-outside-the-project. From the review: a store that cannot take the record, a
+        lock left behind or a ref git cannot write, is a run reported and not a traceback: the
+        record's path is the first line printed and the numbers line follows, one line on stderr
+        names the record and git's own words, the run exits 1, the record stays on disk with its
+        wire compressed, and the store is left as the run found it, nothing of the record staged."""
+        self.runs.mkdir()
+        git(self.runs, "init", "-q")
+        (self.runs / ".git" / "index.lock").write_text("")
+        model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+                         [call("check", {}, "c2")], [call("final_result", REPORT, "c3")])  # fmt: skip
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "make x bigger"], model=model,
+                                sandbox=FakeSandbox([(0, "OK\n")]))  # fmt: skip
+        self.assertEqual(code, 1)
+        lines = out.getvalue().splitlines()
+        locked = self.records()[-1]
+        self.assertEqual(Path(lines[0]), locked)
+        self.assertIn("cost_usd=", lines[1])
+        self.assertEqual(len(err.getvalue().splitlines()), 1, err.getvalue())
+        self.assertIn(locked.name, err.getvalue())
+        self.assertIn("index.lock", err.getvalue())  # git's own words
+        self.assertTrue((locked / "wire.jsonl.gz").is_file())
+        self.assertEqual(self.store("diff", "--cached", "--name-only"), "")
+
+        (self.runs / ".git" / "index.lock").unlink()
+        (self.runs / ".git" / "refs" / "heads").chmod(0o500)
+        self.addCleanup((self.runs / ".git" / "refs" / "heads").chmod, 0o700)
+        git(self.checkout, "checkout", "-q", "--", "f.py")
+        time.sleep(1.1)  # a stamp of its own
+        code, lines, unwritable = self.main(model_again := scripted(
+            [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+            [call("check", {}, "c2")], [call("final_result", REPORT, "c3")]), FakeSandbox([(0, "OK\n")]))  # fmt: skip
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.records()), 2)
+        self.assertEqual(self.store("diff", "--cached", "--name-only"), "")  # the record is not left staged
+        self.assertEqual(self.store("rev-parse", "--verify", "-q", "HEAD").strip(), "")  # nothing committed
+
     def test_a_run_without_a_store_is_a_usage_error(self):
         """seed: records-outside-the-project. The store is the instance's and no constant of the
         program: a configuration that is missing, is not TOML, has no `records`, names a path that
