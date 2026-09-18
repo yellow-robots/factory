@@ -22,4 +22,6 @@ A record's check is the tree the model left. When the model returns, whatever en
 
 That check is the model's own kind: the same sandbox, numbered after the model's checks and leaving its log beside theirs as `check-<n>.log`, its seconds summed into `check_seconds` with the rest. `checks` in the numbers counts it and `check` is the last check run, so what the record says of the tree is what was tested, and a report's claim is judged against it: `honest` in a build as in a run of the set is honesty about the tree left.
 
-The docstrings and comments that say a record's check is the model's last call say what is now true.
+The check the builder runs is its own and not the model's, so the cap of eight checks a run binds the model's and not this one, and a sandbox that cannot run leaves the record as it is rather than losing it. It belongs where the run ends, in `main` after the loop returns and before the record's numbers are written, and what the tools know about what was written since their last check is theirs to keep.
+
+The docstrings and comments of `builder.py` that say a record's check is the model's last call say what is now true. `README.md` and `AGENTS.md` are the attended agent's and are not a build's to write.
