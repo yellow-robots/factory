@@ -11,7 +11,7 @@ uv run builder.py <checkout> "<goal>" # one build in place; the goal is text or 
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records of the store as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 197 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 212 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -242,20 +242,22 @@ build. The Goal was rewritten whole after the second review; one defect was the 
 a test that contradicted the amended Goal and a build that kept both green. No set run: the
 version changes the gate, not what the model sees.
 
-v0.14, twelve builds for four seeds, $1.47 and 79 minutes over eighteen runs, six of them not
-taken, five capped and one ended in a provider error: a build's record left the project for a
-store of the factory's own, a git repository outside every checkout that the instance's
-configuration names, and the 146 records this repository tracked were carried into it and left
-its tree; the builder now compresses the wire, searches every file of a record for the key's
-value and commits the record itself, under a configuration it refuses when a run cannot use it;
-`build.py` takes a repository, a branch and a seed's path and answers with one commit pushed to
-that branch, or leaves it alone and a note under `refs/notes/factory` on the head it was asked
-of; a record's check is the tree the model left; and the gate reads the vault as git tracks it,
-so a scratchpad inside it bothers nothing. Two independent reviews found eight defects and
-thirteen smells, every one reproduced and judged in two notes: a commit the store refused raising
-out of the builder, the host's git configuration dropping the wire from a commit, an empty
+v0.14, seventeen builds for four seeds, $1.75 and 100 minutes over twenty-four runs, seven of
+them not taken, five capped: a build's record left the project for a store of the factory's own,
+a git repository outside every checkout that the instance's configuration names, and the 146
+records this repository tracked were carried into it and left its tree; the builder now
+compresses the wire, searches every file of a record for the key's value and commits the record
+itself, under a configuration it refuses when a run cannot use it; `build.py` takes a repository,
+a branch and a seed's path and answers with one commit pushed to that branch, or leaves it alone
+and a note under `refs/notes/factory` on the head it was asked of; a record's check is the tree
+the model left; and the gate reads the vault as git tracks it, so a scratchpad inside it bothers
+nothing. Three independent reviews found fourteen defects and thirty-five smells, every one
+reproduced and judged in three notes: a commit the store refused raising out of the builder, the
+host's git configuration deciding what a record's commit and a build's commit held, an empty
 `FACTORY_INSTANCE` writing into another instance's store, a search for the key that failed open
-on anything it could not read, and a stamp of digits outside ASCII passing as a run. Two of the
-four seeds were built by the command itself, the first builds the factory was asked for through
-git. No set run: the version changes where a record lives and how a build is asked for, not what
-the model sees.
+on anything it could not read, two stamps the gate read wrongly, a failed build pushing git's
+whole stderr into the project's note, and a copy of the vault passed over whole because the
+repository around it was asked. Six of the smells are gaps in the tests the attended agent wrote,
+found by mutants and now pinned. Seven of the seventeen builds were asked for through the
+command itself, on nine runs, the first the factory was sent through git. No set run: the
+version changes where a record lives and how a build is asked for, not what the model sees.
