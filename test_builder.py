@@ -1402,8 +1402,10 @@ class MainTest(unittest.TestCase):
                          [call("check", {}, "c2")], [call("final_result", REPORT, "c3")])  # fmt: skip
         code, lines, run_dir = self.main(model, FakeSandbox([(0, "OK\n")]))
         self.assertEqual(code, 0)
-        committed = sorted(name.split("/")[-1] for name in self.store("ls-tree", "-r", "--name-only", "HEAD").split())
+        tree = self.store("ls-tree", "-r", "--name-only", "HEAD").split()
+        committed = sorted(name.split("/", 1)[1] for name in tree if name.startswith(f"{run_dir.name}/"))
         self.assertEqual(committed, sorted(p.name for p in run_dir.iterdir()))  # every file of the record
+        self.assertIn(".gitignore", tree)  # and the store's own state as it was
         self.assertIn("check-1.log", committed)
         self.assertIn("wire.jsonl.gz", committed)
         self.assertEqual(self.store("diff", "--cached", "--name-only"), "")
@@ -1445,7 +1447,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(len(self.records()), 2)
         self.assertEqual(self.store("diff", "--cached", "--name-only"), "")  # the record is not left staged
-        self.assertEqual(self.store("rev-parse", "--verify", "-q", "HEAD").strip(), "")  # nothing committed
+        self.assertEqual(self.store("for-each-ref", "--format=%(refname)").strip(), "")  # nothing committed
 
     def test_a_run_without_a_store_is_a_usage_error(self):
         """seed: records-outside-the-project. The store is the instance's and no constant of the
