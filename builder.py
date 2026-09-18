@@ -649,11 +649,15 @@ GIT_ENV_UNSET = (
 
 
 def git_env() -> dict[str, str]:
-    """The environment git runs in: the caller's, without its own GIT_* pointers, and in English,
-    so git's refusals are the ones the code reads whatever the host's locale says."""
+    """The environment git runs in: the caller's, without its own GIT_* pointers, with the host's
+    system and global configuration files left unread -- a GIT_CONFIG_GLOBAL the caller names
+    explicitly is honored -- and in English, so git's refusals are the ones the code reads
+    whatever the host's locale says."""
     env = dict(os.environ)
     for name in GIT_ENV_UNSET:
         env.pop(name, None)
+    env.setdefault("GIT_CONFIG_NOSYSTEM", "1")  # the system file is not read
+    env.setdefault("GIT_CONFIG_GLOBAL", os.devnull)  # nor the global one, unless the caller names one
     env["LC_ALL"] = "C"
     return env
 
