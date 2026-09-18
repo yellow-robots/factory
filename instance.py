@@ -17,10 +17,19 @@ not a string or not an absolute path is a ValueError naming the file and which f
 checkout, a store that is inside it or holds it is too. A configuration without `work`, or with a
 `work` that is not a string or not an absolute path, is a ValueError naming the file and which
 fault, and the directory is made when it is read. Nothing else is made.
+
+Its `roles` is a table of the roles the instance runs, one entry per role, each naming the `model`
+the role runs on and the `key` file it reads, and optionally a `base_url` for a model served
+somewhere other than the provider used by default. A roles table that is missing, is not a table
+or holds an entry that is not a table, that has no `model` or no `key`, or whose `model` or `key`
+is of the wrong kind is a ValueError naming the file and which fault; so is asking for a role the
+configuration does not hold. A key file is never read here: the value lives in as few places as
+it can.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 import tomllib
 from pathlib import Path
@@ -101,3 +110,72 @@ def work_dir() -> Path:
     except OSError:
         raise ValueError(f"{config}: work {work} cannot be made")
     return path
+
+
+@dataclass(frozen=True)
+class Role:
+    """A role the instance runs: the model it runs on, the file its key is read from as an absolute
+    path, and the base URL of a model served somewhere other than the provider used by default,
+    None when the configuration does not name one."""
+
+    model: str
+    key: Path
+    base_url: str | None = None
+
+
+def _role(config: Path, name: str, entry: object) -> Role:
+    """One role of the configuration's `roles`, checked: an entry that is not a table, that has no
+    `model` or no `key`, or whose `model` is not a string or whose `key` is not a string or not an
+    absolute path is a ValueError naming the configuration's file and which fault."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"{config}: role {name} is not a table: {entry!r}")
+    model = entry.get("model")
+    if model is None:
+        raise ValueError(f"{config}: role {name} has no model")
+    if not isinstance(model, str):
+        raise ValueError(f"{config}: role {name} model is not a string: {model!r}")
+    key = entry.get("key")
+    if key is None:
+        raise ValueError(f"{config}: role {name} has no key")
+    if not isinstance(key, str):
+        raise ValueError(f"{config}: role {name} key is not a string: {key!r}")
+    path = Path(key)
+    if not path.is_absolute():
+        raise ValueError(f"{config}: role {name} key is not an absolute path: {key}")
+    return Role(model=model, key=path, base_url=entry.get("base_url"))
+
+
+def _roles(config: Path, data: dict) -> dict[str, Role]:
+    """The configuration's roles, as a mapping from a role's name to the role it names. A `roles`
+    that is missing, is not a table or holds an entry that is not a table is a ValueError naming
+    the configuration's file and which fault."""
+    table = data.get("roles")
+    if table is None:
+        raise ValueError(f"{config}: the instance configuration has no roles")
+    if not isinstance(table, dict):
+        raise ValueError(f"{config}: roles is not a table: {table!r}")
+    return {name: _role(config, name, entry) for name, entry in table.items()}
+
+
+def role(name: str) -> Role:
+    """The role the configuration holds under this name: its model, the absolute path of its key
+    and its base URL. A configuration whose roles are missing or malformed, or that does not hold
+    this role, is a ValueError naming the configuration's file and which fault. No key file is
+    read."""
+    config, data = _read_config()
+    roles = _roles(config, data)
+    if name not in roles:
+        raise ValueError(f"{config}: the instance configuration has no role {name}")
+    return roles[name]
+
+
+def key_paths() -> list[Path]:
+    """The absolute path of every key the configuration's roles name, each once. A configuration
+    whose roles are missing or malformed is a ValueError naming the configuration's file and which
+    fault. No key file is read."""
+    config, data = _read_config()
+    roles = _roles(config, data)
+    paths: dict[Path, Path] = {}
+    for role in roles.values():
+        paths.setdefault(role.key.resolve(), role.key)
+    return list(paths.values())
