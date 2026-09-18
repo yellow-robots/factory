@@ -844,16 +844,9 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
         return [f"{rel_note}: git log -1 --format={TRAILERS_FORMAT} failed for {short}"]
     values = [*lines, *(_entry_value(entry) for entry in entries)]
     problems: list[str] = []
-    seen: set[str] = set()
-
-    def add(problem: str) -> None:
-        if problem not in seen:
-            seen.add(problem)
-            problems.append(problem)
-
     unread = len(lines) - len(entries)
     if unread > 0:
-        add(
+        problems.append(
             f"{rel_note}: {short}: git does not read {unread} of {len(lines)} "
             f"`Built-By` lines as a trailer"
         )
@@ -861,8 +854,8 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
         text = _line_text(value)
         words = _ascii_words(value)
         stamp = words[-1] if len(words) >= 2 and words[-2] == "run" else ""
-        if not _segment(stamp) or not STAMP_SHAPE.fullmatch(stamp):
-            add(f"{rel_note}: {short}: `Built-By: {text}` names no run")
+        if not STAMP_SHAPE.fullmatch(stamp):
+            problems.append(f"{rel_note}: {short}: `Built-By: {text}` names no run")
     return problems
 
 
