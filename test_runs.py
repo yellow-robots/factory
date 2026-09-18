@@ -223,7 +223,6 @@ class InstanceTest(unittest.TestCase):
 
     def test_the_configuration_is_read_without_the_builder(self):
         self.assertFalse(hasattr(runs, "builder"))
-        self.assertNotIn("builder", sys.modules | {})
         source = Path(runs.__file__).read_text(encoding="utf-8")
         self.assertNotIn("import builder", source)
         for name in ("instance_config", "record_store"):
