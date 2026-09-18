@@ -1938,5 +1938,49 @@ class KeysBase(unittest.TestCase):
         self.assertFalse(self.runs.exists(), "and no record is made")
         return code, err.getvalue()
 
+class RoleOfTheRunTest(KeysBase):
+    """The model and the key a run uses are the role's, not the program's."""
+
+    def test_the_model_a_run_uses_is_the_role_s_and_not_the_program_s(self):
+        """seed: keys-of-the-instance. The model and the key's place were constants of `builder.py`, so
+        a second provider was not expressible without editing the program. Both are the role's: a
+        configuration naming another model makes a record that names it, and neither is a constant
+        of the program any longer."""
+        self.assertFalse(hasattr(builder, "MODEL"), "the model a run uses is the role's")
+        self.assertFalse(hasattr(builder, "KEY_FILE"), "the key's place is the role's")
+        self.configure(model="a-model-of-its-own")
+        code, err = self.build()
+        self.assertEqual(code, 0, err)
+        (record,) = self.records()
+        self.assertEqual(json.loads((record / "numbers.json").read_text())["model"], "a-model-of-its-own")
+
+    def test_a_key_file_the_role_names_that_holds_no_key_is_a_usage_error(self):
+        """seed: keys-of-the-instance. The key is read from the file the role names: one that is not
+        there, or that holds nothing once stripped, is a usage error naming that file, exit 2,
+        refused before a model is called and before a record is made, as the one key already is."""
+        for body in ("", "DEEPSEEK_API_KEY=\n", "   \n"):
+            self.deepseek.write_text(body)
+            code, said = self.refused()
+            self.assertEqual(code, 2, said)
+            self.assertIn(str(self.deepseek), said)
+        self.deepseek.unlink()
+        code, said = self.refused()
+        self.assertEqual(code, 2, said)
+        self.assertIn(str(self.deepseek), said)
+
+    def test_a_configuration_that_does_not_hold_the_builder_s_role_is_a_usage_error(self):
+        """seed: keys-of-the-instance. The builder runs as the role named `builder`; a configuration
+        holding no roles at all, or holding others but not that one, cannot run it, and each is
+        refused naming the configuration's file and the role before a model is called."""
+        self.configure(roles="")
+        code, none = self.refused()
+        self.assertEqual(code, 2, none)
+        self.assertIn(str(self.instance), none)
+        self.configure(roles=f'\n[roles.reviewer]\nmodel = "glm-5.3-flash"\nkey = "{self.glm}"\n')
+        code, elsewhere = self.refused()
+        self.assertEqual(code, 2, elsewhere)
+        self.assertIn(str(self.instance), elsewhere)
+        self.assertIn("builder", elsewhere)
+
 if __name__ == "__main__":
     unittest.main()
