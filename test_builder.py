@@ -1262,6 +1262,9 @@ class MainTest(unittest.TestCase):
         self.assertIn("the six tools", builder.build_agent.__doc__)  # seed: codebase-context
         self.assertIn("not one of the tools", builder.git.__doc__)
         self.assertIn("reachable only through six tools", builder.__doc__)
+        self.assertIn("wire.jsonl.gz", builder.__doc__)  # seed: records-outside-the-project
+        self.assertNotIn("wire.jsonl (", builder.__doc__)  # the plain wire is no file of a record
+        self.assertNotIn("runs/<utc-stamp>", builder.__doc__)
         self.assertIn("list, read, search, write, edit and check", builder.__doc__)
         self.assertNotIn("five", builder.__doc__)
         self.assertNotIn("Factory v0.3", builder.__doc__)
@@ -1497,6 +1500,72 @@ class MainTest(unittest.TestCase):
             code, lines, run_dir = self.main(scripted([call("final_result", REPORT, "c1")]), FakeSandbox([]))
         self.assertEqual(code, 0)
         self.assertEqual(run_dir.parent, self.runs)
+
+    def test_the_search_for_the_key_does_not_fail_open(self):
+        """seed: records-outside-the-project. From the review: the search skips what it cannot read and
+        commits the record anyway, so a file it cannot open, a `.gz` that ends before its stream
+        does, and a directory it will not walk into, a link, all pass the wall. Nothing the search
+        cannot read through is committed: the record is refused as one holding the key is, its path
+        and the reason on stderr and never the value, exit 1. A `.gz` that is not gzip at all is
+        searched as the bytes it is, whatever the case of its name."""
+        record = self.runs / "20260918T000000Z"
+        record.mkdir(parents=True)
+        (record / "numbers.json").write_text("{}\n")
+        unreadable = record / "unreadable.log"
+        unreadable.write_text("nothing of the key here\n")
+        unreadable.chmod(0o000)
+        self.addCleanup(unreadable.chmod, 0o644)
+        with self.assertRaises(builder.LeakedKey) as refused:
+            builder.commit_record(self.runs, record, key="not-a-key")
+        self.assertIn("unreadable.log", str(refused.exception))
+        self.assertNotIn("not-a-key", str(refused.exception))
+        unreadable.chmod(0o644)
+
+        whole = gzip.compress(b'{"body": "and the key is not-a-key"}\n')
+        (record / "wire.jsonl.gz").write_bytes(whole[: len(whole) - 4])
+        with self.assertRaises(builder.LeakedKey) as truncated:
+            builder.commit_record(self.runs, record, key="not-a-key")
+        self.assertIn("wire.jsonl.gz", str(truncated.exception))
+        (record / "wire.jsonl.gz").write_bytes(whole)
+        with self.assertRaises(builder.LeakedKey) as read_through:
+            builder.commit_record(self.runs, record, key="not-a-key")
+        self.assertIn("wire.jsonl.gz", str(read_through.exception))  # the compressed wire read through
+        (record / "wire.jsonl.gz").write_bytes(gzip.compress(b"nothing of it here\n"))
+
+        away = Path(self.tmp.name) / "away"
+        away.mkdir()
+        (away / "secret.txt").write_text("the key is not-a-key\n")
+        os.symlink(away, record / "linked")
+        with self.assertRaises(builder.LeakedKey) as linked:
+            builder.commit_record(self.runs, record, key="not-a-key")
+        self.assertIn("linked", str(linked.exception))
+        (record / "linked").unlink()
+
+        (record / "notes.GZ").write_bytes(b"not gzip at all, and the key is not-a-key\n")
+        with self.assertRaises(builder.LeakedKey) as capital:
+            builder.commit_record(self.runs, record, key="not-a-key")
+        self.assertIn("notes.GZ", str(capital.exception))  # searched as the bytes it is
+        (record / "notes.GZ").unlink()
+
+        builder.commit_record(self.runs, record, key="not-a-key")  # nothing left it cannot read
+        self.assertEqual(self.store("log", "--format=%s").splitlines(), ["20260918T000000Z"])
+
+    def test_a_record_the_search_cannot_read_through_is_a_reported_run(self):
+        """seed: records-outside-the-project. The same wall in a run: the record's path is the first
+        line, the numbers line follows, one line on stderr names the file and never the key, the
+        run exits 1 and nothing is committed."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                model=scripted([call("final_result", REPORT, "c1")]), sandbox=FakeSandbox([]))  # fmt: skip
+        self.assertEqual(code, 0)
+        (record,) = self.records()
+        unreadable = record / "check-none.log"
+        unreadable.write_text("the check that never ran\n")
+        unreadable.chmod(0o000)
+        self.addCleanup(unreadable.chmod, 0o644)
+        with self.assertRaises(builder.LeakedKey):
+            builder.commit_record(self.runs, record, key="not-a-key")
 
     def test_a_configuration_a_run_cannot_use_is_a_usage_error_before_anything(self):
         """seed: records-outside-the-project. From the review: three configurations the run reads as

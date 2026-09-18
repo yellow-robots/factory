@@ -11,11 +11,14 @@ import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+import instance
 import runs
 
 COLUMNS = [
@@ -211,6 +214,23 @@ class ToolErrorsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InstanceTest(unittest.TestCase):
+    """seed: records-outside-the-project. From the review: the table reads the instance's
+    configuration from a module of its own, so printing a table of numbers does not import the
+    builder's model stack."""
+
+    def test_the_configuration_is_read_without_the_builder(self):
+        self.assertFalse(hasattr(runs, "builder"))
+        self.assertNotIn("builder", sys.modules | {})
+        source = Path(runs.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("import builder", source)
+        for name in ("instance_config", "record_store"):
+            self.assertTrue(callable(getattr(instance, name)), name)
+        done = subprocess.run([sys.executable, "-c", "import runs, sys; print('builder' in sys.modules)"],
+                              capture_output=True, text=True, cwd=Path(runs.__file__).resolve().parent)  # fmt: skip
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "False"), done.stderr)
 
 
 class StoreTest(unittest.TestCase):
