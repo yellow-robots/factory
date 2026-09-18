@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -120,7 +121,8 @@ def _leave_note(clone: Path, head: str, line: str) -> None:
         _git(["-C", str(clone), "notes", "--ref=factory", "add", "-f", "-m", note, head], env=env)
         _git(["-C", str(clone), "push", "--quiet", "origin", f"{NOTE_REF}:{NOTE_REF}"], env=env)
     except (GitFailed, OSError, subprocess.SubprocessError) as e:
-        print(f"{head}: the note cannot be pushed: {e}", file=sys.stderr)
+        # git's own words are several lines; what is said is one, as every refusal here is.
+        print(f"{head}: the note cannot be pushed: {' '.join(str(e).split())}", file=sys.stderr)
 
 
 def _branch_moved(repository: str, branch: str, requested: str) -> bool:
@@ -138,10 +140,20 @@ def _branch_moved(repository: str, branch: str, requested: str) -> bool:
     return False
 
 
+def repository_path(name: str) -> str:
+    """The repository as git should read it: a path named relatively is read from the directory the
+    command was run in, as the caller means it, since every step of a build runs git from `/`; an
+    absolute path and a URL git reads for itself are left alone."""
+    if "://" in name or name.startswith("git@"):
+        return name
+    return os.path.abspath(name)
+
+
 def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     if len(argv) != 4 or not all(arg.strip() for arg in argv[1:4]):
         return usage_error("three arguments are needed: <repository> <branch> <seed>")
-    repository, branch, seed = argv[1], argv[2], argv[3]
+    repository, branch = repository_path(argv[1].strip()), argv[2].strip()
+    seed = argv[3].strip()  # the seed's path is read stripped, as the builder reads it
 
     # The configuration is the instance's and read before anything of the build: its `work` is
     # where the clone goes, made when the configuration is read, and a configuration without one
@@ -178,7 +190,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
             _goal, name = builder.read_seed(clone, seed)
         except (ValueError, builder.GitError, OSError, subprocess.SubprocessError) as e:
             return usage_error(str(e))
-        if name is None:
+        if not name:  # no seed read at all, or one whose name is empty: nothing to commit under
             return usage_error(f"not a seed of the branch: {seed}")
 
         # The check needs a check.Dockerfile at the root of the project.
@@ -219,9 +231,11 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         stopped, check = numbers.get("stopped"), numbers.get("check")
 
         def refused(how: str) -> int:
-            """A build that leaves the branch alone: the record named on stderr, the factory's note
-            on the head it was asked of, and exit 1."""
-            line = f"{record}: {how}"
+            """A build that leaves the branch alone: one line on stderr naming the record by its
+            stamp alone and the reason with git's words on one line, the factory's note on the head
+            it was asked of, and exit 1."""
+            words = " ".join(str(how).split()).replace(str(record), record.name)
+            line = f"{record.name}: {words}"
             print(line, file=sys.stderr)
             _leave_note(clone, requested, line)
             return 1
