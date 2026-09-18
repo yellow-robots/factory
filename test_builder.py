@@ -1424,23 +1424,26 @@ class MainTest(unittest.TestCase):
 
     def test_a_run_that_never_checked_is_checked_once_when_it_changed_the_checkout(self):
         """seed: the-check-on-the-final-tree. A run that changed the checkout and never checked it is
-        recorded on the tree it left, one check of the builder's; a run that changed nothing is
-        checked not at all and its `check` is `none` as before."""
+        recorded on the tree it left, one check of the builder's."""
         model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
                          [call("final_result", REPORT, "c2")])  # fmt: skip
         sandbox = FakeSandbox([(1, "FAILED\n")])
         code, lines, run_dir = self.main(model, sandbox)
         numbers = json.loads((run_dir / "numbers.json").read_text())
         self.assertEqual((numbers["checks"], numbers["check"]), (1, "red"))
+        self.assertEqual([n for _, _, n in sandbox.calls], [1])
         self.assertTrue((run_dir / "check-1.log").is_file())
 
-        git(self.checkout, "checkout", "-q", "--", "f.py")
-        time.sleep(1.1)  # a stamp of its own
+    def test_a_run_that_changed_nothing_is_not_checked_at_all(self):
+        """seed: the-check-on-the-final-tree. A run that wrote and edited nothing leaves the tree its
+        checkout came with, so no check is run for it and its `check` is `none` as before."""
         nothing = FakeSandbox([])
         code, lines, run_dir = self.main(scripted([call("final_result", REPORT, "c1")]), nothing)
+        self.assertEqual(code, 0)
         numbers = json.loads((run_dir / "numbers.json").read_text())
-        self.assertEqual((numbers["checks"], numbers["check"]), (0, "none"))
+        self.assertEqual((numbers["checks"], numbers["check"], numbers["files_changed"]), (0, "none", 0))
         self.assertEqual(nothing.calls, [])
+        self.assertFalse((run_dir / "check-1.log").exists())
 
     def test_a_capped_run_is_checked_on_the_tree_it_left(self):
         """seed: the-check-on-the-final-tree. Whatever ended the run: a run capped after writing is
