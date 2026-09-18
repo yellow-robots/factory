@@ -6,19 +6,23 @@ code, with the gate that keeps its documents honest and the table of its records
 code since v0.3 was written by the factory itself, from tests written before each build.
 
 ```sh
-uv run builder.py <checkout> "<goal>" # one build; the goal is text or the path of a seed, docs/seeds/<name>.md
+uv run build.py <repository> <branch> <seed>  # one build asked through git: a pushed branch in, a commit on it out
+uv run builder.py <checkout> "<goal>" # one build in place; the goal is text or the path of a seed, docs/seeds/<name>.md
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
-uv run runs.py                        # the records as one tab-separated table
+uv run runs.py                        # the records of the store as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 167 tests, no provider, no network, no docker
+uv run python -m unittest -v          # 197 tests, no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
 `pydantic-ai-slim[openai]==2.43.0`. The checkout is the directory named on the command line, usually
 a git worktree; a directory that is not a git checkout, and a checkout with uncommitted or untracked
 changes, are refused with a usage error, exit 2, before any record exists, so a build always
-runs on a known commit. The run record lands under the factory's own `runs/`, never in the
-checkout. The goal is text, or the path of a seed of the vault, `docs/seeds/<name>.md`: one word
+runs on a known commit. The record lands in the factory's store, the `records` of the instance's
+configuration, never in the checkout and never in any project: `~/.config/factory/instance.toml`,
+or the file `FACTORY_INSTANCE` names, holds `records` and `work` as absolute paths, and a
+configuration a run cannot use, or a key file with no key, is a usage error before anything is
+made or read. The goal is text, or the path of a seed of the vault, `docs/seeds/<name>.md`: one word
 ending in `.md` is a path, anything with whitespace in it is text. The note is read from the
 checkout's commit, so `head` pins the goal too; its `## Goal` section, read as Markdown (to the
 next heading of level one or two, fenced blocks whole, `%%` comments out), is the goal,
@@ -54,9 +58,9 @@ the host and cannot reach the key or the network. Provider DeepSeek `deepseek-fl
 `~/.config/factory/deepseek.key` (bare key or one `name=value` line), thinking at the API
 default; no temperature is sent because DeepSeek ignores it in thinking mode.
 
-A run leaves `runs/<utc-stamp>/`: `goal.txt`; `wire.jsonl` (every HTTP attempt, headers with
-secrets redacted, JSON bodies as JSON, other bodies as text; compressed to `wire.jsonl.gz` when
-the record is reviewed and committed, since it repeats the whole context of every request);
+A run leaves `<store>/<utc-stamp>/`: `goal.txt`; `wire.jsonl.gz` (every HTTP attempt, headers
+with secrets redacted, JSON bodies as JSON, other bodies as text, compressed when the run ends
+since it repeats the whole context of every request);
 `messages.json` (the library's
 message history); `check-<n>.log` per check; `diff.patch` (`git diff HEAD` plus a diff per
 untracked file; absent when the run changed nothing); `report.json`/`response.md` (five sections:
@@ -67,9 +71,12 @@ Changed, Did, Check, Failing, Unsure; only when there is a report); and `numbers
 requests, attempts, tool calls, tokens (input, output, cache read, reasoning), cost and its
 source (`table`: our price table, genai-prices has no row for this model), lists, reads, files
 and lines read, writes, edits, checks, `check` (green/red/none: the tools' own verdict on the
-last check, next to the report's claim), check seconds, files changed, insertions, deletions,
-seconds; cap or error adds `detail` and exits 1. The records are committed: `runs/` is the
-baseline of every measurement, and `runs.py` prints them as one table, a header then a row per
+tree the run left, the builder's own check added when the model wrote after its last, next to the
+report's claim), check seconds, files changed, insertions, deletions,
+seconds; cap or error adds `detail` and exits 1. Every record is committed to the store, one
+commit per record, its wire compressed and every file of it searched for the key's value first,
+so a record the search cannot read through is not committed and the run exits 1; the store is the
+baseline of every measurement, and `runs.py` prints its records as one table, a header then a row per
 record in stamp order, every value as `numbers.json` has it, an empty cell for a key a record
 lacks, `head` read from `head` or, in records before v0.5, `world_head`, and the goal's first
 line.
@@ -85,16 +92,19 @@ with text, read as the builder reads it, from spec; a test whose docstring says 
 from building; rejected needs only what open needs) or carries a field with no consumer, a version note not named like a tag, more than one
 version note without a tag, a tagged version with a seed not done or rejected, a property the
 backlog names in a filter, formula, column, sort, group or summary that is no field of the seed
-template, read as Obsidian writes the base, a committed record whose wire is not
-compressed, a build since the highest tag git cannot list, and a review note, one per review under `docs/reviews/`, whose runs are not records
+template, read as Obsidian writes the base, a build since the highest tag git cannot list, and a
+review note, one per review under `docs/reviews/`, whose runs are no stamps
 or do not name it, whose reviewer or date is missing, or whose findings, one per level-three
 heading, lack a severity of `defect` or `smell`, a `verified` of `yes` or `no`, or, once
 verified, a judgement: `test <name>`, `case <name>` or `seed <name>` that exist, or `none:` with
 the reason. A build git cannot list is a commit with a line beginning `Built-By` that git's own
 trailer parser does not return as a trailer, one whose value does not end `run <stamp>` with the
-stamp in the shape the builder names records with, or one whose record is not a tree
-`runs/<stamp>` in HEAD's tree; the problem stands under the note of the version in flight, so a
-build is seen in the version's worktree before main moves. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
+stamp in the shape the builder names records with, ASCII digits and nothing else; the record
+itself is the factory's, in its store, and the gate asks nothing of it. The problem stands under
+the note of the version in flight, so a
+build is seen in the version's worktree before main moves. The vault is `docs/` as git tracks it: a path git ignores is no note and no wikilink target, so a
+scratchpad inside the vault bothers nothing, and a directory that is no git checkout is read
+whole. `render` writes `CHANGELOG.md` from the tags, newest first, from each version
 note's title, first paragraph and `## Changelog` bullets. `release <version>` refuses unless check
 passes, the note exists and the tag does not, its seeds are done or rejected, the note has
 changelog bullets, the tree is clean, `AGENTS.md` changed since the previous tag and the suite is
@@ -231,3 +241,21 @@ to hold, a stamp in git's revision syntax passing as a record, and a display set
 build. The Goal was rewritten whole after the second review; one defect was the attended agent's,
 a test that contradicted the amended Goal and a build that kept both green. No set run: the
 version changes the gate, not what the model sees.
+
+v0.14, twelve builds for four seeds, $1.47 and 79 minutes over eighteen runs, six of them not
+taken, five capped and one ended in a provider error: a build's record left the project for a
+store of the factory's own, a git repository outside every checkout that the instance's
+configuration names, and the 146 records this repository tracked were carried into it and left
+its tree; the builder now compresses the wire, searches every file of a record for the key's
+value and commits the record itself, under a configuration it refuses when a run cannot use it;
+`build.py` takes a repository, a branch and a seed's path and answers with one commit pushed to
+that branch, or leaves it alone and a note under `refs/notes/factory` on the head it was asked
+of; a record's check is the tree the model left; and the gate reads the vault as git tracks it,
+so a scratchpad inside it bothers nothing. Two independent reviews found eight defects and
+thirteen smells, every one reproduced and judged in two notes: a commit the store refused raising
+out of the builder, the host's git configuration dropping the wire from a commit, an empty
+`FACTORY_INSTANCE` writing into another instance's store, a search for the key that failed open
+on anything it could not read, and a stamp of digits outside ASCII passing as a run. Two of the
+four seeds were built by the command itself, the first builds the factory was asked for through
+git. No set run: the version changes where a record lives and how a build is asked for, not what
+the model sees.
