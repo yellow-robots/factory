@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from instance import instance_config, record_store, role as instance_role
+from instance import instance_config, key_paths, record_store, role as instance_role
 
 # Before the import: the library greets stderr once per process unless this is set.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -1065,41 +1065,60 @@ def _read_through(path: Path) -> bytes:
     return path.read_bytes()
 
 
-def leaked_file(run_dir: Path, key: str) -> Path | None:
-    """The first file of the record whose bytes hold the key, a `.gz` file read through its
+def leaked_file(run_dir: Path, keys: list[str]) -> Path | None:
+    """The first file of the record whose bytes hold any of `keys`, a `.gz` file read through its
     compression; a `.gz` that is not gzip is searched as the bytes it is. None when no file holds
-    it. A file the search cannot read through, or a link or a directory it will not walk into,
-    raises a LeakedKey naming the path and the reason: the search never fails open."""
-    needle = key.encode()
+    any of them. A file the search cannot read through, or a link or a directory it will not walk
+    into, raises a LeakedKey naming the path and the reason: the search never fails open."""
+    needles = [key.encode() for key in keys]
     for path in _record_files(run_dir):
         try:
             data = _read_through(path)
         except OSError as e:  # a file that cannot be read refuses the commit, never a skip
             raise LeakedKey(f"{path}: the record cannot be searched: {e}")
-        if needle in data:
+        if any(needle in data for needle in needles):
             return path
     return None
+
+
+def configured_keys() -> list[str]:
+    """Every key the instance's configuration names, read from its file. A key file that cannot be
+    read is a LeakedKey naming it, never a value: a key that cannot be searched for cannot be shown
+    to be absent. A configuration whose roles are missing or malformed names no key the search can
+    use, and the empty list falls back to the program's constants as the run does."""
+    try:
+        paths = key_paths()
+    except (ValueError, OSError):
+        return []
+    keys: list[str] = []
+    for path in paths:
+        try:
+            keys.append(read_key(path))
+        except (ValueError, OSError) as e:
+            raise LeakedKey(str(e)) from e
+    return keys
 
 
 def commit_record(store: Path, run_dir: Path, key: str | None = None) -> None:
     """The record committed to the store as one commit of its own, the one place a record is
     searched and committed. A store that is not yet a git repository is made one now; the whole
-    record is searched for the key's value -- a `.gz` file read through its compression, a `.gz`
-    that is not gzip read as the bytes it is -- and a record that holds it is not committed: a
-    LeakedKey names the file, never the value. The search never fails open: a file it cannot read
-    through, a `.gz` that ends before its stream does, and a link or a directory it will not walk
-    into refuse the commit the same way. The record and nothing else enters the commit whatever
-    else the store holds uncommitted, the message the stamp, the author and committer the
-    factory's."""
-    if key is None:
-        key = read_key()
+    record is searched for every key the instance's configuration names -- the one key `key` names
+    instead when the caller gives it -- a `.gz` file read through its compression, a `.gz` that is
+    not gzip read as the bytes it is, and a record that holds any of them is not committed: a
+    LeakedKey names the file, never the value. A key file the configuration names that cannot be
+    read refuses the commit too, naming that key file. The search never fails open: a file it
+    cannot read through, a `.gz` that ends before its stream does, and a link or a directory it
+    will not walk into refuse the commit the same way. The record and nothing else enters the
+    commit whatever else the store holds uncommitted, the message the stamp, the author and
+    committer the factory's."""
+    keys = configured_keys() if key is None else [key]
     try:
         top = _store_git(store, "rev-parse", "--show-toplevel").strip()
     except (GitError, OSError, subprocess.SubprocessError):
         top = ""
     if not top or Path(top).resolve() != store.resolve():
         _store_git(store, "init", "-q")  # a store that is not a git repository is made one now
-    leaked = leaked_file(run_dir, key)
+    leaked = leaked_file(run_dir, keys)
     if leaked is not None:
         raise LeakedKey(str(leaked))
     try:
@@ -1178,21 +1197,24 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         return usage_error(str(e))
     # The run is the instance's `builder` role when its configuration holds one: that role's model
     # and key file are used. A configuration that holds no such role changes nothing: the program's
-    # own constants still answer, so every fixture that patches the key's place keeps working. A
+    # model constant still answers and the record's search falls back to the keys the configuration
+    # names, none of which there are, so every fixture that holds no role still runs. A
     # configuration whose roles are malformed is no role to run as either, so it falls back the same
     # way rather than turning the run into a usage error the goal does not ask for.
     try:
         builder_role = instance_role("builder")
     except (ValueError, OSError):
         builder_role = None
-    model_name = builder_role.model if builder_role is not None else MODEL
-    key_file = builder_role.key if builder_role is not None else KEY_FILE
     # The key file holds the bare key, or one `name=value` line as in an env file; one that cannot
     # be read or holds no key is a usage error too, before anything is made.
-    try:
-        key = read_key(key_file)
-    except (ValueError, OSError) as e:
-        return usage_error(str(e))
+    if builder_role is not None:
+        model_name = builder_role.model
+        try:
+            key = read_key(builder_role.key)
+        except (ValueError, OSError) as e:
+            return usage_error(str(e))
+    else:
+        model_name, key = MODEL, ""
     # The store's directory is made once the configuration is read and the key is a key; a plain
     # file or a path the run cannot make is a usage error naming both the configuration and the
     # store.
@@ -1279,13 +1301,14 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     }
     recorded = numbers | {"detail": detail} if detail else numbers  # why it stopped, if not answer
     (run_dir / "numbers.json").write_text(json.dumps(recorded, indent=1) + "\n")
-    # The record is the factory's: the wire is compressed and the whole record searched for the
-    # key's value by the one function that commits it, whatever ended the run.
+    # The record is the factory's: the wire is compressed and the whole record searched for every
+    # key the instance's configuration names by the one function that commits it, whatever ended
+    # the run.
     compress_wire(run_dir)
     print(run_dir)  # the first line the builder prints is the record's path
     numbers_line = " ".join(f"{k}={v}" for k, v in numbers.items())  # stays one line of k=v
     try:
-        commit_record(store, run_dir, key=key)
+        commit_record(store, run_dir)
     except LeakedKey as e:
         print(numbers_line)
         print(f"{e}: the record holds the key", file=sys.stderr)  # never the value
