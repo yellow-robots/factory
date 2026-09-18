@@ -18,8 +18,8 @@ The instance's configuration already names `records` and `work`, read by `instan
 
 ## Goal
 
-The builder runs as the role `builder` when the instance's configuration holds one: the model it runs on and the file it reads its key from are that role's, read through `instance.py`, and the run's record names the model the role gave, where it already names a model. A configuration that holds no such role changes nothing yet — the constants of `builder.py` still answer — so every fixture of the suite that patches the key's place keeps working exactly as it does now. That fallback is the next goal's to remove.
+There is one place a run's model and the place of its key come from, and it is the instance's configuration. `MODEL` and `KEY_FILE` are gone from `builder.py`, and with them the fallback the previous goal left: a configuration that holds no `roles` at all, or holds others but not `builder`, is a usage error naming the configuration's file and the role, refused before the model is called and before a record is made, in the shape a configuration a run cannot use is already refused.
 
-A key file the role names that cannot be read, or that holds nothing once stripped, is a usage error naming that file, exit 2, refused before the model is called and before a record is made, exactly as the one key already is.
+The suite's own fixtures follow, and this is the bulk of the goal: every place that patched `builder.KEY_FILE` writes a configuration holding a `[roles.builder]` table instead, naming a model and that same key file, in `test_builder.py`, `test_build.py` and `test_evals.py` alike. `search` finds them faster than reading the files whole.
 
-Only `builder.py` changes here. No test file's fixtures are touched, and `instance.py` is already what it needs to be.
+Nothing else changes: what searches a record still searches for the one key the run was given.
