@@ -77,10 +77,14 @@ def frontmatter(text: str) -> tuple[dict[str, str] | None, str]:
     return None, text
 
 
-def _notes(docs: Path) -> list[Path]:
-    """Every `.md` under `docs/`, the templates excepted."""
+def _notes(docs: Path, root: Path, vault: set[str] | None) -> list[Path]:
+    """Every `.md` under `docs/` that git does not ignore, the templates excepted."""
     templates = docs / "templates"
-    return [p for p in sorted(docs.rglob("*.md")) if templates not in p.parents]
+    return [
+        p
+        for p in sorted(docs.rglob("*.md"))
+        if templates not in p.parents and _in_vault(p, root, vault)
+    ]
 
 
 def _git_out(root: Path, *args: str) -> tuple[int, str]:
@@ -113,6 +117,28 @@ def _git_bytes(root: Path, *args: str) -> tuple[int, bytes]:
 def _utf8(data: bytes) -> str:
     """The bytes decoded as UTF-8 with what cannot be decoded replaced; never raises."""
     return data.decode("utf-8", "replace")
+
+
+def _vault_paths(root: Path) -> set[str] | None:
+    """The paths under `root` git does not ignore, relative to `root`, or `None` when git cannot
+    answer (a directory that is no checkout, or a git that fails), so the vault is then read whole
+    from the filesystem. `git ls-files` lists what is tracked and what is untracked and not
+    ignored in one call; nothing is read from `.gitignore`."""
+    code, out = _git_bytes(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    if code != 0:
+        return None
+    return {path for path in _utf8(out).split("\0") if path}
+
+
+def _in_vault(path: Path, root: Path, vault: set[str] | None) -> bool:
+    """Whether `path` is part of the vault: git does not ignore it, or git could not answer."""
+    if vault is None:
+        return True
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        return True
+    return rel in vault
 
 
 def _line_text(value: str) -> str:
@@ -154,20 +180,24 @@ def _highest_tag(tags: set[str]) -> str | None:
     return best
 
 
-def _resolve(target: str, docs: Path) -> bool:
-    """A note in `docs/`, by path or by name, or a `.base` file."""
+def _resolve(target: str, docs: Path, root: Path, vault: set[str] | None) -> bool:
+    """A note in `docs/` that git does not ignore, by path or by name, or a `.base` file."""
     target = target.strip()
     if not target:
         return False
     direct = docs / target
-    if direct.is_file():
+    if direct.is_file() and _in_vault(direct, root, vault):
         return True
-    if direct.suffix == "" and (docs / (target + ".md")).is_file():
-        return True
+    if direct.suffix == "":
+        named = docs / (target + ".md")
+        if named.is_file() and _in_vault(named, root, vault):
+            return True
     name = target.rsplit("/", 1)[-1]
     stem = name[:-3] if name.endswith(".md") else name
     for found in docs.rglob("*"):
-        if found.is_file() and (found.name == name or found.stem == stem):
+        if found.is_file() and _in_vault(found, root, vault) and (
+            found.name == name or found.stem == stem
+        ):
             return True
     return False
 
@@ -362,10 +392,10 @@ def _base_named(text: str) -> list[tuple[str, str]]:
     return named
 
 
-def _base_problems(docs: Path) -> list[str]:
+def _base_problems(docs: Path, root: Path, vault: set[str] | None) -> list[str]:
     """The properties `docs/backlog.base` names that are not seed template fields."""
     base = docs / "backlog.base"
-    if not base.is_file():
+    if not base.is_file() or not _in_vault(base, root, vault):
         return []
     fields_, _ = frontmatter(_read(docs / "templates" / "seed.md"))
     if fields_ is None:
@@ -393,12 +423,13 @@ def problems_check(root: Path) -> list[str]:
     if not docs.is_dir():
         return ["docs/: missing"]
     problems: list[str] = []
+    vault = _vault_paths(root)
     tags = _tags(root)
     docstrings = _test_docstrings(root)
     test_names = _test_names(root)
 
     for path in docs.rglob("*"):
-        if not path.is_file():
+        if not path.is_file() or not _in_vault(path, root, vault):
             continue
         text = _read(path)
         if "[[" not in text:
@@ -406,11 +437,11 @@ def problems_check(root: Path) -> list[str]:
         rel = path.relative_to(root).as_posix()
         for match in WIKILINK.finditer(text):
             target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
-            if not _resolve(target, docs):
+            if not _resolve(target, docs, root, vault):
                 problems.append(f"{rel}: wikilink {target} does not resolve")
 
     version_notes: list[tuple[Path, str, dict[str, str], str]] = []
-    for path in _notes(docs):
+    for path in _notes(docs, root, vault):
         rel = path.relative_to(root).as_posix()
         fm, body = frontmatter(_read(path))
         if fm is None:
@@ -424,7 +455,7 @@ def problems_check(root: Path) -> list[str]:
             problems.append(f"{rel}: type {kind} has no template docs/templates/{kind}.md")
             continue
         if kind == "seed":
-            problems.extend(_seed_problems(path, rel, fm, body, root, tags, docstrings))
+            problems.extend(_seed_problems(path, rel, fm, body, root, tags, docstrings, vault))
         elif kind == "version":
             version_notes.append((path, rel, fm, body))
         elif kind == "review":
@@ -439,7 +470,7 @@ def problems_check(root: Path) -> list[str]:
     if len(untagged) > 1:
         for _, rel in untagged:
             problems.append(f"{rel}: at most one version note may not be a tag ({len(untagged)} are)")
-    problems.extend(_base_problems(docs))
+    problems.extend(_base_problems(docs, root, vault))
     in_flight = untagged[0][1] if len(untagged) == 1 else "docs/versions/"
     problems.extend(_build_problems(root, in_flight, _highest_tag(tags)))
     return problems
@@ -453,6 +484,7 @@ def _seed_problems(
     root: Path,
     tags: set[str],
     docstrings: list[str],
+    vault: set[str] | None,
 ) -> list[str]:
     docs = root / "docs"
     problems: list[str] = []
@@ -489,9 +521,10 @@ def _seed_problems(
 
     version = fm.get("version", "")
     if rank >= STATUSES.index("spec"):
+        note = docs / "versions" / f"{version}.md"
         if not version:
             problems.append(f"{rel}: seed has no version")
-        elif not (docs / "versions" / f"{version}.md").is_file():
+        elif not note.is_file() or not _in_vault(note, root, vault):
             problems.append(f"{rel}: version {version} has no note docs/versions/{version}.md")
         problems.extend(_goal_problems(rel, body))
     if version and version in tags and status not in ("done", "rejected"):
@@ -889,7 +922,7 @@ def _release_problems(root: Path, version: str) -> list[str]:
     if version in tags:
         problems.append(f"{rel_note}: {version} is already tagged")
 
-    for path in _notes(docs):
+    for path in _notes(docs, root, _vault_paths(root)):
         fm, _ = frontmatter(_read(path))
         if not fm or fm.get("type") != "seed" or fm.get("version") != version:
             continue
