@@ -47,7 +47,11 @@ WIKILINK = re.compile(r"\[\[([^\[\]]+)\]\]")
 BUILT_BY = re.compile(r"^Built-By[ \t]*:", re.IGNORECASE | re.ASCII)
 ASCII_WHITESPACE = " \t\n\r\x0b\x0c"
 ASCII_RUN = re.compile(r"[^ \t\n\r\x0b\x0c]+")
-STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z", re.ASCII)
+# The builder names a record with a UTC stamp, and, when a second run shares its second, the
+# stamp and a dash and that run's number: the shape the gate reads for a run is that one, digits
+# in ASCII alone, so a dash with nothing after it, with something that is not a number or with a
+# second dash names no run.
+STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z(-\d+)?", re.ASCII)
 # The build reads ask git for UTF-8 and for no signature whatever the repository's display
 # settings say, so a message in another log encoding is not a build git cannot read and a
 # signature is never counted as a trailer.
