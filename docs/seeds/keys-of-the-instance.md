@@ -18,8 +18,6 @@ The instance's configuration already names `records` and `work`, read by `instan
 
 ## Goal
 
-There is one place a run's model and the place of its key come from, and it is the instance's configuration. `MODEL` and `KEY_FILE` are gone from `builder.py`, and with them the fallback the previous goal left: a configuration that holds no `roles` at all, or holds others but not `builder`, is a usage error naming the configuration's file and the role, refused before the model is called and before a record is made, in the shape a configuration a run cannot use is already refused.
+The search that keeps a key out of a record searches a record for **every key the instance's configuration names**, not the key the run was given. A record holding any of them is refused by `LeakedKey`, which names the file and never a value, and the run that made it fails as it does now, its work discarded and its record uncommitted.
 
-The suite's own fixtures follow, and this is the bulk of the goal: every place that patched `builder.KEY_FILE` writes a configuration holding a `[roles.builder]` table instead, naming a model and that same key file, in `test_builder.py`, `test_build.py` and `test_evals.py` alike. `search` finds them faster than reading the files whole.
-
-Nothing else changes: what searches a record still searches for the one key the run was given.
+The search fails open on nothing: a file it cannot read through, a `.gz` that ends before its stream does, and a link or directory it will not walk into refuse the commit exactly as they do today, and a key file the configuration names that cannot be read refuses the commit too, naming that key file, because a key that cannot be searched for cannot be shown to be absent.

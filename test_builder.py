@@ -734,12 +734,17 @@ class MainTest(unittest.TestCase):
         git(self.checkout, "init", "-q")  # a checkout is a git checkout; a plain directory is refused
         git(self.checkout, "add", "f.py")
         git(self.checkout, "commit", "-q", "-m", "start")
-        (base / "key").write_text("DEEPSEEK_API_KEY=not-a-key\n")
+        self.key = base / "key"
+        self.key.write_text("DEEPSEEK_API_KEY=not-a-key\n")
         self.runs = base / "runs"  # the instance's store, which its configuration names
         self.instance = base / "instance.toml"
-        self.instance.write_text(f'records = "{self.runs}"\n')
+        self.instance.write_text(f'records = "{self.runs}"\n' + self.builder_role())
         self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(self.instance)}))
-        self.enterContext(mock.patch.object(builder, "KEY_FILE", base / "key"))
+
+    def builder_role(self, key: Path | None = None) -> str:
+        """The role a build runs as, for a configuration to hold: its model and the file its key is
+        read from. The key's place is the instance's, not the program's, since v0.15."""
+        return f'\n[roles.builder]\nmodel = "deepseek-flash"\nkey = "{key or self.key}"\n'
 
     def records(self) -> list[Path]:
         """The store's records in stamp order; the store's own `.git` is none."""
@@ -1595,8 +1600,7 @@ class MainTest(unittest.TestCase):
             else:
                 self.instance.write_text(text)
             err = io.StringIO()
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
-                    mock.patch.object(builder, "KEY_FILE", Path(self.tmp.name) / "no-key"):  # fmt: skip
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
                 code = builder.main(["builder.py", str(self.checkout), "make x bigger"], model=FunctionModel(model), sandbox=FakeSandbox([]))
             self.assertEqual(code, 2, (text, err.getvalue()))
             self.assertIn(str(self.instance), err.getvalue(), text)
@@ -1709,11 +1713,10 @@ class MainTest(unittest.TestCase):
             called.append(1)
             return ModelResponse(parts=[call("final_result", REPORT, "c1")])
 
-        def refused(key: Path, **environ) -> str:
+        def refused(**environ) -> str:
             err = io.StringIO()
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
-                    mock.patch.dict(os.environ, {"HOME": str(home), **environ}), \
-                    mock.patch.object(builder, "KEY_FILE", key):  # fmt: skip
+                    mock.patch.dict(os.environ, {"HOME": str(home), **environ}):  # fmt: skip
                 code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
                                     model=FunctionModel(model), sandbox=FakeSandbox([]))  # fmt: skip
             self.assertEqual(code, 2, err.getvalue())
@@ -1722,19 +1725,17 @@ class MainTest(unittest.TestCase):
             self.assertFalse(elsewhere.exists())  # never the home's store
             return err.getvalue()
 
-        no_key = Path(self.tmp.name) / "no-key"
-        good_key = Path(self.tmp.name) / "key"
-        empty = refused(no_key, FACTORY_INSTANCE="")
+        empty = refused(FACTORY_INSTANCE="")
         self.assertIn("FACTORY_INSTANCE", empty)
 
-        self.instance.write_bytes(b'records = "/tmp/\xff\xfe"\n')
-        not_utf8 = refused(no_key)
+        self.instance.write_bytes(b'records = "/tmp/\xff\xfe"\n')  # not TOML: refused before any key
+        not_utf8 = refused()
         self.assertIn(str(self.instance), not_utf8)
 
         plain = Path(self.tmp.name) / "a-file"
         plain.write_text("not a store\n")
-        self.instance.write_text(f'records = "{plain}"\n')
-        file_store = refused(good_key)
+        self.instance.write_text(f'records = "{plain}"\n' + self.builder_role())
+        file_store = refused()
         self.assertIn(str(self.instance), file_store)
         self.assertIn(str(plain), file_store)
 
@@ -1742,8 +1743,8 @@ class MainTest(unittest.TestCase):
         locked.mkdir()
         locked.chmod(0o500)
         self.addCleanup(locked.chmod, 0o700)
-        self.instance.write_text(f'records = "{locked / "store"}"\n')
-        cannot_make = refused(good_key)
+        self.instance.write_text(f'records = "{locked / "store"}"\n' + self.builder_role())
+        cannot_make = refused()
         self.assertIn(str(self.instance), cannot_make)
         self.assertIn(str(locked / "store"), cannot_make)
         self.assertFalse((locked / "store").exists())
@@ -1966,30 +1967,49 @@ class RoleOfTheRunTest(KeysBase):
         self.assertIn(str(self.deepseek), said)
 
 
-class NoFallbackTest(KeysBase):
-    """There is one place a run's model and key come from, and it is the configuration."""
+class EveryKeyTest(KeysBase):
+    """What is searched for in a record is every key the instance holds."""
 
-    def test_the_model_and_the_key_s_place_are_no_longer_the_program_s(self):
-        """seed: keys-of-the-instance. While the program still held them, a configuration naming no
-        role could still run, and two places said where the key was. There is one: the constants
-        are gone, and every fixture of the suite names a role instead of patching a path."""
-        self.assertFalse(hasattr(builder, "MODEL"), "the model a run uses is the role's")
-        self.assertFalse(hasattr(builder, "KEY_FILE"), "the key's place is the role's")
+    def test_a_record_is_searched_for_every_key_the_instance_holds(self):
+        """seed: keys-of-the-instance. The search took the one key the run was given, so a run made as
+        one role could commit a record carrying another role's key and pass the wall. Every key the
+        configuration names is searched for: a record holding the reviewer's is refused although the
+        run was made as the builder, named by its file and never by its value, and a record holding
+        neither is committed."""
+        record = self.runs / "20260919T000000Z"
+        record.mkdir(parents=True)
+        (record / "numbers.json").write_text("{}\n")
+        wire = record / "wire.jsonl"
+        wire.write_text('{"headers": {"authorization": "Bearer reviewers-own-key"}}\n')
+        with self.assertRaises(builder.LeakedKey) as other:
+            builder.commit_record(self.runs, record)
+        self.assertIn("wire.jsonl", str(other.exception))
+        self.assertNotIn("reviewers-own-key", str(other.exception))
+        wire.write_text('{"headers": {"authorization": "Bearer builders-own-key"}}\n')
+        with self.assertRaises(builder.LeakedKey) as own:  # the run's own key, refused as it always was
+            builder.commit_record(self.runs, record)
+        self.assertIn("wire.jsonl", str(own.exception))
+        wire.write_text('{"headers": {}}\n')
+        builder.commit_record(self.runs, record)
+        log = subprocess.run(["git", "-C", str(self.runs), "log", "--format=%s"],
+                             capture_output=True, encoding="utf-8", env=builder.store_env())  # fmt: skip
+        self.assertEqual(log.stdout.splitlines(), ["20260919T000000Z"])
 
-    def test_a_configuration_that_does_not_hold_the_builder_s_role_is_a_usage_error(self):
-        """seed: keys-of-the-instance. The builder runs as the role named `builder`; a configuration
-        holding no roles at all, or holding others but not that one, cannot run it, and each is
-        refused naming the configuration's file and the role before a model is called, rather than
-        falling back to somewhere else the key might be."""
-        self.configure(roles="")
-        code, none = self.refused()
-        self.assertEqual(code, 2, none)
-        self.assertIn(str(self.instance), none)
-        self.configure(roles=f'\n[roles.reviewer]\nmodel = "glm-5.3-flash"\nkey = "{self.glm}"\n')
-        code, elsewhere = self.refused()
-        self.assertEqual(code, 2, elsewhere)
-        self.assertIn(str(self.instance), elsewhere)
-        self.assertIn("builder", elsewhere)
+    def test_a_key_the_instance_names_that_cannot_be_read_refuses_the_commit(self):
+        """seed: keys-of-the-instance. A key that cannot be read cannot be searched for, so the wall
+        cannot be shown to hold and the record is not committed: the refusal names that key file, as
+        the search's other refusals name the file they could not read through, and never a value."""
+        record = self.runs / "20260919T000000Z"
+        record.mkdir(parents=True)
+        (record / "numbers.json").write_text("{}\n")
+        self.glm.chmod(0o000)
+        try:
+            with self.assertRaises(builder.LeakedKey) as refused:
+                builder.commit_record(self.runs, record)
+            self.assertIn(str(self.glm), str(refused.exception))
+            self.assertNotIn("builders-own-key", str(refused.exception))
+        finally:
+            self.glm.chmod(0o600)
 
 if __name__ == "__main__":
     unittest.main()

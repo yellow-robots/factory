@@ -214,9 +214,11 @@ class EvalsTest(unittest.TestCase):
         self.root = make_repo(base)
         self.runs = base / "runs"  # the instance's store, which its configuration names
         (base / "key").write_text("DEEPSEEK_API_KEY=not-a-key\n")
-        (base / "instance.toml").write_text(f'records = "{self.runs}"\n')
+        (base / "instance.toml").write_text(
+            f'records = "{self.runs}"\n'
+            f'\n[roles.builder]\nmodel = "deepseek-flash"\nkey = "{base / "key"}"\n'  # the key's place is the instance's
+        )
         self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(base / "instance.toml")}))
-        self.enterContext(mock.patch.object(builder, "KEY_FILE", base / "key"))
         self.status_before = git(self.root, "status", "--porcelain")
         self.head_before = git(self.root, "rev-parse", "HEAD").strip()
 

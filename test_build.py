@@ -106,13 +106,18 @@ class BuildTest(unittest.TestCase):
         self.requested = self.head()
         self.store, self.work = base / "records", base / "work"
         self.instance = base / "instance.toml"
-        self.instance.write_text(f'records = "{self.store}"\nwork = "{self.work}"\n')
-        (base / "key").write_text("DEEPSEEK_API_KEY=not-a-key\n")
+        self.key = base / "key"
+        self.key.write_text("DEEPSEEK_API_KEY=not-a-key\n")
+        self.instance.write_text(f'records = "{self.store}"\nwork = "{self.work}"\n' + self.builder_role())
         self.enterContext(mock.patch.dict(os.environ, {
             "FACTORY_INSTANCE": str(self.instance), "HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg"),
         }))  # fmt: skip
-        self.enterContext(mock.patch.object(builder, "KEY_FILE", base / "key"))
         self.enterContext(mock.patch.object(build, "version", lambda: "v9.9"))
+
+    def builder_role(self, key: Path | None = None) -> str:
+        """The role a build runs as, for a configuration to hold: its model and the file its key is
+        read from. The key's place is the instance's, not the program's, since v0.15."""
+        return f'\n[roles.builder]\nmodel = "deepseek-flash"\nkey = "{key or self.key}"\n'
 
     def head(self, ref: str = BRANCH) -> str:
         return git(self.origin, "rev-parse", f"refs/heads/{ref}").strip()
@@ -200,9 +205,8 @@ class BuildTest(unittest.TestCase):
             return ModelResponse(parts=[ToolCallPart("final_result", REPORT, tool_call_id="c")])
 
         def refused(*words: str, **where) -> str:
-            # No key file at all: every refusal here happens before the key is read.
-            with mock.patch.object(builder, "KEY_FILE", Path(self.tmp.name) / "no-key"):
-                code, _, err = self.build(FunctionModel(model), FakeSandbox([]), **where)
+            # Every refusal here happens before the key is read; the configuration names its place.
+            code, _, err = self.build(FunctionModel(model), FakeSandbox([]), **where)
             self.assertEqual(code, 2, (where, err))
             for word in words:
                 self.assertIn(word, err, (where, err))
