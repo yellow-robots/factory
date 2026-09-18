@@ -1381,6 +1381,85 @@ class MainTest(unittest.TestCase):
         if (self.runs / ".git").exists():
             self.assertEqual(self.store("ls-files").strip(), "")
 
+    def test_the_check_of_a_record_is_the_tree_the_model_leaves(self):
+        """seed: the-check-on-the-final-tree. A record's check was the model's own last call, so a
+        write after it was recorded green on a tree nobody tested. When the model returns, whatever
+        ended the run, the builder runs the check once more on the tree as it is, unless nothing was
+        written or edited since the last check: the check is numbered after the model's own and
+        leaves its log beside them, `checks` counts it, `check` in the numbers is the last one run,
+        and the seconds of every check are summed as before."""
+        model = scripted(
+            [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+            [call("check", {}, "c2")],
+            [call("write", {"path": "after.txt", "content": "written after the check\n"}, "c3")],
+            [call("final_result", REPORT, "c4")],
+        )
+        sandbox = FakeSandbox([(0, "OK\n"), (1, "FAILED on the tree left\n")])
+        code, lines, run_dir = self.main(model, sandbox)
+        self.assertEqual(code, 0)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual((numbers["checks"], numbers["check"]), (2, "red"))
+        self.assertEqual([n for _, _, n in sandbox.calls], [1, 2])  # numbered after the model's own
+        self.assertIn("FAILED on the tree left", (run_dir / "check-2.log").read_text())
+        self.assertEqual(sandbox.results, [])
+        self.assertGreaterEqual(numbers["check_seconds"], 0)
+
+    def test_nothing_written_since_the_last_check_is_checked_no_further(self):
+        """seed: the-check-on-the-final-tree. The check the model ran is the tree it left when nothing
+        was written or edited after it, a write a wall refused among them, so the builder adds no
+        check of its own and the record is as it was."""
+        model = scripted(
+            [call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+            [call("check", {}, "c2")],
+            [call("write", {"path": "runs/sneak.txt", "content": "refused by a wall\n"}, "c3")],
+            [call("final_result", REPORT, "c4")],
+        )
+        sandbox = FakeSandbox([(0, "OK\n")])
+        code, lines, run_dir = self.main(model, sandbox)
+        self.assertEqual(code, 0)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual((numbers["checks"], numbers["check"], numbers["writes"]), (1, "green", 0))
+        self.assertEqual([n for _, _, n in sandbox.calls], [1])
+        self.assertFalse((run_dir / "check-2.log").exists())
+
+    def test_a_run_that_never_checked_is_checked_once_when_it_changed_the_checkout(self):
+        """seed: the-check-on-the-final-tree. A run that changed the checkout and never checked it is
+        recorded on the tree it left, one check of the builder's; a run that changed nothing is
+        checked not at all and its `check` is `none` as before."""
+        model = scripted([call("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"}, "c1")],
+                         [call("final_result", REPORT, "c2")])  # fmt: skip
+        sandbox = FakeSandbox([(1, "FAILED\n")])
+        code, lines, run_dir = self.main(model, sandbox)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual((numbers["checks"], numbers["check"]), (1, "red"))
+        self.assertTrue((run_dir / "check-1.log").is_file())
+
+        git(self.checkout, "checkout", "-q", "--", "f.py")
+        time.sleep(1.1)  # a stamp of its own
+        nothing = FakeSandbox([])
+        code, lines, run_dir = self.main(scripted([call("final_result", REPORT, "c1")]), nothing)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual((numbers["checks"], numbers["check"]), (0, "none"))
+        self.assertEqual(nothing.calls, [])
+
+    def test_a_capped_run_is_checked_on_the_tree_it_left(self):
+        """seed: the-check-on-the-final-tree. Whatever ended the run: a run capped after writing is
+        recorded on the tree it left, so the set reads a cap by the tree and not by the model's
+        last word."""
+        with mock.patch.object(builder, "TOOL_CALLS_CAP", 2):
+            model = scripted(
+                [call("check", {}, "c1")],
+                [call("write", {"path": "after.txt", "content": "written after the check\n"}, "c2")],
+                [call("write", {"path": "more.txt", "content": "and the cap is reached\n"}, "c3")],
+            )
+            sandbox = FakeSandbox([(0, "OK\n"), (1, "FAILED on the tree left\n")])
+            code, lines, run_dir = self.main(model, sandbox)
+        self.assertEqual(code, 1)
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["stopped"], "cap")
+        self.assertEqual((numbers["checks"], numbers["check"]), (2, "red"))
+        self.assertIn("FAILED on the tree left", (run_dir / "check-2.log").read_text())
+
     def test_the_store_s_git_is_the_factory_s_alone(self):
         """seed: records-outside-the-project. From the review: the host's git configuration does not
         reach the store and the store's own hooks do not run, and a record's files are added
