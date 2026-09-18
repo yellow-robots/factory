@@ -1,11 +1,11 @@
 ---
 created: 2026-09-17
 type: seed
-status: open
+status: building
 summary: A build is asked for by the attended agent calling a script on a worktree of its own making, and every step from the model's return to the branch is the attended agent's hand and scratch; the factory takes a repository, a branch and a seed's path and answers with a commit pushed to that branch, so it builds a project it is sent, its own among them.
 value: 5
 effort: M
-version:
+version: v0.14
 ---
 
 ## Evidence
@@ -17,3 +17,17 @@ version:
 ## Idea
 
 One command of the factory's, given a repository, a branch and the path of a seed in it. It fetches the branch into a clone the instance keeps outside every project, makes a worktree at the branch's head, refuses what the builder cannot build and says what is missing, a seed with no Goal, a project with no `check.Dockerfile`, runs the builder there, and when the check is green commits the model's changes on the branch as the factory, with the trailer `Built-By: factory at <the instance's version>, run <stamp>`, and pushes the branch, never forced: a branch that moved meanwhile is refused and said, and the record stays. The trailer names what git does not hold, the version of the factory that built, and leaves the checkout's head to the commit's parent. Nothing leaves the instance holding the key's value, the commit scanned before the push as the record is before the store takes it, and the record is in the store before the commit is pushed, so a trailer never names a run without a record (records-outside-the-project). The request is the push of a branch with a seed at building and its tests red, and the answer is a commit on it: both are git's, so the state of a build is derived from the branch and no queue or message holds it; what starts the command, the attended agent by hand at first, a webhook or a poll later, is not state. A red or a capped build leaves nothing on the branch: the command ends with an error, its exit code and one line naming the run and how it stopped, and the record stays in the store, the diff the model left in it. How a requester with no command to read learns of it, a status a forge shows on a commit being the known way, waits with the owner's question of what a forge is here. The command's name and its file are the spec's. The project's own gate, where it has one, stays the project's: the command checks what the builder needs and no more. It comes after records-outside-the-project, and the instance that runs it, a checkout pinned at a released tag, is installation-and-surfaces. The builds of the version that makes the command are run as today; the command's first builds are its rehearsal, run from the version's worktree, and the first version built through it whole is the next.
+
+## Goal
+
+One command of the factory's, `build.py <repository> <branch> <seed>`, run as `uv run build.py`: the request is a branch that was pushed, holding a seed at building and its tests red, and the answer is one commit pushed to that branch. `main(argv, model=None, sandbox=None)` as the builder's, the model and the sandbox passed to it and to nothing else.
+
+The instance's configuration gains `work`, the absolute path of the directory the instance works in, beside `records`; `instance.py` reads it as it reads the store, a configuration without it or with one that is not a string or not an absolute path refused naming the file and which fault, and the directory is made when the configuration is read. A build works in a directory of its own under it, made when the build starts and removed when the command ends, whatever ended it, so the working directory holds nothing of a build that is over.
+
+The branch is cloned into that directory, one branch of it, and the builder is run on the clone with the seed's path as its goal, so the record is the builder's own, in the store, with the clone as its checkout and the branch's head as its head. The command prints the record's path as its first line, the builder having printed it.
+
+What the builder cannot build is a usage error before the key is read, a model is called or a record is made, exit 2, on stderr, naming what is missing: arguments that are not three; a repository git cannot read, named; a branch the repository does not have, named; a seed the branch does not hold or one with no `## Goal`, named, the note read from the branch's commit as the builder reads it; a project whose root has no `check.Dockerfile`, which the check needs, named; and a configuration with no `work`. Nothing is left in the working directory by a refusal.
+
+A green check that changed something becomes one commit on the branch: the branch's head as the command found it is its parent, the diff is what the model left in the clone, the author and the committer are `factory <factory@localhost>`, and the message is the seed's name, then a blank line, then `Built-By: factory at <version>, run <stamp>`, the one trailer, which git's own parser reads, with nothing of the model's report in it, since the report is in the record. The version is the instance's own, `git describe --tags --always --dirty` where `build.py` lives, or `unknown` when git cannot say, and never the project's. The commit is pushed to the branch it came from, never forced. The command then prints one line naming the commit, by git's abbreviation, and the branch, and exits 0.
+
+What a build that is not green leaves, and what a branch that moved meanwhile does, are the goal after this one.
