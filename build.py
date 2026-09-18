@@ -13,9 +13,9 @@ line, the builder having printed it.
 What the builder cannot build is a usage error, exit 2 on stderr, before the key is read, a model
 is called or a record is made: arguments that are not three; a repository git cannot read; a branch
 the repository does not have; a seed the branch does not hold or one with no `## Goal`; a project
-whose root has no `check.Dockerfile`; and a configuration with no `work`. Nothing is left in the
-working directory by a refusal. The model and the sandbox given to `main` are passed to the
-builder and to nothing else.
+whose root has no `check.Dockerfile`; and a configuration with no `records` or `work`. Nothing is
+left in the working directory by a refusal. The model and the sandbox given to `main` are passed
+to the builder and to nothing else.
 
 A green check that changed something becomes one commit on the branch: the branch's head as the
 command found it is its parent, the diff is what the model left in the clone, the author and the
@@ -25,6 +25,16 @@ is the instance's own, `git describe --tags --always --dirty` where this file li
 when git cannot say, and never the project's. The commit is pushed to the branch it came from,
 never forced; the command prints one line naming the commit by git's abbreviation and the branch,
 and exits 0.
+
+A build that is not green leaves the branch alone: a red check, a green check that changed
+nothing, a run that was capped and one that ended in an error are each an error, exit 1, one line
+on stderr naming the record and how the run ended, the record in the store as any record is. What
+such a build leaves in the repository is a note of the factory's under `refs/notes/factory` on the
+head the build was asked of, one line naming the record and how it ended, pushed and never a
+branch or a tag of it; a second failure on the same head is added to it, both kept, and a green
+build leaves no note. A branch that moved while the build ran keeps the mover's commit: the build
+is refused, one line on stderr names the record and says the branch moved, and the command exits
+1, the push never forced.
 """
 
 from __future__ import annotations
@@ -44,10 +54,6 @@ import builder
 import instance
 
 
-class GitFailed(RuntimeError):
-    """git ran and exited nonzero: the message carries git's own words."""
-
-
 def version() -> str:
     """The instance's own version: `git describe --tags --always --dirty` run where this file
     lives, or `unknown` when git cannot say. Never the project's."""
@@ -58,6 +64,7 @@ def version() -> str:
             capture_output=True,
             encoding="utf-8",
             errors="replace",
+            timeout=120,  # the timeout every other git call of the command has
             env=builder.git_env(),
         )
     except (OSError, subprocess.SubprocessError):
@@ -82,10 +89,11 @@ def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.Compl
 
 
 def _git(args: list[str], env: dict[str, str] | None = None) -> str:
-    """git as `_run`, its stdout returned; a nonzero exit is a GitFailed carrying its stderr."""
+    """git as `_run`, its stdout returned; a nonzero exit is a builder.GitError carrying its
+    stderr, the one name for a git that ran and refused."""
     done = _run(args, env=env)
     if done.returncode != 0:
-        raise GitFailed(done.stderr.strip() or f"git exited {done.returncode}")
+        raise builder.GitError(done.stderr.strip() or f"git exited {done.returncode}")
     return done.stdout
 
 
@@ -120,7 +128,7 @@ def _leave_note(clone: Path, head: str, line: str) -> None:
         note = f"{old.rstrip()}\n{line}\n" if old.strip() else f"{line}\n"
         _git(["-C", str(clone), "notes", "--ref=factory", "add", "-f", "-m", note, head], env=env)
         _git(["-C", str(clone), "push", "--quiet", "origin", f"{NOTE_REF}:{NOTE_REF}"], env=env)
-    except (GitFailed, OSError, subprocess.SubprocessError) as e:
+    except (builder.GitError, OSError, subprocess.SubprocessError) as e:
         # git's own words are several lines; what is said is one, as every refusal here is.
         print(f"{head}: the note cannot be pushed: {' '.join(str(e).split())}", file=sys.stderr)
 
@@ -155,11 +163,13 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     repository, branch = repository_path(argv[1].strip()), argv[2].strip()
     seed = argv[3].strip()  # the seed's path is read stripped, as the builder reads it
 
-    # The configuration is the instance's and read before anything of the build: its `work` is
-    # where the clone goes, made when the configuration is read, and a configuration without one
-    # is refused naming the file and the fault.
+    # The configuration is the instance's and read before anything of the build, `records` and
+    # `work` alike, so every fault of it is the command's own usage error and never something said
+    # in the builder's words. Its `work` is where the clone goes, made when the configuration is
+    # read; its `records` is not made here, the builder makes it when it takes the record.
     try:
         work = instance.work_dir()
+        instance.record_store()
     except (ValueError, OSError) as e:
         return usage_error(str(e))
 
@@ -175,13 +185,25 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         return usage_error(f"{repository}: no branch {branch}")
 
     # A build works in a directory of its own under `work`, removed when the command ends, whatever
-    # ended it, so the working directory holds nothing of a build that is over.
-    build_dir = Path(tempfile.mkdtemp(dir=work, prefix="build-"))
+    # ended it, so the working directory holds nothing of a build that is over. What earlier builds
+    # left under `work` -- a directory a run killed before it could remove its own -- is swept
+    # first, and what is not a build's directory is left alone. A `work` the command cannot make a
+    # build directory in is a usage error naming it, not a traceback.
+    try:
+        for stale in work.iterdir():
+            if stale.name.startswith("build-"):
+                if stale.is_dir() and not stale.is_symlink():
+                    shutil.rmtree(stale, ignore_errors=True)
+                else:
+                    stale.unlink(missing_ok=True)
+        build_dir = Path(tempfile.mkdtemp(dir=work, prefix="build-"))
+    except OSError as e:
+        return usage_error(f"{work}: the working directory cannot be used: {e}")
     try:
         clone = build_dir / "checkout"
         try:
             _git(["clone", "--quiet", "--branch", branch, "--single-branch", repository, str(clone)])
-        except (GitFailed, OSError, subprocess.SubprocessError) as e:
+        except (builder.GitError, OSError, subprocess.SubprocessError) as e:
             return usage_error(f"{repository}: git cannot clone {branch}: {e}")
 
         # The seed's note is the branch's commit, read as the builder reads it: a path the commit
@@ -201,7 +223,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         # found it, the parent of the commit and the commit a failure's note is left on.
         try:
             requested = _git(["-C", str(clone), "rev-parse", "HEAD"]).strip()
-        except (GitFailed, OSError, subprocess.SubprocessError) as e:
+        except (builder.GitError, OSError, subprocess.SubprocessError) as e:
             return usage_error(f"{repository}: git cannot read the branch's head: {e}")
 
         # The builder runs on the clone with the seed's path; the record is its own, in the store,
@@ -270,7 +292,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
             # Pushed to the branch it came from, never forced: a branch that moved meanwhile
             # refuses this push, and the command says that rather than overwrite the mover's work.
             _git(["-C", str(clone), "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}"], env=env)
-        except (GitFailed, OSError, subprocess.SubprocessError) as e:
+        except (builder.GitError, OSError, subprocess.SubprocessError) as e:
             moved = _branch_moved(repository, branch, requested)
             return refused("the branch moved" if moved else str(e))
         print(f"{short} {branch}")
