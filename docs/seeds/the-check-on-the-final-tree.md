@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: building
+status: done
 summary: A record's `check` is the last check the model chose to run, so a change after it would be graded as checked; the builder checks the tree the model leaves, and the record's check is that one.
 value: 3
 effort: S
