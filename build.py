@@ -101,6 +101,43 @@ def usage_error(reason: str = "") -> int:
     return 2
 
 
+NOTE_REF = "refs/notes/factory"  # where git keeps what the factory says about a commit
+
+
+def _leave_note(clone: Path, head: str, line: str) -> None:
+    """The factory's note on the head a failed build was asked of: one line of the factory's own
+    words under `refs/notes/factory`, added to the note a failure before it left, both kept, and
+    pushed to the repository, never a branch or a tag of it. A note git cannot push is one line on
+    stderr and no more: the build's own exit is what it was."""
+    env = builder.store_env()
+    try:
+        # The note the repository already holds, so a second failure adds to it rather than
+        # replacing it; a repository with none leaves nothing to read.
+        _run(["-C", str(clone), "fetch", "--quiet", "origin", f"{NOTE_REF}:{NOTE_REF}"], env=env)
+        shown = _run(["-C", str(clone), "notes", "--ref=factory", "show", head], env=env)
+        old = shown.stdout if shown.returncode == 0 else ""
+        note = f"{old.rstrip()}\n{line}\n" if old.strip() else f"{line}\n"
+        _git(["-C", str(clone), "notes", "--ref=factory", "add", "-f", "-m", note, head], env=env)
+        _git(["-C", str(clone), "push", "--quiet", "origin", f"{NOTE_REF}:{NOTE_REF}"], env=env)
+    except (GitFailed, OSError, subprocess.SubprocessError) as e:
+        print(f"{head}: the note cannot be pushed: {e}", file=sys.stderr)
+
+
+def _branch_moved(repository: str, branch: str, requested: str) -> bool:
+    """Whether the repository's branch now points somewhere other than the head the build was
+    asked of: the mover's commit is kept and the push refused rather than overwritten."""
+    done = _run(["ls-remote", "--heads", repository, f"refs/heads/{branch}"])
+    if done.returncode != 0:
+        return False
+    for line in done.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        sha, ref = line.split("\t", 1)
+        if ref.strip() == f"refs/heads/{branch}" and sha.strip() != requested:
+            return True
+    return False
+
+
 def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     if len(argv) != 4 or not all(arg.strip() for arg in argv[1:4]):
         return usage_error("three arguments are needed: <repository> <branch> <seed>")
@@ -148,31 +185,63 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         if not (clone / "check.Dockerfile").is_file():
             return usage_error(f"the project has no check.Dockerfile: {branch}")
 
+        # The head the build was asked of: the clone's HEAD is the branch's head as the command
+        # found it, the parent of the commit and the commit a failure's note is left on.
+        try:
+            requested = _git(["-C", str(clone), "rev-parse", "HEAD"]).strip()
+        except (GitFailed, OSError, subprocess.SubprocessError) as e:
+            return usage_error(f"{repository}: git cannot read the branch's head: {e}")
+
         # The builder runs on the clone with the seed's path; the record is its own, in the store,
         # with the clone as its checkout and the branch's head as its head. Its first printed line
-        # is the record's path, and the command prints it first.
-        captured = io.StringIO()
-        with contextlib.redirect_stdout(captured):
+        # is the record's path, and the command prints it first. Its stderr is the factory's to
+        # read, captured here so the command can say its own one line of it.
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = builder.main(["builder.py", str(clone), seed], model=model, sandbox=sandbox)
-        printed = captured.getvalue().splitlines()
+        printed = out.getvalue().splitlines()
         record = Path(printed[0]) if printed else None
-        if record is not None:
-            print(record)
-        if code != 0 or record is None:
+        if record is None:  # the builder refused before a record: its line and exit are the command's
+            if err.getvalue():
+                print(err.getvalue(), end="", file=sys.stderr)
             return code or 1
+        print(record)
 
-        # A green check that changed something becomes one commit; a build that is not green is the
-        # goal after this one and leaves the branch alone.
-        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        # How the run ended, from the record's own numbers and never the model's report: a red
+        # check, a green check that changed nothing, a run that was capped and one that ended in an
+        # error are each an error, and never a commit that might be read as work.
+        try:
+            numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            numbers = {}
+        said = err.getvalue().strip().splitlines()
+        reason = said[0].strip() if said else ""
+        stopped, check = numbers.get("stopped"), numbers.get("check")
+
+        def refused(how: str) -> int:
+            """A build that leaves the branch alone: the record named on stderr, the factory's note
+            on the head it was asked of, and exit 1."""
+            line = f"{record}: {how}"
+            print(line, file=sys.stderr)
+            _leave_note(clone, requested, line)
+            return 1
+
+        if stopped == "cap":
+            return refused("the run was capped")
+        if stopped == "error":
+            return refused("the run ended in an error")
+        if code != 0:  # the store would not take the record: nothing is committed or pushed
+            return refused(reason or "the store would not take the record")
+        if check != "green":
+            return refused("the check is red" if check == "red" else "the check did not run")
+
+        # A green check that changed nothing is an error too: nothing of the model's to answer with.
         try:
             changed = builder.dirty_paths(clone)
         except (builder.GitError, OSError, subprocess.SubprocessError) as e:
-            print(f"{record}: {e}", file=sys.stderr)
-            return 1
-        if numbers.get("check") != "green":
-            return 1
-        if not changed:  # green and nothing to commit: nothing of the model's to answer with
-            return 0
+            return refused(str(e))
+        if not changed:
+            return refused("the check is green and nothing changed")
 
         # The commit is the factory's: the branch's head as the command found it is its parent and
         # the diff what the model left in the clone. The message is the seed's name, a blank line,
@@ -185,11 +254,11 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
             _git(["-C", str(clone), "commit", "-q", "-m", message], env=env)
             short = _git(["-C", str(clone), "rev-parse", "--short", "HEAD"], env=env).strip()
             # Pushed to the branch it came from, never forced: a branch that moved meanwhile
-            # refuses this push, and the command reports that rather than overwrite it.
+            # refuses this push, and the command says that rather than overwrite the mover's work.
             _git(["-C", str(clone), "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}"], env=env)
         except (GitFailed, OSError, subprocess.SubprocessError) as e:
-            print(f"{record}: {e}", file=sys.stderr)
-            return 1
+            moved = _branch_moved(repository, branch, requested)
+            return refused("the branch moved" if moved else str(e))
         print(f"{short} {branch}")
         return 0
     finally:
