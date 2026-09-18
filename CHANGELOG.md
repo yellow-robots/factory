@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.14: a build asked through git
+
+2026-09-18
+
+The factory works as a deployment that is sent a seed of a project: `build.py` takes a repository, a branch and a seed's path, and answers with one commit pushed to that branch, or leaves the branch alone and a note on the head it was asked of. A build's record no longer lives in the project it built: it is the factory's log of its own work, kept in a store outside every checkout that the instance's configuration names, which the builder writes, searches for the key's value and commits itself. This repository is the first such project and no exception: seven of the version's seventeen builds were asked for through the command itself, the first the factory was ever sent through git.
+
+- A build's record is the factory's and lives in its store, a git repository outside every project that the instance's configuration names: the builder compresses the wire, searches every file of the record for the key's value, refusing to commit one it cannot read through, and commits the record itself, one commit each; the 146 records this repository tracked were carried into the store and left its tree, and the gate asks nothing of a record, checking only that a build's trailer names a run in the builder's shape.
+- `build.py <repository> <branch> <seed>`: the request is a pushed branch holding a seed at building with its tests red, and the answer is one commit of the factory's pushed to it, never forced, its trailer naming the instance's version and the run. A build that is not green, a record the store would not take and a branch that moved meanwhile leave the branch alone and write the factory's note on the head the build was asked of, `refs/notes/factory`, which is where git keeps what is said about a commit without changing it. The instance is a checkout of the factory's code with a configuration of its own, `records` and `work`, and a configuration a run cannot use is refused before the key is read.
+- A record's check is the tree the model left: when the model wrote after its last check, the builder checks once more, outside the model's cap, so what a record says was tested is what was left. The gate reads the vault as git tracks it, so the owner's scratchpad inside `docs/` bothers nothing, and the table of records reads the store without importing the model stack.
+
 ## v0.13: every build on the list
 
 2026-09-17
