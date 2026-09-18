@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: done
+status: building
 summary: The gate reads every `.md` under `docs/` from the filesystem, so a note git ignores refuses `check` and with it every release; the gate reads the vault as git tracks it.
 value: 3
 effort: S
@@ -21,3 +21,5 @@ The gate reads the vault as git tracks it: a path git ignores is no note, for th
 The gate reads the vault as git tracks it. A path git ignores is no note and no part of the vault: `check` passes it over for its frontmatter, for its type, for its fields and for the wikilinks it holds, and a wikilink of a note's that names an ignored path resolves to nothing, which is the problem it already is. A path git tracks is read as it is now, and so is one nobody has committed yet, which git does not ignore: only what git is told to ignore is passed over.
 
 What git ignores is asked of git once for the whole vault, beside `_wire_problems`'s own reading, and not by reading `.gitignore`: `git check-ignore` or the list `git ls-files` gives of what is tracked and what is untracked and not ignored answers for the notes, for the wikilink pass and for the base alike. A directory that is no git checkout, or a git that cannot answer, leaves the vault read whole as it is today, so a copy of the vault is checked and nothing is passed over for want of git.
+
+From the third review, reproduced by the attended agent on 2026-09-18: git's answer about what is ignored is taken only when it is about this directory. A copy of the vault inside a repository that ignores it had git answer about that repository, which tracks nothing of the copy, so every note was passed over and `check` went silent on a vault with no frontmatter anywhere; the top level git names must be the directory the gate was given, as the builder asks of a checkout, and anything else is a git that cannot answer, which reads the vault whole. What git ignores is asked once for the whole vault, in `check` and in `release` alike, and no path the gate reads a note by is exempt: the base whose properties it checks, a template a note's type names and the version note a spec must have are each no part of the vault when git ignores them.

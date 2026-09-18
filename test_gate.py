@@ -389,6 +389,59 @@ class CheckTest(GateTest):
         self.assertEqual(code, 1, out)
         self.assertIn("docs/scratchpad/notes.md", out)
 
+    def test_a_vault_git_answers_about_somebody_else_is_read_whole(self):
+        """seed: the-vault-as-git-tracks-it. From the review: a copy of the vault inside a repository
+        that ignores it had git answer about that repository, which tracks nothing of the copy, so
+        every note was passed over and check went silent on a vault with no frontmatter anywhere.
+        git's answer is taken only when it is about this directory, its own top level, as the
+        builder asks of a checkout; otherwise the vault is read whole."""
+        outer = Path(self.tmp.name) / "outer"
+        outer.mkdir()
+        git(outer, "init", "-q")
+        (outer / ".gitignore").write_text("copy/\n")
+        (outer / "seed.txt").write_text("x\n")
+        git(outer, "add", "-A")
+        git(outer, "commit", "-q", "-m", "one")
+        copy = outer / "copy"
+        shutil.copytree(self.root, copy, ignore=shutil.ignore_patterns(".git"))
+        write(copy, "docs/scratchpad/notes.md", "no frontmatter at all\n")
+        listed = git(copy, "ls-files", "--cached", "--others", "--exclude-standard")
+        self.assertEqual(listed.split(), [])  # git answers, about the enclosing repository
+        code, out, err = run(copy, "check")
+        self.assertEqual(code, 1, out)
+        self.assertIn("docs/scratchpad/notes.md", out)
+
+    def test_the_vault_is_asked_of_git_once(self):
+        """seed: the-vault-as-git-tracks-it. From the review: what git ignores is asked once for the
+        whole vault, not once a note, which a check of this repository's own vault would pay for
+        fifty times over; a release asks once too."""
+        calls = []
+        real = subprocess.run
+
+        def counting(argv, *args, **kwargs):
+            if isinstance(argv, (list, tuple)) and "ls-files" in argv:
+                calls.append(list(argv))
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", counting):
+            self.assertEqual(self.check(), (0, "", ""))
+        self.assertEqual(len(calls), 1, calls)
+
+    def test_an_ignored_base_a_template_and_a_version_note_are_no_part_of_the_vault(self):
+        """seed: the-vault-as-git-tracks-it. A path git ignores is no note wherever the gate reads
+        one: the base it checks the properties of, a template a note's type names, and the version
+        note a spec must have."""
+        self.edit(".gitignore", "__pycache__/\ndocs/templates/\n")
+        self.commit("the templates ignored")
+        self.assert_problem("docs/seeds/a.md", "template")
+        self.edit(".gitignore", "__pycache__/\ndocs/backlog.base\n")
+        self.commit("the base ignored")
+        out = self.assert_problem("backlog.base")  # a wikilink to a base nobody tracks
+        self.assertNotIn("is not a field", out)
+        self.edit(".gitignore", "__pycache__/\ndocs/versions/v0.2.md\n")
+        self.commit("the version note ignored")
+        self.assert_problem("docs/seeds/b.md", "v0.2")
+
     def test_the_backlog_check_reads_what_obsidian_writes(self):
         """seed: base-against-the-template. From the review: a nested filter group names no
         property but its items do, note. is a prefix of a property, a hyphen in an expression is
