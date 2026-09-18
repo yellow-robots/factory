@@ -1873,5 +1873,70 @@ class RepositoryTest(unittest.TestCase):
         self.assertNotIn("runs", ignored)
 
 
+class KeysBase(unittest.TestCase):
+    """An instance whose configuration names two roles, each with a model and a key of its own."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.checkout = self.base / "checkout"
+        self.checkout.mkdir()
+        (self.checkout / "f.py").write_text("x = 1\n")
+        git(self.checkout, "init", "-q")
+        git(self.checkout, "add", "f.py")
+        git(self.checkout, "commit", "-q", "-m", "start")
+        self.runs = self.base / "records"
+        self.deepseek = self.base / "deepseek.key"
+        self.deepseek.write_text("DEEPSEEK_API_KEY=builders-own-key\n")
+        self.glm = self.base / "glm.key"
+        self.glm.write_text("GLM_API_KEY=reviewers-own-key\n")
+        self.instance = self.base / "instance.toml"
+        self.configure()
+        self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(self.instance)}))
+
+    def configure(self, model: str = "deepseek-flash", roles: str | None = None) -> None:
+        """The instance's configuration: its store, its working directory, and the roles it runs."""
+        if roles is None:
+            roles = (
+                "\n[roles.builder]\n"
+                f'model = "{model}"\n'
+                f'key = "{self.deepseek}"\n'
+                "\n[roles.reviewer]\n"
+                'model = "glm-5.3-flash"\n'
+                f'key = "{self.glm}"\n'
+            )
+        self.instance.write_text(f'records = "{self.runs}"\nwork = "{self.base / "work"}"\n' + roles)
+
+    def records(self) -> list[Path]:
+        """The store's records in stamp order; the store's own `.git` is none."""
+        if not self.runs.exists():
+            return []
+        return sorted(p for p in self.runs.iterdir() if p.is_dir() and p.name != ".git")
+
+    def build(self):
+        """One green run, its exit code and what it said on stderr."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                model=scripted([call("final_result", REPORT, "c1")]), sandbox=FakeSandbox([]))  # fmt: skip
+        return code, err.getvalue()
+
+    def refused(self):
+        """A run that gets no further than its configuration: its exit code and its one line."""
+        called = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[ToolCallPart("final_result", REPORT, tool_call_id="c")])
+
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = builder.main(["builder.py", str(self.checkout), "goal"],
+                                model=FunctionModel(model), sandbox=FakeSandbox([]))  # fmt: skip
+        self.assertEqual(called, [], "no model is called before the configuration is usable")
+        self.assertFalse(self.runs.exists(), "and no record is made")
+        return code, err.getvalue()
+
 if __name__ == "__main__":
     unittest.main()

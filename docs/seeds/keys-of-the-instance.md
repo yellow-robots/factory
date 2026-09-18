@@ -1,11 +1,11 @@
 ---
 created: 2026-09-19
 type: seed
-status: open
-summary: The leak scan searches a record for one key's value and the key's path is a constant of the program, so a run made on a second provider has its record searched for the wrong key; the instance holds keys, a role names the one it uses, and every one of them is scanned.
+status: building
+summary: The leak scan searches a record for one key's value and the key's path is a constant of the program, so a run made on a second provider has its record searched for the wrong key; the instance's configuration describes the roles it runs, each with its model and its key, and every key it names is searched for.
 value: 5
 effort: M
-version:
+version: v0.15
 ---
 
 ## Evidence
@@ -16,8 +16,12 @@ version:
 
 The instance's configuration already names `records` and `work`, read by `instance.py`, which imports nothing of the builder's. It is where a key's place belongs too: the key's path has been a constant since v0.1, which installation-and-surfaces already reads as a fault of the surface rather than of the program.
 
-## Idea
+## Goal
 
-The instance's configuration names its keys, beside `records` and `work`, and `instance.py` reads them as it reads the rest. A role names the key it uses and the model it runs on, so the model and its provider stop being constants of the program and become properties of the run — which is what a reviewer stronger than the builder needs, and what a set run comparing two models needs after it.
+The instance's configuration describes the roles the instance runs. Beside `records` and `work` it holds a `roles` table, one entry per role, each naming the `model` that role runs on and the `key` file it reads; a role may also name a `base_url`, for a model served somewhere other than the provider the factory uses by default. A role is a name: `builder` is the one that exists, and a configuration may hold others.
 
-The leak scan searches a record for **every key the instance holds**, not the key the run was given, so a record that carries any of them is refused by the same wall, named the same way, and the run that made it is the one that fails. A key file that cannot be read, or that holds nothing, is a usage error naming that key and refused before a model is called, as the one key already is.
+`instance.py` reads the roles as it reads the rest, importing nothing of the builder's. It answers with a role's model, the path of its key and its base URL, and with the path of every key the configuration names, each once; it never reads a key file, because a key's value is the caller's to read and should live in as few places as it can.
+
+A `roles` that is missing, is not a table, or holds an entry that is not a table, that has no `model` or no `key`, or whose `model` is not a string or whose `key` is not a string or not an absolute path, is a ValueError naming the configuration's file and which fault, in the shape `record_store` and `work_dir` already use. Asking for a role the configuration does not hold is the same kind of error, naming the configuration and the role.
+
+Nothing of `builder.py` changes in this goal: the builder still reads its key from its own constant, and what searches a record still searches for one key. This goal is the configuration's reader alone.
