@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: done
+status: building
 summary: A build's record is the factory's log of its own work, and the builder already writes it beside itself and never in the checkout; the attended agent copies it into the project's tree, where the gate looks for it and where code the model has `check` run can read it. The record stays in a store of the factory's and the project keeps the trailer.
 value: 5
 effort: M
@@ -37,3 +37,5 @@ From the same review: three configurations a run reads as usable and then falls 
 From the same review, the last of it: the search for the key does not fail open. Anything the search cannot read through, a file it cannot open, a `.gz` that ends before its stream does, or a directory it will not walk into, a link among them, refuses the commit as a file holding the key does, its path and the reason said and never the value; a `.gz` that is not gzip at all is searched as the bytes it is, whatever the case of its name. The instance's configuration is read by a module of its own, `instance.py`, holding `instance_config` and `record_store` and importing nothing of the builder's, which `builder.py` and `runs.py` both use, so printing a table of numbers does not import the model stack, two seconds and fifteen hundred modules of it. A record's files are named as they are, the compressed wire among them and no `runs/<utc-stamp>` beside the program, in the module docstrings the store's builds rewrote, and the sentences those builds left broken across lines read as sentences again.
 
 The docstrings and comments of `gate.py`, `builder.py`, `runs.py` and `evals.py` that say where a record is kept or looked up say what is now true. The tests are the attended agent's and are not changed.
+
+From the third review, reproduced by the attended agent on 2026-09-18: the shape the gate reads for a run is the shape the builder writes, which is the stamp and, when a second run shares its UTC second, a dash and that run's number, `<stamp>-<n>`; the gate read such a stamp as naming no run, so a build the command had pushed would be refused at the release. The digits stay ASCII's, and a dash with nothing after it, with something that is not a number, or with a second dash, names no run.

@@ -801,6 +801,24 @@ class ReleaseTest(GateTest):
         self.commit("a file named like the run")
         self.assertEqual(self.release(), (0, "", ""))
 
+    def test_the_stamp_of_a_second_run_in_one_second_is_a_run(self):
+        """seed: records-outside-the-project. From the review: two runs that share a UTC second leave
+        `<stamp>` and `<stamp>-2`, the builder's own names for them, and the gate read the second as
+        naming no run, so a build the command had pushed would be refused at release. The shape the
+        gate reads is the shape the builder writes, the stamp and, when a second shares its second,
+        a dash and the run's number; the digits stay ASCII's."""
+        self.ready()
+        self.edit("feature.py", "X = 1\n")
+        second = self.build(f"Built-By: factory at 1234567, run {STAMP}-2\nCo-Authored-By: t <t@t>")
+        self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}-2")
+        self.assertEqual(self.release(), (0, "", ""))
+        git(self.root, "tag", "-d", "v0.2")
+        (self.root / "CHANGELOG.md").unlink()
+        for stamp in (f"{STAMP}-", f"{STAMP}-x", f"{STAMP}-2-3", f"{STAMP}-\u0662"):
+            self.build(f"Built-By: factory at 1234567, run {stamp}\nCo-Authored-By: t <t@t>", amend=True)
+            self.assert_refused_with("docs/versions/v0.2.md:", "names no run")
+
+
     def test_release_reads_only_the_builds_since_the_previous_tag(self):
         """seed: built-by-trailer. A build before the previous tag, the highest `v<major>.<minor>` by
         number, v0.10 above v0.9, is not read, whatever its `Built-By`, so the four released build
