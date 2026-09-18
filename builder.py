@@ -964,8 +964,15 @@ def record_store(checkout: Path | None = None) -> Path:
 
 def store_env() -> dict[str, str]:
     """The environment the store's git runs in: `git_env`'s, with the factory's own author and
-    committer identity, so committing a record needs nothing of the host's."""
+    committer identity, so committing a record needs nothing of the host's, and with the host's
+    system and global configuration left unread and no hook of the store's run, so the store's
+    git is the factory's alone."""
     env = git_env()
+    env["GIT_CONFIG_NOSYSTEM"] = "1"  # the system file is not read
+    env["GIT_CONFIG_GLOBAL"] = os.devnull  # nor the global one
+    env["GIT_CONFIG_COUNT"] = "1"  # nor the store's own hooks: none runs
+    env["GIT_CONFIG_KEY_0"] = "core.hooksPath"
+    env["GIT_CONFIG_VALUE_0"] = os.devnull
     env["GIT_AUTHOR_NAME"] = env["GIT_COMMITTER_NAME"] = "factory"
     env["GIT_AUTHOR_EMAIL"] = env["GIT_COMMITTER_EMAIL"] = "factory@localhost"
     return env
@@ -985,6 +992,16 @@ def _store_git(store: Path, *args: str) -> str:
     if done.returncode != 0:
         raise GitError(done.stderr.strip() or f"git exited {done.returncode}")
     return done.stdout
+
+
+def _unstage(store: Path, name: str) -> None:
+    """Take the record's paths out of the store's index again, so a commit the store refused
+    leaves nothing of the record staged and the store as the run found it. Best effort: the
+    refusal is the error the caller reports, and an index git will not touch is left alone."""
+    try:
+        _store_git(store, "rm", "-r", "--cached", "-q", "--", name)
+    except (GitError, OSError, subprocess.SubprocessError):
+        pass
 
 
 def compress_wire(run_dir: Path) -> None:
@@ -1045,8 +1062,14 @@ def commit_record(store: Path, run_dir: Path, key: str | None = None) -> None:
         top = ""
     if not top or Path(top).resolve() != store.resolve():
         _store_git(store, "init", "-q")
-    _store_git(store, "add", "--", run_dir.name)
-    _store_git(store, "commit", "-q", "-m", run_dir.name, "--", run_dir.name)
+    try:
+        # -f: an ignore file of the host's or of the store's does not keep any file of the record
+        # out, so the commit holds every file of the record.
+        _store_git(store, "add", "-f", "--", run_dir.name)
+        _store_git(store, "commit", "-q", "-m", run_dir.name, "--", run_dir.name)
+    except (GitError, OSError, subprocess.SubprocessError):
+        _unstage(store, run_dir.name)  # a refused commit leaves nothing of the record staged
+        raise
 
 
 def main(argv: list[str], model: Any = None, sandbox: Any = None,
@@ -1197,6 +1220,13 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     except LeakedKey as e:
         print(numbers_line)
         print(f"{e}: the record holds the key", file=sys.stderr)  # never the value
+        return 1
+    except (GitError, OSError, subprocess.SubprocessError) as e:
+        # A commit the store refuses is a run reported, never a traceback: the record's path was
+        # the first line and the numbers line follows it, one line on stderr names the record and
+        # git's own words, and the record stays on disk with nothing of it staged.
+        print(numbers_line)
+        print(f"{run_dir}: {' '.join(str(e).split())}", file=sys.stderr)
         return 1
     print(numbers_line)
     if detail:
