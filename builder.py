@@ -10,8 +10,8 @@ checkout mounted read-only, so code the model writes never runs on the host and 
 key. The loop is pydantic-ai, pinned; the provider is DeepSeek's chat completions API, the key
 read from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves a record
 under the store the instance's configuration names, outside the checkout, with goal.txt,
-wire.jsonl (every HTTP attempt as it happened), messages.json (the library's messages),
-check-<n>.log per check, diff.patch (what the run left in the checkout; absent when it left nothing),
+wire.jsonl.gz (every HTTP attempt as it happened, compressed once the run ends), messages.json
+(the library's messages), check-<n>.log per check, diff.patch (what the run left in the checkout; absent when it left nothing),
 report.json, response.md (the report rendered) and numbers.json.
 """
 
@@ -27,10 +27,11 @@ import re
 import subprocess
 import sys
 import time
-import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+
+from instance import instance_config, record_store
 
 # Before the import: the library greets stderr once per process unless this is set.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -920,53 +921,6 @@ def read_seed(checkout: Path, arg: str) -> tuple[str, str | None]:
     return f"seed: {name}\n{text}", name
 
 
-def instance_config() -> Path:
-    """The instance's configuration file: the one the environment's `FACTORY_INSTANCE` names, or
-    `.config/factory/instance.toml` under the home of whoever runs the program. Found when the
-    program runs, never when it is imported. A `FACTORY_INSTANCE` that is set and empty names no
-    file and is a ValueError: only an unset variable falls back to the home's configuration."""
-    if "FACTORY_INSTANCE" in os.environ:
-        named = os.environ["FACTORY_INSTANCE"]
-        if not named:
-            raise ValueError("FACTORY_INSTANCE: set and empty names no instance configuration")
-        return Path(named)
-    return Path.home() / ".config" / "factory" / "instance.toml"
-
-
-def record_store(checkout: Path | None = None) -> Path:
-    """The store the instance's configuration names, its `records`, as an absolute path. A
-    configuration that is missing, is not TOML, has no `records`, or names one that is not a
-    string or not an absolute path is a usage error naming the configuration's file and which
-    fault; with a checkout, a store that is inside it or holds it is too. Nothing is made."""
-    config = instance_config()
-    try:
-        text = config.read_text(encoding="utf-8")
-    except UnicodeDecodeError:  # bytes that are not UTF-8 are not TOML either
-        raise ValueError(f"{config}: the instance configuration is not TOML")
-    except OSError:
-        raise ValueError(f"{config}: the instance configuration cannot be read")
-    try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        raise ValueError(f"{config}: the instance configuration is not TOML")
-    records = data.get("records")
-    if records is None:
-        raise ValueError(f"{config}: the instance configuration has no records")
-    if not isinstance(records, str):
-        raise ValueError(f"{config}: records is not a string: {records!r}")
-    store = Path(records)
-    if not store.is_absolute():
-        raise ValueError(f"{config}: records is not an absolute path: {records}")
-    store = store.resolve()
-    if checkout is not None:
-        checkout = checkout.resolve()
-        if store == checkout or checkout in store.parents:
-            raise ValueError(f"{config}: records {records} is inside the checkout")
-        if store in checkout.parents:
-            raise ValueError(f"{config}: records {records} holds the checkout")
-    return store
-
-
 def store_env() -> dict[str, str]:
     """The environment the store's git runs in: `git_env`'s, with the factory's own author and
     committer identity, so committing a record needs nothing of the host's, and with the host's
@@ -1033,24 +987,55 @@ def read_key() -> str:
     return key
 
 
+def _record_files(run_dir: Path) -> list[Path]:
+    """Every file of the record, in name order, the directories walked first. A `.gz` file is one
+    of them whatever the case of its name. A link, or a directory the walk cannot list, is not a
+    file the search can leave unread: it refuses as a file holding the key does, naming the path
+    and the reason."""
+    files: list[Path] = []
+
+    def walk(directory: Path) -> None:
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError as e:
+            raise LeakedKey(f"{directory}: the record cannot be searched: {e}")
+        for entry in entries:
+            if entry.is_symlink():
+                raise LeakedKey(f"{entry}: the record cannot be searched: a link")
+            if entry.is_dir():
+                walk(entry)
+            elif entry.is_file():
+                files.append(entry)
+
+    walk(run_dir)
+    return files
+
+
+def _read_through(path: Path) -> bytes:
+    """The bytes of one record file: a `.gz`, whatever the case of its name, is read through its
+    compression; one that is not gzip at all -- its magic is not gzip's -- is read as the bytes it
+    is. A gzip stream that ends before it should, or a file that cannot be read, is an OSError."""
+    if path.name.lower().endswith(".gz"):
+        try:
+            return gzip.open(path, "rb").read()
+        except gzip.BadGzipFile:  # not what its name says: the bytes it is
+            return path.read_bytes()
+        except EOFError as e:  # a gzip stream that ends before it should
+            raise OSError(f"the gzip stream ends before it should: {e}") from e
+    return path.read_bytes()
+
+
 def leaked_file(run_dir: Path, key: str) -> Path | None:
     """The first file of the record whose bytes hold the key, a `.gz` file read through its
     compression; a `.gz` that is not gzip is searched as the bytes it is. None when no file holds
-    it."""
+    it. A file the search cannot read through, or a link or a directory it will not walk into,
+    raises a LeakedKey naming the path and the reason: the search never fails open."""
     needle = key.encode()
-    for path in sorted(run_dir.rglob("*")):
-        if not path.is_file():
-            continue
+    for path in _record_files(run_dir):
         try:
-            if path.suffix == ".gz":
-                try:
-                    data = gzip.open(path, "rb").read()
-                except (OSError, EOFError):  # not what its name says: the bytes it is
-                    data = path.read_bytes()
-            else:
-                data = path.read_bytes()
-        except OSError:  # a file that cannot be read is not searched
-            continue
+            data = _read_through(path)
+        except OSError as e:  # a file that cannot be read refuses the commit, never a skip
+            raise LeakedKey(f"{path}: the record cannot be searched: {e}")
         if needle in data:
             return path
     return None
@@ -1061,8 +1046,10 @@ def commit_record(store: Path, run_dir: Path, key: str | None = None) -> None:
     searched and committed. A store that is not yet a git repository is made one now; the whole
     record is searched for the key's value -- a `.gz` file read through its compression, a `.gz`
     that is not gzip read as the bytes it is -- and a record that holds it is not committed: a
-    LeakedKey names the file, never the value. The record and nothing else enters the commit
-    whatever else the store holds uncommitted, the message the stamp, the author and committer the
+    LeakedKey names the file, never the value. The search never fails open: a file it cannot read
+    through, a `.gz` that ends before its stream does, and a link or a directory it will not walk
+    into refuse the commit the same way. The record and nothing else enters the commit whatever
+    else the store holds uncommitted, the message the stamp, the author and committer the
     factory's."""
     if key is None:
         key = read_key()

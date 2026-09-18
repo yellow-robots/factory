@@ -5,12 +5,10 @@
 
 `runs` is the records directory: given one, the table reads it; given none, it reads the store the
 instance's configuration names and, when there is none, is a usage error that names the
-configuration's file, exit 2. Every
-subdirectory is one record, the store's own `.git` excepted, and becomes one row in stamp order;
-each value comes from the record's
-`numbers.json` as it is there, `goal` is the first line of `goal.txt` with tabs as spaces, a key
-the record lacks is an empty cell, and `head` reads `head` and, before v0.5, `world_head`. Two
-cells are derived when
+configuration's file, exit 2. Every subdirectory is one record, the store's own `.git` excepted,
+and becomes one row in stamp order; each value comes from the record's `numbers.json` as it is
+there, `goal` is the first line of `goal.txt` with tabs as spaces, a key the record lacks is an
+empty cell, and `head` reads `head` and, before v0.5, `world_head`. Two cells are derived when
 the table is printed and stored nowhere: `input_per_request`, `input_tokens` over `requests`, and
 `tool_errors`, right after `checks`, a record's tool returns in `messages.json` that start `error:`
 and are not a wall's refusal, empty for a record without messages to read. A record without
@@ -25,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import builder
+import instance
 
 COLUMNS = (
     "stamp", "head", "stopped", "check", "requests", "tool_calls", "lists", "reads", "writes", "edits",
@@ -131,7 +129,7 @@ def main(argv: list[str], runs: Any = None) -> int:
         base = Path(runs)
     else:
         try:  # no directory given: the store the instance's configuration names
-            base = builder.record_store()
+            base = instance.record_store()
         except (ValueError, OSError) as e:
             return usage_error(str(e))
     # A record is a directory at the store's root; the store's own .git is not one.
