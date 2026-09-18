@@ -12,6 +12,7 @@ when there is none; usage on stderr and exit 2 for a missing or unknown command.
 import contextlib
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -348,6 +349,45 @@ class CheckTest(GateTest):
         self.edit("runs/20260916T000000Z/numbers.json", "{}\n")
         self.commit("a record in the project, its wire uncompressed")
         self.assertEqual(self.check(), (0, "", ""))
+
+    def test_a_note_git_ignores_is_no_note(self):
+        """seed: the-vault-as-git-tracks-it. The gate reads the vault as git tracks it: a path git
+        ignores is no note, so a scratchpad inside the vault refuses nothing, neither for its
+        frontmatter nor for a wikilink it holds, and a wikilink of a note's that names an ignored
+        path resolves to nothing and is a problem. A note git tracks is checked as before, and so
+        is one nobody has committed yet, which git does not ignore."""
+        self.edit(".gitignore", "__pycache__/\ndocs/scratchpad/\n")
+        self.edit("docs/scratchpad/notes.md", "no frontmatter at all, and [[a link to nowhere]].\n")
+        self.commit("the owner's scratchpad, which git ignores")
+        self.assertEqual(git(self.root, "status", "--porcelain"), "")
+        self.assertEqual(self.check(), (0, "", ""))
+
+        self.edit("docs/seeds/a.md", SEED_A.replace("see [[b]]", "see [[b]] and [[scratchpad/notes]]"))
+        self.assert_problem("docs/seeds/a.md", "scratchpad/notes")
+        self.edit("docs/seeds/a.md", SEED_A)
+        self.assertEqual(self.check(), (0, "", ""))
+
+        git(self.root, "add", "-f", "docs/scratchpad/notes.md")
+        self.commit("the scratchpad note tracked after all")
+        self.assert_problem("docs/scratchpad/notes.md")
+
+        git(self.root, "rm", "-q", "--cached", "docs/scratchpad/notes.md")
+        self.commit("ignored again")
+        self.assertEqual(self.check(), (0, "", ""))
+
+        self.edit("docs/seeds/c.md", "no frontmatter and nobody has committed it\n")
+        self.assert_problem("docs/seeds/c.md")  # untracked is not ignored
+
+    def test_a_vault_that_is_not_a_git_checkout_is_read_whole(self):
+        """seed: the-vault-as-git-tracks-it. Asking git what it tracks is how the vault is read where
+        git can answer: a directory that is no git checkout is read whole as it was, so the notes
+        of a copy of the vault are checked and nothing is passed over for want of git."""
+        copy = Path(self.tmp.name) / "copy"
+        shutil.copytree(self.root, copy, ignore=shutil.ignore_patterns(".git"))
+        write(copy, "docs/scratchpad/notes.md", "no frontmatter at all\n")
+        code, out, err = run(copy, "check")
+        self.assertEqual(code, 1, out)
+        self.assertIn("docs/scratchpad/notes.md", out)
 
     def test_the_backlog_check_reads_what_obsidian_writes(self):
         """seed: base-against-the-template. From the review: a nested filter group names no
