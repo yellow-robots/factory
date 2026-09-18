@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: done
+status: building
 summary: A build is asked for by the attended agent calling a script on a worktree of its own making, and every step from the model's return to the branch is the attended agent's hand and scratch; the factory takes a repository, a branch and a seed's path and answers with a commit pushed to that branch, so it builds a project it is sent, its own among them.
 value: 5
 effort: M
@@ -37,3 +37,7 @@ What such a build leaves in the repository is a note git keeps beside the branch
 The push is never forced. A branch that moved while the build ran keeps the mover's commit: the build is refused, one line on stderr names the record and says the branch moved, and it exits 1.
 
 Nothing leaves the instance holding the key's value, and the wall that holds it is the record's: whatever the model changed is in the record's own `diff.patch`, so the builder's search refuses the record before the command reaches a commit, and a record the store would not take, for the key or for anything else, is a build that commits nothing and pushes nothing, exits 1 and says the record and the reason, never the value. There is no second search of the change in the command: it would be a wall nothing can reach. The note is one line of the factory's own words, naming the record and the reason, and holds nothing of the model's.
+
+From the third review, its findings reproduced by the attended agent on 2026-09-18: what a failed build says is one line of the factory's own words, and git's own words are several. The record is named by its stamp alone, never by the store's path, which is the instance's and no business of the project's, and the reason carries git's words on one line, as the builder's own refusal does. The note pushed into the repository is that same one line.
+
+A repository named by a relative path is read from the directory the command was run in: git ran from `/`, so such a repository was refused as one git cannot read, and a path of that name under the root would have been built in its place. A seed whose name is empty, `docs/seeds/.md`, is no seed and is refused before a model is called: the message would otherwise begin with the trailer, `git commit` would take it for the subject, and git would read no trailer at all, so the gate would refuse the build the command had just pushed. The seed's path is read stripped, as the builder reads it.

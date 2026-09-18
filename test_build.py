@@ -40,6 +40,13 @@ EDIT = ("edit", {"path": "f.py", "old": "x = 1", "new": "x = 2"})
 CHECK = ("check", {})
 
 
+def write(root: Path, rel: str, text: str) -> None:
+    """A file of the project, its directories made."""
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def git(cwd: Path, *args: str) -> str:
     out = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
                          cwd=cwd, capture_output=True, text=True, check=True)  # fmt: skip
@@ -193,7 +200,9 @@ class BuildTest(unittest.TestCase):
             return ModelResponse(parts=[ToolCallPart("final_result", REPORT, tool_call_id="c")])
 
         def refused(*words: str, **where) -> str:
-            code, _, err = self.build(FunctionModel(model), FakeSandbox([]), **where)
+            # No key file at all: every refusal here happens before the key is read.
+            with mock.patch.object(builder, "KEY_FILE", Path(self.tmp.name) / "no-key"):
+                code, _, err = self.build(FunctionModel(model), FakeSandbox([]), **where)
             self.assertEqual(code, 2, (where, err))
             for word in words:
                 self.assertIn(word, err, (where, err))
@@ -350,18 +359,117 @@ class BuildTest(unittest.TestCase):
             self.assertNotIn("not-a-key", git(self.origin, "log", "-p", "--format=%B", ref))
         self.assert_the_work_is_empty()
 
+    def test_a_failed_build_says_one_line_and_the_note_names_the_record_by_its_stamp(self):
+        """seed: build-from-a-pushed-branch. From the review: git's own words run to several lines, and
+        the reason of a failed build was all of them, on stderr and in the note pushed into the
+        project's repository. What a failed build says is one line of the factory's own words: the
+        record by its stamp, never the store's path, then the reason with git's words on one line.
+        Reproduced with a repository that refuses the push: a `refs/heads` git cannot write."""
+        blocked = self.origin / "refs" / "heads" / "build"
+        blocked.mkdir(parents=True, exist_ok=True)
+
+        def block(checkout, run_dir, n):
+            blocked.chmod(0o500)
+            return 0, "OK\n"
+
+        sandbox = FakeSandbox([])
+        sandbox.run = block
+        self.addCleanup(blocked.chmod, 0o700)
+        code, lines, err = self.build(scripted(EDIT, CHECK), sandbox)
+        blocked.chmod(0o700)
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), self.requested)
+        (record,) = self.records()
+        said = err.strip().splitlines()
+        self.assertEqual(len(said), 1, err)
+        self.assertTrue(said[0].startswith(f"{record.name}: "), said)
+        self.assertNotIn(str(self.store), said[0])
+        note = self.note(self.requested).strip().splitlines()
+        self.assertEqual(len(note), 1, note)
+        self.assertEqual(note[0], said[0])
+        self.assertNotIn(str(self.store), self.note(self.requested))
+        self.assert_the_work_is_empty()
+
+    def test_a_relative_repository_is_read_from_the_caller_s_directory(self):
+        """seed: build-from-a-pushed-branch. From the review: git ran from `/`, so a repository named
+        by a relative path was refused as one git cannot read, and a path of that name under the
+        root would have been built instead. A repository is read from the directory the command was
+        run in, as the caller means it."""
+        here = Path.cwd()
+        os.chdir(self.origin.parent)
+        self.addCleanup(os.chdir, here)
+        code, lines, err = self.build(scripted(EDIT, CHECK), FakeSandbox([(0, "OK\n")]),
+                                      repository=self.origin.name)  # fmt: skip
+        self.assertEqual(code, 0, err)
+        self.assertEqual(git(self.origin, "rev-parse", f"{self.head()}^").strip(), self.requested)
+        self.assert_the_work_is_empty()
+
+    def test_a_seed_whose_name_is_empty_is_no_seed(self):
+        """seed: build-from-a-pushed-branch. From the review: a seed named `.md` has an empty name, so
+        the message began with the trailer, `git commit` took it for the subject and git read no
+        trailer at all; the gate would then refuse the build it just pushed. A seed whose name is
+        empty is no seed, refused before the model is called; and the seed's path is read stripped,
+        as the builder reads it, so a space around it is no refusal."""
+        empty = "docs/seeds/.md"
+        write(self.project, empty, SEED)
+        git(self.project, "add", "-A")
+        git(self.project, "commit", "-q", "-m", "a seed with no name")
+        git(self.project, "push", "-q", "origin", BRANCH)
+        self.requested = self.head()
+        called = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[ToolCallPart("final_result", REPORT, tool_call_id="c")])
+
+        code, lines, err = self.build(FunctionModel(model), FakeSandbox([]), seed=empty)
+        self.assertEqual(code, 2, err)
+        self.assertIn(empty, err)
+        self.assertEqual(called, [])
+        self.assertEqual(self.records(), [])
+        self.assertEqual(self.head(), self.requested)
+
+        code, lines, err = self.build(scripted(EDIT, CHECK), FakeSandbox([(0, "OK\n")]), seed=f"  {SEED_PATH} ")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(git(self.origin, "log", "-1", "--format=%s", self.head()).strip(), "make-x-two")
+        self.assert_the_work_is_empty()
+
 
 class VersionTest(unittest.TestCase):
     """seed: build-from-a-pushed-branch. The version a trailer names is the instance's own, read
     from git where the program lives and nothing of the project's."""
 
+    def described(self) -> str:
+        """What git says of the instance, the checkout `build.py` lives in, or `unknown`."""
+        done = subprocess.run(["git", "describe", "--tags", "--always", "--dirty"],
+                              cwd=Path(build.__file__).resolve().parent, capture_output=True, text=True)  # fmt: skip
+        return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else "unknown"
+
     def test_the_version_is_what_git_describes_of_the_instance(self):
-        described = subprocess.run(["git", "describe", "--tags", "--always", "--dirty"],
-                                   cwd=Path(build.__file__).resolve().parent, capture_output=True, text=True)  # fmt: skip
-        expected = described.stdout.strip() if described.returncode == 0 and described.stdout.strip() else "unknown"
-        self.assertEqual(build.version(), expected)
+        self.assertEqual(build.version(), self.described())
         self.assertNotIn(" ", build.version())
         self.assertTrue(build.version())
+
+    def test_the_version_is_read_where_the_program_lives_and_not_where_it_is_run(self):
+        """seed: build-from-a-pushed-branch. From the review: the version must be the instance's own,
+        so it is read where `build.py` lives; run inside another repository with a tag of its own,
+        the version is still the instance's."""
+        with tempfile.TemporaryDirectory() as tmp:
+            other = Path(tmp) / "other"
+            other.mkdir()
+            subprocess.run(["git", "init", "-q", str(other)], check=True)
+            (other / "f.txt").write_text("x\n")
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"], cwd=other, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"],
+                           cwd=other, check=True)  # fmt: skip
+            subprocess.run(["git", "tag", "vOTHER"], cwd=other, check=True)
+            here = Path.cwd()
+            os.chdir(other)
+            try:
+                self.assertEqual(build.version(), self.described())
+            finally:
+                os.chdir(here)
+            self.assertNotIn("vOTHER", build.version())
 
 
 if __name__ == "__main__":
