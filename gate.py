@@ -81,7 +81,7 @@ def frontmatter(text: str) -> tuple[dict[str, str] | None, str]:
     return None, text
 
 
-def _notes(docs: Path, root: Path, vault: set[str] | None) -> list[Path]:
+def _notes(docs: Path, root: Path, vault: _Vault) -> list[Path]:
     """Every `.md` under `docs/` that git does not ignore, the templates excepted."""
     templates = docs / "templates"
     return [
@@ -123,26 +123,107 @@ def _utf8(data: bytes) -> str:
     return data.decode("utf-8", "replace")
 
 
-def _vault_paths(root: Path) -> set[str] | None:
-    """The paths under `root` git does not ignore, relative to `root`, or `None` when git cannot
-    answer (a directory that is no checkout, or a git that fails), so the vault is then read whole
-    from the filesystem. `git ls-files` lists what is tracked and what is untracked and not
-    ignored in one call; nothing is read from `.gitignore`."""
+class _Vault:
+    """The vault as git tracks it, asked once: `kept` the paths `git ls-files` lists -- what is
+    tracked and what is untracked and not ignored -- and `ignored` the paths `git check-ignore`
+    says an ignore rule matches, both relative to the root, or `kept` `None` when git cannot
+    answer, so the vault is then read whole from the filesystem. `note` reads a path by `kept`
+    alone, so a path git tracks is read as it is now; `part` also drops a path an ignore rule
+    matches, so a template, a base or a version note git is told to ignore is no part of the vault
+    even when it is tracked."""
+
+    def __init__(self, kept: set[str] | None, ignored: set[str] | None = None) -> None:
+        self.kept = kept
+        self.ignored = ignored or set()
+
+    @property
+    def whole(self) -> bool:
+        return self.kept is None
+
+    def note(self, rel: str) -> bool:
+        return self.kept is None or rel in self.kept
+
+    def part(self, rel: str) -> bool:
+        return self.kept is None or (rel in self.kept and rel not in self.ignored)
+
+
+def _listed_paths(root: Path) -> set[str] | None:
+    """The paths under `root` git lists, relative to `root`, or `None` when git cannot answer (a
+    directory that is no checkout, or a git that fails). `git ls-files` lists what is tracked and
+    what is untracked and not ignored in one call; nothing is read from `.gitignore`."""
     code, out = _git_bytes(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
     if code != 0:
         return None
     return {path for path in _utf8(out).split("\0") if path}
 
 
-def _in_vault(path: Path, root: Path, vault: set[str] | None) -> bool:
-    """Whether `path` is part of the vault: git does not ignore it, or git could not answer."""
-    if vault is None:
+def _ignored_paths(root: Path, docs: Path) -> set[str] | None:
+    """The paths under `docs/` git is told to ignore, relative to `root`, or `None` when git cannot
+    answer. One `git check-ignore --no-index` for the whole vault, never a read of `.gitignore`:
+    `--no-index` so a path git tracks is reported when an ignore rule matches it, which `git
+    ls-files` alone cannot say."""
+    rels: list[str] = []
+    for path in docs.rglob("*"):
+        try:
+            if path.is_file():
+                rels.append(path.relative_to(root).as_posix())
+        except (OSError, ValueError):
+            continue
+    if not rels:
+        return set()
+    try:
+        done = subprocess.run(
+            ["git", "check-ignore", "--no-index", "-z", "--stdin"],
+            cwd=str(root),
+            input="\0".join(rels).encode("utf-8", "surrogateescape"),
+            capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode not in (0, 1):
+        return None
+    return {path for path in _utf8(done.stdout).split("\0") if path}
+
+
+def _read_vault(root: Path, docs: Path) -> _Vault:
+    """What git says of the whole vault, or a vault read whole when git cannot answer: a directory
+    that is no checkout, a git that fails, or a git whose top level is not `root` itself -- a copy
+    of the vault inside a repository that ignores it must not be answered for by that repository.
+    The top level is `git rev-parse --show-toplevel`, as the builder asks of a checkout."""
+    code, out = _git_bytes(root, "rev-parse", "--show-toplevel")
+    top = _utf8(out).strip() if code == 0 else ""
+    if not top or Path(top).resolve() != Path(root).resolve():
+        return _Vault(None)
+    kept = _listed_paths(root)
+    if kept is None:
+        return _Vault(None)
+    ignored = _ignored_paths(root, docs)
+    if ignored is None:
+        return _Vault(None)
+    return _Vault(kept, ignored)
+
+
+def _in_vault(path: Path, root: Path, vault: _Vault) -> bool:
+    """Whether `path` is a note the vault holds: git lists it, or git could not answer."""
+    if vault.whole:
         return True
     try:
         rel = path.relative_to(root).as_posix()
     except ValueError:
         return True
-    return rel in vault
+    return vault.note(rel)
+
+
+def _in_part(path: Path, root: Path, vault: _Vault) -> bool:
+    """Whether `path` is part of the vault wherever the gate reads a note by it: git lists it and
+    no ignore rule matches it, or git could not answer."""
+    if vault.whole:
+        return True
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        return True
+    return vault.part(rel)
 
 
 def _line_text(value: str) -> str:
@@ -184,22 +265,23 @@ def _highest_tag(tags: set[str]) -> str | None:
     return best
 
 
-def _resolve(target: str, docs: Path, root: Path, vault: set[str] | None) -> bool:
-    """A note in `docs/` that git does not ignore, by path or by name, or a `.base` file."""
+def _resolve(target: str, docs: Path, root: Path, vault: _Vault) -> bool:
+    """A note in `docs/` git holds, by path or by name, or a `.base` file; a path git is told to
+    ignore names nothing, tracked or not."""
     target = target.strip()
     if not target:
         return False
     direct = docs / target
-    if direct.is_file() and _in_vault(direct, root, vault):
+    if direct.is_file() and _in_part(direct, root, vault):
         return True
     if direct.suffix == "":
         named = docs / (target + ".md")
-        if named.is_file() and _in_vault(named, root, vault):
+        if named.is_file() and _in_part(named, root, vault):
             return True
     name = target.rsplit("/", 1)[-1]
     stem = name[:-3] if name.endswith(".md") else name
     for found in docs.rglob("*"):
-        if found.is_file() and _in_vault(found, root, vault) and (
+        if found.is_file() and _in_part(found, root, vault) and (
             found.name == name or found.stem == stem
         ):
             return True
@@ -396,12 +478,17 @@ def _base_named(text: str) -> list[tuple[str, str]]:
     return named
 
 
-def _base_problems(docs: Path, root: Path, vault: set[str] | None) -> list[str]:
-    """The properties `docs/backlog.base` names that are not seed template fields."""
+def _base_problems(docs: Path, root: Path, vault: _Vault) -> list[str]:
+    """The properties `docs/backlog.base` names that are not seed template fields; a base git is
+    told to ignore is no part of the vault."""
     base = docs / "backlog.base"
-    if not base.is_file() or not _in_vault(base, root, vault):
+    if not base.is_file() or not _in_part(base, root, vault):
         return []
-    fields_, _ = frontmatter(_read(docs / "templates" / "seed.md"))
+    template = docs / "templates" / "seed.md"
+    if not _in_part(template, root, vault):
+        # The missing template is reported once, elsewhere.
+        return []
+    fields_, _ = frontmatter(_read(template))
     if fields_ is None:
         # The missing template is reported once, elsewhere.
         return []
@@ -421,13 +508,13 @@ def _base_problems(docs: Path, root: Path, vault: set[str] | None) -> list[str]:
     return problems
 
 
-def problems_check(root: Path) -> list[str]:
+def problems_check(root: Path, vault: _Vault | None = None) -> list[str]:
     root = Path(root)
     docs = root / "docs"
     if not docs.is_dir():
         return ["docs/: missing"]
     problems: list[str] = []
-    vault = _vault_paths(root)
+    vault = vault if vault is not None else _read_vault(root, docs)
     tags = _tags(root)
     docstrings = _test_docstrings(root)
     test_names = _test_names(root)
@@ -455,7 +542,8 @@ def problems_check(root: Path) -> list[str]:
         if not kind:
             problems.append(f"{rel}: frontmatter has no type")
             continue
-        if not (docs / "templates" / f"{kind}.md").is_file():
+        template = docs / "templates" / f"{kind}.md"
+        if not template.is_file() or not _in_part(template, root, vault):
             problems.append(f"{rel}: type {kind} has no template docs/templates/{kind}.md")
             continue
         if kind == "seed":
@@ -488,7 +576,7 @@ def _seed_problems(
     root: Path,
     tags: set[str],
     docstrings: list[str],
-    vault: set[str] | None,
+    vault: _Vault,
 ) -> list[str]:
     docs = root / "docs"
     problems: list[str] = []
@@ -528,7 +616,7 @@ def _seed_problems(
         note = docs / "versions" / f"{version}.md"
         if not version:
             problems.append(f"{rel}: seed has no version")
-        elif not note.is_file() or not _in_vault(note, root, vault):
+        elif not note.is_file() or not _in_part(note, root, vault):
             problems.append(f"{rel}: version {version} has no note docs/versions/{version}.md")
         problems.extend(_goal_problems(rel, body))
     if version and version in tags and status not in ("done", "rejected"):
@@ -913,20 +1001,21 @@ def _build_problems(root: Path, rel_note: str, previous: str | None) -> list[str
     return problems
 
 
-def _release_problems(root: Path, version: str) -> list[str]:
+def _release_problems(root: Path, version: str, vault: _Vault | None = None) -> list[str]:
     root = Path(root)
     docs = root / "docs"
     problems: list[str] = []
     rel_note = f"docs/versions/{version}.md"
     note = docs / "versions" / f"{version}.md"
     tags = _tags(root)
+    vault = vault if vault is not None else _read_vault(root, docs)
 
     if not note.is_file():
         problems.append(f"{rel_note}: no such version note")
     if version in tags:
         problems.append(f"{rel_note}: {version} is already tagged")
 
-    for path in _notes(docs, root, _vault_paths(root)):
+    for path in _notes(docs, root, vault):
         fm, _ = frontmatter(_read(path))
         if not fm or fm.get("type") != "seed" or fm.get("version") != version:
             continue
@@ -998,9 +1087,10 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
         if len(args) < 3 or not args[2].strip():
             return _usage()
         version = args[2].strip()
-        problems = problems_check(root)
+        vault = _read_vault(root, root / "docs")  # asked once for the whole vault, in release too
+        problems = problems_check(root, vault)
         if not problems:
-            problems = _release_problems(root, version)
+            problems = _release_problems(root, version, vault)
         if problems:
             return _emit(problems)
         note = root / "docs" / "versions" / f"{version}.md"
