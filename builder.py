@@ -8,7 +8,10 @@ list, read, search, write, edit and check. Writes are confined to the checkout a
 tests and the toolchain; check runs the checkout's tests in a container with no network and the
 checkout mounted read-only, so code the model writes never runs on the host and cannot reach the
 key. The loop is pydantic-ai, pinned; the provider is DeepSeek's chat completions API, the key
-read from ~/.config/factory/deepseek.key and never written anywhere. Each run leaves a record
+read from ~/.config/factory/deepseek.key and never written anywhere. When the model returns,
+whatever ended the run, the builder runs the check once more on the tree as it then is, unless
+nothing was written or edited since the model's last check, so the record's check is the tree
+the run left. Each run leaves a record
 under the store the instance's configuration names, outside the checkout, with goal.txt,
 wire.jsonl.gz (every HTTP attempt as it happened, compressed once the run ends), messages.json
 (the library's messages), check-<n>.log per check, diff.patch (what the run left in the checkout; absent when it left nothing),
@@ -155,6 +158,10 @@ class Tools:
         self.written: list[str] = []
         self.edited: list[str] = []
         self.checks: list[dict[str, Any]] = []
+        # What the tools know of the tree since the last check: a write or edit that landed, and
+        # nothing a wall refused, is a tree the last check did not see. The builder's own final
+        # check is what the run ends on, and it is run only when this is so.
+        self.changed_since_check = False
 
     def _resolve(self, path: str) -> tuple[Path, str]:
         p = (self.root / (path or ".")).resolve()
@@ -364,6 +371,7 @@ class Tools:
         except (ValueError, OSError, RuntimeError) as e:  # RuntimeError: a symlink loop
             return f"error: {e}"
         self.written.append(rel)
+        self.changed_since_check = True
         return f"wrote {rel} ({len(content.splitlines())} lines)"
 
     def edit(self, path: str, old: str, new: str) -> str:
@@ -398,31 +406,53 @@ class Tools:
         except (ValueError, OSError, RuntimeError) as e:  # UnicodeDecodeError is a ValueError
             return f"error: {e}"
         self.edited.append(rel)
+        self.changed_since_check = True
         return f"edited {rel} ({before} -> {len(text.splitlines())} lines)"
+
+    def _check_once(self) -> str:
+        """One check on the tree as it is: the same sandbox, numbered after the checks so far, its
+        log `check-<n>.log` beside theirs and its seconds added to theirs. Raises whatever running
+        the sandbox raises, so each caller decides how to answer."""
+        n = len(self.checks) + 1
+        t0 = time.time()
+        code, output = self.sandbox.run(self.root, self.run_dir, n)
+        seconds = round(time.time() - t0, 1)
+        log = self.run_dir / f"check-{n}.log"
+        log.write_text(output, encoding="utf-8", errors="replace")
+        self.checks.append({"exit": code, "seconds": seconds})
+        self.changed_since_check = False
+        tail = "\n".join(output.splitlines()[-CHECK_TAIL_LINES:])
+        if len(tail.encode()) > CHECK_TAIL_BYTES:  # the end of the output is the part that says why
+            tail = tail.encode()[-CHECK_TAIL_BYTES:].decode("utf-8", "ignore")
+        return f"exit {code}\n{tail}"
 
     def check(self) -> str:
         """Run the checkout's tests and return the exit code and the tail of the output: exit 0 is
         green, anything else is red. The tests run in a container, with the checkout read-only and
-        no network, so this reports on the checkout as it is on disk. At most 8 checks per run.
+        no network, so this reports on the checkout as it is on disk. At most 8 checks per run; the
+        builder's own check of the tree the model leaves is not one of the 8.
         """
         if len(self.checks) >= CHECK_CAP:
             return f"error: cap reached ({CHECK_CAP} checks); report now"
         if self.sandbox is None:
             return "error: no sandbox; check is not available in this run"
-        n = len(self.checks) + 1
-        t0 = time.time()
         try:
-            code, output = self.sandbox.run(self.root, self.run_dir, n)
-            seconds = round(time.time() - t0, 1)
-            log = self.run_dir / f"check-{n}.log"
-            log.write_text(output, encoding="utf-8", errors="replace")
+            return self._check_once()
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as e:
             return f"error: {e}"
-        self.checks.append({"exit": code, "seconds": seconds})
-        tail = "\n".join(output.splitlines()[-CHECK_TAIL_LINES:])
-        if len(tail.encode()) > CHECK_TAIL_BYTES:  # the end of the output is the part that says why
-            tail = tail.encode()[-CHECK_TAIL_BYTES:].decode("utf-8", "ignore")
-        return f"exit {code}\n{tail}"
+
+    def check_final(self) -> None:
+        """The builder's check of the tree the model left, run once when the run ends: the model's
+        own kind of check, and only when it wrote or edited since its last check, a refused write
+        being nothing written. The cap of 8 binds the model's checks, not this one, and a sandbox
+        that cannot run leaves the record as it is rather than losing it.
+        """
+        if self.sandbox is None or not self.changed_since_check:
+            return
+        try:
+            self._check_once()
+        except Exception:  # a sandbox that cannot run must not lose the record
+            pass
 
 
 class Sandbox:
@@ -1167,6 +1197,11 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     t0 = time.time()
     report, messages, usage, stopped, detail = run(agent, goal)
     seconds = round(time.time() - t0, 1)
+
+    # The record's check is the tree the run left, whatever ended it: when the model wrote or
+    # edited since its last check the builder runs the same check once more, numbered after the
+    # model's own and logged beside them, so `check` in the numbers is the last check run.
+    tools.check_final()
 
     (run_dir / "messages.json").write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=1))
     if report is not None:
