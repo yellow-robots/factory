@@ -69,6 +69,11 @@ REPORT_REQUESTS = 6  # requests past those calls, so a run that spent the budget
 CALLS_FLOOR = 80  # tool calls a run is given at least; the number the tool cap held since v0.3
 CALLS_CEILING = 200  # and at most, so the worst a run can cost is a number, not the checkout's size
 SHARE = 55  # hundredths of one pass over the checkout a run is given the calls to read it
+# What a run may spend, from the store: a ceiling of 0.125 sits above every one of the 85 builds
+# that answered and below six of the 13 that were capped. The tools land a run there; twice it is
+# the backstop for a run that will not land, a guard and not a tuned threshold.
+SOFT_SPEND = 0.125  # USD a run may spend before every tool refuses and says report now
+HARD_SPEND = 0.25  # USD, twice the soft ceiling: the runaway's backstop, derived from nothing
 LIST_CAP = 500  # entries per list
 READ_LINES_CAP = 300  # lines per read
 READ_BYTES_CAP = 32_000  # bytes per read
@@ -142,15 +147,17 @@ def limits(budget: int) -> UsageLimits:
 
 
 def which_cap(stopped: str, detail: str) -> str:
-    """Which of the two caps ended a run, from what `run` returns: `calls` when the library's
-    tool-call limit raised, `requests` when its request limit did, and the empty string when no cap
-    ended the run or the detail names neither limit rather than guessing."""
+    """Which cap ended a run, from what `run` returns: `calls` when the library's tool-call limit
+    raised, `requests` when its request limit did, `spend` when the hard spend ceiling did, and the
+    empty string when no cap ended the run or the detail names none rather than guessing."""
     if stopped != "cap":
         return ""
     if "tool_calls_limit" in detail:
         return "calls"
     if "request_limit" in detail:
         return "requests"
+    if "spend" in detail:  # the hard spend ceiling, raised from a tool
+        return "spend"
     return ""
 
 
@@ -163,6 +170,19 @@ PROTECTED = ("test*.py", "tests/", "pyproject.toml", "uv.lock", "check.Dockerfil
              ".gitattributes", ".gitignore")  # fmt: skip
 # USD per 1M tokens, peak rates; api-docs.deepseek.com/quick_start/pricing read on 2026-09-15.
 PRICE = {"cache_hit": 0.006, "cache_miss": 0.3, "output": 1.2}
+
+
+def price(usage: Any) -> float:
+    """The USD those tokens cost at `PRICE`, for anything carrying `input_tokens`,
+    `cache_read_tokens` and `output_tokens`: the tokens the cache served at the cache-hit rate, the
+    rest of the input at the miss rate and the output at the output rate. One place prices tokens,
+    so the tools' landing on what a run has spent and the record's `cost_usd` cannot drift."""
+    miss = usage.input_tokens - usage.cache_read_tokens  # what the cache did not serve
+    return (
+        usage.cache_read_tokens * PRICE["cache_hit"]
+        + miss * PRICE["cache_miss"]
+        + usage.output_tokens * PRICE["output"]
+    ) / 1e6
 
 ROLE = """\
 You are the builder. You are given a goal and a checkout: a directory with code and tests. You
@@ -216,12 +236,15 @@ class Tools:
 
     def __init__(self, root: Path, run_dir: Path, hidden: tuple[str, ...] = HIDDEN,
                  protected: tuple[str, ...] = PROTECTED, sandbox: Any = None,
-                 budget: int | None = None):  # fmt: skip
+                 budget: int | None = None, spent: Any = None):  # fmt: skip
         self.root = root.resolve()
         self.run_dir = run_dir
         self.hidden = hidden
         self.protected = protected
         self.sandbox = sandbox
+        # Something callable with no arguments for what the run has spent so far in USD, or None
+        # when the caller has none: a `Tools` built without one refuses nothing on spend.
+        self.spent = spent
         # Taken once, from the tree as it is here: a caller that knows the budget names it and the
         # tree is not walked for it.
         self.budget = call_budget(self.root, hidden) if budget is None else budget
@@ -272,8 +295,19 @@ class Tools:
                 )
 
     def _over_budget(self) -> str:
-        """The run's own cap: the calls it was given, spent. The refusal is the write cap's shape
-        with the run's number and keeps its own: it moves no counter but `calls`."""
+        """The run's own caps: what it has spent, and the calls it was given. The spend is asked
+        here and never cached, because a run crosses the line in the middle and must land there.
+        At `SOFT_SPEND` every tool answers the cap and refuses; at `HARD_SPEND`, above it, the run
+        itself ends, the way the library's limits end a runaway. A refusal is the write cap's shape
+        with this cap's number and moves no counter but `calls`."""
+        if self.spent is not None:
+            spent = self.spent()
+            if spent >= HARD_SPEND:
+                raise UsageLimitExceeded(
+                    f"exceed the hard spend ceiling of {HARD_SPEND} USD, spent {spent:.6f}"
+                )
+            if spent >= SOFT_SPEND:
+                return f"error: cap reached ({SOFT_SPEND} USD spent); report now"
         if self.calls > self.budget:
             return f"error: cap reached ({self.budget} tool calls); report now"
         return ""
@@ -725,14 +759,16 @@ def build_agent(
     return agent
 
 
-def run(agent: Agent[None, BuildReport], goal: str,
-        budget: int) -> tuple[BuildReport | None, list, RunUsage, str, str]:  # fmt: skip
+def run(agent: Agent[None, BuildReport], goal: str, budget: int,
+        usage: RunUsage | None = None) -> tuple[BuildReport | None, list, RunUsage, str, str]:  # fmt: skip
     """One run under the caps: the report if there is one, the messages either way. `budget` is the
     tool calls the run is given and the number the tools carry; it has no default, so a caller that
     does not name one is a TypeError from the call itself and the budget the tools refuse at and the
     budget the library enforces cannot differ. `limits` turns it into the library's caps, so the
-    tools land the run and the requests outlast them."""
-    usage = RunUsage()
+    tools land the run and the requests outlast them. `usage` is the object the run counts into and
+    the caller may hold it already, so a spend the tools ask for is the same one the record writes;
+    a caller that names none gets a fresh one."""
+    usage = RunUsage() if usage is None else usage
     report, stopped, detail = None, "answer", ""
     with capture_run_messages() as messages:
         try:
@@ -1354,11 +1390,18 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     (run_dir / "goal.txt").write_text(goal + "\n")
 
     wire = Wire(run_dir / "wire.jsonl")
-    tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden),
+    usage = RunUsage()  # the run counts into it; the tools ask it, the record prices it
+
+    def spent() -> float:
+        """What the run has spent so far, in the record's own arithmetic: the library's price when
+        it has a row for the model, the factory's table otherwise."""
+        return float(usage.cost) if usage.cost is not None else price(usage)
+
+    tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden), spent=spent,
                   sandbox=sandbox if sandbox is not None else Sandbox())  # fmt: skip
     agent = build_agent(tools, key=key, http_client=wire.client, model=model, model_name=model_name)
     t0 = time.time()
-    report, messages, usage, stopped, detail = run(agent, goal, tools.budget)
+    report, messages, usage, stopped, detail = run(agent, goal, tools.budget, usage=usage)
     seconds = round(time.time() - t0, 1)
 
     # The record's check is the tree the run left, whatever ended it: when the model wrote or
@@ -1374,14 +1417,11 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         changes = record_diff(checkout, run_dir)
     except (OSError, ValueError, subprocess.SubprocessError, GitError) as e:  # never lose the record
         changes = {"diff": f"error: {e}", "files_changed": 0, "insertions": 0, "deletions": 0}
-    miss = usage.input_tokens - usage.cache_read_tokens
-    table = (
-        usage.cache_read_tokens * PRICE["cache_hit"]
-        + miss * PRICE["cache_miss"]
-        + usage.output_tokens * PRICE["output"]
-    ) / 1e6
-    priced = usage.cost is not None  # genai-prices has no deepseek-flash row; ours is the fallback
-    cost_usd = round(float(usage.cost) if priced else table, 5)
+    # The record's cost is the tokens priced through the one function, so the number in the record
+    # and the number the tools land on are the same arithmetic: the library's price when it has a
+    # row for the model, the factory's table otherwise, and for our model the answer is unchanged.
+    priced = usage.cost is not None  # genai-prices has no deepseek-flash row; ours is the source
+    cost_usd = round(float(usage.cost) if priced else price(usage), 5)
     checks = [c["exit"] for c in tools.checks]
     numbers = {
         "model": model_name,
@@ -1404,6 +1444,10 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         "reasoning_tokens": usage.details.get("reasoning_tokens", 0),
         "cost_usd": cost_usd,
         "cost_source": "genai-prices" if priced else "table",
+        # The spend ceilings, beside the count they bound: the soft one the tools land a run on and
+        # the hard one the run itself ends on.
+        "spend_cap": SOFT_SPEND,
+        "hard_spend_cap": HARD_SPEND,
         "lists": len(tools.listed),
         "reads": len(tools.read_paths),
         "files_read": len(set(tools.read_paths)),
