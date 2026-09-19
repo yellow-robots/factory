@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: spec
+status: building
 summary: The call budget claims to follow the reading a checkout costs; decomposed, it counts files, and more than half of what it counts is the vault the builder never opens.
 value: 4
 effort: M
@@ -40,9 +40,9 @@ One more fact, across all 190 records and 5,259 tool returns: the count of retur
 
 A run is bounded by what it has spent, not by a walk over files it will never read.
 
-**A. The spend, during the run.** The run knows at every tool call what it has spent so far, in USD, from `PRICE` and the tokens used to that point -- the same arithmetic `main` already does once at the end, which must keep giving the same answer for a finished run. `Tools` learns it through a seam a test can drive without a model or a network: the caller gives `Tools` the means to ask, and a `Tools` built without one is bounded by nothing and refuses nothing on spend, as today.
+**A. One place that prices tokens.** `price(usage)` gives the USD those tokens cost from `PRICE`, for anything carrying `input_tokens`, `cache_read_tokens` and `output_tokens`. It is the arithmetic `main` already does once at the end, moved so that two callers cannot drift: `main` computes `cost_usd` through it and the answer for a finished run does not change, which every record in the store can be checked against.
 
-**B. The landing.** When the run's spend reaches `SOFT_SPEND`, every one of the six tools refuses in the shape the other caps already use -- an `error:` return naming the cap and its number and telling the model to report now -- and goes on refusing. The model keeps the requests it needs to write its report, as it does for the call cap today. `SOFT_SPEND` is 0.125, the number above every answered build in the store and below six of the thirteen capped ones.
+**B. The landing.** `Tools` takes `spent`, something it can call with no arguments for what the run has spent so far in USD; a `Tools` built without one refuses nothing on spend, as every call in the tests does today. It is asked at each tool call and never cached, because a run crosses the line in the middle and must land there. When it reaches `SOFT_SPEND`, every one of the six tools refuses in the shape the other caps already use -- `error: cap reached (...); report now`, naming this cap and its number -- and goes on refusing, moving no counter but `calls`. The model keeps the requests it needs to write its report, as it does for the call cap today. `SOFT_SPEND` is 0.125, the number above every answered build in the store and below six of the thirteen capped ones. `main` gives `Tools` the run's real spend, so the landing is the same arithmetic as the record's.
 
 **C. The backstop.** `HARD_SPEND` above it stops a run that will not land whatever it is told, the way the library's limits stop one today: the run ends, `stopped` says it was capped, and the record says which cap did it. It is a guard against a runaway and not a tuned threshold -- no run in the store has ever reached 0.25 -- so it is twice the soft ceiling and is not derived from anything else.
 

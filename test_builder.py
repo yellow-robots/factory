@@ -452,6 +452,108 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(len(self.tools.checks), builder.CHECK_CAP)
 
 
+    # v0.17: the landing on what the run has spent
+
+    def test_a_run_given_no_spend_is_bounded_by_none(self):
+        """seed: the-budget-that-counts-files. The seam is what a caller gives; a `Tools` built
+        without one has no spend to ask for and refuses nothing on it. Every other test in this
+        file builds one that way and would change meaning if this did not hold."""
+        self.assertIsNone(self.tools.spent)
+        self.assertTrue(self.tools.list(".").startswith("dir\t") or "a.txt" in self.tools.list("."))
+        self.assertTrue(self.tools.read("a.txt").startswith("1\t"))
+        self.assertTrue(self.tools.write("w.txt", "x\n").startswith("wrote"))
+
+    def test_a_run_that_has_spent_the_soft_ceiling_is_landed_by_every_tool(self):
+        """seed: the-budget-that-counts-files. The bound that means something: a run that has spent
+        what no build that ever answered spent is told to report, by whichever tool it reaches for.
+        The refusal is the shape the other caps use, it names this cap and its number, and it moves
+        no counter but `calls` -- nothing is written, nothing is checked, nothing is read."""
+        tools = Tools(self.root, self.run_dir, sandbox=self.sandbox,
+                      spent=lambda: builder.SOFT_SPEND)  # fmt: skip
+        calls = [
+            lambda: tools.list("."),
+            lambda: tools.read("a.txt"),
+            lambda: tools.search("one"),
+            lambda: tools.write("late.txt", "x\n"),
+            lambda: tools.edit("a.txt", "one", "1"),
+            lambda: tools.check(),
+        ]
+        for i, call in enumerate(calls, start=1):
+            out = call()
+            self.assertTrue(out.startswith("error: cap reached ("), out)
+            self.assertTrue(out.endswith("); report now"), out)
+            self.assertIn(str(builder.SOFT_SPEND), out)
+            self.assertEqual(tools.calls, i, "the call is counted, as a refused call is")
+        self.assertEqual((tools.listed, tools.read_paths, tools.searched), ([], [], []))
+        self.assertEqual((tools.written, tools.edited, tools.checks), ([], [], []))
+        self.assertFalse((self.root / "late.txt").exists())
+        self.assertEqual((self.root / "a.txt").read_text(), "one\ntwo\nthree\n")
+        self.assertEqual(self.sandbox.calls, [])
+        self.assertFalse(tools.changed_since_check)
+
+    def test_a_run_below_the_soft_ceiling_is_not_landed(self):
+        """seed: the-budget-that-counts-files. The ceiling is reached, not approached: a run a
+        hundredth of a cent under it still works, or the bound would cut runs that answer."""
+        tools = Tools(self.root, self.run_dir, sandbox=self.sandbox,
+                      spent=lambda: builder.SOFT_SPEND - 0.0001)  # fmt: skip
+        self.assertIn("a.txt", tools.list("."))
+        self.assertTrue(tools.read("a.txt").startswith("1\t"))
+        self.assertTrue(tools.write("w.txt", "x\n").startswith("wrote"))
+
+    def test_the_spend_is_asked_at_every_call_so_a_run_lands_where_it_crosses(self):
+        """seed: the-budget-that-counts-files. A run does not begin over the line, it crosses it in
+        the middle, so the spend is asked each time and never taken once and kept. The calls before
+        the crossing do their work and the calls after it are refused."""
+        spend = [0.0]
+        tools = Tools(self.root, self.run_dir, sandbox=self.sandbox, spent=lambda: spend[0])
+        self.assertTrue(tools.read("a.txt").startswith("1\t"))
+        spend[0] = builder.SOFT_SPEND
+        self.assertTrue(tools.read("a.txt").startswith("error: cap reached ("))
+        spend[0] = 0.0  # a spend that fell could only be a bug, and the tools follow what they ask
+        self.assertTrue(tools.read("a.txt").startswith("1\t"))
+        self.assertEqual(tools.read_paths, ["a.txt", "a.txt"])
+        self.assertEqual(tools.calls, 3)
+
+    def test_the_soft_ceiling_is_the_one_no_build_that_answered_ever_reached(self):
+        """seed: the-budget-that-counts-files. The number is not a taste. Measured in the store at
+        190 records on 2026-09-20: of 99 builds, 85 answered and the most expensive of those cost
+        $0.1239, while 13 were capped at a median of $0.1249. A ceiling of 0.125 is above every
+        build that answered and below six of the thirteen that did not."""
+        self.assertEqual(builder.SOFT_SPEND, 0.125)
+        self.assertGreater(builder.SOFT_SPEND, 0.1239)
+
+
+class PriceTest(unittest.TestCase):
+    """seed: the-budget-that-counts-files. One place prices tokens, so the bound on a run and the
+    number in its record cannot drift apart."""
+
+    class Usage:
+        def __init__(self, input_tokens: int, cache_read_tokens: int, output_tokens: int):
+            self.input_tokens = input_tokens
+            self.cache_read_tokens = cache_read_tokens
+            self.output_tokens = output_tokens
+
+    def test_price_is_the_arithmetic_every_record_was_written_with(self):
+        """The record of 2026-09-19T22:51:54Z, the first build of v0.17, carries 1,557,544 input
+        tokens of which 1,489,152 were cache reads, 19,130 output, and `cost_usd` 0.05241 written
+        by `main`. Moving the arithmetic must not move the answer: the tokens a cache read served
+        are priced at the cache-hit rate and only the rest at the miss rate."""
+        self.assertEqual(round(builder.price(self.Usage(1557544, 1489152, 19130)), 5), 0.05241)
+
+    def test_price_charges_the_cache_hit_rate_for_what_the_cache_served(self):
+        """A million tokens, all of them cache reads, against a million that were all misses: the
+        published rates differ by fifty times and so must the price."""
+        hit = builder.price(self.Usage(1_000_000, 1_000_000, 0))
+        miss = builder.price(self.Usage(1_000_000, 0, 0))
+        self.assertAlmostEqual(hit, builder.PRICE["cache_hit"])
+        self.assertAlmostEqual(miss, builder.PRICE["cache_miss"])
+        self.assertAlmostEqual(builder.price(self.Usage(0, 0, 1_000_000)), builder.PRICE["output"])
+
+    def test_a_run_that_has_used_nothing_has_spent_nothing(self):
+        """The first tool call of a run is made before any answer has been paid for."""
+        self.assertEqual(builder.price(self.Usage(0, 0, 0)), 0.0)
+
+
 class SandboxTest(unittest.TestCase):
     """Docker is a patched subprocess: the argv is the security boundary and is fixed by the plan."""
 
