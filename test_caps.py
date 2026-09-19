@@ -27,9 +27,9 @@ from test_keys import KeysBase
 
 models.ALLOW_MODEL_REQUESTS = False
 
-LINES = 250
-FILES = 40  # 10,000 lines: 34 reads at 300 lines a read to see the checkout once
-BUDGET = 106  # 2 * 34, for the reading and the reading again, + 30 writes + 8 checks
+LINES = 900
+FILES = 40  # 3 reads a file at 300 lines a read, so 120 reads for one pass over the checkout
+BUDGET = 104  # 120 * 55 per cent = 66 reads of looking, + 30 writes + 8 checks
 
 
 class BudgetTest(unittest.TestCase):
@@ -50,14 +50,23 @@ class BudgetTest(unittest.TestCase):
             (root / f"f{i}.py").write_text("".join(f"line {n}\n" for n in range(lines)))
         return root
 
-    def test_the_budget_is_the_reading_of_the_checkout_twice_over_and_the_work(self):
+    def test_the_budget_is_a_share_of_one_pass_over_the_checkout_and_the_work(self):
         """seed: caps-for-the-checkout-as-it-is. The caps were set at v0.3 for a program of three
         hundred lines and have not moved since, while the checkout the builder works on has grown
-        to thirteen thousand. What it costs to read a checkout once is its lines over the lines a
-        read returns; the budget is that twice over, for the reading and the reading again, plus
+        to thirteen thousand. The budget is a share of what one pass over the checkout costs, plus
         the writes and the checks a run is already allowed."""
-        root = self.checkout("ten-thousand", FILES, LINES)
+        root = self.checkout("one-pass", FILES, LINES)
         self.assertEqual(builder.call_budget(root), BUDGET)
+
+    def test_one_pass_is_the_reads_the_tools_would_answer_with(self):
+        """seed: caps-for-the-checkout-as-it-is. Found by the reviewer of the first three runs. A
+        read answers about one file and never spans two, so what one pass costs is the reads each
+        file costs, summed, and not the checkout's lines over the lines a read returns. A file the
+        tools can reach costs at least one read however short it is, and the error is in the count
+        of files rather than their size: two hundred files of one line are two hundred reads, and
+        dividing the lines called them one."""
+        many = self.checkout("many-small", 200, 1)
+        self.assertEqual(builder.call_budget(many), 148)  # 200 * 55 per cent + 30 + 8
 
     def test_a_small_checkout_gets_the_floor_and_a_large_one_the_ceiling(self):
         """seed: caps-for-the-checkout-as-it-is. A checkout smaller than the one the caps were set
@@ -74,7 +83,7 @@ class BudgetTest(unittest.TestCase):
         is what the tools would answer with: a hidden name at the root, git's own files at any
         depth and a symlink are not the checkout's text, and a file that is not text or cannot be
         read counts nothing rather than stopping the count."""
-        root = self.checkout("ten-thousand", FILES, LINES)
+        root = self.checkout("one-pass", FILES, LINES)
         self.assertEqual(builder.call_budget(root), BUDGET)
         plenty = "".join(f"line {n}\n" for n in range(3000))
 
@@ -98,7 +107,7 @@ class BudgetTest(unittest.TestCase):
         """seed: caps-for-the-checkout-as-it-is. The count is taken once, from the tree the run
         starts on, and the tools carry it; a caller that already knows the budget names it and the
         tree is not walked for it."""
-        root = self.checkout("ten-thousand", FILES, LINES)
+        root = self.checkout("one-pass", FILES, LINES)
         self.assertEqual(Tools(root, self.run_dir, sandbox=FakeSandbox([])).budget, BUDGET)
         self.assertEqual(Tools(root, self.run_dir, budget=7, sandbox=FakeSandbox([])).budget, 7)
         hidden = Tools(root, self.run_dir, hidden=(*builder.HIDDEN, "f0.py"), sandbox=FakeSandbox([]))
@@ -182,6 +191,43 @@ class LandingTest(unittest.TestCase):
             self.assertGreater(limits.tool_calls_limit, budget, "a refusal can be answered")
             self.assertGreater(limits.request_limit, limits.tool_calls_limit, "and then reported")
 
+    def test_a_response_larger_than_the_reserve_still_lands(self):
+        """seed: caps-for-the-checkout-as-it-is. Found by the reviewer of the first three runs. The
+        library admits or refuses a whole response's tool calls together, so a response that steps
+        over the budget by more than the reserve is refused entire and the model is never told to
+        report: the failure this seed exists to remove, moved from the requests to the calls. Of
+        3,635 responses in the store 29 carried more than four calls and the largest carried 16, so
+        the reserve is wide enough for any response the factory has made. An obedient model lands
+        whatever size its last response was, and the requests are never what stopped it."""
+        for size in (1, 5, 16):
+            tools = self.tools(3)
+
+            def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                answered = [str(p.content) for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+                if any("report now" in a for a in answered):
+                    return ModelResponse(parts=[call("final_result", REPORT, "end")])
+                return ModelResponse(parts=[call("list", {"path": "."}, f"c{len(answered)}-{i}")
+                                            for i in range(size)])  # fmt: skip
+
+            report, messages, usage, stopped, detail = run(
+                build_agent(tools, model=FunctionModel(model)), "goal", 3
+            )
+            self.assertEqual((stopped, detail), ("answer", ""), f"a response of {size} calls")
+            self.assertIsNotNone(report, f"a response of {size} calls")
+            self.assertEqual(len(tools.listed), 3, f"a response of {size} calls")
+
+    def test_the_budget_a_run_is_given_is_the_budget_its_tools_carry(self):
+        """seed: caps-for-the-checkout-as-it-is. Found by the reviewer of the first three runs.
+        `run` took the budget with a default, so a caller that forgot it left the tools refusing at
+        the checkout's budget while the library cut the run off at the floor's -- the fault the seed
+        exists to remove, one call site away. The budget has no default: a run is given the number
+        its tools carry, or it is not a call."""
+        tools = self.tools(3)
+        agent = build_agent(tools, model=FunctionModel(lambda messages, info: ModelResponse(parts=[])))
+        with self.assertRaises(TypeError):
+            run(agent, "goal")
+
+
 class RecordTest(KeysBase):
     """What a run's numbers say about the caps it was given, and which one ended it."""
 
@@ -200,7 +246,11 @@ class RecordTest(KeysBase):
         self.assertEqual(n["calls_cap"], budget)
         self.assertEqual(n["requests_cap"], builder.limits(budget).request_limit)
         self.assertEqual(n["cap"], "")
-        self.assertLessEqual(n["tool_calls"], n["calls_cap"])
+        # The two caps are not the same kind of number, which the reviewer of the first three runs
+        # found the test asserting away: a request can never pass its limit, and the calls pass the
+        # budget by as much as the reserve, because the budget is what the tools refuse at and the
+        # reserve is what the library allows above it so a refusal can be answered.
+        self.assertLessEqual(n["tool_calls"], n["calls_cap"] + builder.RESERVE)
         self.assertLessEqual(n["requests"], n["requests_cap"])
 
     def test_the_record_says_which_cap_ended_the_run(self):

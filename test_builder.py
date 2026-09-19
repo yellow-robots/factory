@@ -1852,7 +1852,7 @@ class WireTest(unittest.TestCase):
         tools = Tools(checkout, Path(self.tmp.name), sandbox=FakeSandbox([]))
         agent = build_agent(tools, key="not-a-key", http_client=wire.client)
         with mock.patch.object(models, "ALLOW_MODEL_REQUESTS", True):
-            report, messages, usage, stopped, detail = run(agent, "goal")
+            report, messages, usage, stopped, detail = run(agent, "goal", tools.budget)
         self.assertEqual(stopped, "answer")
         self.assertEqual(report.check, "green")
         request = next(json.loads(l) for l in self.path.read_text().splitlines())["body"]

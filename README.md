@@ -48,9 +48,12 @@ anything under `tests/`, `pyproject.toml`, `uv.lock`, `check.Dockerfile`, anythi
 toolchain is what check runs against, the vault is where the goals come from, and a filter or an
 ignore rule the model wrote would change what git records of the run). The six tools run one at a
 time, in the order the model gave them, since v0.12: the library would otherwise overlap the calls
-of one response, and two edits of one file raced. Caps: 30 writes and edits, 8 checks per run in the tools;
-80 tool calls, 60 provider requests in the library; a cap hit in the library ends the run with no
-report. The check: `docker run --rm --network none --user <uid>:<gid> -v <checkout>:/w:ro ...
+of one response, and two edits of one file raced. Caps: 30 writes and edits, 8 checks per run in the tools, and a
+budget of tool calls the checkout earns -- a share of what one pass over everything the tools can
+reach costs to read, plus those writes and checks, floored at 80 and bounded at 200. The tools
+refuse past the budget and say so, so a run that has spent it reports instead of being cut off; the
+library's own limits sit above the budget as a backstop, and the record says which of them ended a
+run when one did. The check: `docker run --rm --network none --user <uid>:<gid> -v <checkout>:/w:ro ...
 python -P -m unittest discover -q`, in an image built once per checkout from `check.Dockerfile` and
 the checkout's `uv.lock` (`factory-check:<hash>`, git installed because the checkout's tests use it),
 120 s timeout then the container is killed. `-P` because a checkout-root `unittest.py` would
