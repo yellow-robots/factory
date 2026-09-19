@@ -1189,20 +1189,23 @@ def leaked_file(run_dir: Path, keys: list[str]) -> Path | None:
 
 
 def configured_keys() -> list[str]:
-    """Every key the instance's configuration names, read from its file. A key file that cannot be
-    read is a LeakedKey naming it, never a value: a key that cannot be searched for cannot be shown
-    to be absent. A configuration whose roles are missing or malformed names no key the search can
-    use, and the empty list falls back to the program's constants as the run does."""
+    """Every key the instance's configuration names, read from its file. A configuration whose
+    roles are missing, malformed or name no role is a LeakedKey naming the configuration's file and
+    which fault, never a value: a key that cannot be named cannot be searched for, and a record
+    searched for no key is a record unsearched. A key file that cannot be read is a LeakedKey
+    naming it, never a value: a key that cannot be searched for cannot be shown to be absent."""
     try:
         paths = key_paths()
-    except (ValueError, OSError):
-        return []
+    except (ValueError, OSError) as e:
+        raise LeakedKey(str(e)) from e
     keys: list[str] = []
     for path in paths:
         try:
             keys.append(read_key(path))
         except (ValueError, OSError) as e:
             raise LeakedKey(str(e)) from e
+    if not keys:  # a roles table holding no role leaves the search with nothing to look for
+        raise LeakedKey(f"{instance_config()}: the instance configuration names no key")
     return keys
 
 
@@ -1212,13 +1215,19 @@ def commit_record(store: Path, run_dir: Path, key: str | None = None) -> None:
     record is searched for every key the instance's configuration names -- the one key `key` names
     instead when the caller gives it -- a `.gz` file read through its compression, a `.gz` that is
     not gzip read as the bytes it is, and a record that holds any of them is not committed: a
-    LeakedKey names the file, never the value. A key file the configuration names that cannot be
-    read refuses the commit too, naming that key file. The search never fails open: a file it
-    cannot read through, a `.gz` that ends before its stream does, and a link or a directory it
-    will not walk into refuse the commit the same way. The record and nothing else enters the
-    commit whatever else the store holds uncommitted, the message the stamp, the author and
-    committer the factory's."""
+    LeakedKey names the file, never the value. A configuration whose roles are missing or malformed,
+    or that names no key at all, refuses the commit too, naming the configuration's file; a key file
+    the configuration names that cannot be read refuses it naming that key file. The search never
+    fails open: a file it cannot read through, a `.gz` that ends before its stream does, and a link
+    or a directory it will not walk into refuse the commit the same way. The record and nothing
+    else enters the commit whatever else the store holds uncommitted, the message the stamp, the
+    author and committer the factory's."""
     keys = configured_keys() if key is None else [key]
+    if not keys:  # nothing to search for: a record searched for nothing is unsearched
+        raise LeakedKey(f"{instance_config()}: the instance configuration names no key")
+    # The program's own key for the older, records-only configuration is empty; a caller that
+    # names one key itself is searched for that one, and an empty key names no key at all.
+    keys = [k for k in keys if k]
     try:
         top = _store_git(store, "rev-parse", "--show-toplevel").strip()
     except (GitError, OSError, subprocess.SubprocessError):
@@ -1422,7 +1431,10 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     print(run_dir)  # the first line the builder prints is the record's path
     numbers_line = " ".join(f"{k}={v}" for k, v in numbers.items())  # stays one line of k=v
     try:
-        commit_record(store, run_dir)
+        # A run made as a role searches every key the configuration names; the older, records-only
+        # run that names no role has only the program's own key, and names that itself, so the
+        # configuration is not consulted for it.
+        commit_record(store, run_dir, key=None if builder_role is not None else key)
     except LeakedKey as e:
         print(numbers_line)
         print(f"{e}: the record holds the key", file=sys.stderr)  # never the value
