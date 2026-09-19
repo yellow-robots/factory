@@ -722,24 +722,16 @@ def build_agent(
         model_settings=OpenAIChatModelSettings(timeout=180),
         retries={"tools": 1, "output": 2},
     )
-    # The calls the tools refuse at travel with the agent, so `run` can tell a caller whose library
-    # budget and tools' budget would disagree: the two numbers must be the same number.
-    agent.tools_budget = tools.budget
     return agent
 
 
 def run(agent: Agent[None, BuildReport], goal: str,
-        budget: int | None = None) -> tuple[BuildReport | None, list, RunUsage, str, str]:  # fmt: skip
+        budget: int) -> tuple[BuildReport | None, list, RunUsage, str, str]:  # fmt: skip
     """One run under the caps: the report if there is one, the messages either way. `budget` is the
-    tool calls the run is given and must be the number the tools carry; a caller that names none is
-    given `CALLS_FLOOR` and refused with a TypeError when that is not the tools' own number, so the
-    budget the tools refuse at and the budget the library enforces can never disagree. `limits`
-    turns it into the library's caps, so the tools land the run and the requests outlast them."""
-    if budget is None:
-        budget = CALLS_FLOOR
-    carried = getattr(agent, "tools_budget", budget)
-    if carried != budget:
-        raise TypeError(f"the run's tools carry a budget of {carried}, not {budget}")
+    tool calls the run is given and the number the tools carry; it has no default, so a caller that
+    does not name one is a TypeError from the call itself and the budget the tools refuse at and the
+    budget the library enforces cannot differ. `limits` turns it into the library's caps, so the
+    tools land the run and the requests outlast them."""
     usage = RunUsage()
     report, stopped, detail = None, "answer", ""
     with capture_run_messages() as messages:
