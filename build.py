@@ -19,19 +19,24 @@ to the builder and to nothing else.
 
 A green check that changed something becomes one commit on the branch: the branch's head as the
 command found it is its parent, the diff is what the model left in the clone, the author and the
-committer are the factory's, and the message is the seed's name, a blank line, then the one
-trailer `Built-By: factory at <version>, run <stamp>`, which git's own parser reads. The version
-is the instance's own, `git describe --tags --always --dirty` where this file lives, or `unknown`
-when git cannot say, and never the project's. The commit is pushed to the branch it came from,
-never forced; the command prints one line naming the commit by git's abbreviation and the branch,
-and exits 0.
+committer are the factory's, and the message is the seed's name, a blank line, then the trailer
+`Built-By: factory at <version>, run <stamp>`, which git's own parser reads. A run that did not
+report carries one more trailer, `Stopped-By: <how it ended>`, so a reader of the branch can tell
+a build left by a run that never reported from one left by a run that did; it leaves the reading
+of `Built-By` intact. The version is the instance's own, `git describe --tags --always --dirty`
+where this file lives, or `unknown` when git cannot say, and never the project's. The commit is
+pushed to the branch it came from, never forced; the command prints one line naming the commit by
+git's abbreviation and the branch, and exits 0.
 
-A build that is not green leaves the branch alone: a red check, a green check that changed
-nothing, a run that was capped and one that ended in an error are each an error, exit 1, one line
-on stderr naming the record and how the run ended, the record in the store as any record is. What
-such a build leaves in the repository is a note of the factory's under `refs/notes/factory` on the
-head the build was asked of, one line naming the record and how it ended, pushed and never a
-branch or a tag of it; a second failure on the same head is added to it, both kept, and a green
+Whether a run reported is not one of the questions a build asks: a run that was capped and left a
+green tree with a diff is taken as any other build is. A build that is not green leaves the branch
+alone, and so does one whose record the store would not take: a run that ended in an error, a red
+check, a check that never ran, a green check that changed nothing and a record the store refused
+are each an error, exit 1, one line on stderr naming the record and how the run ended, the record
+in the store as any record is.
+What such a build leaves in the repository is a note of the factory's under `refs/notes/factory`
+on the head the build was asked of, one line naming the record and how it ended, pushed and never
+a branch or a tag of it; a second failure on the same head is added to it, both kept, and a green
 build leaves no note. A branch that moved while the build ran keeps the mover's commit: the build
 is refused, one line on stderr names the record and says the branch moved, and the command exits
 1, the push never forced.
@@ -148,6 +153,17 @@ def _branch_moved(repository: str, branch: str, requested: str) -> bool:
     return False
 
 
+def _record_taken(store: Path, record: Path) -> bool:
+    """Whether the store's git holds the record, the one commit `commit_record` makes of it. The
+    exit code cannot say it did: a run that was capped and one whose record the store refused share
+    a non-zero code now that a cap is no longer a refusal before that code is read. The store is
+    asked instead, and a store that cannot answer for the record -- one that never made a commit,
+    one git refuses -- answers no: a record the store would not take may hold a key, so nothing may
+    be pushed on a reading that cannot rule that out."""
+    done = _run(["-C", str(store), "cat-file", "-e", f"HEAD:{record.name}"], env=builder.store_env())
+    return done.returncode == 0
+
+
 def repository_path(name: str) -> str:
     """The repository as git should read it: a path named relatively is read from the directory the
     command was run in, as the caller means it, since every step of a build runs git from `/`; an
@@ -169,7 +185,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
     # read; its `records` is not made here, the builder makes it when it takes the record.
     try:
         work = instance.work_dir()
-        instance.record_store()
+        store = instance.record_store()
     except (ValueError, OSError) as e:
         return usage_error(str(e))
 
@@ -241,9 +257,9 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
             return code or 1
         print(record)
 
-        # How the run ended, from the record's own numbers and never the model's report: a red
-        # check, a green check that changed nothing, a run that was capped and one that ended in an
-        # error are each an error, and never a commit that might be read as work.
+        # How the run ended, from the record's own numbers and never the model's report: a run that
+        # ended in an error, a record the store would not take, a red check and a green check that
+        # changed nothing are each an error, and never a commit that might be read as work.
         try:
             numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
@@ -262,11 +278,12 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
             _leave_note(clone, requested, line)
             return 1
 
-        if stopped == "cap":
-            return refused("the run was capped")
         if stopped == "error":
             return refused("the run ended in an error")
-        if code != 0:  # the store would not take the record: nothing is committed or pushed
+        # The store must have taken the record. The exit code cannot say it did: a capped run and
+        # one whose record the store refused share it, so the store is asked, and a record it did
+        # not take refuses the build whatever ended the run -- it may hold a key.
+        if not _record_taken(store, record):
             return refused(reason or "the store would not take the record")
         if check != "green":
             return refused("the check is red" if check == "red" else "the check did not run")
@@ -281,9 +298,14 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
 
         # The commit is the factory's: the branch's head as the command found it is its parent and
         # the diff what the model left in the clone. The message is the seed's name, a blank line,
-        # then the one trailer git reads, naming the instance's own version and the run; nothing of
-        # the model's report is in it, since the report is in the record.
-        message = f"{name}\n\nBuilt-By: factory at {version()}, run {record.name}"
+        # then the trailer git reads, naming the instance's own version and the run, and -- when
+        # the run did not report -- the trailer that says so, since a build from a run that never
+        # reported is not the same artefact as one from a run that did. Nothing of the model's
+        # report is in it, since the report is in the record.
+        trailer = f"Built-By: factory at {version()}, run {record.name}"
+        if stopped != "answer":
+            trailer += f"\nStopped-By: {stopped}"
+        message = f"{name}\n\n{trailer}"
         env = builder.store_env()
         try:
             _git(["-C", str(clone), "add", "-A"], env=env)
