@@ -7,6 +7,7 @@ fake. The fixtures of the builder's own suite are reused rather than copied.
 """
 
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -217,15 +218,17 @@ class LandingTest(unittest.TestCase):
             self.assertEqual(len(tools.listed), 3, f"a response of {size} calls")
 
     def test_the_budget_a_run_is_given_is_the_budget_its_tools_carry(self):
-        """seed: caps-for-the-checkout-as-it-is. Found by the reviewer of the first three runs.
-        `run` took the budget with a default, so a caller that forgot it left the tools refusing at
-        the checkout's budget while the library cut the run off at the floor's -- the fault the seed
-        exists to remove, one call site away. The budget has no default: a run is given the number
-        its tools carry, or it is not a call."""
+        """seed: caps-for-the-checkout-as-it-is. Found by the reviewer of the first three runs, and
+        the build that answered it met this test's letter rather than the Goal: it kept the default
+        and hung the tools' number on the library's own agent to compare against, so a caller could
+        still name the wrong one and the program carried a side-channel through a class it does not
+        own. There is one number and one way to pass it. The budget has no default, so a run that is
+        not given one is not a call, and nothing needs to be carried on the agent to notice."""
         tools = self.tools(3)
         agent = build_agent(tools, model=FunctionModel(lambda messages, info: ModelResponse(parts=[])))
         with self.assertRaises(TypeError):
             run(agent, "goal")
+        self.assertIs(inspect.signature(run).parameters["budget"].default, inspect.Parameter.empty)
 
 
 class RecordTest(KeysBase):
