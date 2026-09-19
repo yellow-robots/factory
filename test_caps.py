@@ -13,10 +13,12 @@ from pathlib import Path
 from unittest import mock
 
 from pydantic_ai import models
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 import builder
-from builder import Tools
-from test_builder import FakeSandbox
+from builder import Tools, build_agent, run
+from test_builder import REPORT, FakeSandbox, call
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -98,6 +100,82 @@ class BudgetTest(unittest.TestCase):
         self.assertEqual(hidden.budget, builder.call_budget(root, (*builder.HIDDEN, "f0.py")))
         self.assertLess(hidden.budget, BUDGET, "what the tools hide is not what they must read")
 
+
+class LandingTest(unittest.TestCase):
+    """A run that spends its budget is told to report and has the requests left to do it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "checkout"
+        self.root.mkdir()
+        (self.root / "a.py").write_text("x = 1\n")
+        self.run_dir = Path(self.tmp.name) / "run"
+        self.run_dir.mkdir()
+
+    def tools(self, budget: int) -> Tools:
+        """The tools over that checkout, given that many calls and a sandbox that would raise if a
+        check ever reached it."""
+        return Tools(self.root, self.run_dir, budget=budget, sandbox=FakeSandbox([]))
+
+    def test_every_tool_refuses_once_the_budget_is_spent(self):
+        """seed: caps-for-the-checkout-as-it-is. The tools count every call made through them and
+        stop when the budget is gone, in the words the write cap and the check cap already use, so
+        the run lands instead of being cut off. All six refuse, none of them does anything, and a
+        refused call counts too: what the budget bounds is what the model asked for."""
+        tools = self.tools(3)
+        self.assertEqual(tools.budget, 3)
+        for _ in range(3):
+            tools.list(".")
+        self.assertEqual((tools.calls, len(tools.listed)), (3, 3))
+
+        refusal = "error: cap reached (3 tool calls); report now"
+        self.assertEqual(tools.list("."), refusal)
+        self.assertEqual(tools.read("a.py"), refusal)
+        self.assertEqual(tools.search("x"), refusal)
+        self.assertEqual(tools.write("new.py", "y = 2\n"), refusal)
+        self.assertEqual(tools.edit("a.py", "x = 1", "x = 2"), refusal)
+        self.assertEqual(tools.check(), refusal)
+
+        self.assertEqual(len(tools.listed), 3, "the refused list is not a list")
+        self.assertEqual((tools.read_paths, tools.searched, tools.written, tools.edited), ([], [], [], []))
+        self.assertEqual(tools.checks, [], "the check never reached the sandbox")
+        self.assertFalse((self.root / "new.py").exists(), "the refused write wrote nothing")
+        self.assertEqual((self.root / "a.py").read_text(), "x = 1\n", "the refused edit changed nothing")
+        self.assertEqual(tools.calls, 9, "a call the budget refused is still a call")
+
+    def test_a_run_that_spends_its_budget_reports_instead_of_being_cut_off(self):
+        """seed: caps-for-the-checkout-as-it-is. Four runs of v0.15 reached a green check with the
+        whole change made and were cut off before they could report, because the request cap was
+        below the tool-call cap and the provider budget ran out before the tools could say stop.
+        A model that is told to report now has the requests to do it, and the run ends with an
+        answer and no cap at all."""
+        tools = self.tools(3)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            answered = [str(p.content) for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+            if answered and "report now" in answered[-1]:
+                return ModelResponse(parts=[call("final_result", REPORT, "end")])
+            return ModelResponse(parts=[call("list", {"path": "."}, f"c{len(answered)}")])
+
+        report, messages, usage, stopped, detail = run(
+            build_agent(tools, model=FunctionModel(model)), "goal", 3
+        )
+        self.assertEqual((stopped, detail), ("answer", ""))
+        self.assertIsNotNone(report)
+        self.assertEqual(len(tools.listed), 3, "three calls of the three were work")
+        self.assertEqual(tools.calls, 4, "and the fourth was the refusal that ended the looking")
+
+    def test_the_requests_a_run_is_given_always_outlast_its_calls(self):
+        """seed: caps-for-the-checkout-as-it-is. `REQUEST_CAP = 60` sat below `TOOL_CALLS_CAP = 80`
+        from v0.3 to v0.15, so the requests ran out twenty calls before the tools could refuse and
+        the landing could never fire. The two limits are derived from the budget and never set
+        apart: above the budget there are calls left to answer a refusal with, and above those
+        there are requests left to report with."""
+        for budget in (1, 3, builder.CALLS_FLOOR, builder.CALLS_CEILING):
+            limits = builder.limits(budget)
+            self.assertGreater(limits.tool_calls_limit, budget, "a refusal can be answered")
+            self.assertGreater(limits.request_limit, limits.tool_calls_limit, "and then reported")
 
 if __name__ == "__main__":
     unittest.main()

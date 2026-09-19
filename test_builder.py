@@ -678,23 +678,24 @@ class LoopTest(unittest.TestCase):
             # two calls per turn, so the tool-call cap binds before the request cap does
             return ModelResponse(parts=[call("list", {"path": "."}, "c1"), call("list", {"path": "."}, "c2")])
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
         self.assertEqual(stopped, "cap")
         self.assertIsNone(report)
-        self.assertEqual(len(tools.listed), builder.TOOL_CALLS_CAP)
+        self.assertEqual(len(tools.listed), tools.budget)
         self.assertIn("tool_calls_limit", detail)
 
-    def test_a_model_that_never_stops_one_call_at_a_time_hits_the_request_cap(self):
+    def test_a_model_that_never_stops_one_call_at_a_time_is_still_bound_by_the_calls(self):
         tools = self.tools([])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[call("list", {"path": "."}, "c")])
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
         self.assertEqual(stopped, "cap")
         self.assertIsNone(report)
-        self.assertEqual(len(tools.listed), builder.REQUEST_CAP)
-        self.assertIn("request_limit", detail)
+        self.assertEqual(len(tools.listed), tools.budget)
+        self.assertIn("tool_calls_limit", detail)
+        self.assertNotIn("request_limit", detail)  # the requests outlast the calls, always
 
     def test_a_plain_text_answer_is_retried_by_the_library(self):
         tools = self.tools([])
@@ -1454,14 +1455,16 @@ class MainTest(unittest.TestCase):
         """seed: the-check-on-the-final-tree. Whatever ended the run: a run capped after writing is
         recorded on the tree it left, so the set reads a cap by the tree and not by the model's
         last word."""
-        with mock.patch.object(builder, "TOOL_CALLS_CAP", 2):
-            model = scripted(
-                [call("check", {}, "c1")],
-                [call("write", {"path": "after.txt", "content": "written after the check\n"}, "c2")],
-                [call("write", {"path": "more.txt", "content": "and the cap is reached\n"}, "c3")],
-            )
+        def checks_then_writes_forever(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            done = sum(1 for m in messages if isinstance(m, ModelResponse))
+            if done == 0:
+                return ModelResponse(parts=[call("check", {}, "c0")])
+            return ModelResponse(parts=[call("write", {"path": f"after{done}.txt",
+                                                       "content": "written after the check\n"}, f"c{done}")])
+
+        with mock.patch.object(builder, "CALLS_CEILING", 2):
             sandbox = FakeSandbox([(0, "OK\n"), (1, "FAILED on the tree left\n")])
-            code, lines, run_dir = self.main(model, sandbox)
+            code, lines, run_dir = self.main(FunctionModel(checks_then_writes_forever), sandbox)
         self.assertEqual(code, 1)
         numbers = json.loads((run_dir / "numbers.json").read_text())
         self.assertEqual(numbers["stopped"], "cap")

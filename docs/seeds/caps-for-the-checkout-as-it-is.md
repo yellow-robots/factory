@@ -26,14 +26,14 @@ The third is what a larger budget would cost, from the store's 181 records. Of 9
 
 ## Goal
 
-A run's budget follows the checkout it is given, rather than being a constant of the program. This goal carries the budget; spending it is the next one, so nothing about how a run ends changes here.
+A run that spends its budget is told to report and has the requests left to do it, instead of being cut off with its work unsaid. The budget is the one the previous goal put on the tools.
 
-`builder.py` gains three constants and one function. `CALLS_FLOOR` is 80, the number `TOOL_CALLS_CAP` has held since v0.3. `CALLS_CEILING` is 200. `PASSES` is 2, the times over the checkout a run is given the calls to read.
+`Tools` counts every call made through it as `self.calls`, an integer that starts at zero and rises by one on entry to `list`, `read`, `search`, `write`, `edit` and `check`, whether the call does work or is refused. `check_final` is the builder's own and is not one of the six.
 
-`call_budget(root: Path, hidden: tuple[str, ...] = HIDDEN) -> int` answers how many tool calls a run over that checkout is given. It sums the lines of every file the tools can reach under `root`; what it costs to read the checkout once is that sum divided by `READ_LINES_CAP`, rounded up; the budget is that many times `PASSES`, plus `WRITE_CAP` and `CHECK_CAP`, the writes and the checks a run is already allowed. The answer is never below `CALLS_FLOOR` and never above `CALLS_CEILING`, in that order, so the ceiling is the last word.
+Once `self.calls` has reached `self.budget`, every one of the six answers `error: cap reached (<budget> tool calls); report now` and does nothing else: nothing is listed, read, searched, written, edited or checked, no counter but `self.calls` moves, and the sandbox is never reached. The words and the shape are the ones `_capped` already gives for the write cap, which keeps its own words and its own number, as the check cap keeps its.
 
-What the tools can reach is what `list` and `read` would answer with, and nothing else is counted: a name in `hidden` at the root of the checkout, anything with a `.git` component at any depth, a symlink and a directory are all skipped. A file whose bytes are not UTF-8 text, and a file this process cannot read, count nothing and do not stop the count. Nothing is written, and nothing outside `root` is opened.
+`limits(budget: int) -> UsageLimits` is a new function of `builder.py`. Its `tool_calls_limit` is `budget + RESERVE`, so a model that keeps calling after it has been told to report is still stopped; its `request_limit` is `budget + RESERVE + REPORT_REQUESTS`, so a run that has spent every call it was given still has the requests to say what it did. `RESERVE` is 4 and `REPORT_REQUESTS` is 6, new constants of `builder.py`. The request limit is never below the tool-call limit: `REQUEST_CAP = 60` against `TOOL_CALLS_CAP = 80` has been that way since v0.3, and it is why the landing above could never fire.
 
-`Tools` takes a `budget` keyword argument and carries it as `self.budget`. A caller that does not name one gets `call_budget(self.root, self.hidden)`, taken once in the constructor from the tree as it then is; a caller that names one gets that number and the tree is not walked for it. `main` names none, so a run's budget is its checkout's.
+`run` takes the budget as a third argument, `budget: int | None = None`, `None` meaning `CALLS_FLOOR`, and gives `agent.run_sync` what `limits` answers for it. `main` builds the tools first and passes `tools.budget`, so one number bounds the calls and the requests together.
 
-Nothing else changes. `TOOL_CALLS_CAP` and `REQUEST_CAP` still bound the run and are still what `run` gives the library.
+`TOOL_CALLS_CAP` and `REQUEST_CAP` are removed from `builder.py`. Nothing else in the program reads them.

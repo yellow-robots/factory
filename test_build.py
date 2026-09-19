@@ -269,8 +269,13 @@ class BuildTest(unittest.TestCase):
         self.assertIn(self.records()[-1].name, err)
         self.assertIn("nothing", err)
 
-        with mock.patch.object(builder, "TOOL_CALLS_CAP", 1):
-            code, lines, err = self.build(scripted(EDIT, EDIT, EDIT, CHECK), FakeSandbox([(0, "OK\n")]))
+        def writes_forever(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            done = sum(1 for m in messages if isinstance(m, ModelResponse))
+            return ModelResponse(parts=[ToolCallPart("write", {"path": f"g{done}.py", "content": "y = 1\n"},
+                                                     tool_call_id=f"c{done}")])
+
+        with mock.patch.object(builder, "CALLS_CEILING", 1):
+            code, lines, err = self.build(FunctionModel(writes_forever), FakeSandbox([(0, "OK\n")]))
         self.assertEqual(code, 1)
         self.assertEqual(self.head(), self.requested)
         self.assertIn(self.records()[-1].name, err)
