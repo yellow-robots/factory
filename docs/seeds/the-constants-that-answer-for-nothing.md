@@ -2,20 +2,24 @@
 created: 2026-09-19
 type: seed
 status: open
-summary: `MODEL` and `KEY_FILE` are still in `builder.py` with nothing left that reads them, because the caps cut off every run that tried to take them out; two places still say where a key is, and one of them is dead.
-value: 2
+summary: The older records-only configuration is a path no instance takes any more; it is what keeps MODEL alive, and it is where the key wall still commits a record it has not searched.
+value: 4
 effort: S
 version:
 ---
 
 ## Evidence
 
-2026-09-19, v0.15. keys-of-the-instance moved the model and the key's place into the instance's configuration, and its last goal was to take the program's own constants out with the fallback that used them. Five runs tried. Two reached a green check with the whole change made and were cut off by the tool-call cap before they could report, so their work was discarded: 20260918T233211Z at 79 calls of 80 and 20260918T234138Z at 80, the second with the Goal quoting every line to be removed. Across the five, between fifty and fifty-five of every eighty calls were reads and searches, whatever the Goal said; naming the sites did not change it and quoting them did not either.
+2026-09-19, read in `builder.py` at v0.16 by the attended agent, correcting what this seed said when it was filed on the 18th. It claimed `MODEL` and `KEY_FILE` were both present with nothing left that reads them. Half of that is true and half is not, and the half that is not is the interesting one.
 
-The attended agent then amended the spec, stated in the commit of 19 September: the usage error a configuration without a `builder` role raises is what a misconfigured instance needs and it stays; the assertion that the constants are absent was dropped, and this is where it went. What remains is dead code — nothing reads `KEY_FILE` once `read_key` is always given a path, and nothing reads `MODEL` once every caller passes a model name — and two places still say where a key is, which is the thing the seed set out to end.
+`KEY_FILE` is dead as claimed: `read_key(path=None)` falls back to it, and both of the two callers in the program pass a path, so the default is never taken and no test patches it any more.
+
+`MODEL` is not dead. It is `build_agent`'s default `model_name`, and it is what `main` runs on when `instance_role("builder")` raises and the configuration names neither `roles` nor `work` -- the older, records-only configuration, kept when the roles arrived at v0.15. On that path the key is the empty string.
+
+That empty key is where the wall still fails open. [[the-search-that-answers-for-no-keys]] made a record searched for nothing refuse to commit, and had to exempt one case to stay green: a caller naming the empty string. The only caller that does is `main` on that path, and the only thing that runs it is one configuration inside `test_a_run_without_a_store_is_a_usage_error`, which writes `records = ...` and nothing else to prove where the configuration is found when the environment names none. The test is about where the file is, not about running with no roles.
+
+So one leftover path keeps a constant alive, keeps an exemption in the key wall alive, and is exercised by a test that does not mean to exercise it.
 
 ## Idea
 
-The two constants below the imports go, with `read_key`'s `path is None` branch and `build_agent`'s default for `model_name`, so the parameters are required and the configuration is the one place. The names stay gone rather than hidden: a module that keeps an attribute and refuses to answer for it, which is what run 20260918T224905Z did when it was boxed in, is the same two places to look told apart by a trick.
-
-It is an S and it is blocked on nothing but the budget, so it goes in the first version built under caps that fit the checkout — which makes it a test of caps-for-the-checkout-as-it-is as much as a change of its own: if that seed works, this one builds in a single run.
+The records-only path goes. `main` reads the `builder` role as it reads the store, and a configuration that cannot name one is the usage error it already is for a configuration that names `roles` or `work` badly -- there stops being a third case. `MODEL` and `KEY_FILE` go with it, and so does the empty-key exemption in `commit_record`, since nothing can then name an empty key. The test that proves where the configuration is found names a role in it, which is what every configuration of an instance has named since v0.15.

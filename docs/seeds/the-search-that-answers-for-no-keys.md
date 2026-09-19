@@ -1,7 +1,7 @@
 ---
 created: 2026-09-19
 type: seed
-status: building
+status: done
 summary: A configuration that cannot say what a key is makes the record's search answer with an empty list, so the record is committed having been searched for nothing; every other case of that function refuses the commit.
 value: 4
 effort: S
@@ -24,4 +24,8 @@ The error `key_paths()` raises is no longer swallowed. A configuration whose `ro
 
 An empty list of keys refuses the commit whatever produced it, so a `roles` table holding no role is refused too, because a record searched for nothing has not been searched. A caller that names one key itself is unaffected: it has said what to search for, and the configuration is not consulted.
 
-The docstring says what is then true. Its sentence that the empty list "falls back to the program's constants as the run does" describes a fallback the code never had, and that the run stopped having at v0.15 when the builder began running as a role.
+The docstring says what is then true. Its sentence that the empty list "falls back to the program's constants as the run does" described a fallback the code never had, and that the run stopped having at v0.15 when the builder began running as a role.
+
+**The one exemption, and why it stands.** A caller that names the empty string as its key has named no key, and the build keeps that case committing rather than refusing. It had to: the only caller that does so is `main` on the older, records-only configuration -- one naming neither `roles` nor `work` -- where the program's own key stands in and is empty, and a test of records-outside-the-project runs exactly that configuration to prove where the file is found when the environment names none. The build did not hide this. It wrote the exemption as its own line with a comment saying what it is, which is what an honest answer to a goal it cannot fully meet looks like. The remaining hole is that path and not this function, and closing it is [[the-constants-that-answer-for-nothing]]: with no records-only path there is no empty key, and with no empty key there is no exemption.
+
+**What it came to.** One run, 58 requests of the 60 the instance still allows and 73 tool calls, green, 12 cents. It came within two requests of the cap that this version exists to remove, on an instance pinned at v0.15 which carries v0.15's constants -- the plainest demonstration that a caps change helps the version after the one that makes it.
