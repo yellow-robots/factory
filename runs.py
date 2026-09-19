@@ -26,7 +26,8 @@ from typing import Any
 import instance
 
 COLUMNS = (
-    "stamp", "head", "stopped", "check", "requests", "tool_calls", "lists", "reads", "writes", "edits",
+    "stamp", "head", "stopped", "cap", "check", "requests", "requests_cap", "tool_calls", "calls_cap",
+    "lists", "reads", "writes", "edits",
     "checks", "tool_errors", "input_tokens", "input_per_request", "cache_read_tokens", "output_tokens",
     "reasoning_tokens", "cost_usd", "seconds", "files_changed", "insertions", "deletions", "goal",
 )  # fmt: skip

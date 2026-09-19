@@ -134,6 +134,19 @@ def limits(budget: int) -> UsageLimits:
     )
 
 
+def which_cap(stopped: str, detail: str) -> str:
+    """Which of the two caps ended a run, from what `run` returns: `calls` when the library's
+    tool-call limit raised, `requests` when its request limit did, and the empty string when no cap
+    ended the run or the detail names neither limit rather than guessing."""
+    if stopped != "cap":
+        return ""
+    if "tool_calls_limit" in detail:
+        return "calls"
+    if "request_limit" in detail:
+        return "requests"
+    return ""
+
+
 # Refused to write and edit: the tests are the goal's acceptance criteria, the toolchain is what
 # check runs against, and a .gitattributes or .gitignore the model wrote would change what git
 # records of the run. A basename glob anywhere, a dotted basename anywhere, a prefix, or an exact
@@ -1360,9 +1373,12 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         "head": checkout_head,
         "seed": seed,
         "stopped": stopped,
+        "cap": which_cap(stopped, detail),
         "requests": usage.requests,
+        "requests_cap": limits(tools.budget).request_limit,
         "wire_attempts": wire.attempts,
         "tool_calls": usage.tool_calls,
+        "calls_cap": tools.budget,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "cache_read_tokens": usage.cache_read_tokens,
