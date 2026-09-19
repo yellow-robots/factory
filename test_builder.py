@@ -628,7 +628,7 @@ class LoopTest(unittest.TestCase):
             call("edit", {"path": "g.py", "old": "b = 1", "new": "b = 2"}, "e2"),
             call("edit", {"path": "g.py", "old": "a = 2", "new": "a = 3"}, "e3"),
         ])
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal", tools.budget)
         self.assertEqual(stopped, "answer", detail)
         self.assertEqual(returns_of(messages)[:3], ["edited g.py (2 -> 2 lines)"] * 3)
         self.assertEqual((self.root / "g.py").read_text(), "a = 3\nb = 2\n")
@@ -645,7 +645,7 @@ class LoopTest(unittest.TestCase):
             [call("check", {}, "c4")],
             [call("final_result", REPORT, "c5")],
         )
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal", tools.budget)
         self.assertEqual((stopped, detail), ("answer", ""))
         self.assertIsInstance(report, BuildReport)
         self.assertEqual(report.check, "green")
@@ -665,7 +665,7 @@ class LoopTest(unittest.TestCase):
     def test_the_write_cap_reaches_the_model_as_an_error(self):
         tools = self.tools([])
         turns = [[call("write", {"path": f"w{i}.txt", "content": "x\n"}, f"w{i}")] for i in range(builder.WRITE_CAP + 1)]
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), "goal", tools.budget)
         self.assertEqual(stopped, "answer")
         self.assertEqual(len(tools.written), builder.WRITE_CAP)
         # the last tool return is the library's own for final_result; the cap error precedes it
@@ -705,7 +705,7 @@ class LoopTest(unittest.TestCase):
                 return ModelResponse(parts=[TextPart("done")])
             return ModelResponse(parts=[call("final_result", REPORT, "c")])
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
         self.assertEqual(stopped, "answer")
         self.assertIsInstance(report, BuildReport)
         retries = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
@@ -718,7 +718,7 @@ class LoopTest(unittest.TestCase):
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelAPIError("deepseek-flash", "boom")
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
         self.assertEqual(stopped, "error")
         self.assertIsNone(report)
         self.assertIn("boom", detail)
