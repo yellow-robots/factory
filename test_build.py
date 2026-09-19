@@ -484,6 +484,41 @@ class BuildTest(unittest.TestCase):
         self.assertIn("did not run", err)
         self.assert_the_work_is_empty()
 
+    def reads_forever_after(self, *plays: tuple[str, dict]):
+        """A model that makes each of `plays` once, in order, and then reads one file until
+        something stops it."""
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            done = sum(1 for m in messages if isinstance(m, ModelResponse))
+            name, args = plays[done] if done < len(plays) else ("read", {"path": "f.py"})
+            return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id=f"c{done}")])
+
+        return FunctionModel(model)
+
+    def test_a_green_the_final_check_could_not_confirm_does_not_push_the_tree(self):
+        """seed: the-check-that-could-not-run. The model edits, checks green, then writes something
+        the check has never seen, and is capped. The builder's own final check is the only thing
+        that could speak for that tree, and it cannot run -- the sandbox has nothing left to give,
+        which is what a stopped docker daemon looks like from here. `check_final` swallows the
+        failure by design, so the record keeps a green that was true of a tree two writes ago, and
+        since this version that green is the whole permission to push. The build must refuse, and
+        the record must survive: a sandbox that cannot run must not lose it."""
+        broken = ("write", {"path": "broken.py", "content": "def (  # not python\n"})
+        with mock.patch.object(builder, "CALLS_CEILING", 4):
+            code, lines, err = self.build(
+                self.reads_forever_after(EDIT, CHECK, broken), FakeSandbox([(0, "OK\n")]))
+        (record,) = self.records()
+        self.assertTrue((record / "numbers.json").is_file(), "the record survives the failed check")
+        self.assertTrue((record / "wire.jsonl.gz").is_file())
+        numbers = json.loads((record / "numbers.json").read_text())
+        self.assertEqual(numbers["stopped"], "cap")
+        self.assertNotEqual(numbers["check"], "green",
+                            "a green the final check could not confirm is not a green")  # fmt: skip
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), self.requested, "the branch is where it was")
+        self.assertEqual(git(self.origin, "ls-tree", "--name-only", self.head()).split().count("broken.py"), 0)
+        self.assert_the_work_is_empty()
+
     def test_a_failed_build_says_one_line_and_the_note_names_the_record_by_its_stamp(self):
         """seed: build-from-a-pushed-branch. From the review: git's own words run to several lines, and
         the reason of a failed build was all of them, on stderr and in the note pushed into the
