@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: building
+status: done
 summary: The call budget claims to follow the reading a checkout costs; decomposed, it counts files, and more than half of what it counts is the vault the builder never opens.
 value: 4
 effort: M
@@ -47,6 +47,9 @@ A run is bounded by what it has spent, not by a walk over files it will never re
 **C. The backstop.** `HARD_SPEND` above it stops a run that will not land whatever it is told, the way the library's limits stop one today: the run ends, `stopped` says it was capped, and the record says which cap did it. It is a guard against a runaway and not a tuned threshold -- no run in the store has ever reached 0.25 -- so it is twice the soft ceiling and is not derived from anything else.
 
 **D. The walk goes.** `call_budget` and everything only it uses are removed, and with them the idea that a budget is a share of a pass over the checkout. `tool_calls_limit` and `request_limit` stay as fixed, generous constants: a cheap counter that catches a runaway is worth having beside the bound that means something, but it is no longer the budget and no longer derived. Pick them so that neither binds before `HARD_SPEND` on any run the store has ever seen.
+
+> [!warning] Not built in v0.17
+> 2026-09-20: goals A, B, C and E landed in run 20260919T230907Z and this one did not. It is not a smaller change than it reads: `run(agent, goal, budget)` is a signature named at 25 call sites across `test_caps.py` and `test_builder.py`, the builder may not touch a protected test, so every one of them must be amended by the attended agent before a build can start -- and that amendment is larger than the change. Deferred whole rather than started late, and carried by [[the-walk-that-bounds-nothing]]. Nothing in A, B, C or E depends on it: the spend landing is what bounds a run, and the walk now derives a number that decides nothing.
 
 **E. What the record says.** A record names the caps it was given beside the counts they bound, as it does now, and which cap ended the run when one did. The spend ceilings join them; whatever no longer exists leaves. `numbers.json` keeps `cost_usd` and `cost_source` as they are and with the same meaning, so every reading of the table still works across the change.
 
