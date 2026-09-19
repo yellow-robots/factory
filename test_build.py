@@ -436,6 +436,54 @@ class BuildTest(unittest.TestCase):
             self.assertNotIn("not-a-key", git(self.origin, "log", "-p", "--format=%B", ref))
         self.assert_the_work_is_empty()
 
+    def test_a_record_the_store_would_not_take_is_refused_though_the_store_holds_other_commits(self):
+        """seed: the-work-a-capped-run-leaves. From the review of run 20260919T225154Z. Both tests
+        that covered a refused record ran against a store with nothing in it, so the store was on an
+        unborn HEAD at the moment of the refusal, and every weaker reading passed them: a mutant
+        asking `rev-parse --verify HEAD` -- has the store any commit at all -- instead of asking for
+        this record's own path passed all 201 tests and pushed the key onto the branch. The setup
+        the boundary needs is one build taken before the one refused."""
+        code, lines, err = self.build(scripted(EDIT, CHECK), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        self.requested = self.head()
+        taken = self.records()[-1]
+
+        leak = ("write", {"path": "leak.py", "content": "TOKEN = 'not-a-key'\n"})
+        code, lines, err = self.build(scripted(leak, CHECK), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 1)
+        refused = self.records()[-1]
+        self.assertNotEqual(refused, taken)
+        self.assertEqual(self.head(), self.requested, "the branch is where the first build left it")
+        self.assertNotIn("not-a-key", err, "the reason never carries the value")
+        self.assertIn(refused.name, err)
+        committed = subprocess.run(["git", "-C", str(self.store), "log", "--format=%s"],
+                                   capture_output=True, encoding="utf-8", env=builder.store_env())  # fmt: skip
+        self.assertIn(taken.name, committed.stdout, "the store still holds the first record")
+        self.assertNotIn(refused.name, committed.stdout, "and holds no commit for the refused one")
+        for ref in git(self.origin, "for-each-ref", "--format=%(refname)").split():
+            self.assertNotIn("not-a-key", git(self.origin, "log", "-p", "--format=%B", ref))
+        self.assert_the_work_is_empty()
+
+    def test_a_capped_run_whose_check_never_ran_is_refused_though_it_changed_the_tree(self):
+        """seed: the-work-a-capped-run-leaves. From the review: of the five things the Goal says
+        must still refuse, a check that never ran was pinned by nothing, and a mutant that refused
+        only `red` -- dropping the `none` case -- passed all 201 tests while pushing a tree no check
+        had ever seen. It is the clause a real capped run is likeliest to reach, since a run capped
+        in the middle of writing has often not checked at all. The tree here is changed and the
+        sandbox cannot run, so no check of any kind stands behind it."""
+        wrote = ("write", {"path": "g.py", "content": "y = 1\n"})
+        with mock.patch.object(builder, "CALLS_CEILING", 2):
+            code, lines, err = self.build(self.reads_forever(wrote), FakeSandbox([]))
+        self.assertEqual(code, 1)
+        (record,) = self.records()
+        numbers = json.loads((record / "numbers.json").read_text())
+        self.assertEqual((numbers["stopped"], numbers["check"]), ("cap", "none"))
+        self.assertGreater(numbers["files_changed"], 0, "the tree was changed")
+        self.assertEqual(self.head(), self.requested, "and the branch is where it was")
+        self.assertIn(record.name, err)
+        self.assertIn("did not run", err)
+        self.assert_the_work_is_empty()
+
     def test_a_failed_build_says_one_line_and_the_note_names_the_record_by_its_stamp(self):
         """seed: build-from-a-pushed-branch. From the review: git's own words run to several lines, and
         the reason of a failed build was all of them, on stderr and in the note pushed into the

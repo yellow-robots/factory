@@ -522,6 +522,35 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(builder.SOFT_SPEND, 0.125)
         self.assertGreater(builder.SOFT_SPEND, 0.1239)
 
+    def test_a_run_past_the_hard_ceiling_ends_rather_than_being_told_to_report(self):
+        """seed: the-budget-that-counts-files. The backstop is not a refusal the model can ignore:
+        past `HARD_SPEND` the run itself ends, the way the library's own limits end a runaway. The
+        build added it without a test, so this pins the whole path -- the raise from inside a tool
+        reaches `run` as a cap rather than escaping as an error, and `which_cap` names it."""
+        tools = Tools(self.root, self.run_dir, sandbox=self.sandbox, budget=50,
+                      spent=lambda: builder.HARD_SPEND)  # fmt: skip
+
+        def reads(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            n = sum(1 for m in messages if isinstance(m, ModelResponse))
+            return ModelResponse(parts=[ToolCallPart("read", {"path": "a.txt"}, tool_call_id=f"c{n}")])
+
+        report, messages, usage, stopped, detail = run(
+            build_agent(tools, model=FunctionModel(reads)), "goal", tools.budget)
+        self.assertIsNone(report)
+        self.assertEqual(stopped, "cap")
+        self.assertEqual(builder.which_cap(stopped, detail), "spend")
+        self.assertIn(str(builder.HARD_SPEND), detail)
+        self.assertEqual(tools.calls, 1, "it ends on the first call, not after a pass over the tree")
+        self.assertEqual(tools.read_paths, [], "and the call it ended on did no work")
+
+    def test_the_hard_ceiling_is_above_the_soft_one_and_neither_is_the_other(self):
+        """seed: the-budget-that-counts-files. Two ceilings, and the order between them is the
+        whole design: below the soft one a run works, between them it is told to report and can,
+        above the hard one it is stopped. A hard ceiling at or below the soft one would mean no run
+        is ever told to report before it is killed."""
+        self.assertGreater(builder.HARD_SPEND, builder.SOFT_SPEND)
+        self.assertEqual(builder.HARD_SPEND, 0.25)
+
 
 class PriceTest(unittest.TestCase):
     """seed: the-budget-that-counts-files. One place prices tokens, so the bound on a run and the
