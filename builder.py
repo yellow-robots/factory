@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from instance import instance_config, key_paths, record_store, role as instance_role
+from instance import _read_config, instance_config, key_paths, record_store, role as instance_role
 
 # Before the import: the library greets stderr once per process unless this is set.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -1195,26 +1195,30 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         store = record_store(checkout)
     except (ValueError, OSError) as e:
         return usage_error(str(e))
-    # The run is the instance's `builder` role when its configuration holds one: that role's model
-    # and key file are used. A configuration that holds no such role changes nothing: the program's
-    # model constant still answers and the record's search falls back to the keys the configuration
-    # names, none of which there are, so every fixture that holds no role still runs. A
-    # configuration whose roles are malformed is no role to run as either, so it falls back the same
-    # way rather than turning the run into a usage error the goal does not ask for.
+    # The run's model and key file are the instance's `builder` role. A configuration that holds no
+    # roles, holds others but not that one, or holds a malformed one cannot say which key a run
+    # uses, and is refused in the words `instance.py` raises for it -- naming the configuration's
+    # file and the role -- before the model is called or anything is made, as any other
+    # configuration a run cannot use is. The older, records-only configuration that names neither
+    # `roles` nor `work` is no run's configuration at all: nothing there can name a key, and the
+    # program's own model and key still answer for it.
     try:
         builder_role = instance_role("builder")
-    except (ValueError, OSError):
+    except (ValueError, OSError) as e:
+        _, data = _read_config()
+        if "roles" in data or "work" in data:
+            return usage_error(str(e))
         builder_role = None
     # The key file holds the bare key, or one `name=value` line as in an env file; one that cannot
     # be read or holds no key is a usage error too, before anything is made.
-    if builder_role is not None:
+    if builder_role is None:
+        model_name, key = MODEL, ""
+    else:
         model_name = builder_role.model
         try:
             key = read_key(builder_role.key)
         except (ValueError, OSError) as e:
             return usage_error(str(e))
-    else:
-        model_name, key = MODEL, ""
     # The store's directory is made once the configuration is read and the key is a key; a plain
     # file or a path the run cannot make is a usage error naming both the configuration and the
     # store.
