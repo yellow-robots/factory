@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: building
+status: done
 summary: A final check that cannot run leaves the model's earlier verdict standing, and since this version that stale green is what decides whether a tree is pushed.
 value: 5
 effort: S

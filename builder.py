@@ -587,6 +587,10 @@ class Tools:
         own kind of check, and only when it wrote or edited since its last check, a refused write
         being nothing written. The cap of 8 binds the model's checks, not this one, and a sandbox
         that cannot run leaves the record as it is rather than losing it.
+
+        A check that could not run leaves `changed_since_check` standing, which is what the record
+        reads: the last verdict is kept only when it saw the tree the record is for, so the stale
+        green of an earlier tree is written as `none` instead of standing as permission to push.
         """
         if self.sandbox is None or not self.changed_since_check:
             return
@@ -1412,7 +1416,8 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
 
     # The record's check is the tree the run left, whatever ended it: when the model wrote or
     # edited since its last check the builder runs the same check once more, numbered after the
-    # model's own and logged beside them, so `check` in the numbers is the last check run.
+    # model's own and logged beside them, so `check` in the numbers is the last check run -- or
+    # `none`, when that final check could not run and no verdict stands for the tree it left.
     tools.check_final()
 
     (run_dir / "messages.json").write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=1))
@@ -1466,8 +1471,13 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         "written": tools.written,
         "edited": tools.edited,
         "checks": len(checks),
-        # The tools' own truth about the checkout, next to the report's claim about it.
-        "check": "none" if not checks else "green" if checks[-1] == 0 else "red",
+        # The tools' own truth about the checkout, next to the report's claim about it: the last
+        # check's verdict, but only when that check saw the tree the record is for. A run that wrote
+        # since its last check and whose final check could not run -- `check_final` swallows the
+        # sandbox's failure so the record survives -- has no verdict on the tree it left: the flag
+        # still says the check is due, so `check` says nothing rather than carrying the stale one.
+        "check": "none" if not checks or tools.changed_since_check
+                 else "green" if checks[-1] == 0 else "red",  # fmt: skip
         "check_seconds": round(sum(c["seconds"] for c in tools.checks), 1),
         **changes,
         "seconds": seconds,
