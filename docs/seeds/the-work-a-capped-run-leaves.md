@@ -1,11 +1,11 @@
 ---
 created: 2026-09-19
 type: seed
-status: open
+status: spec
 summary: Seven capped builds left a tree the builder's own check passed, and all seven were discarded for want of a report: 90 cents, seventeen per cent of everything this factory has ever spent on builds.
 value: 5
 effort: S
-version:
+version: v0.17
 ---
 
 ## Evidence
@@ -32,10 +32,14 @@ The precedent is published. SWE-agent's harness, on exceeding its cost limit, ca
 
 The same paper (https://arxiv.org/html/2405.15793v3) reports that "93.0% of resolved instances are submitted before exhausting their cost budget, compared to 69.0% of instances overall" and concludes that "increasing the maximum budget or token limit are unlikely to substantially increase performance". Their successes finish at a median $1.21 and 12 steps against failures at a mean $2.52 and 21 steps. The same shape holds here: answered builds run a median of 20 requests at $0.032, capped builds a median of 60 at $0.125, and the most expensive build that ever answered, $0.1239, sits just below the median capped one. That is the argument that this seed, and not a larger budget, is where the money is.
 
-## Idea
+## Goal
 
-`build.py` takes the commit when the check on the final tree is green and something changed, whatever ended the run. A cap stops being a reason to refuse; a red check, an empty diff, a record the store will not take and a branch that moved remain what they are.
+A build is taken when the tree it left passes the check, whatever ended the run.
 
-What the commit says about itself is the spec's, and it should say it: a build taken from a run that never reported is not the same artefact as one taken from a run that did, and the trailer or the note is where that belongs, so a reader of the branch knows without going to the store. The record already says `stopped: cap`, so the fact is derivable; what is not yet decided is whether the commit carries it too.
+`build.py` stops treating a cap as a reason to refuse. What it asks of a run is what it already asks: that the check on the final tree is green, and that something changed. A run that was capped and left a green tree with a diff is pushed as any other build is, one commit, never forced, with its trailer as it is now.
 
-The seed it corrects should be corrected: the sentence in [[caps-for-the-checkout-as-it-is]] asserting the rule is sound is evidence that was wrong, and the loop's own discipline is that evidence is dated and true.
+What still refuses, and must: a red check; a check that never ran; a green check that changed nothing; a branch that moved while the build was in flight; and **a record the store would not take**. That last one needs care, because the ordering it relied on is gone. Today a capped run is refused before the exit code is read, so `code != 0` can be taken to mean the store refused the record; once a cap is no longer a refusal, a capped run reaches that line with the same non-zero code as a leaked key. The two must be told apart by something other than the exit code, and the safe direction is unambiguous: a record whose commit the store refused may hold a key, so a build must not be pushed on any reading that cannot rule it out.
+
+The commit says what it came from. A build taken from a run that never reported is not the same artefact as one taken from a run that did, and a reader of the branch should not have to hold the store to know which they have. Where that goes is the spec's, with one constraint: `gate.py` reads `Built-By` as a trailer and refuses a release whose value does not end `run <stamp>` in the builder's shape, so whatever is added must leave that reading intact.
+
+The record already carries everything needed to decide: `stopped`, and `check`, which `check_final` writes from the builder's own run of the suite on the tree the model left, whatever ended the run.
