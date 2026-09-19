@@ -1,7 +1,7 @@
 ---
 created: 2026-09-18
 type: seed
-status: building
+status: done
 summary: The request and tool-call caps were set when the builder was three hundred lines; on a checkout four times that they are spent on finding the work rather than doing it, seven capped runs of eleven in one version, and a capped run's work is not taken.
 value: 5
 effort: M
@@ -28,10 +28,16 @@ The third is what a larger budget would cost, from the store's 181 records. Of 9
 
 ## Goal
 
-A run's record says what it was given as well as what it spent, and the table shows it.
+A run's budget follows the checkout it is given, and a run that spends its budget lands rather than being cut off.
 
-The numbers of a run carry three more fields. `calls_cap` is the budget the tools were given, beside `tool_calls`, the calls that were made. `requests_cap` is the request limit the run was given, beside `requests`. `cap` says which cap ended the run: `calls` when the library's tool-call limit raised, `requests` when its request limit did, and the empty string when no cap ended the run at all. A run the requests bound means the reserve was wrong, since the requests are derived to outlast the calls.
+**The budget.** `builder.py` answers, for a checkout and the names its tools hide, how many tool calls a run over it is given. The lines of every file the tools can reach, divided by the lines one read returns, is what it costs to read the checkout once; the budget is that twice over, for the reading and the reading again, plus the writes and the checks a run is already allowed. A checkout smaller than the one the caps were set for is given no fewer calls than a floor, and a checkout larger than any the factory has built no more than a ceiling, so the worst a run can cost is a number and not a function of whatever the factory is pointed at. Nothing the tools cannot reach is counted: a hidden name at the root, git's own files at any depth, a symlink, and a file that is not text are all outside the sum, and a file that cannot be read counts nothing rather than failing. The count is taken once, from the tree the run starts on, and a caller that already knows the budget may name it instead.
 
-`which_cap(stopped: str, detail: str) -> str` answers that third field from what `run` returns: the empty string unless `stopped` is `cap`, and otherwise `calls` or `requests` after the limit the library named in `detail`, which is `tool_calls_limit` or `request_limit`. A `cap` whose detail names neither is the empty string rather than a guess.
+**The landing.** The tools count every call made through them, refused or not, and once that count has reached the budget every one of the six answers `error: cap reached (<budget> tool calls); report now` and does nothing, in the words and the shape the write cap and the check cap already use. The library's own limits are derived from the budget and are a backstop rather than the thing that binds: the tool calls it allows are the budget and a reserve above it, so a model that keeps calling after it has been told to report is still stopped; the requests it allows are that and a few more, so a run that has spent every call it was given still has the requests to say what it did. The request limit is never below the tool-call limit. Before this, the two were independent constants and both were the library's own hard limits, so neither could land a run and whichever the run's ratio of calls to requests favoured cut it off first.
 
-`runs.py` shows the three in `COLUMNS`: `cap` straight after `stopped`, `requests_cap` straight after `requests`, and `calls_cap` straight after `tool_calls`. A record written before these numbers existed has no such keys and shows empty cells, as every other record missing a number already does.
+**What the record says.** A run's numbers carry the caps beside the counts they bound: the calls the run was given beside the calls it made, and the requests it was allowed beside the requests it made. When a cap ended the run the numbers say which one, `calls` or `requests`, and say nothing when none did, or when the library named neither limit, rather than guessing; a run ended by the request limit means the reserve was wrong, because the requests are meant to outlast the calls. `runs.py` shows the two caps beside the counts they belong to and says which one ended the run, so a version can read off its own table whether a run was cut off or went wrong.
+
+**What this changed that the suite already pinned, amended with the spec by the attended agent and stated here.** Two tests of v0.3 pin a model that never stops: one calling two tools a turn, which reached the tool-call cap, and one calling a tool at a time, which reached the request cap. Both now meet the tools' refusal first, and the second can no longer reach the request limit at all, which is the point of the change; it asserts so. The two tests that forced a cap by patching `TOOL_CALLS_CAP` patch the ceiling instead, the constant they patched being gone, and force it with a model that keeps calling after it has been told to report, since a scripted model that runs out of turns now lands. `test_runs.py`'s own list of the table's columns follows `runs.py`'s.
+
+**What it came to.** On the checkout as it stands, 13,044 lines the tools can reach, the budget is 128 tool calls where the constant was 80, and 138 requests where the constant was 60. Built in three goals and three runs, none of them capped, for 9.2 cents: the budget, the landing, and what the record and the table say.
+
+**What is not here.** The other lever on the looking is the size of a read: at 300 lines it costs 44 reads to cover this checkout, and a read of the same bytes in fewer calls would cost fewer requests for the same content. That is its own seed, [[the-read-that-costs-a-request]], and the budget above follows it automatically, since it divides by the lines a read returns.
