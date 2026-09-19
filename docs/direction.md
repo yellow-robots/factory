@@ -166,6 +166,12 @@ What the dataset cannot do is more important than what it says, because it is fi
 
 Two things follow that are worth doing. A seed's effort stops being a guess and becomes a measurement written back from its builds, which is reference-class forecasting on our own history rather than estimation. And the lever is the mean rather than the spread: relative spread is roughly constant whatever the size of the task, while the cap is an absolute number, so a seed's average cost is what decides whether it caps — nine seeds averaging under 35 requests produced no caps between them, and seven averaging more produced twelve.
 
+### 2026-09-20 — the factory prices its own runs, at one flat rate, on purpose
+
+`builder.py`'s `PRICE` table is the source of every cost the records carry and is not a fallback waiting to be replaced. `genai_prices` has no row for `deepseek-flash`, and the row for the adjacent name, `deepseek-v4-flash`, is a different model's numbers: 0.43x our cache-hit rate, 0.68x our input and 0.91x our output, which is no discount of anything. Checked against api-docs.deepseek.com/quick_start/pricing on 2026-09-20, our three constants are exactly DeepSeek's published peak rate for the model we run. Naming the model so the library can price it would have replaced a correct number with a wrong one, and the seed that proposed it is rejected.
+
+The rate is flat where DeepSeek's is not. DeepSeek charges half outside 01:00-04:00 and 06:00-10:00 UTC on weekdays; 85% of the store's 190 runs started outside those windows, so the recorded spend overstates the money by 1.61x, $6.53 against $4.07. That is the right trade and it stays. What a bound on a run must measure is the work, and a number that halves because the clock passed 10:00 measures the hour instead — the same tokens would buy twice the work at midnight. So the column is what a run consumed at one constant rate, it is comparable across every record ever written, and no threshold derived from it is a claim about a bill. What the factory actually pays is a separate question that only arises when someone is billed for it.
+
 ## Open questions
 
 - **How deep does the reviewer look before saying "meets"?** The builder's stopping condition is a green check; the reviewer's is a judgement about sufficiency and we have no principled one. Probably the hardest part of the role. Research commissioned 19 September into inspection-rate evidence, mutation score as an adequacy criterion, capture-recapture estimation of what two reviewers missed, and the economics of marginal detection.

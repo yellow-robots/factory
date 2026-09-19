@@ -1,7 +1,7 @@
 ---
 created: 2026-09-19
 type: seed
-status: spec
+status: done
 summary: Seven capped builds left a tree the builder's own check passed, and all seven were discarded for want of a report: 90 cents, seventeen per cent of everything this factory has ever spent on builds.
 value: 5
 effort: S
