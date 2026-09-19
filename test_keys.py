@@ -144,6 +144,24 @@ class EveryKeyTest(KeysBase):
                              capture_output=True, encoding="utf-8", env=builder.store_env())  # fmt: skip
         self.assertEqual(log.stdout.splitlines(), ["20260919T000000Z"])
 
+    def test_a_configuration_that_names_no_key_refuses_the_commit(self):
+        """seed: keys-of-the-instance. The search never fails open, and this was the one case where it
+        did: a configuration whose roles are missing or malformed names no key, the list came back
+        empty, and the record was committed having been searched for nothing. A record that cannot
+        be searched is not committed; the refusal names the configuration, as the others name the
+        file they could not read through, and never a value."""
+        self.configure(roles="")
+        record = self.runs / "20260919T000000Z"
+        record.mkdir(parents=True)
+        (record / "numbers.json").write_text("{}\n")
+        with self.assertRaises(builder.LeakedKey) as refused:
+            builder.commit_record(self.runs, record)
+        self.assertIn(str(self.instance), str(refused.exception))
+        self.assertNotIn("builders-own-key", str(refused.exception))
+        log = subprocess.run(["git", "-C", str(self.runs), "log", "--oneline"],
+                             capture_output=True, encoding="utf-8", env=builder.store_env())  # fmt: skip
+        self.assertEqual(log.stdout, "", "nothing of the record is committed")
+
     def test_a_key_the_instance_names_that_cannot_be_read_refuses_the_commit(self):
         """seed: keys-of-the-instance. A key that cannot be read cannot be searched for, so the wall
         cannot be shown to hold and the record is not committed: the refusal names that key file, as

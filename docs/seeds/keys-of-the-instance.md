@@ -18,17 +18,17 @@ The instance's configuration already names `records` and `work`, read by `instan
 
 ## Goal
 
-A configuration that cannot say which key a run uses is refused, rather than quietly answering with the program's own. In `main`, this block stops falling back:
+The search that keeps a key out of a record never fails open, and there is one place left where it does. `configured_keys` catches the error `key_paths()` raises for a configuration whose `roles` are missing or malformed and answers with an empty list; `leaked_file` then searches a record for nothing and the record is committed. A configuration that cannot say what a key is turns the wall off silently, which is the opposite of what every other case of this function does — a file it cannot read through, a truncated `.gz`, a link it will not walk into all refuse the commit.
 
 ```
     try:
-        builder_role = instance_role("builder")
+        paths = key_paths()
     except (ValueError, OSError):
-        builder_role = None
+        return []
 ```
 
-A configuration holding no `roles`, holding others but not `builder`, or holding a malformed one, is refused in the words `instance.py` already raises for it, naming the configuration's file and the role, before the model is called and before a record is made, in the shape a configuration a run cannot use is already refused. The `else` branch below that used the constants becomes unreachable and goes with it; the comment above the block says what is now true.
+That error refuses the commit instead, as an unreadable key file already does: a `LeakedKey` carrying the words `instance.py` raised, which name the configuration's file and the fault, and never a key's value. An empty list of keys is refused the same way, whatever produced it, because a record searched for nothing has not been searched.
 
-Nothing else moves, in `builder.py` or in any other file. `KEY_FILE` and `MODEL` stay where they are for now, with nothing left that reads them; taking them out is its own seed, since five runs were cut off by the caps trying to do it here.
+The docstring says what is now true. Its last sentence claims the empty list "falls back to the program's constants as the run does", which the code never did and which the run no longer does either.
 
-One test is red, `test_a_configuration_that_does_not_hold_the_builder_s_role_is_a_usage_error`, in `test_keys.py`, which is a hundred and eighty lines and holds this seed's tests and nothing else. No test file changes and none may: `test*.py` is protected from write and edit.
+Nothing else moves, in `builder.py` or any other file. One test is red, `test_a_configuration_that_names_no_key_refuses_the_commit`, in `test_keys.py`.
