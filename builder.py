@@ -61,6 +61,9 @@ MODEL = "deepseek-flash"
 LIBRARY = "pydantic-ai-slim " + importlib.metadata.version("pydantic-ai-slim")
 TOOL_CALLS_CAP = 80  # tool calls per run; over it the run stops with no report
 REQUEST_CAP = 60  # provider requests per run
+CALLS_FLOOR = 80  # tool calls a run is given at least; the number TOOL_CALLS_CAP held since v0.3
+CALLS_CEILING = 200  # and at most, so the worst a run can cost is a number, not the checkout's size
+PASSES = 2  # the times over the checkout a run is given the calls to read it
 LIST_CAP = 500  # entries per list
 READ_LINES_CAP = 300  # lines per read
 READ_BYTES_CAP = 32_000  # bytes per read
@@ -84,6 +87,41 @@ IMAGE_TIMEOUT = 600  # seconds for the one image build
 # -- names them through main's `hidden` argument, so a checkout of another program keeps its
 # ordinary names.
 HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git")
+
+
+def call_budget(root: Path, hidden: tuple[str, ...] = HIDDEN) -> int:
+    """How many tool calls a run over that checkout is given: reading the checkout over `PASSES`
+    times, at `READ_LINES_CAP` lines a read, plus the writes and the checks a run is already
+    allowed. What is counted is what the tools can reach: a hidden name at the root, a `.git`
+    component at any depth, a symlink and a directory are not the checkout's text, and a file that
+    is not UTF-8 or cannot be read counts nothing and does not stop the count. The answer is never
+    below `CALLS_FLOOR` and never above `CALLS_CEILING`, in that order: the ceiling is last."""
+    lines = 0
+    pending = [(root, ".")]
+    while pending:
+        directory, rel = pending.pop()
+        try:
+            entries = list(directory.iterdir())
+        except (OSError, RuntimeError):  # a directory that cannot be listed: nothing under it
+            continue
+        for e in entries:
+            if e.is_symlink():  # a link is not a file of the checkout, whatever it points at
+                continue
+            if e.name == ".git" or (rel == "." and e.name in hidden):
+                continue
+            child = e.name if rel == "." else f"{rel}/{e.name}"
+            if e.is_dir():
+                pending.append((e, child))
+            elif e.is_file():
+                try:
+                    with e.open("r", encoding="utf-8") as f:
+                        lines += sum(1 for _ in f)
+                except (OSError, UnicodeDecodeError, ValueError):  # not text, or not to read
+                    pass
+    reading = -(-lines // READ_LINES_CAP)  # the reads one pass over the checkout costs
+    return min(CALLS_CEILING, max(CALLS_FLOOR, reading * PASSES + WRITE_CAP + CHECK_CAP))
+
+
 # Refused to write and edit: the tests are the goal's acceptance criteria, the toolchain is what
 # check runs against, and a .gitattributes or .gitignore the model wrote would change what git
 # records of the run. A basename glob anywhere, a dotted basename anywhere, a prefix, or an exact
@@ -145,12 +183,16 @@ class Tools:
     """The tools: what the model can do to the checkout, and the record of it."""
 
     def __init__(self, root: Path, run_dir: Path, hidden: tuple[str, ...] = HIDDEN,
-                 protected: tuple[str, ...] = PROTECTED, sandbox: Any = None):  # fmt: skip
+                 protected: tuple[str, ...] = PROTECTED, sandbox: Any = None,
+                 budget: int | None = None):  # fmt: skip
         self.root = root.resolve()
         self.run_dir = run_dir
         self.hidden = hidden
         self.protected = protected
         self.sandbox = sandbox
+        # Taken once, from the tree as it is here: a caller that knows the budget names it and the
+        # tree is not walked for it.
+        self.budget = call_budget(self.root, hidden) if budget is None else budget
         self.listed: list[str] = []
         self.read_paths: list[str] = []
         self.searched: list[str] = []
