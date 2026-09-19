@@ -162,6 +162,41 @@ class EveryKeyTest(KeysBase):
             self.glm.chmod(0o600)
 
 
+    def test_a_configuration_that_names_no_key_refuses_the_commit(self):
+        """seed: the-search-that-answers-for-no-keys. The search never fails open, and this was the
+        one case where it did: a configuration whose roles are missing or malformed names no key,
+        the list came back empty, and the record was committed having been searched for nothing. A
+        record that cannot be searched is not committed; the refusal names the configuration, as
+        the search's other refusals name the file they could not read through, and never a value.
+        A roles table holding no role names no key either and is refused the same way, because what
+        produced the empty list does not matter: a record searched for nothing is unsearched."""
+        for roles in ("", "\n[roles]\n"):
+            self.configure(roles=roles)
+            record = self.runs / "20260919T000000Z"
+            record.mkdir(parents=True, exist_ok=True)
+            (record / "numbers.json").write_text("{}\n")
+            with self.assertRaises(builder.LeakedKey) as refused:
+                builder.commit_record(self.runs, record)
+            self.assertIn(str(self.instance), str(refused.exception), roles or "no roles at all")
+            self.assertNotIn("builders-own-key", str(refused.exception))
+            log = subprocess.run(["git", "-C", str(self.runs), "log", "--oneline"],
+                                 capture_output=True, encoding="utf-8", env=builder.store_env())  # fmt: skip
+            self.assertEqual(log.stdout, "", "nothing of the record is committed")
+
+    def test_a_caller_that_names_the_key_itself_is_searched_for_that_one(self):
+        """seed: the-search-that-answers-for-no-keys. What refuses the commit is a search with
+        nothing to look for, not a configuration in itself: a caller that names the key has said
+        what to search for, so a configuration naming none does not stop it."""
+        self.configure(roles="")
+        record = self.runs / "20260919T000001Z"
+        record.mkdir(parents=True)
+        (record / "numbers.json").write_text("{}\n")
+        builder.commit_record(self.runs, record, key="a-key-of-its-own")
+        log = subprocess.run(["git", "-C", str(self.runs), "log", "--format=%s"],
+                             capture_output=True, encoding="utf-8", env=builder.store_env())  # fmt: skip
+        self.assertEqual(log.stdout.splitlines(), ["20260919T000001Z"])
+
+
 class NoFallbackTest(KeysBase):
     """There is one place a run's model and key come from, and it is the configuration."""
 

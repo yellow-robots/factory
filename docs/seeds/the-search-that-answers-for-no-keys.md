@@ -1,11 +1,11 @@
 ---
 created: 2026-09-19
 type: seed
-status: open
+status: building
 summary: A configuration that cannot say what a key is makes the record's search answer with an empty list, so the record is committed having been searched for nothing; every other case of that function refuses the commit.
 value: 4
 effort: S
-version:
+version: v0.16
 ---
 
 ## Evidence
@@ -16,30 +16,12 @@ Latent, not live: since goal b2 `main` refuses such a configuration before a rec
 
 One run was spent on the fix, 20260919T000504Z, and capped at 80 tool calls with the check green: 27 reads and 29 searches for six edits, on a goal that is one small function. It is the sixth cap of eleven runs and the third to be cut off with the work done. The test below was written and taken back out of the tree so the version's suite is green; it goes back in with the build.
 
-## Idea
+## Goal
 
-The error `key_paths()` raises refuses the commit rather than being swallowed: a `LeakedKey` carrying the words `instance.py` raised, which name the configuration's file and the fault and never a key's value, as an unreadable key file already does. An empty list of keys is refused the same way whatever produced it, because a record searched for nothing has not been searched. The docstring says what is then true.
+The search that keeps a key out of a record never fails open, and `configured_keys` was the one place it did.
 
-The test, as written on the night and ready to go back:
+The error `key_paths()` raises is no longer swallowed. A configuration whose `roles` are missing or malformed names no key the search can use, and that refuses the commit: a `LeakedKey` carrying the words `instance.py` raised, which name the configuration's file and which fault and never a key's value, exactly as a key file that cannot be read already does.
 
-```python
-def test_a_configuration_that_names_no_key_refuses_the_commit(self):
-    """seed: the-search-that-answers-for-no-keys. The search never fails open, and this was the one
-    case where it did: a configuration whose roles are missing or malformed names no key, the list
-    came back empty, and the record was committed having been searched for nothing. A record that
-    cannot be searched is not committed; the refusal names the configuration, as the others name the
-    file they could not read through, and never a value."""
-    self.configure(roles="")
-    record = self.runs / "20260919T000000Z"
-    record.mkdir(parents=True)
-    (record / "numbers.json").write_text("{}\n")
-    with self.assertRaises(builder.LeakedKey) as refused:
-        builder.commit_record(self.runs, record)
-    self.assertIn(str(self.instance), str(refused.exception))
-    self.assertNotIn("builders-own-key", str(refused.exception))
-    log = subprocess.run(["git", "-C", str(self.runs), "log", "--oneline"],
-                         capture_output=True, encoding="utf-8", env=builder.store_env())
-    self.assertEqual(log.stdout, "", "nothing of the record is committed")
-```
+An empty list of keys refuses the commit whatever produced it, so a `roles` table holding no role is refused too, because a record searched for nothing has not been searched. A caller that names one key itself is unaffected: it has said what to search for, and the configuration is not consulted.
 
-It belongs in `EveryKeyTest` of `test_keys.py`, whose fixtures it uses as written.
+The docstring says what is then true. Its sentence that the empty list "falls back to the program's constants as the run does" describes a fallback the code never had, and that the run stopped having at v0.15 when the builder began running as a role.
