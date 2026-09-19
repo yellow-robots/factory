@@ -629,7 +629,7 @@ class SandboxTest(unittest.TestCase):
                 "-e", "HOME=/tmp",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
                 "-v", f"{self.checkout}:/w:ro", "-w", "/w",
-                "--memory", "1g", "--cpus", "2", "--pids-limit", "256",
+                "--memory", "1g", "--cpus", "2", "--pids-limit", "1024",
                 self.image, "python", "-P", "-m", "unittest", "discover", "-q",
             ],
         )

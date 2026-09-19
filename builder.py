@@ -87,6 +87,12 @@ CHECK_CAP = 8  # checks per run
 # turns any suite green; `discover` still finds the checkout's tests and puts the root back for them.
 CHECK_CMD = ("python", "-P", "-m", "unittest", "discover", "-q")
 CHECK_TIMEOUT = 120  # seconds for one check, then the container is killed
+# Tasks the check's container may hold at once, a guard against a fork bomb and not a wall: the
+# walls are the read-only mount, `--network none`, the memory and the CPUs. It counts threads as
+# well as processes, and the factory's own suite accumulates them, so 256 -- where every module
+# passed alone and the suite did not -- stopped the factory building itself on 2026-09-20. Why the
+# suite holds so many at once is its own seed; this is the headroom until that is answered.
+PIDS_LIMIT = 1024
 CHECK_TAIL_LINES = 60  # lines of check output handed back
 CHECK_TAIL_BYTES = 8_000  # and at most this many bytes of them
 IMAGE_TIMEOUT = 600  # seconds for the one image build
@@ -634,7 +640,7 @@ class Sandbox:
             "-e", "HOME=/tmp",
             "-e", "PYTHONDONTWRITEBYTECODE=1",  # the checkout is read-only; do not try to cache
             "-v", f"{checkout}:/w:ro", "-w", "/w",
-            "--memory", "1g", "--cpus", "2", "--pids-limit", "256",
+            "--memory", "1g", "--cpus", "2", "--pids-limit", str(PIDS_LIMIT),
             name, *CHECK_CMD,
         ]  # fmt: skip
         try:
