@@ -248,10 +248,10 @@ class BuildTest(unittest.TestCase):
         return shown.stdout if shown.returncode == 0 else ""
 
     def test_a_build_that_is_not_green_leaves_the_branch_alone_and_says_why(self):
-        """A red check, a green check that changed nothing, a run that was capped and one that ended
-        in an error each leave the branch where it was: exit 1, one line on stderr naming the
-        record and how the run ended, the record in the store, and nothing pushed. The command
-        returns an error and never a commit that might be read as work."""
+        """A red check, a green check that changed nothing, a run that was capped and left a red
+        tree, and one that ended in an error each leave the branch where it was: exit 1, one line
+        on stderr naming the record and how the run ended, the record in the store, and nothing
+        pushed. The command returns an error and never a commit that might be read as work."""
         red = self.build(scripted(EDIT, CHECK, report=RED_REPORT), FakeSandbox([(1, "FAILED\n")]))
         code, lines, err = red
         self.assertEqual(code, 1)
@@ -274,12 +274,12 @@ class BuildTest(unittest.TestCase):
             return ModelResponse(parts=[ToolCallPart("write", {"path": f"g{done}.py", "content": "y = 1\n"},
                                                      tool_call_id=f"c{done}")])
 
-        with mock.patch.object(builder, "CALLS_CEILING", 1):
-            code, lines, err = self.build(FunctionModel(writes_forever), FakeSandbox([(0, "OK\n")]))
+        with mock.patch.object(builder, "CALLS_CEILING", 1):  # capped, and the tree it left is red
+            code, lines, err = self.build(FunctionModel(writes_forever), FakeSandbox([(1, "FAILED\n")]))
         self.assertEqual(code, 1)
         self.assertEqual(self.head(), self.requested)
         self.assertIn(self.records()[-1].name, err)
-        self.assertIn("cap", err)
+        self.assertIn("red", err)
 
         def falls_over(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelAPIError("deepseek-flash", "the provider fell over")
@@ -290,6 +290,74 @@ class BuildTest(unittest.TestCase):
         self.assertIn(self.records()[-1].name, err)
         self.assertIn("error", err)
         self.assertEqual(len(self.records()), 4)
+        self.assert_the_work_is_empty()
+
+    def reads_forever(self, first: tuple[str, dict]):
+        """A model that does `first` once and then reads the same file until something stops it."""
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            done = sum(1 for m in messages if isinstance(m, ModelResponse))
+            name, args = first if done == 0 else ("read", {"path": "f.py"})
+            return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id=f"c{done}")])
+
+        return FunctionModel(model)
+
+    def test_a_capped_run_that_left_a_green_tree_is_taken(self):
+        """seed: the-work-a-capped-run-leaves. Seven of the store's thirteen capped builds left a
+        tree the builder's own check had passed and every one was thrown away for want of a report,
+        seventeen per cent of all build spend. What a build asks of a run is what it already asks:
+        a green check on the tree it left, and something changed. How the run ended is not one of
+        the questions, and a cap stops being an answer to any of them. The commit says where it
+        came from: `Stopped-By` names how the run ended when it did not answer, and `Built-By` is
+        untouched, because the gate reads that one."""
+        with mock.patch.object(builder, "CALLS_CEILING", 2):
+            code, lines, err = self.build(self.reads_forever(EDIT), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        (record,) = self.records()
+        numbers = json.loads((record / "numbers.json").read_text())
+        self.assertEqual((numbers["stopped"], numbers["check"]), ("cap", "green"))
+
+        built = self.head()
+        self.assertNotEqual(built, self.requested)
+        self.assertEqual(git(self.origin, "rev-parse", f"{built}^").strip(), self.requested)
+        self.assertEqual(git(self.origin, "rev-list", "--count", f"{self.requested}..{built}").strip(), "1")
+        self.assertEqual(git(self.origin, "show", f"{built}:f.py"), "x = 2\n")
+        self.assertEqual(git(self.origin, "log", "-1", "--format=%(trailers:key=Built-By,valueonly)", built).strip(),
+                         f"factory at v9.9, run {record.name}")  # fmt: skip
+        self.assertEqual(git(self.origin, "log", "-1", "--format=%(trailers:key=Stopped-By,valueonly)", built).strip(),
+                         "cap")  # fmt: skip
+        self.assertIn(built[:7], lines[1])
+        self.assert_the_work_is_empty()
+
+    def test_a_build_that_answered_says_nothing_about_how_it_stopped(self):
+        """seed: the-work-a-capped-run-leaves. The trailer exists to tell a reader of the branch
+        that the work arrived without a report, which is only worth saying when it is true: a run
+        that answered carries no `Stopped-By` at all."""
+        code, lines, err = self.build(scripted(EDIT, CHECK), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 0, err)
+        message = git(self.origin, "log", "-1", "--format=%B", self.head())
+        self.assertNotIn("Stopped-By", message, message)
+
+    def test_a_record_the_store_would_not_take_refuses_the_build_though_the_run_was_capped(self):
+        """seed: the-work-a-capped-run-leaves. The ordering this rule relied on is gone. A capped
+        run used to be refused before the exit code was read, so a non-zero code meant the store
+        had refused the record; now a capped run reaches that line carrying the same code as a
+        leaked key. A record the store would not take may hold the key, so it refuses the build
+        whatever ended the run, the branch stays where it was, and the store holds no commit for
+        it."""
+        leak = ("write", {"path": "leak.py", "content": "not-a-key\n"})
+        with mock.patch.object(builder, "CALLS_CEILING", 2):
+            code, lines, err = self.build(self.reads_forever(leak), FakeSandbox([(0, "OK\n")]))
+        self.assertEqual(code, 1)
+        (record,) = self.records()
+        numbers = json.loads((record / "numbers.json").read_text())
+        self.assertEqual((numbers["stopped"], numbers["check"]), ("cap", "green"))
+        self.assertEqual(self.head(), self.requested, "the branch is where it was")
+        self.assertIn(record.name, err)
+        self.assertNotIn("not-a-key", err, "the reason never carries the value")
+        committed = subprocess.run(["git", "-C", str(self.store), "log", "--format=%s"],
+                                   capture_output=True, encoding="utf-8", env=builder.store_env())  # fmt: skip
+        self.assertNotIn(record.name, committed.stdout, "the store holds no commit for it")
         self.assert_the_work_is_empty()
 
     def test_what_a_failed_build_leaves_in_the_repository_is_a_note_on_the_head_it_was_asked_of(self):

@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: open
+status: rejected
 summary: A goal that names where the work is costs a fraction of one that does not, and the factory has no shape for a goal and no measurement of whether the shape helps.
 value: 4
 effort: M
@@ -22,10 +22,6 @@ The evaluation set already holds one half of the experiment. `ambiguous_goal` is
 
 ## Idea
 
-The measurement comes first and the template may never come at all. That ordering is the whole of the change from how this was first written, and the reason is in the evidence above: the effect is large in the literature and invisible in the one clean measurement the factory owns.
+Rejected by the owner on 2026-09-20: drop what brings no clear benefit. The effect it chases is measured on human-written bug reports, which are underspecified in a way this factory's goals are not -- ours arrive deliberate, revised, and with their tests already committed and runnable -- and the one clean measurement the factory owns points the other way, since `ambiguous_goal` is deliberately under-specified and passes nine of nine with one of the lowest spreads in the set. What was left was a template: a document to maintain, a form to fill in, and a body of evidence saying structural changes alone can reduce solve rates without removing any content. The evidence for the shape was never there, and the measurement alone did not earn a seed.
 
-A pair is the instrument. The same task under two goal texts -- one written to a shape, one not -- run the way [[paired-set-runs]] runs two builders, with the cases, the harness and the hour shared and only the goal differing. `ambiguous_goal` is one half of the first pair already; what is needed is a precise counterpart of it, and the shape is what that counterpart is written to.
-
-So the shape is a hypothesis the pair tests, not a standard the template adopts. What it holds is what the evidence points at -- what changes, where it is by named path, what the behaviour must be afterwards, what is out of scope -- and it is a shape rather than a length, since padding is the one thing measured to hurt. Whether `docs/templates/seed.md` ever states it depends on what the pair says, and the spec should be willing to come back with nothing.
-
-Two reasons to expect less than the literature promises, both of which the spec should hold. The effect there is measured on human-written bug reports, which are underspecified in a way our goals are not: ours are written deliberately, revised, and arrive with their tests already committed and runnable. And the same body of work finds that structural changes alone can reduce solve rates without removing any content, which is exactly the risk in adding a form to fill in. A template is a document that must be maintained and can become ritual; it should have to earn its place against a measurement, like anything else here.
+What survives is in the evidence above and is worth keeping for whoever asks again: specification quality is the largest effect in the literature, length is measured to hurt, and this factory's own history cannot settle it because the goal text, the caps, the prompt and the repository all moved together.
