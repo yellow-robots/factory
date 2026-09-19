@@ -59,11 +59,16 @@ from pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402
 KEY_FILE = Path.home() / ".config" / "factory" / "deepseek.key"
 MODEL = "deepseek-flash"
 LIBRARY = "pydantic-ai-slim " + importlib.metadata.version("pydantic-ai-slim")
-RESERVE = 4  # calls past the budget a model that keeps calling is still stopped by
+# Calls past the budget the model can still be stopped by: the library admits or refuses a whole
+# response's calls together, so a response wider than this crosses the limit before any of it runs
+# and the model is never told to report. 32 is evidence, not taste: of the 3,635 responses carrying
+# tool calls in the store, 29 carried more than four and the widest carried 16, so this is twice the
+# widest response the factory has ever made.
+RESERVE = 32
 REPORT_REQUESTS = 6  # requests past those calls, so a run that spent the budget can still report
 CALLS_FLOOR = 80  # tool calls a run is given at least; the number the tool cap held since v0.3
 CALLS_CEILING = 200  # and at most, so the worst a run can cost is a number, not the checkout's size
-PASSES = 2  # the times over the checkout a run is given the calls to read it
+SHARE = 55  # hundredths of one pass over the checkout a run is given the calls to read it
 LIST_CAP = 500  # entries per list
 READ_LINES_CAP = 300  # lines per read
 READ_BYTES_CAP = 32_000  # bytes per read
@@ -90,13 +95,15 @@ HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git")
 
 
 def call_budget(root: Path, hidden: tuple[str, ...] = HIDDEN) -> int:
-    """How many tool calls a run over that checkout is given: reading the checkout over `PASSES`
-    times, at `READ_LINES_CAP` lines a read, plus the writes and the checks a run is already
-    allowed. What is counted is what the tools can reach: a hidden name at the root, a `.git`
-    component at any depth, a symlink and a directory are not the checkout's text, and a file that
-    is not UTF-8 or cannot be read counts nothing and does not stop the count. The answer is never
-    below `CALLS_FLOOR` and never above `CALLS_CEILING`, in that order: the ceiling is last."""
-    lines = 0
+    """How many tool calls a run over that checkout is given: `SHARE` hundredths of one pass over
+    the checkout, at `READ_LINES_CAP` lines a read, plus the writes and the checks a run is already
+    allowed. A read answers about one file and never spans two, so one pass is the reads each file
+    costs, summed, and a file costs at least one read however short it is. What is counted is what
+    the tools can reach: a hidden name at the root, a `.git` component at any depth, a symlink and a
+    directory are not the checkout's text, and a file that is not UTF-8 or cannot be read counts
+    nothing and does not stop the count. The answer is never below `CALLS_FLOOR` and never above
+    `CALLS_CEILING`, in that order: the ceiling is last."""
+    reading = 0  # the reads one pass over the checkout costs
     pending = [(root, ".")]
     while pending:
         directory, rel = pending.pop()
@@ -115,11 +122,11 @@ def call_budget(root: Path, hidden: tuple[str, ...] = HIDDEN) -> int:
             elif e.is_file():
                 try:
                     with e.open("r", encoding="utf-8") as f:
-                        lines += sum(1 for _ in f)
+                        lines = sum(1 for _ in f)
                 except (OSError, UnicodeDecodeError, ValueError):  # not text, or not to read
-                    pass
-    reading = -(-lines // READ_LINES_CAP)  # the reads one pass over the checkout costs
-    return min(CALLS_CEILING, max(CALLS_FLOOR, reading * PASSES + WRITE_CAP + CHECK_CAP))
+                    continue
+                reading += max(1, -(-lines // READ_LINES_CAP))  # a file costs at least one read
+    return min(CALLS_CEILING, max(CALLS_FLOOR, reading * SHARE // 100 + WRITE_CAP + CHECK_CAP))
 
 
 def limits(budget: int) -> UsageLimits:
@@ -696,7 +703,7 @@ def build_agent(
         model = OpenAIChatModel(
             model_name, provider=DeepSeekProvider(api_key=key, http_client=http_client), profile=PROFILE
         )
-    return Agent(
+    agent = Agent(
         model,
         instructions=ROLE,
         output_type=BuildReport,
@@ -715,13 +722,24 @@ def build_agent(
         model_settings=OpenAIChatModelSettings(timeout=180),
         retries={"tools": 1, "output": 2},
     )
+    # The calls the tools refuse at travel with the agent, so `run` can tell a caller whose library
+    # budget and tools' budget would disagree: the two numbers must be the same number.
+    agent.tools_budget = tools.budget
+    return agent
 
 
 def run(agent: Agent[None, BuildReport], goal: str,
         budget: int | None = None) -> tuple[BuildReport | None, list, RunUsage, str, str]:  # fmt: skip
     """One run under the caps: the report if there is one, the messages either way. `budget` is the
-    tool calls the run is given, `CALLS_FLOOR` when the caller names none; `limits` turns it into
-    the library's caps, so the tools land the run and the requests outlast them."""
+    tool calls the run is given and must be the number the tools carry; a caller that names none is
+    given `CALLS_FLOOR` and refused with a TypeError when that is not the tools' own number, so the
+    budget the tools refuse at and the budget the library enforces can never disagree. `limits`
+    turns it into the library's caps, so the tools land the run and the requests outlast them."""
+    if budget is None:
+        budget = CALLS_FLOOR
+    carried = getattr(agent, "tools_budget", budget)
+    if carried != budget:
+        raise TypeError(f"the run's tools carry a budget of {carried}, not {budget}")
     usage = RunUsage()
     report, stopped, detail = None, "answer", ""
     with capture_run_messages() as messages:
@@ -729,7 +747,7 @@ def run(agent: Agent[None, BuildReport], goal: str,
             result = agent.run_sync(
                 goal,
                 usage=usage,
-                usage_limits=limits(CALLS_FLOOR if budget is None else budget),
+                usage_limits=limits(budget),
             )
             report = result.output
         except UsageLimitExceeded as e:
