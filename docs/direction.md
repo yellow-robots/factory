@@ -158,6 +158,14 @@ The host is imaged whole, so the single-copy risk is covered. It stops being cov
 
 `docs/scratchpad/factory-v2-design.md` is a source of proposals to argue with. Its architectural patterns and its code-quality checks are worth considering; its hypothesis sections — the sealed targets, the pre-registered thresholds, the horizon — are rejected and are not carried into anything.
 
+### 2026-09-20 — a task's cost is not predicted before the work, and our own data cannot yet settle it
+
+Research commissioned on whether a coding task's size or cost can be estimated before it is attempted came back against it, and the factory will not build a sizer. The published ceiling for predicting task difficulty from its description is a rank correlation near 0.4 within a benchmark and near 0.2 outside one, and a baseline of the description's word count reaches 0.086; measured on this factory's own builds, goal word count reaches 0.096 — the same baseline, independently reproduced, and nothing better. Every ex-ante feature in our records performs worse than predicting the mean, and the total a perfect oracle would have saved across the factory's whole history is $1.94.
+
+What the dataset cannot do is more important than what it says, because it is fixable. Repository size and calendar date are the same variable in it, at a rank correlation of 1.000 — this repository only grows — so nothing about repository size is identifiable from our history at all; the one feature that appeared to predict well turned out to be counting files the model cannot see. The role prompt changed seven times across 61 seeded builds, the caps changed inside the window, and goal texts were revised between builds of the same seed, so the label moves too. Four confounds, all moving with time. `paired-set-runs` is the instrument that separates them, by holding everything but one variable fixed across a pair, and it is what a revisit would need first.
+
+Two things follow that are worth doing. A seed's effort stops being a guess and becomes a measurement written back from its builds, which is reference-class forecasting on our own history rather than estimation. And the lever is the mean rather than the spread: relative spread is roughly constant whatever the size of the task, while the cap is an absolute number, so a seed's average cost is what decides whether it caps — nine seeds averaging under 35 requests produced no caps between them, and seven averaging more produced twelve.
+
 ## Open questions
 
 - **How deep does the reviewer look before saying "meets"?** The builder's stopping condition is a green check; the reviewer's is a judgement about sufficiency and we have no principled one. Probably the hardest part of the role. Research commissioned 19 September into inspection-rate evidence, mutation score as an adequacy criterion, capture-recapture estimation of what two reviewers missed, and the economics of marginal detection.
