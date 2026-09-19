@@ -6,6 +6,9 @@ No provider, no network, no docker: the model is scripted with FunctionModel and
 fake. The fixtures of the builder's own suite are reused rather than copied.
 """
 
+import contextlib
+import io
+import json
 import os
 import tempfile
 import unittest
@@ -17,8 +20,10 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 import builder
+import runs
 from builder import Tools, build_agent, run
 from test_builder import REPORT, FakeSandbox, call
+from test_keys import KeysBase
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -176,6 +181,77 @@ class LandingTest(unittest.TestCase):
             limits = builder.limits(budget)
             self.assertGreater(limits.tool_calls_limit, budget, "a refusal can be answered")
             self.assertGreater(limits.request_limit, limits.tool_calls_limit, "and then reported")
+
+class RecordTest(KeysBase):
+    """What a run's numbers say about the caps it was given, and which one ended it."""
+
+    def numbers(self, record: Path) -> dict:
+        return json.loads((record / "numbers.json").read_text())
+
+    def test_the_record_carries_the_caps_beside_the_counts_they_bound(self):
+        """seed: caps-for-the-checkout-as-it-is. A count without the cap it was bounded by cannot
+        be read: 24 requests of 60 and 24 of 138 are different runs. The record carries both caps
+        beside both counts, and says nothing about a cap when no cap ended the run."""
+        code, err = self.build()
+        self.assertEqual(code, 0, err)
+        (record,) = self.records()
+        n = self.numbers(record)
+        budget = builder.call_budget(self.checkout)
+        self.assertEqual(n["calls_cap"], budget)
+        self.assertEqual(n["requests_cap"], builder.limits(budget).request_limit)
+        self.assertEqual(n["cap"], "")
+        self.assertLessEqual(n["tool_calls"], n["calls_cap"])
+        self.assertLessEqual(n["requests"], n["requests_cap"])
+
+    def test_the_record_says_which_cap_ended_the_run(self):
+        """seed: caps-for-the-checkout-as-it-is. A run cut off by the calls and one cut off by the
+        requests were both `stopped: cap` with only `detail` telling them apart, so the table
+        could not say which budget bound a run. The numbers say which, and nothing when no cap
+        did; a run the requests bound means the reserve was wrong, because the requests are meant
+        to outlast the calls."""
+        self.assertEqual(builder.which_cap("answer", ""), "")
+        self.assertEqual(builder.which_cap("error", "the provider fell over"), "")
+        self.assertEqual(builder.which_cap("cap", "exceed the tool_calls_limit of 84"), "calls")
+        self.assertEqual(builder.which_cap("cap", "exceed the request_limit of 90"), "requests")
+
+        def endless(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[call("list", {"path": "."}, "c")])
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(builder, "CALLS_CEILING", 2):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = builder.main(["builder.py", str(self.checkout), "goal"],
+                                    model=FunctionModel(endless), sandbox=FakeSandbox([]))  # fmt: skip
+        self.assertEqual(code, 1, err.getvalue())
+        (record,) = self.records()
+        n = self.numbers(record)
+        self.assertEqual((n["stopped"], n["cap"], n["calls_cap"]), ("cap", "calls", 2))
+
+    def test_the_table_shows_the_caps_beside_the_counts_they_bound(self):
+        """seed: caps-for-the-checkout-as-it-is. A version reads its own runs off the table, so the
+        caps belong beside the counts they bound and the cap that bit beside how the run stopped.
+        A record written before the caps were recorded has empty cells and is still a row."""
+        self.assertEqual(runs.COLUMNS.index("cap"), runs.COLUMNS.index("stopped") + 1)
+        self.assertEqual(runs.COLUMNS.index("requests_cap"), runs.COLUMNS.index("requests") + 1)
+        self.assertEqual(runs.COLUMNS.index("calls_cap"), runs.COLUMNS.index("tool_calls") + 1)
+
+        code, err = self.build()
+        self.assertEqual(code, 0, err)
+        older = self.runs / "20250101T000000Z"
+        older.mkdir()
+        (older / "goal.txt").write_text("a run from before the caps were recorded\n")
+        (older / "numbers.json").write_text('{"stopped": "answer", "requests": 4}\n')
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(runs.main(["runs.py"], runs=self.runs), 0)
+        rows = [line.split("\t") for line in out.getvalue().splitlines()]
+        by_stamp = {row[0]: dict(zip(rows[0], row)) for row in rows[1:]}
+        self.assertEqual(by_stamp[older.name]["calls_cap"], "")
+        self.assertEqual(by_stamp[older.name]["cap"], "")
+        recent = by_stamp[self.records()[-1].name]
+        self.assertEqual(recent["calls_cap"], str(builder.call_budget(self.checkout)))
+        self.assertEqual(recent["cap"], "")
 
 if __name__ == "__main__":
     unittest.main()
