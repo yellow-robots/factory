@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.15: the roles an instance runs
+
+2026-09-19
+
+The instance's configuration stops being two paths and becomes a description of the roles the instance runs: each names the model that role runs on and the file its key is read from, so a second model is expressible without editing the program — which is what a reviewer stronger than the builder needs, and the reason this version exists. The wall that keeps a key out of a record searches every record for every key the configuration names, not the one key the run was given, so a run made on one provider cannot commit a record carrying another's; and a configuration that cannot say which key a run uses is refused rather than quietly answering with the program's own. It is the first version built by the one before it: an instance pinned at the v0.14 tag, answering a pushed branch through `build.py`, and every commit here carries the tag it was built at.
+
+- The instance's configuration describes the roles it runs: a `roles` table, one entry per role, each naming the `model` that role runs on, the `key` file it reads and optionally a `base_url` for a model served elsewhere. `instance.py` reads them as it reads `records` and `work`, answering with a key's place and never its value, and refusing a `roles` that is missing or malformed in the shape the rest of the configuration is already refused. The builder runs as the role `builder`, so its model is no longer a constant of the program, and a configuration that cannot say which key a run uses is a usage error before the model is called.
+- The search that keeps a key out of a record searches every record for every key the configuration names, not the key the run was given, so a run made on one provider cannot commit a record carrying another's; a key file the configuration names that cannot be read refuses the commit too, because a key that cannot be searched for cannot be shown to be absent.
+- A version is built by the version before it: an instance is a checkout of the factory's code pinned at a released tag with a configuration of its own, installed by a clone and `uv sync`, and README says how one is installed and moved to a tag.
+
 ## v0.14: a build asked through git
 
 2026-09-18
