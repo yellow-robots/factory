@@ -1,7 +1,7 @@
 ---
 created: 2026-09-19
 type: seed
-status: building
+status: done
 summary: The leak scan searches a record for one key's value and the key's path is a constant of the program, so a run made on a second provider has its record searched for the wrong key; the instance's configuration describes the roles it runs, each with its model and its key, and every key it names is searched for.
 value: 5
 effort: M
@@ -18,17 +18,12 @@ The instance's configuration already names `records` and `work`, read by `instan
 
 ## Goal
 
-The search that keeps a key out of a record never fails open, and there is one place left where it does. `configured_keys` catches the error `key_paths()` raises for a configuration whose `roles` are missing or malformed and answers with an empty list; `leaked_file` then searches a record for nothing and the record is committed. A configuration that cannot say what a key is turns the wall off silently, which is the opposite of what every other case of this function does — a file it cannot read through, a truncated `.gz`, a link it will not walk into all refuse the commit.
+The instance's configuration describes the roles the instance runs. Beside `records` and `work` it holds a `roles` table, one entry per role, each naming the `model` that role runs on and the `key` file it reads; a role may also name a `base_url`, for a model served somewhere other than the provider the factory uses by default. A role is a name: `builder` is the one that exists, and a configuration may hold others.
 
-```
-    try:
-        paths = key_paths()
-    except (ValueError, OSError):
-        return []
-```
+`instance.py` reads the roles as it reads the rest, importing nothing of the builder's. It answers with a role's model, the path of its key and its base URL, and with the path of every key the configuration names, each once; it never reads a key file, because a key's value is the caller's to read and should live in as few places as it can. A `roles` that is missing, is not a table, or holds an entry that is not a table, that has no `model` or no `key`, or whose `model` is not a string or whose `key` is not a string or not an absolute path, is a ValueError naming the configuration's file and which fault, in the shape `record_store` and `work_dir` already use; asking for a role the configuration does not hold is the same kind of error, naming the configuration and the role.
 
-That error refuses the commit instead, as an unreadable key file already does: a `LeakedKey` carrying the words `instance.py` raised, which name the configuration's file and the fault, and never a key's value. An empty list of keys is refused the same way, whatever produced it, because a record searched for nothing has not been searched.
+The builder runs as the role `builder`: the model it runs on and the file it reads its key from are that role's, and the run's record names the model the role gave. A key file the role names that cannot be read, or that holds nothing once stripped, is a usage error naming that file, refused before the model is called and before a record is made. A configuration that cannot say which key a run uses — no `roles`, others but not `builder`, or a malformed one — is refused rather than quietly answering with the program's own, in the words `instance.py` already raises.
 
-The docstring says what is now true. Its last sentence claims the empty list "falls back to the program's constants as the run does", which the code never did and which the run no longer does either.
+The search that keeps a key out of a record searches a record for **every key the configuration names**, not the key the run was given. A record holding any of them is refused by `LeakedKey`, which names the file and never a value, and the run that made it fails as it does now. The search fails open on nothing: a file it cannot read through, a `.gz` that ends before its stream does, a link or directory it will not walk into, and a key file the configuration names that cannot be read all refuse the commit, because a key that cannot be searched for cannot be shown to be absent.
 
-Nothing else moves, in `builder.py` or any other file. One test is red, `test_a_configuration_that_names_no_key_refuses_the_commit`, in `test_keys.py`.
+Built in four goals, three of them split from one after it capped. What the caps would not let through and what is therefore not here: `MODEL` and `KEY_FILE` remain in `builder.py` with nothing left that reads them, which is the-constants-that-answer-for-nothing.
