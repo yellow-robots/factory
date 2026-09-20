@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: building
+status: done
 summary: A second role, read only, that answers whether a build's code does what its tests claim and what else it changed, with findings it has reproduced and a verdict, recorded like any other run.
 value: 5
 effort: M
