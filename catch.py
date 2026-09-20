@@ -137,6 +137,8 @@ def _case(path: Path) -> Case | str:
         if span is None:
             return f"case {path.stem} has a finding without a line or a span: {target}"
         findings.append((target, span[0], span[1]))
+    if not findings:  # nothing to catch: a case that names no finding cannot be scored
+        return f"case {path.stem} names no finding"
     return Case(name=path.stem, commit=commit.strip(), seed=seed.strip(), findings=findings)
 
 
@@ -285,10 +287,11 @@ def _tag(record: Path, case: Case) -> None:
         print(f"{record}: {' '.join(str(e).split())}", file=sys.stderr)
 
 
-def _run_case(root: Path, work: Path, case: Case, model: Any) -> tuple[list[str], tuple[int, int], bool]:
+def _run_case(root: Path, work: Path, case: Case,
+              model: Any) -> tuple[list[str], tuple[int, int, int] | None, bool]:  # fmt: skip
     """One case: a worktree at its commit, the reviewer over it, its record tagged and counted. The
-    cells, the (known, caught-strict, caught-path) it earned for the set's rate, and whether the
-    review answered in full."""
+    cells, the (known, caught-strict, caught-path) it earned for the set's rate -- None when the
+    review was not a measurement -- and whether the review answered in full."""
     worktree = work / case.name
     try:
         builder.git(root, "worktree", "add", "--detach", str(worktree), case.commit)
@@ -297,34 +300,48 @@ def _run_case(root: Path, work: Path, case: Case, model: Any) -> tuple[list[str]
             code = reviewer.main(["reviewer.py", str(worktree), case.seed], model=model)
         printed = out.getvalue().splitlines()
         record = Path(printed[0].strip()) if printed and printed[0].strip() else None
-        if record is None or not record.is_dir():
-            return _cells(case, 0, 0, {}), (len(case.findings), 0, 0), False
+        if record is None or not record.is_dir():  # the review could not be started: unmeasured
+            return _unmeasured(case), None, False
         _tag(record, case)
         numbers = _numbers(record)
+        if code != 0 or _capped(numbers):  # capped or errored: not a measurement, so not in the rate
+            return _unmeasured(case, numbers), None, False
         strict, loose = _counts(case, _reported(record))
-        capped = code != 0 or _capped(numbers)
-        return _cells(case, strict, loose, numbers), (len(case.findings), strict, loose), not capped
+        return _cells(case, strict, loose, numbers), (len(case.findings), strict, loose), True
     except (builder.GitError, OSError, subprocess.SubprocessError) as e:
         print(f"{case.name}: {' '.join(str(e).split())}", file=sys.stderr)
-        return _cells(case, 0, 0, {}), (len(case.findings), 0, 0), False
+        return _unmeasured(case), None, False
     finally:
         _remove(root, worktree)
 
 
-def _cells(case: Case, strict: int, loose: int, numbers: dict[str, Any]) -> list[str]:
-    """One case's row: its name, the two counts, how many findings were known, how many passes ran,
-    what the review cost and how long it took."""
+def _row(case: Case, strict: str, loose: str, numbers: dict[str, Any]) -> list[str]:
+    """One case's row: its name, the two counts as its caller renders them, how many findings were
+    known, how many passes ran, what the review cost and how long it took."""
     cost, seconds = _number(numbers.get("cost_usd")), _number(numbers.get("seconds"))
     ran = numbers.get("passes_ran")
     return [
         case.name,
-        str(strict),
-        str(loose),
+        strict,
+        loose,
         str(len(case.findings)),
         str(ran) if isinstance(ran, int) and not isinstance(ran, bool) else "",
         "" if cost is None else str(round(cost, 5)),
         "" if seconds is None else str(round(seconds, 1)),
     ]
+
+
+def _cells(case: Case, strict: int, loose: int, numbers: dict[str, Any]) -> list[str]:
+    """A measured case's row: the findings it caught on each count."""
+    return _row(case, str(strict), str(loose), numbers)
+
+
+def _unmeasured(case: Case, numbers: dict[str, Any] | None = None) -> list[str]:
+    """A case's row when it was not measured: no record, a review that could not be started, or one
+    that did not finish. Its counts are not zero -- a review that never answered is not a review that
+    found nothing, and counting it as one drags the rate down with cases that were never asked. The
+    passes it ran and what they cost are still shown, so the row says what was spent on it."""
+    return _row(case, UNMEASURED, UNMEASURED, numbers or {})
 
 
 def _remove(root: Path, worktree: Path) -> None:
@@ -356,7 +373,10 @@ def _rate(pairs: list[tuple[int, int]]) -> tuple[float, float]:
 
 def _rates(stats: list[tuple[int, int, int]]) -> list[str]:
     """The set's rate and its standard error on each count, as `evals.py` gives the builder's: an
-    empty line first, then the strict rate and the path rate."""
+    empty line first, then the strict rate and the path rate. No measurements at all is no rate to
+    print and no arithmetic to attempt, which is an answer rather than a failure."""
+    if not stats:  # nothing was measured: there is no rate over nothing to print
+        return []
     strict_rate, strict_error = _rate([(strict, known) for known, strict, _ in stats])
     path_rate, path_error = _rate([(loose, known) for known, _, loose in stats])
     return ["", f"strict rate {strict_rate:.3f} ± {strict_error:.3f}",
@@ -381,14 +401,16 @@ def _score(store: Path, cases: list[Case]) -> int:
     for case in cases:
         record = latest.get(case.name)
         if record is None:  # never run: shown as unmeasured and left out of the rate
-            rows.append("\t".join(
-                [case.name, UNMEASURED, UNMEASURED, str(len(case.findings)), "", "", ""]))
+            rows.append("\t".join(_unmeasured(case)))
             continue
         numbers = _numbers(record)
+        if _capped(numbers):  # capped or errored: not a measurement, so not in the rate, but exit 1
+            rows.append("\t".join(_unmeasured(case, numbers)))
+            failed = True
+            continue
         strict, loose = _counts(case, _reported(record))
         rows.append("\t".join(_cells(case, strict, loose, numbers)))
         stats.append((len(case.findings), strict, loose))
-        failed = failed or _capped(numbers)
     print("\n".join(rows))
     if cases:
         print("\n".join(_rates(stats)))
@@ -435,12 +457,13 @@ def main(argv: list[str], root: Any = None, model: Any = None) -> int:
     try:
         for case in cases:
             try:
-                cells, (known, strict, loose), ok = _run_case(base, work, case, model)
+                cells, measured, ok = _run_case(base, work, case, model)
             except Exception as e:  # one failed case names itself and the set goes on
                 print(f"{case.name}: {' '.join(str(e).split())}", file=sys.stderr)
-                cells, (known, strict, loose), ok = _cells(case, 0, 0, {}), (len(case.findings), 0, 0), False
+                cells, measured, ok = _unmeasured(case), None, False
             rows.append("\t".join(cells))
-            stats.append((known, strict, loose))
+            if measured is not None:  # only a review that answered is a measurement
+                stats.append(measured)
             failed = failed or not ok
     finally:
         shutil.rmtree(work, ignore_errors=True)
