@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: building
+status: done
 summary: A role served elsewhere is priced with DeepSeek's table, so the reviewer on GLM is bounded five times too tightly and reads a fifth of what it was given.
 value: 5
 effort: S
