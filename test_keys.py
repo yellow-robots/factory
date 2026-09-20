@@ -18,6 +18,7 @@ from unittest import mock
 
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 import builder
 from test_builder import REPORT, FakeSandbox, call, git, scripted
@@ -96,11 +97,11 @@ class RoleOfTheRunTest(KeysBase):
         """seed: keys-of-the-instance. The model was a constant of `builder.py`, so a second provider
         was not expressible without editing the program. It is the role's: a configuration naming
         another model makes a record that names it."""
-        self.configure(model="a-model-of-its-own")
+        self.configure(model="glm-5.3-flash")
         code, err = self.build()
         self.assertEqual(code, 0, err)
         (record,) = self.records()
-        self.assertEqual(json.loads((record / "numbers.json").read_text())["model"], "a-model-of-its-own")
+        self.assertEqual(json.loads((record / "numbers.json").read_text())["model"], "glm-5.3-flash")
 
     def test_a_key_file_the_role_names_that_holds_no_key_is_a_usage_error(self):
         """seed: keys-of-the-instance. The key is read from the file the role names: one that is not
@@ -214,6 +215,62 @@ class NoFallbackTest(KeysBase):
         self.assertEqual(code, 2, elsewhere)
         self.assertIn(str(self.instance), elsewhere)
         self.assertIn("builder", elsewhere)
+
+
+class PriceOfTheRoleTest(KeysBase):
+    """seed: the-role-priced-as-another. What bounds a run is what it has spent, so a run whose
+    spend cannot be computed cannot be bounded at all."""
+
+    def usage(self, input_tokens: int, cache_read_tokens: int, output_tokens: int):
+        """A scripted answer that reports tokens, so a record carries a cost worth reading. The
+        numbers a caller passes here are the ones the wire would have brought back."""
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart("final_result", REPORT, tool_call_id="c1")],
+                usage=RequestUsage(input_tokens=input_tokens, cache_read_tokens=cache_read_tokens,
+                                   output_tokens=output_tokens),  # fmt: skip
+            )
+        return FunctionModel(model)
+
+    def test_a_role_on_a_model_nothing_can_price_does_not_start(self):
+        """seed: the-role-priced-as-another. The spend ceilings are the only thing standing between
+        a run and a runaway, and a ceiling derived from another model's rate is not a ceiling: a
+        model neither `PRICE` nor the library can price is refused before a model is called and
+        before a record is made, exit 2, naming the role and the model it could not price."""
+        for name in ("a-model-of-its-own", "deepseek-flush", ""):
+            self.configure(model=name)
+            code, said = self.refused()
+            self.assertEqual(code, 2, said)
+            self.assertIn("builder", said)
+            if name:
+                self.assertIn(name, said)
+
+    def test_a_record_carries_the_price_of_the_model_the_run_ran_on(self):
+        """seed: the-role-priced-as-another. Measured on run 20260920T103528Z, the first run on a
+        model that is not the builder's: the table said $0.001065 for tokens the library prices at
+        $0.000197 as `zhipuai/GLM-5.3-Flash`, **overstating it 5.41 times**. It is the record's
+        number and the tools' landing alike, so the table answering here would land a pass after a
+        fifth of the work it was given and say $0.125 either way."""
+        self.configure(model="glm-5.3-flash")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                model=self.usage(2427, 1088, 547), sandbox=FakeSandbox([]))  # fmt: skip
+        self.assertEqual(code, 0, out.getvalue())
+        (record,) = self.records()
+        numbers = json.loads((record / "numbers.json").read_text())
+        self.assertEqual(numbers["cost_source"], "genai-prices")
+        self.assertAlmostEqual(numbers["cost_usd"], 0.000197, places=5)
+
+    def test_our_own_model_still_costs_what_it_has_always_cost(self):
+        """seed: the-role-priced-as-another. `PRICE` is DeepSeek's peak rate for `deepseek-flash`
+        and stays the source for it, `cost_source` still reading `table`, so every record ever
+        written stays comparable with every record written after this."""
+        code, err = self.build()
+        self.assertEqual(code, 0, err)
+        (record,) = self.records()
+        numbers = json.loads((record / "numbers.json").read_text())
+        self.assertEqual((numbers["model"], numbers["cost_source"]), (builder.MODEL, "table"))
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,7 +114,7 @@ class ReviewerBase(unittest.TestCase):
         self.instance = self.base / "instance.toml"
         self.instance.write_text(
             f'records = "{self.runs}"\nwork = "{self.base / "work"}"\n'
-            f'\n[roles.reviewer]\nmodel = "a-reviewers-model"\nkey = "{self.key}"\n'
+            f'\n[roles.reviewer]\nmodel = "glm-5.3-flash"\nkey = "{self.key}"\n'
         )
         self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(self.instance)}))
         # A review is one set of passes per dimension. Every test here but DimensionTest's is about
@@ -153,7 +153,7 @@ class ReviewRecordTest(ReviewerBase):
             self.assertTrue((record / name).is_file(), name)
         numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
         self.assertEqual(numbers["role_name"], "reviewer")
-        self.assertEqual(numbers["model"], "a-reviewers-model")
+        self.assertEqual(numbers["model"], "glm-5.3-flash")
         self.assertEqual(numbers["head"], git(self.checkout, "rev-parse", "HEAD").strip())
         self.assertEqual(numbers["seed"], "a-seed")
 
@@ -356,6 +356,29 @@ class RoleServedElsewhereTest(ReviewerBase):
         self.assertEqual(seen.get("model_name"), "glm-5.3-flash")
 
 
+    def test_a_reviewer_on_a_model_nothing_can_price_does_not_start(self):
+        """seed: the-role-priced-as-another. Both programs reach their role the same way and both
+        are bounded the same way, so both refuse the same way: a model neither `PRICE` nor the
+        library can price is refused before a model is called and before a record is made, exit 2,
+        naming the role and the model. A review is `PASSES` sessions per dimension bounded by what
+        each has spent, and passes priced by another model's rate are not bounded at all."""
+        called = []
+
+        def counting(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[ToolCallPart("final_result", {"findings": []}, tool_call_id="c")])
+
+        self.instance.write_text(
+            f'records = "{self.runs}"\nwork = "{self.base / "work"}"\n'
+            f'\n[roles.reviewer]\nmodel = "a-reviewers-model"\nkey = "{self.key}"\n'
+        )
+        code, _, err, record = self.review(FunctionModel(counting))
+        self.assertEqual(code, 2, err)
+        self.assertIn("reviewer", err)
+        self.assertIn("a-reviewers-model", err)
+        self.assertEqual(called, [], "no model is called before the configuration is usable")
+        self.assertIsNone(record, "and no record is made")
+
 
 class WhatTheSuiteDidNotHoldTest(ReviewerBase):
     """seed: reviewer-role. From the review of run 20260920T000130Z: the load-bearing claims of the
@@ -386,7 +409,7 @@ class WhatTheSuiteDidNotHoldTest(ReviewerBase):
         other.write_text("key=a-different-secret\n")
         self.instance.write_text(
             f'records = "{self.runs}"\nwork = "{self.base / "work"}"\n'
-            f'\n[roles.reviewer]\nmodel = "a-reviewers-model"\nkey = "{self.key}"\n'
+            f'\n[roles.reviewer]\nmodel = "glm-5.3-flash"\nkey = "{self.key}"\n'
             f'\n[roles.builder]\nmodel = "deepseek-flash"\nkey = "{other}"\n'
         )
         (self.checkout / "f.py").write_text("x = 2\nTOKEN = 'a-different-secret'\n")

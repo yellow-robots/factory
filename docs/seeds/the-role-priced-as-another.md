@@ -27,6 +27,26 @@ Why the library did not price it is the interesting half. `genai_prices` *can*: 
 
 [[the-catch-rate-that-decides-the-role]] is what v0.19 exists for, and one of the questions it settles is whether the stronger model is the better reviewer. Asked today, it would compare a DeepSeek reviewer running to its full budget against a GLM reviewer cut off after a fifth of one, and it would answer confidently and wrongly. **That is why this comes first.**
 
+### What the first build reached, 2026-09-20
+
+Run 20260920T103528Z's mispricing is fixed and measured: commit 5c5d4ed, run 20260920T103952Z, green
+at $0.1199 of a $0.125 ceiling. `price(usage, model)` takes the model with no default, the library
+answers for `glm-5.3-flash` -- $0.000197 where the table said $0.001065 -- and a record made on it
+now carries the library's number and says so.
+
+The other two clauses it could not reach, and its report says why in as many words: the suite's own
+fixtures configured roles on `a-model-of-its-own` and `a-reviewers-model`, names neither source can
+price, and required those runs to proceed. The file asked for a refusal and forbade it at once, so
+no code could satisfy both. **That was the attended agent's error, not the builder's** -- the third
+time its `unsure` has been right about a blocker. The fixtures have been amended to a real model
+that is not ours, which is what those tests were always about: that the model a run uses is the
+role's and not the program's.
+
+What the build did instead was add a second way to price a run, which answers with the table for any
+model the library cannot price, and both programs call that one rather than `price`. So the defect
+this seed exists to remove is still live on the path that matters, and a record made that way would
+carry the table's arithmetic under the library's name.
+
 ## Goal
 
 A run is priced by what it ran on, or it does not run.
@@ -40,3 +60,9 @@ A run is priced by what it ran on, or it does not run.
 Both programs, because both reach their role the same way and both are bounded the same way.
 
 What must not change: `deepseek-flash` keeps costing exactly what it costs today, by the same table, with `cost_source` still reading `table`, so every record ever written stays comparable with every record written after this.
+
+**One function prices tokens.** That is what `AGENTS.md` already claims of this code, and the reason
+is the same reason as everything above: the number the tools land a run on and the number its record
+carries are the same arithmetic, so they cannot drift. A second way to price, with a laxer answer
+than the first, is a way for them to drift again. With the refusal above in place nothing reaches a
+record that the one function cannot price, so there is nothing for a second one to do.
