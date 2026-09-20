@@ -6,6 +6,7 @@ No provider, no network, no docker: the model is scripted with FunctionModel, an
 executes nothing of the project's, so there is no sandbox to fake.
 """
 
+import collections
 import contextlib
 import gzip
 import io
@@ -67,6 +68,24 @@ def five(*reports):
     """Five passes, the last report repeated when fewer are given."""
     given = list(reports) or [{"findings": []}]
     return passes(*(given + [given[-1]] * (5 - len(given)))[:5])
+
+
+def watching(*reports):
+    """A model answering each session with the next report in turn, the last repeated, and the list
+    of the user prompt each session was given -- what it was actually asked, not a repr of it."""
+    asked: list[str] = []
+    answers = list(reports) or [{"findings": []}]
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(m, ModelResponse) for m in messages):
+            asked.append("".join(
+                str(part.content) for m in messages for part in getattr(m, "parts", [])
+                if type(part).__name__ == "UserPromptPart"
+            ))  # fmt: skip
+        report = answers[min(len(asked), len(answers)) - 1]
+        return ModelResponse(parts=[ToolCallPart("final_result", report, tool_call_id=f"c{len(asked)}")])
+
+    return FunctionModel(model), asked
 
 
 class ReviewerBase(unittest.TestCase):
@@ -550,6 +569,102 @@ class PassCeilingTest(ReviewerBase):
         numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
         self.assertEqual(numbers["passes_ran"], 0)
         self.assertFalse((record / "review.json").is_file())
+
+
+
+class DimensionTest(ReviewerBase):
+    """seed: reviewer-role. Not "review this change" but one pass per named goal, each dimension
+    there because something got past a green check."""
+
+    def test_a_review_is_every_dimension_pursued_its_own_passes_over(self):
+        """Four dimensions and `PASSES` passes each, none of them told what another found. The count
+        is the product: a dimension that shares its passes with the others is three quarters less
+        read than the one before it."""
+        self.assertEqual(len(reviewer.DIMENSIONS), 4)
+        model, asked = watching({"findings": [FINDING]})
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(asked), len(reviewer.DIMENSIONS) * reviewer.PASSES)
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(numbers["dimensions"], len(reviewer.DIMENSIONS))
+        self.assertEqual(numbers["passes"], reviewer.PASSES)
+
+    def test_the_dimension_is_the_last_thing_in_the_prompt(self):
+        """The role, the goal and the diff are the same in every session and the dimension is not,
+        so the shared material goes first and every session shares one cached prefix. Measured on
+        the first real review, 95% of its input was served from cache, which turned $1.18 of input
+        into $0.25. It costs nothing to get right and nothing catches it when it is wrong: what the
+        sessions have in common must hold the goal and the diff, and what differs must be the tail."""
+        model, asked = watching()
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        shared = os.path.commonprefix(asked)
+        self.assertIn("Make x bigger than one.", shared, "the goal is inside the shared prefix")
+        self.assertIn("x = 2", shared, "and so is the change under review")
+        tails = {prompt[len(shared):] for prompt in asked}
+        self.assertEqual(len(tails), len(reviewer.DIMENSIONS), "one tail per dimension and nothing else")
+        for tail in tails:
+            self.assertTrue(tail.strip(), "the tail is the dimension, not an empty string")
+
+    def test_each_dimension_is_pursued_by_the_same_number_of_passes(self):
+        """No dimension is read harder than another, or the catch rate says more about how the
+        passes were shared out than about what the dimensions are worth."""
+        model, asked = watching()
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        shared = os.path.commonprefix(asked)
+        counts = collections.Counter(prompt[len(shared):] for prompt in asked)
+        self.assertEqual(len(counts), len(reviewer.DIMENSIONS), "one group per dimension")
+        self.assertEqual(set(counts.values()), {reviewer.PASSES})
+
+    def test_a_finding_carries_the_dimension_that_found_it(self):
+        """A finding without the goal it was found under cannot be counted against that goal, and
+        counting them is how a dimension that catches nothing gets dropped. The model is not asked
+        for it -- it is pursuing one goal and does not need to name it -- so the reviewer stamps it."""
+        model, asked = watching({"findings": [FINDING]})
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        written = json.loads((record / "review.json").read_text(encoding="utf-8-sig"))
+        self.assertTrue(written["findings"], "something was reported")
+        for found in written["findings"]:
+            self.assertTrue(found["dimension"], found)
+        self.assertLessEqual(len({f["dimension"] for f in written["findings"]}), len(reviewer.DIMENSIONS))
+
+    def test_two_dimensions_that_land_on_one_line_found_two_things(self):
+        """Agreement is counted inside a dimension. Two passes found the same thing when they were
+        pursuing the same goal and they name the same path and line; two passes asked different
+        questions that land on one line were asked different questions, and a reviewer that collapses
+        them reports agreement it did not get."""
+        model, asked = watching({"findings": [FINDING]})
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        written = json.loads((record / "review.json").read_text(encoding="utf-8-sig"))
+        # Every session returned one finding on the same path and line. Within a dimension that is
+        # PASSES passes agreeing; across dimensions it is four separate findings, not one of twenty.
+        self.assertEqual(len(written["findings"]), len(reviewer.DIMENSIONS))
+        for found in written["findings"]:
+            self.assertEqual(found["passes"], reviewer.PASSES)
+        self.assertEqual({f["dimension"] for f in written["findings"]}.__len__(), len(reviewer.DIMENSIONS))
+
+    def test_the_review_renders_a_note_in_the_record_and_never_in_the_vault(self):
+        """`review.md` beside `review.json`, in the shape the review template gives, ready for the
+        attended agent to move into `docs/reviews/` once they have reproduced a finding. It does not
+        write into the vault itself: `verified` in that template means the attended agent reproduced
+        it and `judged` means they decided what it became, and a role that filled either in would be
+        marking its own homework."""
+        model, asked = watching({"findings": [FINDING]})
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        note = record / "review.md"
+        self.assertTrue(note.is_file())
+        text = note.read_text(encoding="utf-8")
+        self.assertIn("## Findings", text)
+        self.assertIn("severity:", text)
+        self.assertIn(FINDING["what"], text)
+        self.assertIn("### ", text, "one heading per finding")
+        self.assertEqual(list((self.checkout / "docs" / "reviews").glob("*")) if
+                         (self.checkout / "docs" / "reviews").exists() else [], [],
+                         "the vault is the attended agent's to write")  # fmt: skip
 
 
 if __name__ == "__main__":

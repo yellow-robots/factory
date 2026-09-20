@@ -95,16 +95,21 @@ And the curve belongs to a model, not to the role. The record already names the 
 
 ## Goal
 
-**A and B are built**, and a correction to A after them. This section was amended to each in turn and is now amended again, to what the first real review of 20260920T091432Z made blocking. The dimensions of C wait one goal, because they multiply both of the problems below by four.
+This is goal **C**. A and B are built, and so are the two corrections the first real review forced. Nothing built so far moves: the lens still cannot write, a pass is still bounded by its own spend, and a capped review still keeps what its passes found.
 
-A review is bounded like the many sessions it is, and it keeps what it found.
+One reading of a change is not a review, and neither is five readings of the same question.
 
-**The ceiling is a pass's.** `SOFT_SPEND` and `HARD_SPEND` were measured on builds, and a build is one session. A review is `PASSES` sessions sharing one budget, so the soft ceiling lands the third pass the moment it opens its mouth and the hard one kills the review outright -- which is what happened: $0.2531 spent, `cap: spend`, twelve minutes, and the run dead. What bounds a pass is **the pass's own spend**, against the same two ceilings a build gets and for the same reasons: landed at the soft one with the requests to report, ended at the hard one.
+**Four dimensions, each one earned.** `DIMENSIONS` names them, each a goal a pass pursues rather than a question it may answer briefly, and each one there because something got past a green check:
 
-**And the review stops starting passes once it has spent what its passes were worth.** `PASSES` times `SOFT_SPEND`, derived rather than a second magic number, so it scales when `PASSES` or the dimension count changes instead of being guessed again. It is reachable precisely because a pass may run to `HARD_SPEND`, above the soft ceiling the total is counted in: a review of runaway passes stops early, a review of ordinary ones never touches it. Measured on the first real review, a pass costs $0.0506, so five passes come to a quarter of the way there. What it must not do is kill a pass that is running -- it decides whether to start the next one, and the passes that already answered are what the review has.
+- *find every place the change satisfies its tests without meeting the goal* -- twice in three days, and structurally invisible to a suite, because the suite is the thing that got satisfied;
+- *find every claim the goal makes that no test would catch being broken* -- the largest catch of the first two reviews by a distance: seven one-line mutants passing 262 tests, among them deleting the key scan and telling the reviewer it could write;
+- *find work the program already does* -- the duplicated walk, the constant kept alive by a branch nothing reaches;
+- *find what now describes something that is gone* -- filed twice already, in `stale-docstring-case` and in `the-readme-the-gate-never-reads`.
 
-**A capped review keeps what its passes found.** `review.json` is written only when the run ends in an answer, so that review produced no readable report at all -- while its own numbers carried `findings 1`, `findings_seen 5` and `agreement 0.2`, computed from the passes that did answer. Twelve minutes and a quarter of a dollar of work, aggregated and then discarded for the same reason [[the-work-a-capped-run-leaves]] was written: how a run ended is not what decides whether its work is real. The passes that answered are what the review is. The record says how many ran of how many were asked for, so a reader can tell a review of five from a review of two, and `agreement` means what it always meant -- over the passes that happened.
+**Every dimension gets `PASSES` passes of its own**, so a review is `len(DIMENSIONS)` times `PASSES` cold sessions and none of them is told what any other found. The review's ceiling is derived from that product rather than from `PASSES` alone, or it shrinks by a quarter the moment the fourth dimension is added.
 
-**What a pass that was landed still owes.** A pass told to report has the requests to do it, exactly as a build does; that is already true and must stay true when the ceiling becomes the pass's own.
+**The dimension is the last thing in the prompt.** The role, the goal and the diff are identical across every session and the dimension is not, so the shared material goes first and all twenty sessions share one cached prefix. Measured on the first real review: 95% of that review's input was served from cache, which turned $1.18 of input into $0.25. It costs nothing to get right and nothing catches it when it is wrong.
 
-Nothing about the lens, the record, the key scan or the five passes changes.
+**A finding carries the dimension that found it, and agreement is counted inside a dimension.** Two passes found the same thing when they were pursuing the same goal and they name the same path and the same line. Two passes of different dimensions that land on one line found two things, because they were asked two questions -- and a reviewer that collapses them is reporting agreement it did not get.
+
+**The review renders a note in the record, in the shape `docs/templates/review.md` gives.** `review.md` beside `review.json`, a heading per finding with its severity and its dimension, ready for the attended agent to move into `docs/reviews/` once they have reproduced it. It does **not** write into the vault itself: `verified` in that template means the attended agent reproduced the finding, and `judged` means they decided what it became. Neither is the reviewer's to fill in, and a role that could would be marking its own homework.
