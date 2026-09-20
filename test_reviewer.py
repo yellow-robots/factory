@@ -475,5 +475,82 @@ class SeedPathTest(ReviewerBase):
         self.assertEqual(numbers["seed"], "a-seed")
 
 
+
+class PassCeilingTest(ReviewerBase):
+    """seed: reviewer-role. From the first real review, 20260920T091432Z: the ceilings were measured
+    on builds and a build is one session, so five sessions sharing one budget died against them."""
+
+    def test_each_pass_is_bounded_by_what_that_pass_has_spent(self):
+        """The review of 20260920T091432Z spent $0.2531 and was killed by the hard ceiling twelve
+        minutes in, because `spent` summed every pass. Under that reading the third pass is landed
+        the moment it opens its mouth, whatever it has cost. Here every pass costs less than the
+        soft ceiling and the review costs four times it: all five passes run and the review reports,
+        which is false the moment the ceiling is the review's rather than the pass's."""
+        model, told = five({"findings": [FINDING]})
+        with mock.patch.object(reviewer.builder, "price", lambda usage: 0.10):
+            code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(told), 5, "every pass ran")
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(numbers["passes_ran"], 5)
+        self.assertTrue((record / "review.json").is_file())
+
+    def test_a_review_stops_starting_passes_once_it_has_spent_what_its_passes_were_worth(self):
+        """A pass may run to `HARD_SPEND`, which is above the soft ceiling the review's total is
+        counted in, so a review of runaway passes stops early and a review of ordinary ones never
+        touches it. Five passes at 0.20 each cross five times `SOFT_SPEND` after the fourth, so the
+        fifth is never started and what the four found is the review."""
+        model, told = five({"findings": [FINDING]})
+        with mock.patch.object(reviewer.builder, "price", lambda usage: 0.20):
+            code, lines, err, record = self.review(model)
+        self.assertEqual(len(told), 4, "the fifth pass is never started")
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual((numbers["passes"], numbers["passes_ran"]), (5, 4))
+        self.assertTrue((record / "review.json").is_file(), "and what the four found is kept")
+
+    def test_a_review_that_was_capped_keeps_what_its_passes_found(self):
+        """The sharpest finding of the first real review: `review.json` is written only when the run
+        ends in an answer, so twelve minutes and a quarter of a dollar produced no readable report
+        at all -- while the numbers of that same record carried `findings 1`, `findings_seen 5` and
+        `agreement 0.2`, aggregated from the passes that did answer and then thrown away. It is
+        [[the-work-a-capped-run-leaves]] one layer up: how a run ended is not what decides whether
+        its work is real. Two passes answer here and the third is capped by the calls."""
+        answers = [{"findings": [FINDING]}, {"findings": [FINDING]}]
+        seen = {"n": 0}
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            first = not any(isinstance(m, ModelResponse) for m in messages)
+            if first:
+                seen["n"] += 1
+            if seen["n"] <= 2:
+                return ModelResponse(parts=[ToolCallPart("final_result", answers[seen["n"] - 1],
+                                                         tool_call_id=f"a{seen['n']}")])  # fmt: skip
+            return ModelResponse(parts=[ToolCallPart("read", {"path": "f.py"}, tool_call_id=f"r{len(messages)}")])
+
+        with mock.patch.object(reviewer, "PASSES", 3), \
+             mock.patch.object(reviewer.builder, "CALLS_LIMIT", 2):  # fmt: skip
+            code, lines, err, record = self.review(FunctionModel(model))
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual((numbers["passes"], numbers["passes_ran"]), (3, 2))
+        self.assertTrue((record / "review.json").is_file(), "the two passes that answered are the review")
+        written = json.loads((record / "review.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual([f["what"] for f in written["findings"]], [FINDING["what"]])
+        self.assertEqual(written["passes"], 2, "agreement is over the passes that happened")
+
+    def test_a_review_no_pass_answered_reports_nothing_and_says_so(self):
+        """The other side of it: keeping what was found is not the same as inventing a report. A
+        review whose every pass was capped has nothing to say and exits saying nothing."""
+        def forever(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart("read", {"path": "f.py"}, tool_call_id=f"c{len(messages)}")])
+
+        with mock.patch.object(reviewer, "PASSES", 2), \
+             mock.patch.object(reviewer.builder, "CALLS_LIMIT", 2):  # fmt: skip
+            code, lines, err, record = self.review(FunctionModel(forever))
+        self.assertEqual(code, 1)
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(numbers["passes_ran"], 0)
+        self.assertFalse((record / "review.json").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()
