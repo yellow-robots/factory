@@ -167,9 +167,9 @@ class SpendTest(CatchBase):
 
     def test_what_a_run_may_spend_bounds_what_it_can_spend(self):
         """seed: the-catch-rate-that-decides-the-role. Run 20260920T124559Z projected $2.50, was
-        allowed $3.00, and could have spent $5.00: a pass may run to `HARD_SPEND`, which is above
-        the ceiling the projection is counted in, so the projection is what a run is expected to
-        cost and never what it may. The allowance is checked against what it could cost. Both
+        allowed $3.00, and could have reached $2.75: a pass may run to `HARD_SPEND`, which is
+        above the ceiling the projection is counted in, so the projection is what a run is expected
+        to cost and never what it may. The allowance is checked against what it could cost. Both
         numbers are said, because the difference between them is the difference between a plan and
         a promise."""
         called = []
@@ -178,9 +178,8 @@ class SpendTest(CatchBase):
             called.append(1)
             return ModelResponse(parts=[ToolCallPart("final_result", {"findings": []}, tool_call_id="c")])
 
-        passes_run = len(reviewer.DIMENSIONS) * reviewer.PASSES
-        expected = passes_run * builder.SOFT_SPEND
-        most = passes_run * builder.HARD_SPEND
+        expected = len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.SOFT_SPEND
+        most = expected + builder.HARD_SPEND  # the stopping rule, and the pass already running
         allowed = (expected + most) / 2  # room for the projection, not for the ceiling above it
         self.assertLess(expected, allowed, "the fixture must leave the projection affordable")
         code, lines, err = self.run_catch("--spend", f"{allowed:.4f}", model=FunctionModel(counting))
@@ -205,16 +204,6 @@ class SpendTest(CatchBase):
         code, lines, err = self.run_catch("--spend", f"{most + 0.01:.4f}", model=model)
         self.assertEqual(code, 0, f"a run it could afford was refused: {err}")
         self.assertTrue([line for line in lines if line.startswith("one\t")], lines)
-
-    def test_a_run_that_could_reach_past_its_allowance_still_does_not_start(self):
-        """seed: the-catch-rate-that-decides-the-role. The other side of the same sentence: the
-        ceiling moved down, it did not stop being a ceiling."""
-        stopping = len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.SOFT_SPEND
-        most = stopping + builder.HARD_SPEND
-        code, lines, err = self.run_catch("--spend", f"{most - 0.01:.4f}", model=agreed()[0])
-        self.assertEqual(code, 2, err)
-        self.assertEqual(self.records(), [], "and no record is made")
-        self.assertIn(f"{most:.2f}", err + "\n".join(lines), "what it could cost is not said")
 
     def test_the_allowance_is_required_rather_than_assumed(self):
         """seed: the-catch-rate-that-decides-the-role. There is no default that spends money. A run
