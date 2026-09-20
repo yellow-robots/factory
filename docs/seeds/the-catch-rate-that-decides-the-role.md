@@ -96,6 +96,10 @@ The harness runs the reviewer over cases whose answers are already known, and co
 
 **It says what it will cost before it spends anything.** A review's cost is chosen and not emergent -- `dimensions x passes x SOFT_SPEND` for each case -- so the harness can say what the whole run comes to before the first pass starts, and does. A run that would cost more than it was told it may spend does not start: refused before a model is called and before a record is made, naming what it would have cost and what it was allowed. The full set is a decision somebody takes on purpose, not one they discover afterwards.
 
+**A measurement is paid for once.** A review's record holds every finding it reported, and scoring is arithmetic over those findings and the case's answers. So the harness scores the records it already has as well as making new ones: no worktree, no pass, no model, nothing spent, and no allowance asked for because there is nothing to allow. A record says which case it was in its own goal, so it needs no telling.
+
+The reason is the first run. It cost $2.5787, and the number it printed was wrong because an answer's span was too wide; correcting the span is a two-character edit and seeing the corrected number should not cost another $2.5787. An answer key written by hand will be corrected repeatedly, and a harness that charges a review for every correction is one that will be corrected less often than it should be.
+
 **What it may spend bounds what it can spend.** A pass may run to `HARD_SPEND`, above the ceiling the projection is counted in, so the allowance is checked against what the run could cost and not against what it is expected to cost. Both numbers are said, because the difference between them is the difference between a plan and a promise.
 
 Exit 1 when a review was capped or errored, because a capped review is not a measurement; 2 for a usage error.

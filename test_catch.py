@@ -187,6 +187,65 @@ class SpendTest(CatchBase):
         self.assertEqual(code, 2, err)
 
 
+class ScoreTest(CatchBase):
+    """Scoring a record the store already holds: arithmetic, not a review."""
+
+    def record(self, name="one", findings=(), passes_ran=20, cost=2.5787, seconds=6836.8):
+        """A review's record as the store holds one, without having run a review to get it."""
+        made = self.runs / "20260101T000000Z"
+        made.mkdir(parents=True, exist_ok=True)
+        (made / "goal.txt").write_text(f"case: {name}\nthe goal that was reviewed\n")
+        (made / "review.json").write_text(json.dumps({"findings": list(findings)}))
+        (made / "numbers.json").write_text(json.dumps(
+            {"passes_ran": passes_ran, "cost_usd": cost, "seconds": seconds, "stopped": "answer"}))
+        return made
+
+    def test_a_record_already_made_is_scored_without_being_reviewed_again(self):
+        """seed: the-catch-rate-that-decides-the-role. The first run cost $2.5787 and printed a
+        number that was wrong, because an answer's span was too wide. Correcting the span is a
+        two-character edit and seeing the corrected number must not cost another $2.5787: a record
+        holds every finding its review reported, and scoring is arithmetic over those and the case's
+        answers. No worktree, no pass, no model, nothing spent."""
+        called = []
+
+        def counting(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[ToolCallPart("final_result", {"findings": []}, tool_call_id="c")])
+
+        self.record(findings=[finding(path="f.py", line=3)])
+        code, lines, err = self.run_catch("--score", model=FunctionModel(counting))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(called, [], "no model is called to score what is already recorded")
+        self.assertEqual([p.name for p in self.records()], ["20260101T000000Z"], "and no record is made")
+        (row,) = [line for line in lines if line.startswith("one\t")]
+        self.assertEqual(row.split("\t")[1:4], ["1", "1", "1"], row)
+
+    def test_scoring_asks_for_no_allowance_because_it_spends_nothing(self):
+        """seed: the-catch-rate-that-decides-the-role. `--spend` exists so that a run costing money
+        says so first. Scoring costs nothing, so requiring an allowance for it would be a wall in
+        front of a door."""
+        self.record(findings=[finding(path="f.py", line=3)])
+        code, _, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+
+    def test_a_corrected_answer_changes_the_number_without_a_new_review(self):
+        """seed: the-catch-rate-that-decides-the-role. This is the whole point. The same record
+        scored against a span that swallows an unrelated finding reads one, and against the span
+        narrowed to what the answer is really about reads nothing -- which is the correction the
+        first run needed and the reason this exists."""
+        self.record(findings=[finding(path="f.py", line=7)])
+        self.case("one", findings=((("f.py"), (1, 8)),))  # wide enough to swallow the other function
+        code, lines, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+        (wide,) = [line for line in lines if line.startswith("one\t")]
+        self.case("one", findings=((("f.py"), (1, 4)),))  # the span the answer is really about
+        code, lines, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+        (narrow,) = [line for line in lines if line.startswith("one\t")]
+        self.assertEqual((wide.split("\t")[1], narrow.split("\t")[1]), ("1", "0"),
+                         f"the span made no difference: {wide} / {narrow}")  # fmt: skip
+
+
 class CaughtTest(CatchBase):
     """What a catch is: crude, visible, and counted twice."""
 
