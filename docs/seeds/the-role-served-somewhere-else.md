@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: building
+status: done
 summary: A role may name a base_url and the configuration reads one, but no program uses it, so the reviewer role this host already configures cannot run.
 value: 5
 effort: S

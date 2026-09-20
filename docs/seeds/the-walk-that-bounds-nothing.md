@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: building
+status: done
 summary: The spend now bounds a run, so the walk over the checkout that used to derive a budget still runs, still counts files, and decides nothing.
 value: 3
 effort: M
