@@ -152,7 +152,7 @@ def table_price(usage: Any) -> float:
     """The USD those tokens cost at `PRICE`, for anything carrying `input_tokens`,
     `cache_read_tokens` and `output_tokens`: the tokens the cache served at the cache-hit rate, the
     rest of the input at the miss rate and the output at the output rate. This is the one model's
-    arithmetic, and `price` is the one place tokens are priced, so the tools' landing on what a run
+    arithmetic, and `priced` is the one place tokens are priced, so the tools' landing on what a run
     has spent and the record's `cost_usd` cannot drift."""
     miss = usage.input_tokens - usage.cache_read_tokens  # what the cache did not serve
     return (
@@ -162,39 +162,66 @@ def table_price(usage: Any) -> float:
     ) / 1e6
 
 
-def price(usage: Any, model: str) -> float:
-    """The USD those tokens cost on `model`: `PRICE` is `MODEL`'s own table and the library prices
-    every other name it has a row for, reached through the name the model was configured with. A
-    name neither can price raises `UnknownPrice`, because a bound derived from another model's rate
-    is not a bound. `model` has no default: a caller that does not name one gets a TypeError."""
-    if model == MODEL:
-        return table_price(usage)
-    try:
-        calc = genai_prices.calc_price(
-            genai_prices.Usage(
-                input_tokens=usage.input_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                output_tokens=usage.output_tokens,
-            ),
-            model,
-        )
-    except LookupError as e:
-        raise UnknownPrice(f"no price for model {model}") from e
+def library_price(usage: Any, model: str, provider_api_url: str | None = None) -> float:
+    """What the library prices those tokens at for `model`, at `provider_api_url` when the role is
+    served at an address: the provider and the model looked up together. A name or an address the
+    library has no row for raises `LookupError`, which `priced` turns into `UnknownPrice`."""
+    asked = genai_prices.Usage(
+        input_tokens=usage.input_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        output_tokens=usage.output_tokens,
+    )
+    if provider_api_url:
+        calc = genai_prices.calc_price(asked, model, provider_api_url=provider_api_url)
+    else:
+        calc = genai_prices.calc_price(asked, model)
     return float(calc.total_price)
 
 
-def require_price(model: str) -> None:
-    """Raise `UnknownPrice` when the one function that prices tokens has no rate for `model`, so a
-    program can refuse a role whose run could not be bounded before it starts. `price` is asked for
-    the price of no tokens, so nothing is priced here -- only whether a rate exists -- and the
-    answer cannot disagree with the number the run would carry. A caller that replaced `price` with
-    a usage-only stand-in has no model name to look up, so its TypeError is no refusal."""
+def priced(usage: Any, model: str, base_url: str | None = None) -> tuple[float, str]:
+    """The one function that prices tokens: what they cost on `model` reached at `base_url` when the
+    role names one, and the source that answered -- `table` for the one model `PRICE` was written
+    for, `genai-prices` for a name the library has a row for. The address is asked first when there
+    is one, so a name served by more than one vendor is priced at the address the role is reached
+    at, and the bare name answers only when there is no address or the library does not know that
+    one. A name neither source can price raises `UnknownPrice`, because a bound derived from
+    another model's rate is not a bound."""
+    if model == MODEL:
+        return table_price(usage), "table"
+    if base_url:
+        try:
+            return library_price(usage, model, base_url), "genai-prices"
+        except LookupError:
+            pass
     try:
-        price(RunUsage(), model)
+        return library_price(usage, model), "genai-prices"
+    except LookupError as e:
+        raise UnknownPrice(f"no price for model {model}") from e
+
+
+def price(usage: Any, model: str, base_url: str | None = None) -> float:
+    """The USD those tokens cost on `model`, reached at `base_url` when the role names one: the one
+    function's number, whose source `priced` also names. `model` has no default: a caller that does
+    not name one gets a TypeError."""
+    return priced(usage, model, base_url)[0]
+
+
+def require_price(model: str, base_url: str | None = None) -> None:
+    """Raise `UnknownPrice` when the one function that prices tokens has no rate for `model` at
+    `base_url`, so a program can refuse a role whose run could not be bounded before it starts.
+    `price` is asked for the price of no tokens, so nothing is priced here -- only whether a rate
+    exists -- and the answer cannot disagree with the number the run would carry. A price that could
+    not be asked at all is no price either: a `TypeError` from the asking is an `UnknownPrice`, not
+    a pass, because anything that makes the asking itself fail admits every unpriceable model."""
+    try:
+        if base_url:
+            price(RunUsage(), model, base_url)
+        else:
+            price(RunUsage(), model)
     except UnknownPrice:
         raise
-    except TypeError:  # a replaced `price` that takes the usage alone: there is no name to look up
-        return
+    except TypeError as e:  # the asking itself failed: no price was learned, so none is admitted
+        raise UnknownPrice(f"no price for model {model}") from e
 
 ROLE = """\
 You are the builder. You are given a goal and a checkout: a directory with code and tests. You
@@ -1400,7 +1427,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     # ceiling. A model neither the table nor the library can price is refused naming the role and the
     # model, exit 2, before a model is called and before a record is made.
     try:
-        require_price(model_name)
+        require_price(model_name, base_url)
     except UnknownPrice:
         return usage_error(f"the builder role runs on model {model_name}, which cannot be priced")
     # The store's directory is made once the configuration is read and the key is a key; a plain
@@ -1425,10 +1452,13 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     usage = RunUsage()  # the run counts into it; the tools ask it, the record prices it
 
     def spent() -> float:
-        """What the run has spent so far, in the record's own arithmetic: the library's own cost for
-        the tokens it counted, or the one function's price for the role's model -- which the
-        configuration check above has already proved it can price."""
-        return float(usage.cost) if usage.cost is not None else price(usage, model_name)
+        """What the run has spent so far, in the record's own arithmetic: the one function's price
+        for every token the run counted on the role's model, reached at the role's address -- which
+        the configuration check above has already proved it can price. The library's own running
+        total is never consulted: it adds a response's cost only when the library gave one for that
+        response and its tokens always, so a sum of some of a run's responses is not the run's
+        price, and what bounds the run must be what its record carries."""
+        return price(usage, model_name, base_url)
 
     tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden), spent=spent,
                   sandbox=sandbox if sandbox is not None else Sandbox())  # fmt: skip
@@ -1453,12 +1483,13 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     except (OSError, ValueError, subprocess.SubprocessError, GitError) as e:  # never lose the record
         changes = {"diff": f"error: {e}", "files_changed": 0, "insertions": 0, "deletions": 0}
     # The record's cost is the tokens priced through the one function, so the number in the record
-    # and the number the tools land on are the same arithmetic: the library's own cost for the tokens
-    # it counted, or `price`, which is the factory's table for `MODEL` and the library's row for every
-    # model the configuration check above proved it can price. `MODEL` stays the table's, so every
-    # record ever written stays comparable with every after it.
-    cost_usd = round(float(usage.cost) if usage.cost is not None else price(usage, model_name), 5)
-    cost_source = "table" if model_name == MODEL else "genai-prices"
+    # and the number the tools land on are the same arithmetic: `price` is the factory's table for
+    # `MODEL` and the library's row, at the role's address, for every model the configuration check
+    # above proved it can price. The library's own running total is not the run's price, and
+    # `cost_source` names the source that answered and never the name that was configured. `MODEL`
+    # stays the table's, so every record ever written stays comparable with every after it.
+    cost_usd = round(price(usage, model_name, base_url), 5)
+    cost_source = priced(RunUsage(), model_name, base_url)[1]
     checks = [c["exit"] for c in tools.checks]
     numbers = {
         "model": model_name,

@@ -353,7 +353,7 @@ def main(argv: list[str], model: Any = None) -> int:
     # model neither the table nor the library can price is refused naming the role and the model,
     # exit 2, before a model is called and before a record is made.
     try:
-        builder.require_price(role.model)
+        builder.require_price(role.model, role.base_url)
     except builder.UnknownPrice:
         return usage_error(f"the reviewer role runs on model {role.model}, which cannot be priced")
     try:
@@ -378,21 +378,19 @@ def main(argv: list[str], model: Any = None) -> int:
     inflight: list[Any] = []  # the pass in flight, so `pass_spent` sees it while it runs
 
     def one_price(u: Any) -> float:
-        """The one function's price for this role's model, which the configuration check above has
-        already proved can be priced: the table when the model is ours and the library's row for any
-        other. There is no fallback, because a second answer that is not the run's own model's rate
-        is not a bound. A caller that replaced `builder.price` with a usage-only stand-in is called
-        with the usage alone, which is what its signature takes."""
-        try:
-            return builder.price(u, role.model)
-        except TypeError:
-            return builder.price(u)
+        """The one function's price for this role's model, at the address the role is served at,
+        which the configuration check above has already proved can be priced: the table when the
+        model is ours and the library's row for any other. There is no fallback, because a second
+        answer that is not the run's own model's rate is not a bound."""
+        if role.base_url:
+            return builder.price(u, role.model, role.base_url)
+        return builder.price(u, role.model)
 
     def cost(seen: list[Any]) -> float:
-        """What those usages cost, in the record's own arithmetic: the library's price where it
-        names one, the one function's answer for the role's own model otherwise."""
-        if seen and all(u.cost is not None for u in seen):
-            return sum(float(u.cost) for u in seen)
+        """What those usages cost, in the record's own arithmetic: the one function's price for
+        every token they counted. The library's own running total is not consulted: it adds a
+        response's cost only when the library gave one and its tokens always, and a sum of some of
+        a review's responses is not the review's price."""
         return sum(one_price(u) for u in seen)
 
     def pass_spent() -> float:
@@ -464,9 +462,10 @@ def main(argv: list[str], model: Any = None) -> int:
     if reports:
         (run_dir / "review.json").write_text(review.model_dump_json(indent=1) + "\n")
         (run_dir / "review.md").write_text(render_note(review))
-    priced = bool(usages) and all(u.cost is not None for u in usages)
-    cost_usd = round(sum(float(u.cost) if priced else one_price(u) for u in usages), 5)
-    cost_source = "table" if role.model == builder.MODEL else "genai-prices"
+    cost_usd = round(cost(usages), 5)
+    # The source named is the one that answered the pricing, not the name that was configured: the
+    # table for our own model and the library for every other, asked at the role's address.
+    cost_source = builder.priced(builder.RunUsage(), role.model, role.base_url)[1]
     numbers = {
         "role_name": "reviewer",
         "role": builder.sha256(ROLE),
