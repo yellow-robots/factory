@@ -21,6 +21,22 @@ The sample is not small. Twenty-five runs, 160,611,525 input tokens of which 154
 | output | 3,801,129 | $1.200/M | $4.5614 | 63.1% |
 | | | | **$7.2317** | |
 
+### The provider's own counters, same day
+
+The owner read three numbers off DeepSeek's account, and the third settles it:
+
+| | the factory's records | DeepSeek |
+|---|---|---|
+| requests | 2,317 | 2,515 (+8.5%) |
+| tokens | 164,412,654 | 177,441,711 (+7.9%) |
+| cost | $7.2317 | **$3.80 (-47.5%)** |
+
+**DeepSeek counted more tokens than we did and charged less than half.** Whatever the disagreement about volume is, it runs the wrong way to explain the cost, so the gap is in the rates and not in the accounting.
+
+The volume gap is itself expected and small. The OpenAI SDK retries 429s and 5xxs twice on its own, and `RunUsage.requests` counts logical requests where the provider bills attempts, which is why the record carries `wire_attempts` beside `requests`; and the provider's day may not start when ours does. Neither matters here except to say the token counts agree to within eight per cent.
+
+Priced on **DeepSeek's own token count**, the table gives **$7.8048, a ratio of 2.054 to what was billed**, and halved it gives **$3.9024 against $3.80, +2.7%** -- and the residual is about the size of the $0.2489 that ran in the 00h hour, which is the one part of the day a discount could plausibly touch. The table is twice the rate, near enough that the remainder is explained by the one thing the table already says it ignores.
+
 **It is not the off-peak discount.** `AGENTS.md` says the table is deliberately flat where DeepSeek's halves off peak, so that is the first thing to suspect and it does not fit: 96% of the day's recorded spend falls between 09:00 and 15:59 UTC, one six-hour block in the middle of the day, with $0.2489 of $7.23 in the 00h hour. For a discount to explain a 1.9x gap it would have to cover most of the working day.
 
 **A uniform halving of the table fits.** Recomputing the same tokens at half of every rate gives **$3.6159 against $3.80 billed, within 5%** -- and the residual is the size of the rounding in *"$3.8"*. No single-rate change fits as well: holding the other two and solving for output alone needs $0.297/M, which is not a number anybody publishes. For comparison, `genai_prices`' row for the adjacent name `deepseek-v4-flash`, which `AGENTS.md` records as a different model's numbers, is also below ours on every line -- miss $0.220 against our $0.300, output $0.660 against our $1.200 -- and gives $4.87 for the day, closer than ours and still not it.
