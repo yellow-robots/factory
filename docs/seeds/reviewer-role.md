@@ -82,14 +82,16 @@ It does not become a comment in the code, and the reasoning should be stated bec
 
 ## Goal
 
-This is goal **B** of the four in *How it is built* above. **A is built** and this section was amended from it on 2026-09-20; C and D follow the same way. Nothing here asks for dimensions or a catch rate, and nothing about goal A moves: the lens still reads and cannot write, the record is still a record, and the usage errors are still refused before a model is called.
+**A and B are built.** This section was amended to A on 2026-09-20, then to B, and now to this: a correction the review of run 20260920T000130Z found in A, which comes before C and D. Nothing built so far moves.
 
-One reading of a change is not a review. The review is several, and what is made of them is the answer.
+The reviewer's second argument is a seed, always.
 
-**Five passes, and none of them knows the others.** `PASSES` is five, fixed and recorded in the run's numbers so two reviews are comparable. Each pass is a cold session over the same checkout with the same Goal and the same diff, and no pass is ever told what another found -- not in its prompt, not in its tools' returns, not anywhere. A single pass has been measured to find between a quarter and a third of what is there, and five passes over one change to agree on very little; the point of the five is precisely that they disagree, so anything that leaks one into another destroys the only measurement this design has.
+`builder.read_seed` reads `docs/seeds/<name>.md` as a seed and **anything else as the goal text itself**, which is right for the builder, whose second argument is documented as text or a seed. The reviewer's is not: `usage: reviewer.py <checkout> <seed>` is what it prints, `<seed>` is what its docstring and this Goal call it, and `numbers.json` carries a `seed` field naming it.
 
-**What two passes reached is reported, what one reached alone is not.** A finding that only one pass saw stays in the record and leaves the report. The numbers still count everything: how many findings were seen across all passes, and how many were reported.
+So one forgotten `.md` walks past every refusal. `uv run reviewer.py <checkout> docs/seeds/reviewer-role` does not refuse; it takes the string `docs/seeds/reviewer-role` as the whole goal, spends a full priced model session reviewing a real diff against that one line, commits the record to the store with `seed` null, and exits 0. A directory does the same, and so does arbitrary prose.
 
-**Two passes found the same thing when they name the same place.** The path and the line, and nothing else -- not the prose, because prose similarity is a second model's judgement and this number must not need one. It is a crude measure, it will call two findings one when they share a line, and the record says that is what was done so that a later reading of the cases can say whether crude was good enough. Every reported finding carries the count of passes that reached it, because how much agreement stood behind a finding is what tells a reader how far to trust it.
+What must happen instead is what the Goal already says of a seed the commit does not hold: exit 2, before a model is called and before a record is made, naming what was given. Every `.md` path already refuses correctly -- absent, uncommitted, a symlink, no `## Goal` -- so what is missing is that anything which is not a seed path is refused rather than read as a goal.
 
-**The answer is what was found and how far the passes agreed, and never that a contract is met.** No number of passes can warrant that, so the report does not say it in any word: not `meets`, not `verdict`, not `approved`. What it carries is the findings with their counts, how many passes ran, and `agreement` -- the share of everything seen that more than one pass reached. That last number is what tells a reader how far to trust the silence, and it is the thing the cases will later be asked about.
+One line goes dead when this is fixed and should go with it: `the checkout has no commit` is reachable only through this hole, because on a commit-less checkout the seed read fails first.
+
+The record's `seed` field stops being nullable, since there is no longer a way to run without one.

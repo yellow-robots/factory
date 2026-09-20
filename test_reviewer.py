@@ -441,5 +441,39 @@ class WhatTheSuiteDidNotHoldTest(ReviewerBase):
         self.assertFalse((record / "review.json").is_file(), "a run that did not report has no report")
 
 
+
+class SeedPathTest(ReviewerBase):
+    """seed: reviewer-role. From the review of run 20260920T000130Z: the reviewer's second argument
+    is a seed, and anything that is not one must be refused rather than read as a goal."""
+
+    def test_an_argument_that_is_not_a_seed_path_is_refused_and_costs_nothing(self):
+        """`builder.read_seed` reads a `.md` path as a seed and anything else as the goal text, which
+        is right for the builder and wrong here: the reviewer prints `usage: reviewer.py <checkout>
+        <seed>` and records a `seed` field. One forgotten `.md` spent a full priced session reviewing
+        a real diff against the one-line pseudo-goal `docs/seeds/a-seed`, committed it to the store
+        with seed null, and exited 0. A directory and arbitrary prose did the same."""
+        called = []
+
+        def counting(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[ToolCallPart("final_result", {"findings": []}, tool_call_id="c")])
+
+        for given in ("docs/seeds/a-seed", "docs/seeds", "make x bigger than one", "a-seed.md.txt"):
+            code, lines, err, record = self.review(FunctionModel(counting), seed=given)
+            self.assertEqual(code, 2, f"{given!r} is not a seed: {err}")
+            self.assertIn(given, err, given)
+        self.assertEqual(called, [], "no model is called")
+        self.assertEqual(self.records(), [], "and no record is made")
+
+    def test_a_seed_the_commit_holds_is_still_read_as_one(self):
+        """The other half: the refusal is about what is not a seed path, and every seed path that was
+        accepted before is accepted still."""
+        model, _ = five()
+        code, lines, err, record = self.review(model, seed="docs/seeds/a-seed.md")
+        self.assertEqual(code, 0, err)
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(numbers["seed"], "a-seed")
+
+
 if __name__ == "__main__":
     unittest.main()
