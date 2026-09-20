@@ -2,57 +2,42 @@
 created: 2026-09-20
 type: seed
 status: open
-summary: The factory records about 1.9 times what DeepSeek bills, so every run is landed at roughly half the work its ceiling allows and every projection made from a record is twice what it should be.
-value: 5
-effort: S
+summary: A record's cost is the work at one flat rate and the bill is the work at the rate of the day it ran, so the two differ by up to half and nothing says which day a record was.
+value: 3
+effort: M
 version:
 ---
 
 ## Evidence
 
-2026-09-20, from the owner against the provider's own account: **DeepSeek reports $3.80 for the day. The factory's records say $7.2317 for the same day.** A ratio of **1.903**.
-
-The sample is not small. Twenty-five runs, 160,611,525 input tokens of which 154,806,464 were served from cache, and 3,801,129 output. Where the recorded number comes from, at `PRICE`:
-
-| | tokens | rate | cost | share |
-|---|---|---|---|---|
-| cache hits | 154,806,464 | $0.006/M | $0.9288 | 12.8% |
-| cache misses | 5,805,061 | $0.300/M | $1.7415 | 24.1% |
-| output | 3,801,129 | $1.200/M | $4.5614 | 63.1% |
-| | | | **$7.2317** | |
-
-### The provider's own counters, same day
-
-The owner read three numbers off DeepSeek's account, and the third settles it:
+2026-09-20, from the owner against the provider's own account:
 
 | | the factory's records | DeepSeek |
 |---|---|---|
 | requests | 2,317 | 2,515 (+8.5%) |
 | tokens | 164,412,654 | 177,441,711 (+7.9%) |
-| cost | $7.2317 | **$3.80 (-47.5%)** |
+| cost | $7.2317 | $3.80 |
 
-**DeepSeek counted more tokens than we did and charged less than half.** Whatever the disagreement about volume is, it runs the wrong way to explain the cost, so the gap is in the rates and not in the accounting.
+Priced on DeepSeek's own token count the table gives $7.8048, a ratio of **2.054**, and halved it gives $3.9024 against $3.80.
 
-The volume gap is itself expected and small. The OpenAI SDK retries 429s and 5xxs twice on its own, and `RunUsage.requests` counts logical requests where the provider bills attempts, which is why the record carries `wire_attempts` beside `requests`; and the provider's day may not start when ours does. Neither matters here except to say the token counts agree to within eight per cent.
+**The factor of two is the off-peak discount and the table is correct.** 2026-09-20 was a **Sunday**, and DeepSeek's notice says weekends, Chinese public holidays and adjusted working days are billed off peak in their entirety -- not only within the daily window. The attended agent checked the daily window, found 96% of the day's spend between 09:00 and 15:59 UTC, concluded the discount could not explain the gap, and wrote that conclusion into this seed as a finding. It was wrong, and it was wrong in the confident direction: a measured ratio, a table of candidate rate sets, and a false premise underneath all of it.
 
-Priced on **DeepSeek's own token count**, the table gives **$7.8048, a ratio of 2.054 to what was billed**, and halved it gives **$3.9024 against $3.80, +2.7%** -- and the residual is about the size of the $0.2489 that ran in the 00h hour, which is the one part of the day a discount could plausibly touch. The table is twice the rate, near enough that the remainder is explained by the one thing the table already says it ignores.
+`AGENTS.md` had the answer the whole time: *the rate is flat where DeepSeek's halves off peak, deliberately, because a bound on a run must measure the work and not the hour it ran in; what the records carry is what a run consumed at one constant rate, and no threshold from it is a claim about a bill.* That is the design, working. There is no pricing defect here.
 
-**It is not the off-peak discount.** `AGENTS.md` says the table is deliberately flat where DeepSeek's halves off peak, so that is the first thing to suspect and it does not fit: 96% of the day's recorded spend falls between 09:00 and 15:59 UTC, one six-hour block in the middle of the day, with $0.2489 of $7.23 in the 00h hour. For a discount to explain a 1.9x gap it would have to cover most of the working day.
-
-**A uniform halving of the table fits.** Recomputing the same tokens at half of every rate gives **$3.6159 against $3.80 billed, within 5%** -- and the residual is the size of the rounding in *"$3.8"*. No single-rate change fits as well: holding the other two and solving for output alone needs $0.297/M, which is not a number anybody publishes. For comparison, `genai_prices`' row for the adjacent name `deepseek-v4-flash`, which `AGENTS.md` records as a different model's numbers, is also below ours on every line -- miss $0.220 against our $0.300, output $0.660 against our $1.200 -- and gives $4.87 for the day, closer than ours and still not it.
-
-**What it costs is not a reporting error.** v0.17 made what a run has spent the thing that bounds it, and the tools ask at every call. A run landed at `SOFT_SPEND` believes it has spent $0.125 and has really been billed about $0.066, so **every build today was landed at roughly half the work its ceiling allowed**. That is the same defect as [[the-role-priced-as-another]], which was closed this morning at 5.41x for a role served elsewhere, arriving at 1.9x on the model the builder itself runs on. The seed that fixed the first one did not look at the second, because the table was the one thing in the pricing path nobody was questioning.
-
-Everything projected from a record inherits it. The twelve-case catch-rate set was put to the owner at about $33 and is more likely about $17.
-
-`AGENTS.md` already says *no threshold from it is a claim about a bill*, and that sentence is still true and was never enough: the thresholds are what bound the runs, so a table that is not a claim about a bill is a table that cannot be trusted to bound one either.
+The volume gap is separate and small: the SDK retries 429s and 5xxs twice and `RunUsage.requests` counts logical requests where the provider bills attempts, which is why a record carries `wire_attempts` beside `requests`; and the provider's day may not start when ours does.
 
 ## Idea
 
-The table says what the provider charges, and something checks that it does.
+**What is left is not a bug, it is a missing fact: a record does not say what rate it ran at.**
 
-The rates are read from DeepSeek's own published prices for `deepseek-flash` and `PRICE` is corrected to them -- which needs the provider's page and is therefore the owner's or an online step, not something to infer from one day's bill. The day's arithmetic above is the acceptance test: the same tokens at the corrected table, against the billed figure for the same day, agreeing to within the rounding of the bill.
+Every record carries what the work cost at one flat rate, which is the right number for comparing two runs and the wrong number for anticipating a bill. Today the difference is exactly two, which is fine to know and impossible to derive from the record: nothing in `numbers.json` says whether the run was peak or off peak, and nothing in the repository knows which days are which.
 
-Then the harder half, which is why this is worth a note rather than a one-line edit. A table read once is a table that silently rots, and it rotted here without anything noticing for at least five days. What would have caught it is the comparison itself: the factory knows every token it has ever sent and the provider knows what it charged, so one number a day, entered by hand, is enough to hold a table honest. Where that number lives and what refuses when it drifts is the part worth thinking about.
+That is the hard part, and it is why this is not urgent. Deciding the rate of a run needs a calendar the factory does not have and cannot derive -- weekends are easy, Chinese public holidays are a published list that changes yearly, and *adjusted working days* are Saturdays and Sundays that the Chinese State Council declares to be working days in lieu around a holiday, announced once a year. A factory that guessed at that calendar would be wrong occasionally and silently, which is worse than a flat rate that is knowably flat.
 
-Until it is fixed, what the records carry is a constant multiple of the truth and comparisons between runs are unaffected. It is the absolute numbers -- the ceilings, and every budget put in front of somebody -- that are wrong, and they are wrong in the direction of doing less work than intended and asking for more money than needed.
+The cheap end, if it is ever wanted: a record says which rate it believes it ran at, on the one rule that is certain -- the daily window, plus weekends -- and says nothing rather than guessing about holidays. Then a projection can be quoted as a range instead of a number, and the day a bill is checked against the records, the difference is accounted for rather than investigated. The expensive end is the calendar, and it should stay unbuilt until something depends on it.
+
+What must not change is the flat rate the ceilings use. A ceiling that moved with the hour would mean a run does more work on a Sunday than on a Tuesday for the same bound, and the whole point of bounding a run by spend is that the bound measures the work.
+
+## Not to repeat
+
+The attended agent had the disconfirming evidence and the correct explanation in the same file it was editing, and wrote a confident negative -- *it is not the off-peak discount* -- on one day's data, without checking what day it was. The check was `date`. When an explanation is ruled out, the cost of ruling it out wrongly is every conclusion built on top, and here that was a seed at value 5, a correction to `AGENTS.md`, and a line in a version note.
