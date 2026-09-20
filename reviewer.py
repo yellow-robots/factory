@@ -348,6 +348,14 @@ def main(argv: list[str], model: Any = None) -> int:
         key = builder.read_key(role.key)
     except (ValueError, OSError) as e:
         return usage_error(str(e))
+    # The role's model must be one the one function can price before any pass starts: a pass is
+    # bounded by what it has spent, and a bound derived from another model's rate is not a bound. A
+    # model neither the table nor the library can price is refused naming the role and the model,
+    # exit 2, before a model is called and before a record is made.
+    try:
+        builder.require_price(role.model)
+    except builder.UnknownPrice:
+        return usage_error(f"the reviewer role runs on model {role.model}, which cannot be priced")
     try:
         store.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -370,14 +378,13 @@ def main(argv: list[str], model: Any = None) -> int:
     inflight: list[Any] = []  # the pass in flight, so `pass_spent` sees it while it runs
 
     def one_price(u: Any) -> float:
-        """The one function's price for this role's model: the library's row when it has one, the
-        table when the model is ours, and the table's arithmetic for a model neither can price, so a
-        pass still lands rather than crashing. A caller that replaced `builder.price` with a
-        usage-only stand-in is called with the usage alone, which is what its signature takes."""
+        """The one function's price for this role's model, which the configuration check above has
+        already proved can be priced: the table when the model is ours and the library's row for any
+        other. There is no fallback, because a second answer that is not the run's own model's rate
+        is not a bound. A caller that replaced `builder.price` with a usage-only stand-in is called
+        with the usage alone, which is what its signature takes."""
         try:
             return builder.price(u, role.model)
-        except builder.UnknownPrice:
-            return builder.table_price(u)
         except TypeError:
             return builder.price(u)
 

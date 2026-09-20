@@ -183,15 +183,18 @@ def price(usage: Any, model: str) -> float:
     return float(calc.total_price)
 
 
-def price_or_table(usage: Any, model: str) -> float:
-    """The price for `model`, with the table as the answer for a model neither source can price: the
-    one rate the factory knows bounds a run whose model it cannot look up, rather than the record
-    crashing when it is written. `price` is the honest call; this is the programs' answer when the
-    model is the configuration's and a record must still be made."""
+def require_price(model: str) -> None:
+    """Raise `UnknownPrice` when the one function that prices tokens has no rate for `model`, so a
+    program can refuse a role whose run could not be bounded before it starts. `price` is asked for
+    the price of no tokens, so nothing is priced here -- only whether a rate exists -- and the
+    answer cannot disagree with the number the run would carry. A caller that replaced `price` with
+    a usage-only stand-in has no model name to look up, so its TypeError is no refusal."""
     try:
-        return price(usage, model)
+        price(RunUsage(), model)
     except UnknownPrice:
-        return table_price(usage)
+        raise
+    except TypeError:  # a replaced `price` that takes the usage alone: there is no name to look up
+        return
 
 ROLE = """\
 You are the builder. You are given a goal and a checkout: a directory with code and tests. You
@@ -1392,6 +1395,14 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
             key = read_key(builder_role.key)
         except (ValueError, OSError) as e:
             return usage_error(str(e))
+    # The role's model must be one the one function can price before a run on it starts: the spend
+    # ceilings are the only bound on a run, and a ceiling derived from another model's rate is not a
+    # ceiling. A model neither the table nor the library can price is refused naming the role and the
+    # model, exit 2, before a model is called and before a record is made.
+    try:
+        require_price(model_name)
+    except UnknownPrice:
+        return usage_error(f"the builder role runs on model {model_name}, which cannot be priced")
     # The store's directory is made once the configuration is read and the key is a key; a plain
     # file or a path the run cannot make is a usage error naming both the configuration and the
     # store.
@@ -1414,9 +1425,10 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     usage = RunUsage()  # the run counts into it; the tools ask it, the record prices it
 
     def spent() -> float:
-        """What the run has spent so far, in the record's own arithmetic: the library's price when
-        it has a row for the model, the one function's answer otherwise."""
-        return float(usage.cost) if usage.cost is not None else price_or_table(usage, model_name)
+        """What the run has spent so far, in the record's own arithmetic: the library's own cost for
+        the tokens it counted, or the one function's price for the role's model -- which the
+        configuration check above has already proved it can price."""
+        return float(usage.cost) if usage.cost is not None else price(usage, model_name)
 
     tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden), spent=spent,
                   sandbox=sandbox if sandbox is not None else Sandbox())  # fmt: skip
@@ -1441,11 +1453,11 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     except (OSError, ValueError, subprocess.SubprocessError, GitError) as e:  # never lose the record
         changes = {"diff": f"error: {e}", "files_changed": 0, "insertions": 0, "deletions": 0}
     # The record's cost is the tokens priced through the one function, so the number in the record
-    # and the number the tools land on are the same arithmetic: the library's price when it has a
-    # row for the model, the factory's table when the model is ours, and neither can price the other.
-    # `MODEL` stays the table's, so every record ever written stays comparable with every after it.
-    priced = usage.cost is not None
-    cost_usd = round(float(usage.cost) if priced else price_or_table(usage, model_name), 5)
+    # and the number the tools land on are the same arithmetic: the library's own cost for the tokens
+    # it counted, or `price`, which is the factory's table for `MODEL` and the library's row for every
+    # model the configuration check above proved it can price. `MODEL` stays the table's, so every
+    # record ever written stays comparable with every after it.
+    cost_usd = round(float(usage.cost) if usage.cost is not None else price(usage, model_name), 5)
     cost_source = "table" if model_name == MODEL else "genai-prices"
     checks = [c["exit"] for c in tools.checks]
     numbers = {
