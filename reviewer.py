@@ -28,8 +28,8 @@ committed.
 
 Exit 0 when the model reported, 1 on a cap or a provider error, 2 on what it cannot review: a
 directory that is not a checkout git can read, a head with no commit before it to compare against,
-and a seed the head's commit does not hold -- each refused, in its own words, before a model is
-called and before a record is made.
+an argument that names no seed note, and a seed the head's commit does not hold -- each refused, in
+its own words, before a model is called and before a record is made.
 """
 
 from __future__ import annotations
@@ -261,19 +261,21 @@ def main(argv: list[str], model: Any = None) -> int:
         return usage_error(f"git could not run: {e}")
     if not top or Path(top).resolve() != checkout:
         return usage_error(f"not a git checkout: {argv[1]}")
-    # The seed is read the way the builder reads one: its text is the head's commit, `git show
-    # HEAD:<path>`, and its `## Goal` is the goal. A seed the commit does not hold is refused here.
+    # The reviewer's second argument is a seed and nothing else, where the builder's may be text:
+    # the seed is read the way the builder reads one, its text the head's commit, `git show
+    # HEAD:<path>`, and its `## Goal` the goal. An argument `read_seed` takes for text is no seed,
+    # and a seed the commit does not hold is refused too, before a model is called.
     try:
         goal, seed = builder.read_seed(checkout, argv[2].strip())
     except (ValueError, OSError, subprocess.SubprocessError) as e:
         return usage_error(str(e))
-    goal_text = goal.split("\n", 1)[1] if seed is not None else goal
+    if seed is None:  # the argument was read as text: no seed names no goal to review
+        return usage_error(f"not a seed: {argv[2]}")
+    goal_text = goal.split("\n", 1)[1]
     try:
         checkout_head = builder.head(checkout)
     except (OSError, subprocess.SubprocessError, builder.GitError) as e:
         return usage_error(str(e))
-    if not checkout_head:
-        return usage_error(f"the checkout has no commit: {argv[1]}")
     # A head with no commit before it has no change to review: refused before any record is made.
     try:
         parent = _head_parent(checkout)
