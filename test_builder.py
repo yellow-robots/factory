@@ -552,6 +552,54 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(builder.HARD_SPEND, 0.25)
 
 
+class RoleServedElsewhereTest(unittest.TestCase):
+    """seed: the-role-served-somewhere-else. Where a role's model is reached, and what is claimed
+    about it on the way."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name) / "checkout"
+        root.mkdir()
+        (root / "a.txt").write_text("one\n")
+        run_dir = Path(self.tmp.name) / "run"
+        run_dir.mkdir()
+        self.tools = Tools(root, run_dir, sandbox=FakeSandbox([]), budget=10)
+
+    def test_a_role_that_names_no_base_url_is_reached_where_it_always_was(self):
+        """The default is unchanged: no address named, the provider is the one every run has used,
+        and the profile that suppresses DeepSeek's forced-tool-choice hazard is passed for the model
+        it was written for."""
+        agent = builder.build_agent(self.tools, key="k", model_name=builder.MODEL)
+        model = agent.model
+        self.assertEqual(model.model_name, builder.MODEL)
+        self.assertIs(model.profile["openai_supports_forced_tool_choice_with_thinking"], False, "DeepSeek's answer to the hazard is applied")
+        self.assertIs(model.profile["openai_reasoning_enabled_by_default"], True)
+        self.assertIn("deepseek", str(model.client.base_url).lower())
+
+    def test_a_role_served_elsewhere_is_reached_there(self):
+        """A role that names an address has its model reached at it. The instance has read the field
+        since v0.15 and nothing has ever used it, so the reviewer role this host configures on
+        another provider would have gone to DeepSeek's endpoint with another provider's key."""
+        agent = builder.build_agent(
+            self.tools, key="k", model_name="glm-5.3-flash",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+        )  # fmt: skip
+        self.assertEqual(agent.model.model_name, "glm-5.3-flash")
+        self.assertIn("bigmodel.cn", str(agent.model.client.base_url))
+
+    def test_deepseeks_profile_is_not_claimed_of_a_model_served_elsewhere(self):
+        """`PROFILE` says three things true of DeepSeek's thinking models and claims nothing about
+        anything else. A model at another address is not a DeepSeek V4, and asserting that it
+        answers the forced-tool-choice hazard the same way is asserting something unknown."""
+        agent = builder.build_agent(
+            self.tools, key="k", model_name="glm-5.3-flash",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+        )  # fmt: skip
+        self.assertIs(agent.model.profile["openai_supports_forced_tool_choice_with_thinking"], True,
+                      "DeepSeek's answer to its own hazard is not claimed of another model")  # fmt: skip
+
+
 class PriceTest(unittest.TestCase):
     """seed: the-budget-that-counts-files. One place prices tokens, so the bound on a run and the
     number in its record cannot drift apart."""

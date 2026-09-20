@@ -288,5 +288,49 @@ class PassesTest(ReviewerBase):
             self.assertNotIn(word, json.dumps(review).lower().replace('"passes":', ""), word)
 
 
+
+class RoleServedElsewhereTest(ReviewerBase):
+    """seed: the-role-served-somewhere-else. The reviewer builds its model the way the builder does,
+    and the role it runs as on this host is on another provider."""
+
+    def test_the_reviewer_reaches_a_role_served_elsewhere(self):
+        """The reviewer's own agent honours the role's address and does not claim DeepSeek's profile
+        of a model that is not one. Without this the role this host already configures could not
+        have made a single request."""
+        run_dir = self.base / "lens"
+        run_dir.mkdir()
+        tools = reviewer.builder.Tools(self.checkout, run_dir, budget=10)
+        agent = reviewer.build_agent(
+            tools, key="k", model_name="glm-5.3-flash",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+        )  # fmt: skip
+        self.assertEqual(agent.model.model_name, "glm-5.3-flash")
+        self.assertIn("bigmodel.cn", str(agent.model.client.base_url))
+        self.assertIs(agent.model.profile["openai_supports_forced_tool_choice_with_thinking"], True,
+                      "DeepSeek's answer to its own hazard is not claimed of another model")  # fmt: skip
+
+    def test_the_reviewer_passes_its_roles_address_to_the_agent(self):
+        """The address is the role's, so it comes from the configuration and not from the program:
+        a run whose role names one reaches it without the caller saying anything."""
+        self.instance.write_text(
+            f'records = "{self.runs}"\nwork = "{self.base / "work"}"\n'
+            f'\n[roles.reviewer]\nmodel = "glm-5.3-flash"\nkey = "{self.key}"\n'
+            f'base_url = "https://open.bigmodel.cn/api/paas/v4"\n'
+        )
+        seen = {}
+        real = reviewer.build_agent
+
+        def spy(*args, **kw):
+            seen.update(kw)
+            return real(*args, **{**kw, "model": kw.get("model")})
+
+        model, _ = five()
+        with mock.patch.object(reviewer, "build_agent", spy):
+            code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(seen.get("base_url"), "https://open.bigmodel.cn/api/paas/v4")
+        self.assertEqual(seen.get("model_name"), "glm-5.3-flash")
+
+
 if __name__ == "__main__":
     unittest.main()
