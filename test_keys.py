@@ -339,18 +339,27 @@ class PriceOfTheRoleTest(KeysBase):
         fires and the partial sum becomes the whole run's price. Measured: one priced response of
         $0.001 followed by one the library could not price, 1,000,000 input and 100,000 output
         tokens, recorded as $0.001 -- the run bounded some seventy times too loosely. One function
-        prices tokens, and a sum of some of them is not that function's answer."""
+        prices tokens, and a sum of some of them is not that function's answer.
+
+        The same tokens are run twice, split and whole, and the two records must agree. What a run
+        costs is what it used, so how many of its responses the library happened to price along the
+        way cannot change it -- and asked this way the question names no rate and no signature."""
         self.at("https://api.z.ai/api/paas/v4")
-        code, numbers, said = self.ran(self.turns(
-            ([ToolCallPart("list", {"path": "."}, tool_call_id="c1")],
-             {"input_tokens": 1000, "cache_read_tokens": 0, "output_tokens": 100, "cost": 0.001}),
-            ([], {"input_tokens": 1_000_000, "cache_read_tokens": 0, "output_tokens": 100_000}),
-        ))
-        self.assertEqual(code, 0, said)
-        every = builder.price(RequestUsage(input_tokens=1_001_000, cache_read_tokens=0,
-                                           output_tokens=100_100), "glm-5.3-flash")  # fmt: skip
-        self.assertAlmostEqual(numbers["cost_usd"], round(every, 5), places=5)
-        self.assertGreater(numbers["cost_usd"], 0.01, "not the one response the library could price")
+        priced = []
+        for turns in (
+            (([ToolCallPart("list", {"path": "."}, tool_call_id="c1")],
+              {"input_tokens": 1000, "cache_read_tokens": 0, "output_tokens": 100, "cost": 0.001}),
+             ([], {"input_tokens": 1_000_000, "cache_read_tokens": 0, "output_tokens": 100_000})),
+            (([], {"input_tokens": 1_001_000, "cache_read_tokens": 0, "output_tokens": 100_100}),),
+        ):
+            code, numbers, said = self.ran(self.turns(*turns))
+            self.assertEqual(code, 0, said)
+            priced.append(numbers["cost_usd"])
+            for record in self.records():  # each run answers for itself
+                shutil.rmtree(record)
+        split, whole = priced
+        self.assertEqual(split, whole, "the same tokens cost the same however they arrived")
+        self.assertGreater(whole, 0.01, "not the one response the library could price")
 
     def test_a_run_is_not_admitted_because_the_price_could_not_be_asked(self):
         """seed: the-role-priced-as-another. The check that a model can be priced swallowed
