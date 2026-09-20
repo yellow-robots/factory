@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""The catch-rate harness: run the reviewer over commits whose findings are already known, and
+count what it caught.
+
+    uv run catch.py --spend USD [case ...]
+
+A case is `catches/<name>.toml`: a commit of this repository, the seed that commit was built
+from, and one `[[finding]]` per defect the commit is known to hold -- a `path`, and `lines` or
+`line` of the file at that commit, each with the review note it came from. The answers are the
+ones in `docs/reviews/` that the attended agent verified and that a pass which reads and cannot
+run could have reached.
+
+A case is reviewed the way anything is reviewed. A throwaway worktree at that commit, the
+reviewer run over it as `reviewer.py` is run over any delivered tree, nothing about the review
+special-cased because it is being measured. Its record lands in the instance's store key-scanned
+like any other, tagged with a goal beginning `case: <name>` as an evaluation build's does, so
+`runs.py` shows what the measurement cost beside everything else it shows.
+
+A catch is crude and visible, and it is counted twice. A reported finding catches a known one when
+it names that path and its line falls within that span; the same set is counted again on the path
+alone. One row per case gives how many of the known findings were caught on each count, how many
+passes ran, what the review cost and how long it took. Then the set's rate on each count with its
+standard error under a uniform prior, as `evals.py` gives the builder's.
+
+A review's cost is chosen and not emergent -- `dimensions x passes x SOFT_SPEND` for each case --
+so what the whole run comes to is said before the first pass starts, and a run that would cost
+more than it was told it may spend is refused before a model is called and before a record is
+made, naming both numbers. There is no default allowance.
+
+Exit 0 when every review answered, 1 when a review was capped or errored, 2 on a usage error: a
+case that is missing or not whole, an allowance that is not a non-negative number, no allowance,
+or a run over what it was allowed.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import math
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import builder
+import reviewer
+
+# The set's own name at the checkout root, one file per case, as `cases/` is the evaluation set's.
+CASES_DIR = "catches"
+COLUMNS = ("case", "strict", "path", "known", "passes", "cost_usd", "seconds")
+
+
+def usage_error(reason: str = "") -> int:
+    print("usage: catch.py --spend USD [case ...]", file=sys.stderr)
+    if reason:
+        print(reason, file=sys.stderr)
+    return 2
+
+
+@dataclass
+class Case:
+    """One commit and what it is known to hold: its name, the commit to review, the seed that
+    commit was built from, and one (path, first, last) per known finding."""
+
+    name: str
+    commit: str
+    seed: str
+    findings: list[tuple[str, int, int]] = field(default_factory=list)
+
+
+def _number(value: Any) -> float | None:
+    """`value` as a number, or None when it is absent or not one; a bool is not a number and a
+    non-finite float is no number either."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return value
+
+
+def _line_span(finding: dict[str, Any]) -> tuple[int, int] | None:
+    """A finding's span as two line numbers: `lines` when it holds exactly two ints, a single
+    `line` as a one-line span, and None when it names neither. A bool is not a line."""
+    lines = finding.get("lines")
+    if isinstance(lines, list) and len(lines) == 2:
+        first, last = lines
+        if all(isinstance(n, int) and not isinstance(n, bool) for n in lines):
+            return (first, last) if first <= last else (last, first)
+    line = finding.get("line")
+    if isinstance(line, int) and not isinstance(line, bool):
+        return line, line
+    return None
+
+
+def _case(path: Path) -> Case | str:
+    """The case a file holds, or the reason it is not whole."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return f"case {path.stem} cannot be read as UTF-8"
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return f"case {path.stem} is not TOML"
+    commit, seed = data.get("commit"), data.get("seed")
+    if not isinstance(commit, str) or not commit.strip():
+        return f"case {path.stem} has no commit"
+    if not isinstance(seed, str) or not seed.strip():
+        return f"case {path.stem} has no seed"
+    raw = data.get("finding", [])
+    if not isinstance(raw, list):
+        return f"case {path.stem} has a finding that is not a table"
+    findings: list[tuple[str, int, int]] = []
+    for finding in raw:
+        if not isinstance(finding, dict):
+            return f"case {path.stem} has a finding that is not a table"
+        target = finding.get("path")
+        if not isinstance(target, str) or not target:
+            return f"case {path.stem} has a finding without a path"
+        span = _line_span(finding)
+        if span is None:
+            return f"case {path.stem} has a finding without a line or a span: {target}"
+        findings.append((target, span[0], span[1]))
+    return Case(name=path.stem, commit=commit.strip(), seed=seed.strip(), findings=findings)
+
+
+def _cases(base: Path, names: list[str]) -> tuple[list[Case] | None, str]:
+    """The cases to run: the named files must exist and be whole, the unnamed ones are every
+    `*.toml` under `catches/`. None and the reason when a case cannot be used."""
+    directory = base / CASES_DIR
+    if names:
+        paths = []
+        for name in names:
+            found = directory / f"{name}.toml"
+            if not found.is_file():
+                return None, f"no such case: {name}"
+            paths.append(found)
+    else:
+        if not directory.is_dir():
+            return [], ""
+        paths = sorted(directory.glob("*.toml"))
+    cases: list[Case] = []
+    for path in paths:
+        case = _case(path)
+        if isinstance(case, str):
+            return None, case
+        cases.append(case)
+    return cases, ""
+
+
+def _parse(argv: list[str]) -> tuple[float | None, list[str], str]:
+    """`--spend USD` and the case names; the reason of a usage error instead, with the allowance,
+    which is None when the run did not name one."""
+    spend, names, i = None, [], 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--spend" or arg.startswith("--spend="):
+            if arg == "--spend":
+                if i + 1 >= len(argv):
+                    return None, names, "--spend needs a value"
+                value, i = argv[i + 1], i + 2
+            else:
+                value, i = arg.partition("=")[2], i + 1
+            number = _number(_float(value))
+            if number is None or number < 0:
+                return None, names, f"--spend is not a non-negative number: {value}"
+            spend = number
+        elif arg.startswith("-") and arg != "-":
+            return None, names, f"unknown argument: {arg}"
+        elif not arg:
+            return None, names, "not a case name: "
+        else:
+            names.append(arg)
+            i += 1
+    return spend, names, ""
+
+
+def _float(text: str) -> float | None:
+    """`text` as a float, or None when it is not one."""
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _numbers(record: Path) -> dict[str, Any]:
+    """The record's `numbers.json` as a mapping; empty when it is absent or unreadable."""
+    try:
+        data = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _reported(record: Path) -> list[dict[str, Any]]:
+    """The findings the review reported, from its `review.json`; empty when it has none."""
+    try:
+        data = json.loads((record / "review.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    findings = data.get("findings") if isinstance(data, dict) else None
+    return [f for f in findings if isinstance(f, dict)] if isinstance(findings, list) else []
+
+
+def _counts(case: Case, reported: list[dict[str, Any]]) -> tuple[int, int]:
+    """How many of the case's known findings were caught strictly -- same path and a line in the
+    span -- and on the path alone. A known finding is caught once however many reports name it."""
+    strict = loose = 0
+    for path, first, last in case.findings:
+        named = [f for f in reported if f.get("path") == path]
+        if not named:
+            continue
+        loose += 1
+        if any(isinstance(f.get("line"), int) and not isinstance(f.get("line"), bool)
+               and first <= f["line"] <= last for f in named):  # fmt: skip
+            strict += 1
+    return strict, loose
+
+
+def _tag(record: Path, case: Case) -> None:
+    """The record named for the case it measures: its goal becomes `case: <name>` and the seed's
+    own goal beneath it, as an evaluation build's does, and it is committed and key-scanned again
+    so the store holds what its goal says it is."""
+    try:
+        original = (record / "goal.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        original = ""
+    text = f"case: {case.name}\n{original}"
+    (record / "goal.txt").write_text(text)
+    numbers = _numbers(record)
+    numbers["goal"] = text
+    (record / "numbers.json").write_text(json.dumps(numbers, indent=1) + "\n")
+    try:  # the same one function that commits any record: searched and committed, never trusted
+        builder.commit_record(builder.record_store(), record)
+    except (builder.LeakedKey, builder.GitError, OSError, subprocess.SubprocessError) as e:
+        print(f"{record}: {' '.join(str(e).split())}", file=sys.stderr)
+
+
+def _run_case(root: Path, work: Path, case: Case, model: Any) -> tuple[list[str], tuple[int, int], bool]:
+    """One case: a worktree at its commit, the reviewer over it, its record tagged and counted. The
+    cells, the (known, caught-strict, caught-path) it earned for the set's rate, and whether the
+    review answered in full."""
+    worktree = work / case.name
+    try:
+        builder.git(root, "worktree", "add", "--detach", str(worktree), case.commit)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = reviewer.main(["reviewer.py", str(worktree), case.seed], model=model)
+        printed = out.getvalue().splitlines()
+        record = Path(printed[0].strip()) if printed and printed[0].strip() else None
+        if record is None or not record.is_dir():
+            return _cells(case, 0, 0, {}), (len(case.findings), 0, 0), False
+        _tag(record, case)
+        numbers = _numbers(record)
+        strict, loose = _counts(case, _reported(record))
+        dimensions = numbers.get("dimensions", len(reviewer.DIMENSIONS))
+        passes = numbers.get("passes", reviewer.PASSES)
+        expected = dimensions * passes if all(isinstance(n, int) and not isinstance(n, bool)
+                                              for n in (dimensions, passes)) else None
+        ran = numbers.get("passes_ran")
+        short = isinstance(expected, int) and (not isinstance(ran, int) or ran < expected)
+        capped = code != 0 or numbers.get("stopped") != "answer" or short
+        return _cells(case, strict, loose, numbers), (len(case.findings), strict, loose), not capped
+    except (builder.GitError, OSError, subprocess.SubprocessError) as e:
+        print(f"{case.name}: {' '.join(str(e).split())}", file=sys.stderr)
+        return _cells(case, 0, 0, {}), (len(case.findings), 0, 0), False
+    finally:
+        _remove(root, worktree)
+
+
+def _cells(case: Case, strict: int, loose: int, numbers: dict[str, Any]) -> list[str]:
+    """One case's row: its name, the two counts, how many findings were known, how many passes ran,
+    what the review cost and how long it took."""
+    cost, seconds = _number(numbers.get("cost_usd")), _number(numbers.get("seconds"))
+    ran = numbers.get("passes_ran")
+    return [
+        case.name,
+        str(strict),
+        str(loose),
+        str(len(case.findings)),
+        str(ran) if isinstance(ran, int) and not isinstance(ran, bool) else "",
+        "" if cost is None else str(round(cost, 5)),
+        "" if seconds is None else str(round(seconds, 1)),
+    ]
+
+
+def _remove(root: Path, worktree: Path) -> None:
+    """Remove the worktree, whatever the review left in it."""
+    try:
+        if worktree.exists():
+            builder.git(root, "worktree", "remove", "--force", str(worktree))
+    except (builder.GitError, OSError, subprocess.SubprocessError) as e:
+        print(f"could not remove the worktree {worktree}: {e}", file=sys.stderr)
+
+
+def _prune(root: Path) -> None:
+    """Prune the worktree metadata once the temporary directory that held them is gone."""
+    try:
+        builder.git(root, "worktree", "prune")
+    except (builder.GitError, OSError, subprocess.SubprocessError) as e:
+        print(f"could not prune worktrees of {root}: {e}", file=sys.stderr)
+
+
+def _rate(pairs: list[tuple[int, int]]) -> tuple[float, float]:
+    """A set's rate and its standard error: the mean over the cases of each case's caught over
+    known, and the root of the sum over the cases of the variance of a case's rate under a uniform
+    prior, (k+1)(n-k+1) over (n+2)^2 (n+3), divided by the case count; as `evals.py` gives the
+    builder's. A case that knows nothing contributes a rate of zero and its own prior variance."""
+    rates = [k / n if n else 0.0 for k, n in pairs]
+    terms = [(k + 1) * (n - k + 1) / ((n + 2) ** 2 * (n + 3)) for k, n in pairs]
+    return sum(rates) / len(rates), math.sqrt(sum(terms)) / len(pairs)
+
+
+def main(argv: list[str], root: Any = None, model: Any = None) -> int:
+    base = Path(root).resolve() if root is not None else Path(__file__).resolve().parent
+    spend, names, reason = _parse(list(argv[1:]))
+    if reason:
+        return usage_error(reason)
+    if spend is None:  # no default that spends money: a run must say what it may spend
+        return usage_error("--spend is required")
+    cases, reason = _cases(base, names)
+    if cases is None:
+        return usage_error(reason)
+    # A review is `dimensions x passes x SOFT_SPEND`, every factor known before the first pass, so
+    # what the whole run comes to is arithmetic and is said before anything is spent.
+    projected = len(cases) * len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.SOFT_SPEND
+    print(f"projected spend {projected:.2f} USD for {len(cases)} cases, allowed {spend:.2f} USD")
+    if projected > spend:
+        print(f"the run would cost {projected:.2f} USD, more than the {spend:.2f} USD allowed",
+              file=sys.stderr)  # fmt: skip
+        return 2
+    rows: list[str] = ["\t".join(COLUMNS)]
+    stats: list[tuple[int, int, int]] = []
+    failed = False
+    work = Path(tempfile.mkdtemp(prefix="factory-catch-"))
+    try:
+        for case in cases:
+            try:
+                cells, (known, strict, loose), ok = _run_case(base, work, case, model)
+            except Exception as e:  # one failed case names itself and the set goes on
+                print(f"{case.name}: {' '.join(str(e).split())}", file=sys.stderr)
+                cells, (known, strict, loose), ok = _cells(case, 0, 0, {}), (len(case.findings), 0, 0), False
+            rows.append("\t".join(cells))
+            stats.append((known, strict, loose))
+            failed = failed or not ok
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+        _prune(base)
+    print("\n".join(rows))
+    if cases:
+        strict_rate, strict_error = _rate([(strict, known) for known, strict, _ in stats])
+        path_rate, path_error = _rate([(loose, known) for known, _, loose in stats])
+        print()
+        print(f"strict rate {strict_rate:.3f} ± {strict_error:.3f}")
+        print(f"path rate {path_rate:.3f} ± {path_error:.3f}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
