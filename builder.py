@@ -60,16 +60,14 @@ from pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402
 KEY_FILE = Path.home() / ".config" / "factory" / "deepseek.key"
 MODEL = "deepseek-flash"
 LIBRARY = "pydantic-ai-slim " + importlib.metadata.version("pydantic-ai-slim")
-# Calls past the budget the model can still be stopped by: the library admits or refuses a whole
-# response's calls together, so a response wider than this crosses the limit before any of it runs
-# and the model is never told to report. 32 is evidence, not taste: of the 3,635 responses carrying
-# tool calls in the store, 29 carried more than four and the widest carried 16, so this is twice the
-# widest response the factory has ever made.
-RESERVE = 32
-REPORT_REQUESTS = 6  # requests past those calls, so a run that spent the budget can still report
-CALLS_FLOOR = 80  # tool calls a run is given at least; the number the tool cap held since v0.3
-CALLS_CEILING = 200  # and at most, so the worst a run can cost is a number, not the checkout's size
-SHARE = 55  # hundredths of one pass over the checkout a run is given the calls to read it
+# The two backstops, fixed rather than derived from anything: a cheap counter that catches a runaway
+# beside the spend, which is the bound that means something. Neither binds before the spend on any
+# run the store has ever seen: at the expensive end a request costs 0.0040 USD, so HARD_SPEND at 0.25
+# is reached within 120 requests, and the store's deepest builds sit far below both. REQUEST_LIMIT is
+# above CALLS_LIMIT for the reason it always has: a run that has spent its calls must still have the
+# requests to say what it did, the failure of v0.15 the landing exists to prevent.
+CALLS_LIMIT = 200  # tool calls one run may make before the tools land it; a backstop, not a budget
+REQUEST_LIMIT = 250  # requests the library allows; above CALLS_LIMIT, so a landed run can report
 # What a run may spend, from the store: a ceiling of 0.125 sits above every one of the 85 builds
 # that answered and below six of the 13 that were capped. The tools land a run there; twice it is
 # the backstop for a run that will not land, a guard and not a tuned threshold.
@@ -106,51 +104,12 @@ IMAGE_TIMEOUT = 600  # seconds for the one image build
 HIDDEN = ("runs", ".claude", "__pycache__", ".venv", ".git")
 
 
-def call_budget(root: Path, hidden: tuple[str, ...] = HIDDEN) -> int:
-    """How many tool calls a run over that checkout is given: `SHARE` hundredths of one pass over
-    the checkout, at `READ_LINES_CAP` lines a read, plus the writes and the checks a run is already
-    allowed. A read answers about one file and never spans two, so one pass is the reads each file
-    costs, summed, and a file costs at least one read however short it is. What is counted is what
-    the tools can reach: a hidden name at the root, a `.git` component at any depth, a symlink and a
-    directory are not the checkout's text, and a file that is not UTF-8 or cannot be read counts
-    nothing and does not stop the count. The answer is never below `CALLS_FLOOR` and never above
-    `CALLS_CEILING`, in that order: the ceiling is last."""
-    reading = 0  # the reads one pass over the checkout costs
-    pending = [(root, ".")]
-    while pending:
-        directory, rel = pending.pop()
-        try:
-            entries = list(directory.iterdir())
-        except (OSError, RuntimeError):  # a directory that cannot be listed: nothing under it
-            continue
-        for e in entries:
-            if e.is_symlink():  # a link is not a file of the checkout, whatever it points at
-                continue
-            if e.name == ".git" or (rel == "." and e.name in hidden):
-                continue
-            child = e.name if rel == "." else f"{rel}/{e.name}"
-            if e.is_dir():
-                pending.append((e, child))
-            elif e.is_file():
-                try:
-                    with e.open("r", encoding="utf-8") as f:
-                        lines = sum(1 for _ in f)
-                except (OSError, UnicodeDecodeError, ValueError):  # not text, or not to read
-                    continue
-                reading += max(1, -(-lines // READ_LINES_CAP))  # a file costs at least one read
-    return min(CALLS_CEILING, max(CALLS_FLOOR, reading * SHARE // 100 + WRITE_CAP + CHECK_CAP))
-
-
-def limits(budget: int) -> UsageLimits:
-    """The library's caps for a run given `budget` tool calls: the tools refuse at the budget, the
-    model answers a refusal with the `RESERVE` calls the tool-call limit leaves it, and it reports
-    with the `REPORT_REQUESTS` requests the request limit leaves above those. The request limit is
-    never below the tool-call limit, so a run that spent its budget is landed by the tools and not
-    cut off by the provider."""
-    return UsageLimits(
-        tool_calls_limit=budget + RESERVE,
-        request_limit=budget + RESERVE + REPORT_REQUESTS,
-    )
+def limits() -> UsageLimits:
+    """The library's caps for a run: the two fixed constants, read here at the moment they are
+    asked for rather than derived from the checkout or from anything else. The tools refuse at
+    `CALLS_LIMIT`; `REQUEST_LIMIT` is above it, so a run that spent its calls still has the requests
+    to report, and the request limit can never cut a landed run off before the tools say stop."""
+    return UsageLimits(tool_calls_limit=CALLS_LIMIT, request_limit=REQUEST_LIMIT)
 
 
 def which_cap(stopped: str, detail: str) -> str:
@@ -243,7 +202,7 @@ class Tools:
 
     def __init__(self, root: Path, run_dir: Path, hidden: tuple[str, ...] = HIDDEN,
                  protected: tuple[str, ...] = PROTECTED, sandbox: Any = None,
-                 budget: int | None = None, spent: Any = None):  # fmt: skip
+                 spent: Any = None):  # fmt: skip
         self.root = root.resolve()
         self.run_dir = run_dir
         self.hidden = hidden
@@ -252,11 +211,8 @@ class Tools:
         # Something callable with no arguments for what the run has spent so far in USD, or None
         # when the caller has none: a `Tools` built without one refuses nothing on spend.
         self.spent = spent
-        # Taken once, from the tree as it is here: a caller that knows the budget names it and the
-        # tree is not walked for it.
-        self.budget = call_budget(self.root, hidden) if budget is None else budget
-        # Every call through the six tools, work or refusal alike: once it is past the budget they
-        # all answer the cap and stop, so the run lands and can still report.
+        # Every call through the six tools, work or refusal alike: once it is past `CALLS_LIMIT`
+        # they all answer the cap and stop, so the run lands and can still report.
         self.calls = 0
         self.listed: list[str] = []
         self.read_paths: list[str] = []
@@ -301,12 +257,13 @@ class Tools:
                     "the vault and git's own files)"
                 )
 
-    def _over_budget(self) -> str:
-        """The run's own caps: what it has spent, and the calls it was given. The spend is asked
-        here and never cached, because a run crosses the line in the middle and must land there.
-        At `SOFT_SPEND` every tool answers the cap and refuses; at `HARD_SPEND`, above it, the run
-        itself ends, the way the library's limits end a runaway. A refusal is the write cap's shape
-        with this cap's number and moves no counter but `calls`."""
+    def _over_limit(self) -> str:
+        """The run's own caps: what it has spent, and the fixed backstop on its calls. The spend is
+        asked here and never cached, because a run crosses the line in the middle and must land
+        there. At `SOFT_SPEND` every tool answers the cap and refuses; at `HARD_SPEND`, above it,
+        the run itself ends, the way the library's limits end a runaway. A refusal is the write
+        cap's shape with this cap's number and moves no counter but `calls`; `CALLS_LIMIT` is read
+        here rather than cached, so it is the constant the caller sees at the moment of the call."""
         if self.spent is not None:
             spent = self.spent()
             if spent >= HARD_SPEND:
@@ -315,12 +272,12 @@ class Tools:
                 )
             if spent >= SOFT_SPEND:
                 return f"error: cap reached ({SOFT_SPEND} USD spent); report now"
-        if self.calls > self.budget:
-            return f"error: cap reached ({self.budget} tool calls); report now"
+        if self.calls > CALLS_LIMIT:
+            return f"error: cap reached ({CALLS_LIMIT} tool calls); report now"
         return ""
 
     def _capped(self) -> str:
-        over = self._over_budget()
+        over = self._over_limit()
         if over:
             return over
         if len(self.written) + len(self.edited) >= WRITE_CAP:
@@ -335,7 +292,7 @@ class Tools:
             path: The directory to list, relative to the checkout root.
         """
         self.calls += 1
-        if capped := self._over_budget():
+        if capped := self._over_limit():
             return capped
         try:
             p, rel = self._resolve(path)
@@ -366,7 +323,7 @@ class Tools:
             start: The first line to read, 1-based.
         """
         self.calls += 1
-        if capped := self._over_budget():
+        if capped := self._over_limit():
             return capped
         try:
             p, rel = self._resolve(path)
@@ -432,7 +389,7 @@ class Tools:
             path: The directory to search, relative to the checkout root; '.' is the root.
         """
         self.calls += 1
-        if capped := self._over_budget():
+        if capped := self._over_limit():
             return capped
         if not pattern:
             return "error: the pattern is empty"
@@ -572,7 +529,7 @@ class Tools:
         builder's own check of the tree the model leaves is not one of the 8.
         """
         self.calls += 1
-        if capped := self._over_budget():
+        if capped := self._over_limit():
             return capped
         if len(self.checks) >= CHECK_CAP:
             return f"error: cap reached ({CHECK_CAP} checks); report now"
@@ -782,15 +739,13 @@ def build_agent(
     return agent
 
 
-def run(agent: Agent[None, BuildReport], goal: str, budget: int,
+def run(agent: Agent[None, BuildReport], goal: str,
         usage: RunUsage | None = None) -> tuple[BuildReport | None, list, RunUsage, str, str]:  # fmt: skip
-    """One run under the caps: the report if there is one, the messages either way. `budget` is the
-    tool calls the run is given and the number the tools carry; it has no default, so a caller that
-    does not name one is a TypeError from the call itself and the budget the tools refuse at and the
-    budget the library enforces cannot differ. `limits` turns it into the library's caps, so the
-    tools land the run and the requests outlast them. `usage` is the object the run counts into and
-    the caller may hold it already, so a spend the tools ask for is the same one the record writes;
-    a caller that names none gets a fresh one."""
+    """One run under the caps: the report if there is one, the messages either way. The tools are
+    what land a run, on what it has spent; `limits` gives the library the two fixed backstops, so a
+    runaway that spends nothing is still caught and the requests outlast the calls. `usage` is the
+    object the run counts into and the caller may hold it already, so a spend the tools ask for is
+    the same one the record writes; a caller that names none gets a fresh one."""
     usage = RunUsage() if usage is None else usage
     report, stopped, detail = None, "answer", ""
     with capture_run_messages() as messages:
@@ -798,7 +753,7 @@ def run(agent: Agent[None, BuildReport], goal: str, budget: int,
             result = agent.run_sync(
                 goal,
                 usage=usage,
-                usage_limits=limits(budget),
+                usage_limits=limits(),
             )
             report = result.output
         except UsageLimitExceeded as e:
@@ -1425,7 +1380,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     agent = build_agent(tools, key=key, http_client=wire.client, model=model, model_name=model_name,
                         base_url=base_url)  # fmt: skip
     t0 = time.time()
-    report, messages, usage, stopped, detail = run(agent, goal, tools.budget, usage=usage)
+    report, messages, usage, stopped, detail = run(agent, goal, usage=usage)
     seconds = round(time.time() - t0, 1)
 
     # The record's check is the tree the run left, whatever ended it: when the model wrote or
@@ -1459,10 +1414,10 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         "stopped": stopped,
         "cap": which_cap(stopped, detail),
         "requests": usage.requests,
-        "requests_cap": limits(tools.budget).request_limit,
+        "requests_cap": limits().request_limit,
         "wire_attempts": wire.attempts,
         "tool_calls": usage.tool_calls,
-        "calls_cap": tools.budget,
+        "calls_cap": CALLS_LIMIT,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "cache_read_tokens": usage.cache_read_tokens,

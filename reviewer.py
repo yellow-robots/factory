@@ -345,12 +345,10 @@ def main(argv: list[str], model: Any = None) -> int:
     messages: list[Any] = []
     stopped, detail = "answer", ""
     for _ in range(PASSES):
-        tools.calls = 0  # a cold session reads on its own budget, not the passes' before it
+        tools.calls = 0  # a cold session reads on its own count, not the passes' before it
         usage = builder.RunUsage()
         inflight.append(usage)  # the one in flight: `spent` sees it while it runs
-        report, answered, _, stopped, detail = builder.run(
-            agent, prompt, tools.budget, usage=usage
-        )
+        report, answered, _, stopped, detail = builder.run(agent, prompt, usage=usage)
         inflight.pop()
         usages.append(usage)
         messages.extend(answered)
@@ -379,10 +377,10 @@ def main(argv: list[str], model: Any = None) -> int:
         "cap": builder.which_cap(stopped, detail),
         "passes": PASSES,
         "requests": sum(u.requests for u in usages),
-        "requests_cap": builder.limits(tools.budget).request_limit,
+        "requests_cap": builder.limits().request_limit,
         "wire_attempts": wire.attempts,
         "tool_calls": sum(u.tool_calls for u in usages),
-        "calls_cap": tools.budget,
+        "calls_cap": builder.CALLS_LIMIT,
         "input_tokens": sum(u.input_tokens for u in usages),
         "output_tokens": sum(u.output_tokens for u in usages),
         "cache_read_tokens": sum(u.cache_read_tokens for u in usages),
