@@ -18,9 +18,30 @@ Everything about the run succeeded. All five passes ran, `stopped: answer`, `pas
 
 That the work survives is luck rather than design. A caller reads an exit code, and this one says the run died. `build.py` reads the builder's exit code to decide whether to push, and goal D's harness will read the reviewer's to decide whether a case counted -- a review that did its job and reports 139 is a review that harness will score as a failure. Exit codes are the only thing a program says to the thing that started it, and a program whose last word is wrong is worse than one that fails loudly.
 
-The likely holder is not the reviewer's own code, which had returned. This run made 173 requests over 15.7M input tokens, the largest the factory has ever made by an order of magnitude, and it holds an `httpx2.AsyncClient` built by `Wire` that nothing closes; the event loop `run_sync` builds per pass is built and discarded five times. Both are native-backed and both are candidates. It is one observation, not a pattern: the first review, 20260920T091432Z, was killed by a ceiling and did not show it.
+The likely holder is not the reviewer's own code, which had returned. This run made 173 requests over 15.7M input tokens, the largest the factory has ever made by an order of magnitude, and it holds an `httpx2.AsyncClient` built by `Wire` that nothing closes. It is one observation, not a pattern: the first review, 20260920T091432Z, was killed by a ceiling and did not show it.
 
-The same run is also evidence for [[the-tasks-the-suite-never-gives-back]], whose seed says `--pids-limit` counts threads and the suite accumulates them. An unclosed client and a discarded loop per pass are exactly the kind of thing that accumulates.
+The same run is also evidence for [[the-tasks-the-suite-never-gives-back]], whose seed says `--pids-limit` counts threads and the suite accumulates them. A client nothing closes, holding a pool of connections nothing closes, is exactly the kind of thing that accumulates.
+
+### One suspect ruled out, 2026-09-20
+
+This seed first named two candidates: the unclosed client, and an event loop built and discarded
+once per pass. **The second does not exist**, and saying so is the point of writing it down.
+
+`agent.run_sync` calls `pydantic_ai._utils.run_until_complete`, which calls `pydantic_graph`'s, and
+that one opens with `loop = get_event_loop()` and then `loop.run_until_complete(task)`. The loop is
+fetched, not created: **one persistent loop serves every pass of a review**, and it is never closed.
+
+Three things then agree. `reviewer.py` builds one `Wire`, so one `AsyncClient`, at line 366 and one
+agent at 406, and the pass loop at 428 reuses both. An offline check -- one client, real sockets on
+loopback, a genuinely separate loop per call the way `asyncio.run` makes one -- fails at the
+**second** call with `RuntimeError: Event loop is closed`, because a pooled connection belongs to
+the loop that opened it; the same check against a transport that holds no socket survives twenty.
+So a per-pass loop would not have produced a segmentation fault on the way out, it would have ended
+the review at pass two. The review ran all five.
+
+What survives is narrower and still true: nothing closes the client, nothing closes the loop, and
+the interpreter exits with a live pool of open TLS connections. That is a lead and not a diagnosis,
+which is what the Idea below already says to do about it.
 
 ## Idea
 
