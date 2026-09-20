@@ -299,7 +299,7 @@ class RoleServedElsewhereTest(ReviewerBase):
         have made a single request."""
         run_dir = self.base / "lens"
         run_dir.mkdir()
-        tools = reviewer.builder.Tools(self.checkout, run_dir, budget=10)
+        tools = reviewer.builder.Tools(self.checkout, run_dir)
         agent = reviewer.build_agent(
             tools, key="k", model_name="glm-5.3-flash",
             base_url="https://open.bigmodel.cn/api/paas/v4",
@@ -433,7 +433,7 @@ class WhatTheSuiteDidNotHoldTest(ReviewerBase):
             n = sum(1 for m in messages if isinstance(m, ModelResponse))
             return ModelResponse(parts=[ToolCallPart("read", {"path": "f.py"}, tool_call_id=f"c{n}")])
 
-        with mock.patch.object(reviewer.builder, "CALLS_CEILING", 2):
+        with mock.patch.object(reviewer.builder, "CALLS_LIMIT", 2):
             code, lines, err, record = self.review(FunctionModel(forever))
         self.assertEqual(code, 1)
         numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))

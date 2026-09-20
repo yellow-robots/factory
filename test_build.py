@@ -274,7 +274,7 @@ class BuildTest(unittest.TestCase):
             return ModelResponse(parts=[ToolCallPart("write", {"path": f"g{done}.py", "content": "y = 1\n"},
                                                      tool_call_id=f"c{done}")])
 
-        with mock.patch.object(builder, "CALLS_CEILING", 1):  # capped, and the tree it left is red
+        with mock.patch.object(builder, "CALLS_LIMIT", 1):  # capped, and the tree it left is red
             code, lines, err = self.build(FunctionModel(writes_forever), FakeSandbox([(1, "FAILED\n")]))
         self.assertEqual(code, 1)
         self.assertEqual(self.head(), self.requested)
@@ -310,7 +310,7 @@ class BuildTest(unittest.TestCase):
         the questions, and a cap stops being an answer to any of them. The commit says where it
         came from: `Stopped-By` names how the run ended when it did not answer, and `Built-By` is
         untouched, because the gate reads that one."""
-        with mock.patch.object(builder, "CALLS_CEILING", 2):
+        with mock.patch.object(builder, "CALLS_LIMIT", 2):
             code, lines, err = self.build(self.reads_forever(EDIT), FakeSandbox([(0, "OK\n")]))
         self.assertEqual(code, 0, err)
         (record,) = self.records()
@@ -346,7 +346,7 @@ class BuildTest(unittest.TestCase):
         whatever ended the run, the branch stays where it was, and the store holds no commit for
         it."""
         leak = ("write", {"path": "leak.py", "content": "not-a-key\n"})
-        with mock.patch.object(builder, "CALLS_CEILING", 2):
+        with mock.patch.object(builder, "CALLS_LIMIT", 2):
             code, lines, err = self.build(self.reads_forever(leak), FakeSandbox([(0, "OK\n")]))
         self.assertEqual(code, 1)
         (record,) = self.records()
@@ -472,7 +472,7 @@ class BuildTest(unittest.TestCase):
         in the middle of writing has often not checked at all. The tree here is changed and the
         sandbox cannot run, so no check of any kind stands behind it."""
         wrote = ("write", {"path": "g.py", "content": "y = 1\n"})
-        with mock.patch.object(builder, "CALLS_CEILING", 2):
+        with mock.patch.object(builder, "CALLS_LIMIT", 2):
             code, lines, err = self.build(self.reads_forever(wrote), FakeSandbox([]))
         self.assertEqual(code, 1)
         (record,) = self.records()
@@ -504,7 +504,7 @@ class BuildTest(unittest.TestCase):
         since this version that green is the whole permission to push. The build must refuse, and
         the record must survive: a sandbox that cannot run must not lose it."""
         broken = ("write", {"path": "broken.py", "content": "def (  # not python\n"})
-        with mock.patch.object(builder, "CALLS_CEILING", 4):
+        with mock.patch.object(builder, "CALLS_LIMIT", 4):
             code, lines, err = self.build(
                 self.reads_forever_after(EDIT, CHECK, broken), FakeSandbox([(0, "OK\n")]))
         (record,) = self.records()

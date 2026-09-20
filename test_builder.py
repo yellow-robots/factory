@@ -527,7 +527,7 @@ class ToolsTest(unittest.TestCase):
         past `HARD_SPEND` the run itself ends, the way the library's own limits end a runaway. The
         build added it without a test, so this pins the whole path -- the raise from inside a tool
         reaches `run` as a cap rather than escaping as an error, and `which_cap` names it."""
-        tools = Tools(self.root, self.run_dir, sandbox=self.sandbox, budget=50,
+        tools = Tools(self.root, self.run_dir, sandbox=self.sandbox,
                       spent=lambda: builder.HARD_SPEND)  # fmt: skip
 
         def reads(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -535,7 +535,7 @@ class ToolsTest(unittest.TestCase):
             return ModelResponse(parts=[ToolCallPart("read", {"path": "a.txt"}, tool_call_id=f"c{n}")])
 
         report, messages, usage, stopped, detail = run(
-            build_agent(tools, model=FunctionModel(reads)), "goal", tools.budget)
+            build_agent(tools, model=FunctionModel(reads)), "goal")
         self.assertIsNone(report)
         self.assertEqual(stopped, "cap")
         self.assertEqual(builder.which_cap(stopped, detail), "spend")
@@ -564,7 +564,7 @@ class RoleServedElsewhereTest(unittest.TestCase):
         (root / "a.txt").write_text("one\n")
         run_dir = Path(self.tmp.name) / "run"
         run_dir.mkdir()
-        self.tools = Tools(root, run_dir, sandbox=FakeSandbox([]), budget=10)
+        self.tools = Tools(root, run_dir, sandbox=FakeSandbox([]))
 
     def test_a_role_that_names_no_base_url_is_reached_where_it_always_was(self):
         """The default is unchanged: no address named, the provider is the one every run has used,
@@ -807,7 +807,7 @@ class LoopTest(unittest.TestCase):
             call("edit", {"path": "g.py", "old": "b = 1", "new": "b = 2"}, "e2"),
             call("edit", {"path": "g.py", "old": "a = 2", "new": "a = 3"}, "e3"),
         ])
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal", tools.budget)
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal")
         self.assertEqual(stopped, "answer", detail)
         self.assertEqual(returns_of(messages)[:3], ["edited g.py (2 -> 2 lines)"] * 3)
         self.assertEqual((self.root / "g.py").read_text(), "a = 3\nb = 2\n")
@@ -824,7 +824,7 @@ class LoopTest(unittest.TestCase):
             [call("check", {}, "c4")],
             [call("final_result", REPORT, "c5")],
         )
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal", tools.budget)
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal")
         self.assertEqual((stopped, detail), ("answer", ""))
         self.assertIsInstance(report, BuildReport)
         self.assertEqual(report.check, "green")
@@ -844,23 +844,26 @@ class LoopTest(unittest.TestCase):
     def test_the_write_cap_reaches_the_model_as_an_error(self):
         tools = self.tools([])
         turns = [[call("write", {"path": f"w{i}.txt", "content": "x\n"}, f"w{i}")] for i in range(builder.WRITE_CAP + 1)]
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), "goal", tools.budget)
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=scripted(*turns)), "goal")
         self.assertEqual(stopped, "answer")
         self.assertEqual(len(tools.written), builder.WRITE_CAP)
         # the last tool return is the library's own for final_result; the cap error precedes it
         self.assertEqual(returns_of(messages)[-2], f"error: cap reached ({builder.WRITE_CAP} writes and edits); report now")
 
     def test_a_model_that_never_stops_hits_the_tool_call_cap(self):
+        """The tools land a run on what it has spent; a run that spends nothing and never stops is
+        a runaway, and the library's fixed limit is the cheap counter that catches it."""
         tools = self.tools([])
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # two calls per turn, so the tool-call cap binds before the request cap does
             return ModelResponse(parts=[call("list", {"path": "."}, "c1"), call("list", {"path": "."}, "c2")])
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
+        with mock.patch.object(builder, "CALLS_LIMIT", 6):
+            report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "cap")
         self.assertIsNone(report)
-        self.assertEqual(len(tools.listed), tools.budget)
+        self.assertEqual(len(tools.listed), 6)
         self.assertIn("tool_calls_limit", detail)
 
     def test_a_model_that_never_stops_one_call_at_a_time_is_still_bound_by_the_calls(self):
@@ -869,10 +872,11 @@ class LoopTest(unittest.TestCase):
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[call("list", {"path": "."}, "c")])
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
+        with mock.patch.object(builder, "CALLS_LIMIT", 6):
+            report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "cap")
         self.assertIsNone(report)
-        self.assertEqual(len(tools.listed), tools.budget)
+        self.assertEqual(len(tools.listed), 6)
         self.assertIn("tool_calls_limit", detail)
         self.assertNotIn("request_limit", detail)  # the requests outlast the calls, always
 
@@ -884,7 +888,7 @@ class LoopTest(unittest.TestCase):
                 return ModelResponse(parts=[TextPart("done")])
             return ModelResponse(parts=[call("final_result", REPORT, "c")])
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "answer")
         self.assertIsInstance(report, BuildReport)
         retries = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
@@ -897,7 +901,7 @@ class LoopTest(unittest.TestCase):
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelAPIError("deepseek-flash", "boom")
 
-        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal", tools.budget)
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
         self.assertEqual(stopped, "error")
         self.assertIsNone(report)
         self.assertIn("boom", detail)
@@ -1641,7 +1645,7 @@ class MainTest(unittest.TestCase):
             return ModelResponse(parts=[call("write", {"path": f"after{done}.txt",
                                                        "content": "written after the check\n"}, f"c{done}")])
 
-        with mock.patch.object(builder, "CALLS_CEILING", 2):
+        with mock.patch.object(builder, "CALLS_LIMIT", 2):
             sandbox = FakeSandbox([(0, "OK\n"), (1, "FAILED on the tree left\n")])
             code, lines, run_dir = self.main(FunctionModel(checks_then_writes_forever), sandbox)
         self.assertEqual(code, 1)
@@ -2031,7 +2035,7 @@ class WireTest(unittest.TestCase):
         tools = Tools(checkout, Path(self.tmp.name), sandbox=FakeSandbox([]))
         agent = build_agent(tools, key="not-a-key", http_client=wire.client)
         with mock.patch.object(models, "ALLOW_MODEL_REQUESTS", True):
-            report, messages, usage, stopped, detail = run(agent, "goal", tools.budget)
+            report, messages, usage, stopped, detail = run(agent, "goal")
         self.assertEqual(stopped, "answer")
         self.assertEqual(report.check, "green")
         request = next(json.loads(l) for l in self.path.read_text().splitlines())["body"]

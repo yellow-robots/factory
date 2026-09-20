@@ -1,11 +1,11 @@
 ---
 created: 2026-09-20
 type: seed
-status: open
+status: building
 summary: The spend now bounds a run, so the walk over the checkout that used to derive a budget still runs, still counts files, and decides nothing.
 value: 3
 effort: M
-version:
+version: v0.18
 ---
 
 ## Evidence
@@ -29,3 +29,19 @@ The numbers are measurable rather than chosen. At the expensive end of the store
 The record keeps saying what bound the run: the spend ceilings are already there, and whatever no longer exists leaves the numbers with it.
 
 The order of work is the amendment first. Every `run(...)` call site in the protected tests is made to match the new signature and committed green, and only then is the goal given to a builder, which is the discipline the red build of 2026-09-19 bought.
+
+## Goal
+
+A run is bounded by what it has spent, and by nothing that counts files.
+
+**The walk goes, with everything only it used.** `call_budget`, `CALLS_FLOOR`, `CALLS_CEILING`, `SHARE`, `RESERVE` and `REPORT_REQUESTS` are removed, and with them the idea that a budget is a share of a pass over the checkout. `Tools` carries no budget and takes none; what it refuses on is the spend, which is already built and does not change. `run` loses its `budget` argument, and `limits` takes none.
+
+**Two constants stay, as a backstop and not a budget.** `CALLS_LIMIT` is 200 and `REQUEST_LIMIT` is 250, fixed, read by `limits` at the moment it is called. A cheap counter that catches a runaway is worth having beside the bound that means something -- it is the composition every system the research surveyed arrived at -- but it is no longer derived from anything and no longer the budget.
+
+The numbers are measured rather than chosen, and the test says so. At the expensive end of the store a run costs between $0.0021 and $0.0040 a request, so `HARD_SPEND` at 0.25 is reached somewhere between 60 and 120 requests; both limits sit above that, so on any run that is spending the spend ceiling binds first and the run is landed by the tools rather than cut off by the library. A run that spends nothing and never stops is a runaway, and the limits are what catch it. `REQUEST_LIMIT` stays above `CALLS_LIMIT` for the reason it always has: a run that has spent its calls must still have the requests to say what it did, which is the failure of v0.15 that the landing exists to prevent.
+
+**The record says what actually bound the run.** `calls_cap` and `requests_cap` are the two constants; `spend_cap` and `hard_spend_cap` stay as they are. `which_cap` keeps naming which of the three ended a run.
+
+Nothing else moves. The walls are what they were -- the write cap, the check cap, the protected paths, the hidden names -- and the spend landing built in this version's predecessor is untouched.
+
+The call sites in the protected tests are already amended to this shape and committed red, which is the order this change required: `run(agent, goal, budget)` is a signature named at twenty-five places across `test_caps.py` and `test_builder.py`, and the builder may not touch a test.
