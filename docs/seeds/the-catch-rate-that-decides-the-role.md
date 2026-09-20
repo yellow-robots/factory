@@ -106,6 +106,8 @@ The reason is the first run. It cost $2.5787, and the number it printed was wron
 
 **What it may spend bounds what it can spend.** A pass may run to `HARD_SPEND`, above the ceiling the projection is counted in, so the allowance is checked against what the run could cost and not against what it is expected to cost. Both numbers are said, because the difference between them is the difference between a plan and a promise.
 
+What a review *can* cost is the reviewer's own stopping rule and not the sum of its passes at their worst. It stops starting passes once it has spent `dimensions x passes x SOFT_SPEND`, so the most it can reach is that plus the one pass already running, which may go to `HARD_SPEND`. Counting every pass at `HARD_SPEND` instead doubles it and refuses runs that were affordable: the twelve-case set reads $60 where it cannot exceed about $33, and those are different decisions to put in front of someone.
+
 Exit 1 when a review was capped or errored, because a capped review is not a measurement; 2 for a usage error.
 
 **What it must not do is be trusted before it is understood.** The first rate is one model, one phrasing, one depth, on a handful of cases, scored against an answer key that is a floor. It settles whether the reviewer is worth routing a decision through. It does not settle whether reviewing works.

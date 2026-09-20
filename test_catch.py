@@ -191,6 +191,31 @@ class SpendTest(CatchBase):
         self.assertIn(f"{most:.2f}", said, "what it could cost is not said")
         self.assertIn(f"{expected:.2f}", said, "what it is expected to cost is not said")
 
+    def test_the_ceiling_is_what_a_review_can_reach_and_not_its_passes_at_their_worst(self):
+        """seed: the-catch-rate-that-decides-the-role. A review stops starting passes once it has
+        spent `dimensions x passes x SOFT_SPEND`, so the most it can reach is that plus the one pass
+        already running. Counting every pass at `HARD_SPEND` doubles it and refuses runs that were
+        affordable -- the twelve-case set reading $60 where it cannot exceed about $33, which is a
+        different decision to put in front of someone."""
+        stopping = len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.SOFT_SPEND
+        most = stopping + builder.HARD_SPEND  # the rule, and the pass that was already running
+        every_pass_at_its_worst = len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.HARD_SPEND
+        self.assertLess(most, every_pass_at_its_worst, "the fixture must tell the two apart")
+        model, _ = agreed(finding(path="f.py", line=3))
+        code, lines, err = self.run_catch("--spend", f"{most + 0.01:.4f}", model=model)
+        self.assertEqual(code, 0, f"a run it could afford was refused: {err}")
+        self.assertTrue([line for line in lines if line.startswith("one\t")], lines)
+
+    def test_a_run_that_could_reach_past_its_allowance_still_does_not_start(self):
+        """seed: the-catch-rate-that-decides-the-role. The other side of the same sentence: the
+        ceiling moved down, it did not stop being a ceiling."""
+        stopping = len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.SOFT_SPEND
+        most = stopping + builder.HARD_SPEND
+        code, lines, err = self.run_catch("--spend", f"{most - 0.01:.4f}", model=agreed()[0])
+        self.assertEqual(code, 2, err)
+        self.assertEqual(self.records(), [], "and no record is made")
+        self.assertIn(f"{most:.2f}", err + "\n".join(lines), "what it could cost is not said")
+
     def test_the_allowance_is_required_rather_than_assumed(self):
         """seed: the-catch-rate-that-decides-the-role. There is no default that spends money. A run
         that does not say what it may spend is a usage error, not a run at the harness's guess."""
