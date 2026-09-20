@@ -4,6 +4,8 @@ The factory is `builder.py`: a program that runs a cold model session over a dir
 
 You are the attended agent: a model in some harness, resuming this work cold, working with the owner. This file is for any such model. The state of the work is never narrated here; it is derived from git and the files, as below.
 
+How the owner wants to be written to, since it is not derivable from anything here. Headers, bullet points and bold are welcome where they help the eye, not as decoration. Cut: preambles, flattery, repetition, restating the question, summarising what was just said, narrating steps taken or about to be taken, and flourished prose. Keep: exact figures and paths, stated assumptions, and uncertainty that carries information -- *~2x, fitted to one day's bill* rather than *2x*. Lead with the answer. State an error once, plainly, and move on. Concise, thoughtful, factual, concrete, in simple but precise terms.
+
 ## Orient yourself
 
 Run these before reading anything else, from the root of the checkout or worktree you are in:
