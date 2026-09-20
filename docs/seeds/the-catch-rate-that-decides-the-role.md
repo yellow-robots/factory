@@ -1,7 +1,7 @@
 ---
 created: 2026-09-20
 type: seed
-status: spec
+status: done
 summary: The reviewer is built and nobody knows whether it catches anything; the number that decides whether it is a gate or theatre is the one thing it has never been measured against.
 value: 5
 effort: M
