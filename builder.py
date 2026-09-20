@@ -53,6 +53,7 @@ from pydantic_ai import (  # noqa: E402
     capture_run_messages,
 )
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings  # noqa: E402
+from openai import AsyncOpenAI  # noqa: E402
 from pydantic_ai.profiles.openai import OpenAIModelProfile  # noqa: E402
 from pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402
 
@@ -738,15 +739,27 @@ PROFILE = OpenAIModelProfile(
 
 
 def build_agent(
-    tools: Tools, key: str = "", http_client: Any = None, model: Any = None, model_name: str = MODEL
-) -> Agent[None, BuildReport]:
+    tools: Tools, key: str = "", http_client: Any = None, model: Any = None,
+    model_name: str = MODEL, base_url: str | None = None,
+) -> Agent[None, BuildReport]:  # fmt: skip
     """The agent: the role, the six tools, a typed report, our caps. The model is the caller's, or
     the one `model_name` names -- the instance's `builder` role when it holds one, the program's
-    constant otherwise."""
+    constant otherwise -- reached at `base_url` when the role names one. `PROFILE` says what
+    DeepSeek's thinking models are, so it is passed only for the model it was written for; a model
+    served at another address is not one and is given the stock profile."""
     if model is None:
-        model = OpenAIChatModel(
-            model_name, provider=DeepSeekProvider(api_key=key, http_client=http_client), profile=PROFILE
+        # The role's address, when it names one, is the client the provider reaches: the stock
+        # DeepSeekProvider has no `base_url` of its own, so an OpenAI client built at it is what
+        # the provider is handed. `PROFILE` is DeepSeek's, so it is passed only for the model it
+        # was written for; a model served elsewhere gets the library's own profile.
+        provider = (
+            DeepSeekProvider(
+                openai_client=AsyncOpenAI(base_url=base_url, api_key=key, http_client=http_client)
+            )
+            if base_url
+            else DeepSeekProvider(api_key=key, http_client=http_client)
         )
+        model = OpenAIChatModel(model_name, provider=provider, profile=None if base_url else PROFILE)
     agent = Agent(
         model,
         instructions=ROLE,
@@ -1374,9 +1387,9 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
     # The key file holds the bare key, or one `name=value` line as in an env file; one that cannot
     # be read or holds no key is a usage error too, before anything is made.
     if builder_role is None:
-        model_name, key = MODEL, ""
+        model_name, key, base_url = MODEL, "", None
     else:
-        model_name = builder_role.model
+        model_name, base_url = builder_role.model, builder_role.base_url
         try:
             key = read_key(builder_role.key)
         except (ValueError, OSError) as e:
@@ -1409,7 +1422,8 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
 
     tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden), spent=spent,
                   sandbox=sandbox if sandbox is not None else Sandbox())  # fmt: skip
-    agent = build_agent(tools, key=key, http_client=wire.client, model=model, model_name=model_name)
+    agent = build_agent(tools, key=key, http_client=wire.client, model=model, model_name=model_name,
+                        base_url=base_url)  # fmt: skip
     t0 = time.time()
     report, messages, usage, stopped, detail = run(agent, goal, tools.budget, usage=usage)
     seconds = round(time.time() - t0, 1)

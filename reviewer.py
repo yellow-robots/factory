@@ -188,15 +188,29 @@ class WireModel(WrapperModel):
 
 def build_agent(
     tools: builder.Tools, key: str = "", http_client: Any = None,
-    model: Any = None, model_name: str = builder.MODEL,
+    model: Any = None, model_name: str = builder.MODEL, base_url: str | None = None,
 ) -> Any:  # fmt: skip
     """The agent: the reviewer's role, the three tools that read, the typed report and the caps.
-    The model is the caller's, or the one `model_name` names -- the instance's `reviewer` role."""
+    The model is the caller's, or the one `model_name` names -- the instance's `reviewer` role --
+    reached at `base_url` when the role names one. `PROFILE` says what DeepSeek's thinking models
+    are, so it is passed only for the model it was written for; a model served at another address
+    is not one and is given the stock profile."""
     if model is None:
+        # The role's address, when it names one, is the client the provider reaches: the stock
+        # DeepSeekProvider has no `base_url` of its own, so an OpenAI client built at it is what
+        # the provider is handed. `PROFILE` is DeepSeek's, so it is passed only for the model it
+        # was written for; a model served elsewhere gets the library's own profile.
+        provider = (
+            builder.DeepSeekProvider(
+                openai_client=builder.AsyncOpenAI(
+                    base_url=base_url, api_key=key, http_client=http_client
+                )
+            )
+            if base_url
+            else builder.DeepSeekProvider(api_key=key, http_client=http_client)
+        )
         model = builder.OpenAIChatModel(
-            model_name,
-            provider=builder.DeepSeekProvider(api_key=key, http_client=http_client),
-            profile=builder.PROFILE,
+            model_name, provider=provider, profile=None if base_url else builder.PROFILE
         )
     agent = builder.Agent(
         model,
@@ -319,7 +333,8 @@ def main(argv: list[str], model: Any = None) -> int:
     # A scripted model does not go over HTTP, so it is wrapped to record on the wire what it was
     # offered; a real model's own requests are recorded by the wire's HTTP hooks.
     run_model = None if model is None else WireModel(model, wire)
-    agent = build_agent(tools, key=key, http_client=wire.client, model=run_model, model_name=role.model)
+    agent = build_agent(tools, key=key, http_client=wire.client, model=run_model, model_name=role.model,
+                        base_url=role.base_url)  # fmt: skip
     prompt = f"{goal_text}\n\nThe change under review:\n\n{diff}"
     t0 = time.time()
     # Five cold sessions over the same checkout, goal and diff. No pass sees another's messages:
