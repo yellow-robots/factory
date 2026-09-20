@@ -3,6 +3,7 @@
 count what it caught.
 
     uv run catch.py --spend USD [case ...]
+    uv run catch.py --score [case ...]
 
 A case is `catches/<name>.toml`: a commit of this repository, the seed that commit was built
 from, and one `[[finding]]` per defect the commit is known to hold -- a `path`, and `lines` or
@@ -28,9 +29,15 @@ it could cost are said before the first pass starts. A run that could cost more 
 it may spend is refused before a model is called and before a record is made, naming both
 numbers. There is no default allowance.
 
-Exit 0 when every review answered, 1 when a review was capped or errored, 2 on a usage error: a
-case that is missing or not whole, an allowance that is not a non-negative number, no allowance,
-or a run over what it was allowed.
+`--score` scores the records the store already holds and spends nothing: no worktree, no pass, no
+model, and no allowance, because there is nothing to allow. A record says which case it was in its
+own goal -- its first line is `case: <name>` -- so scoring needs no telling, and a key that was
+corrected after a review is scored again for the price of the arithmetic. It prints the same table
+and rates as a run, one row per case, against the latest record that names it.
+
+Exit 0 when every review answered and every record scored, 1 when a review was capped or errored,
+2 on a usage error: a case that is missing or not whole, an allowance that is not a non-negative
+number, no allowance for a run, or a run over what it was allowed.
 """
 
 from __future__ import annotations
@@ -57,7 +64,7 @@ COLUMNS = ("case", "strict", "path", "known", "passes", "cost_usd", "seconds")
 
 
 def usage_error(reason: str = "") -> int:
-    print("usage: catch.py --spend USD [case ...]", file=sys.stderr)
+    print("usage: catch.py [--score | --spend USD] [case ...]", file=sys.stderr)
     if reason:
         print(reason, file=sys.stderr)
     return 2
@@ -152,31 +159,35 @@ def _cases(base: Path, names: list[str]) -> tuple[list[Case] | None, str]:
     return cases, ""
 
 
-def _parse(argv: list[str]) -> tuple[float | None, list[str], str]:
-    """`--spend USD` and the case names; the reason of a usage error instead, with the allowance,
-    which is None when the run did not name one."""
-    spend, names, i = None, [], 0
+def _parse(argv: list[str]) -> tuple[bool, float | None, list[str], str]:
+    """`--score`, `--spend USD` and the case names; the reason of a usage error instead, with
+    whether the run scores records rather than making them and the allowance, which is None when
+    the run did not name one."""
+    score, spend, names, i = False, None, [], 0
     while i < len(argv):
         arg = argv[i]
-        if arg == "--spend" or arg.startswith("--spend="):
+        if arg == "--score":
+            score = True
+            i += 1
+        elif arg == "--spend" or arg.startswith("--spend="):
             if arg == "--spend":
                 if i + 1 >= len(argv):
-                    return None, names, "--spend needs a value"
+                    return score, None, names, "--spend needs a value"
                 value, i = argv[i + 1], i + 2
             else:
                 value, i = arg.partition("=")[2], i + 1
             number = _number(_float(value))
             if number is None or number < 0:
-                return None, names, f"--spend is not a non-negative number: {value}"
+                return score, None, names, f"--spend is not a non-negative number: {value}"
             spend = number
         elif arg.startswith("-") and arg != "-":
-            return None, names, f"unknown argument: {arg}"
+            return score, spend, names, f"unknown argument: {arg}"
         elif not arg:
-            return None, names, "not a case name: "
+            return score, spend, names, "not a case name: "
         else:
             names.append(arg)
             i += 1
-    return spend, names, ""
+    return score, spend, names, ""
 
 
 def _float(text: str) -> float | None:
@@ -204,6 +215,35 @@ def _reported(record: Path) -> list[dict[str, Any]]:
         return []
     findings = data.get("findings") if isinstance(data, dict) else None
     return [f for f in findings if isinstance(f, dict)] if isinstance(findings, list) else []
+
+
+def _case_of(record: Path) -> str | None:
+    """The case name a record's goal names: the first line is `case: <name>` as an evaluation
+    build's goal is. None when the record holds no readable goal or one that names no case, so a
+    record that is not a measurement is not scored against one."""
+    try:
+        lines = (record / "goal.txt").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    line = lines[0].strip() if lines else ""
+    prefix = "case: "
+    if line.startswith(prefix):
+        name = line[len(prefix):].strip()
+        return name or None
+    return None
+
+
+def _capped(numbers: dict[str, Any]) -> bool:
+    """Whether a review's numbers say it was not a measurement: it did not answer, or fewer passes
+    ran than its dimensions x passes say it was given. A record whose dimensions and passes are
+    absent is counted in the dimensions and passes fixed today, as its run counted them."""
+    dimensions = numbers.get("dimensions", len(reviewer.DIMENSIONS))
+    passes = numbers.get("passes", reviewer.PASSES)
+    expected = dimensions * passes if all(isinstance(n, int) and not isinstance(n, bool)
+                                          for n in (dimensions, passes)) else None
+    ran = numbers.get("passes_ran")
+    short = isinstance(expected, int) and (not isinstance(ran, int) or ran < expected)
+    return numbers.get("stopped") != "answer" or short
 
 
 def _counts(case: Case, reported: list[dict[str, Any]]) -> tuple[int, int]:
@@ -257,13 +297,7 @@ def _run_case(root: Path, work: Path, case: Case, model: Any) -> tuple[list[str]
         _tag(record, case)
         numbers = _numbers(record)
         strict, loose = _counts(case, _reported(record))
-        dimensions = numbers.get("dimensions", len(reviewer.DIMENSIONS))
-        passes = numbers.get("passes", reviewer.PASSES)
-        expected = dimensions * passes if all(isinstance(n, int) and not isinstance(n, bool)
-                                              for n in (dimensions, passes)) else None
-        ran = numbers.get("passes_ran")
-        short = isinstance(expected, int) and (not isinstance(ran, int) or ran < expected)
-        capped = code != 0 or numbers.get("stopped") != "answer" or short
+        capped = code != 0 or _capped(numbers)
         return _cells(case, strict, loose, numbers), (len(case.findings), strict, loose), not capped
     except (builder.GitError, OSError, subprocess.SubprocessError) as e:
         print(f"{case.name}: {' '.join(str(e).split())}", file=sys.stderr)
@@ -315,16 +349,64 @@ def _rate(pairs: list[tuple[int, int]]) -> tuple[float, float]:
     return sum(rates) / len(rates), math.sqrt(sum(terms)) / len(pairs)
 
 
+def _rates(stats: list[tuple[int, int, int]]) -> list[str]:
+    """The set's rate and its standard error on each count, as `evals.py` gives the builder's: an
+    empty line first, then the strict rate and the path rate."""
+    strict_rate, strict_error = _rate([(strict, known) for known, strict, _ in stats])
+    path_rate, path_error = _rate([(loose, known) for known, _, loose in stats])
+    return ["", f"strict rate {strict_rate:.3f} ± {strict_error:.3f}",
+            f"path rate {path_rate:.3f} ± {path_error:.3f}"]
+
+
+def _score(store: Path, cases: list[Case]) -> int:
+    """Score the records the store already holds, without a worktree, a pass or a model: for each
+    case, the latest record whose goal names it, against the case's answers. A case with no record
+    is a row of zeros, since a review that was never made caught nothing. Nothing is read from a
+    record but its goal, its numbers and the findings it reported; nothing is written."""
+    latest: dict[str, Path] = {}
+    if store.is_dir():
+        for record in sorted(p for p in store.iterdir() if p.is_dir() and p.name != ".git"):
+            name = _case_of(record)
+            if name is not None:
+                latest[name] = record  # stamp order: the last record of a case is the latest one
+    rows: list[str] = ["\t".join(COLUMNS)]
+    stats: list[tuple[int, int, int]] = []
+    failed = False
+    for case in cases:
+        record = latest.get(case.name)
+        if record is None:
+            rows.append("\t".join(_cells(case, 0, 0, {})))
+            stats.append((len(case.findings), 0, 0))
+            continue
+        numbers = _numbers(record)
+        strict, loose = _counts(case, _reported(record))
+        rows.append("\t".join(_cells(case, strict, loose, numbers)))
+        stats.append((len(case.findings), strict, loose))
+        failed = failed or _capped(numbers)
+    print("\n".join(rows))
+    if cases:
+        print("\n".join(_rates(stats)))
+    return 1 if failed else 0
+
+
 def main(argv: list[str], root: Any = None, model: Any = None) -> int:
     base = Path(root).resolve() if root is not None else Path(__file__).resolve().parent
-    spend, names, reason = _parse(list(argv[1:]))
+    score, spend, names, reason = _parse(list(argv[1:]))
     if reason:
         return usage_error(reason)
-    if spend is None:  # no default that spends money: a run must say what it may spend
+    if not score and spend is None:  # no default that spends money: a run must say what it may spend
         return usage_error("--spend is required")
     cases, reason = _cases(base, names)
     if cases is None:
         return usage_error(reason)
+    if score:
+        if spend is not None:  # scoring spends nothing, so an allowance has nothing to bound
+            return usage_error("--score spends nothing: it takes no --spend")
+        try:
+            store = builder.record_store()
+        except (ValueError, OSError) as e:
+            return usage_error(str(e))
+        return _score(store, cases)
     # A review is `dimensions x passes x SOFT_SPEND` expected and `dimensions x passes x HARD_SPEND`
     # at most, every factor known before the first pass, so what the whole run is expected to cost
     # and what it could cost are both arithmetic and are both said before anything is spent.
@@ -359,11 +441,7 @@ def main(argv: list[str], root: Any = None, model: Any = None) -> int:
         _prune(base)
     print("\n".join(rows))
     if cases:
-        strict_rate, strict_error = _rate([(strict, known) for known, strict, _ in stats])
-        path_rate, path_error = _rate([(loose, known) for known, _, loose in stats])
-        print()
-        print(f"strict rate {strict_rate:.3f} ± {strict_error:.3f}")
-        print(f"path rate {path_rate:.3f} ± {path_error:.3f}")
+        print("\n".join(_rates(stats)))
     return 1 if failed else 0
 
 
