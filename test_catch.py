@@ -1,0 +1,239 @@
+"""The catch-rate harness's acceptance tests, written from docs/seeds/the-catch-rate-that-decides-the-role.md
+before the code.
+
+    uv run python -m unittest test_catch -v
+
+Each test builds a temporary repository with a commit worth reviewing, a `catches/` directory
+holding one or two cases whose answers point into that commit, an instance whose `reviewer` role
+names a model and a key, and runs `catch.main` with a model that plays every pass from a script. No
+provider, no network, no docker.
+"""
+
+import contextlib
+import io
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from pydantic_ai import models
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+import builder
+import catch
+import reviewer
+
+models.ALLOW_MODEL_REQUESTS = False
+
+SEED = "---\ntype: seed\n---\n\n## Goal\n\nMake x equal two in f.py, and leave everything else alone.\n"
+# The file the case's answers point into: the defect is on line 3 and the span is the function.
+CODE = "def f():\n    x = 1\n    return x  # the answer's line\n\n\ndef g():\n    return 0\n"
+
+
+def git(checkout: Path, *args: str) -> str:
+    done = subprocess.run(["git", "-C", str(checkout), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                          capture_output=True, encoding="utf-8")  # fmt: skip
+    if done.returncode != 0:
+        raise AssertionError(done.stderr)
+    return done.stdout
+
+
+def finding(path="f.py", line=3, severity="defect", what="x is set and never read"):
+    return {"severity": severity, "path": path, "line": line, "what": what}
+
+
+def passes(*reports):
+    """A model answering each session with the next report, the last repeated. A review reports
+    what two or more passes of one dimension reached, so a finding meant to survive is given twice."""
+    told: list[str] = []
+    answers = list(reports) or [{"findings": []}]
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        report = answers[min(len(told), len(answers)) - 1] if told else answers[0]
+        told.append(repr(messages))
+        return ModelResponse(parts=[ToolCallPart("final_result", report, tool_call_id=f"c{len(told)}")])
+
+    return FunctionModel(model), told
+
+
+def agreed(*findings):
+    """Every pass reporting the same findings, so all of them clear the agreement rule."""
+    return passes({"findings": list(findings)})
+
+
+class CatchBase(unittest.TestCase):
+    """A repository with something to review, and a case whose answers point into it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.repo = self.base / "repo"
+        (self.repo / "docs" / "seeds").mkdir(parents=True)
+        (self.repo / "f.py").write_text("def f():\n    return 0\n")
+        (self.repo / "docs" / "seeds" / "a-seed.md").write_text(SEED)
+        git(self.repo, "init", "-q")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "before")
+        (self.repo / "f.py").write_text(CODE)
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "the build")
+        self.commit = git(self.repo, "rev-parse", "--short", "HEAD").strip()
+
+        self.catches = self.repo / "catches"
+        self.catches.mkdir()
+        self.case("one")
+
+        self.runs = self.base / "records"
+        self.key = self.base / "reviewer.key"
+        self.key.write_text("key=not-a-key\n")
+        self.instance = self.base / "instance.toml"
+        self.instance.write_text(
+            f'records = "{self.runs}"\nwork = "{self.base / "work"}"\n'
+            f'\n[roles.reviewer]\nmodel = "glm-5.3-flash"\nkey = "{self.key}"\n'
+        )
+        self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(self.instance)}))
+        # One dimension, so a review is PASSES sessions long and a test's script is readable.
+        self.enterContext(mock.patch.object(reviewer, "DIMENSIONS", tuple(reviewer.DIMENSIONS)[:1]))
+
+    def case(self, name, findings=((("f.py"), (1, 4)),)):
+        """A case file: the commit, the seed, and one entry per known finding."""
+        body = [f'commit = "{self.commit}"', 'seed = "docs/seeds/a-seed.md"']
+        for path, (first, last) in findings:
+            body += ["", "[[finding]]", 'review = "20260101T000000Z"', f'title = "{name} answer"',
+                     f'path = "{path}"', f"lines = [{first}, {last}]"]  # fmt: skip
+        (self.catches / f"{name}.toml").write_text("\n".join(body) + "\n")
+
+    def records(self):
+        if not self.runs.exists():
+            return []
+        return sorted(p for p in self.runs.iterdir() if p.is_dir() and p.name != ".git")
+
+    def run_catch(self, *args, model=None):
+        """The harness over that repository: its exit code, its stdout lines and its stderr."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = catch.main(["catch.py", *args], root=self.repo, model=model)
+        return code, out.getvalue().splitlines(), err.getvalue()
+
+
+class SpendTest(CatchBase):
+    """A review's cost is chosen, not discovered, so the harness says it before it spends it."""
+
+    def test_what_a_run_will_cost_is_said_before_a_model_is_called(self):
+        """seed: the-catch-rate-that-decides-the-role. A review is `dimensions x passes x
+        SOFT_SPEND` and the harness knows every one of those before the first pass starts, so what
+        the whole run comes to is arithmetic and not a surprise. The full set is a decision somebody
+        takes on purpose."""
+        projected = len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.SOFT_SPEND
+        model, told = agreed(finding())
+        code, lines, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(any(f"{projected:.2f}" in line for line in lines),
+                        f"what it would cost is not in {lines}")  # fmt: skip
+
+    def test_a_run_over_what_it_was_allowed_does_not_start(self):
+        """seed: the-catch-rate-that-decides-the-role. Twelve cases at four dimensions is $83 and
+        days, and the owner's direction is that the number is worth having and is not worth having
+        by surprise. A run that would cost more than it was told it may spend is refused before a
+        model is called and before a record is made, naming both numbers."""
+        called = []
+
+        def counting(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(1)
+            return ModelResponse(parts=[ToolCallPart("final_result", {"findings": []}, tool_call_id="c")])
+
+        self.case("two")
+        code, lines, err = self.run_catch("--spend", "0.10", model=FunctionModel(counting))
+        self.assertEqual(code, 2, err)
+        self.assertIn("0.10", err + "\n".join(lines))
+        self.assertEqual(called, [], "no model is called")
+        self.assertEqual(self.records(), [], "and no record is made")
+
+    def test_the_allowance_is_required_rather_than_assumed(self):
+        """seed: the-catch-rate-that-decides-the-role. There is no default that spends money. A run
+        that does not say what it may spend is a usage error, not a run at the harness's guess."""
+        code, _, err = self.run_catch(model=agreed()[0])
+        self.assertEqual(code, 2, err)
+
+
+class CaughtTest(CatchBase):
+    """What a catch is: crude, visible, and counted twice."""
+
+    def test_a_finding_on_the_path_and_in_the_span_is_caught(self):
+        """seed: the-catch-rate-that-decides-the-role. A reported finding catches a known one when
+        it names that path and its line falls within that span. Crude on purpose: the first rate
+        should be honest about being crude rather than impressive and unreproducible."""
+        model, _ = agreed(finding(path="f.py", line=3))
+        code, lines, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 0, err)
+        row = [line for line in lines if line.startswith("one\t")]
+        self.assertEqual(len(row), 1, f"one row for the case in {lines}")
+        self.assertIn("1", row[0].split("\t")[1:3], f"a catch is not counted in {row[0]}")
+
+    def test_the_right_file_at_the_wrong_line_is_counted_on_the_path_alone(self):
+        """seed: the-catch-rate-that-decides-the-role. The same set is counted again on the path
+        alone, because the difference between the two numbers is how much of the rate is the
+        reviewer knowing where rather than what, and one number would hide it."""
+        model, _ = agreed(finding(path="f.py", line=7))  # the other function: right file, wrong place
+        code, lines, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 0, err)
+        (row,) = [line for line in lines if line.startswith("one\t")]
+        strict, loose = row.split("\t")[1:3]
+        self.assertNotEqual(strict, loose, f"the two counts do not differ in {row}")
+
+    def test_a_finding_somewhere_else_entirely_is_caught_on_neither_count(self):
+        """seed: the-catch-rate-that-decides-the-role. A review that reports something real and new
+        scores nothing for it, because the key holds what somebody already found. The key is a floor
+        and never a ceiling, and a number read as a fraction of the defects that were there is a
+        number read wrongly."""
+        model, _ = agreed(finding(path="docs/seeds/a-seed.md", line=3))
+        code, lines, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 0, err)
+        (row,) = [line for line in lines if line.startswith("one\t")]
+        self.assertEqual(row.split("\t")[1:3], ["0", "0"], f"nothing should be caught in {row}")
+
+
+class RecordTest(CatchBase):
+    """The measurement's own cost is in the table with everything else."""
+
+    def test_a_case_is_reviewed_at_its_commit_and_recorded_like_any_review(self):
+        """seed: the-catch-rate-that-decides-the-role. A throwaway worktree at that commit, the
+        reviewer run over it as it is run over any delivered tree, and its record in the store
+        key-scanned like any other, with a goal beginning `case: <name>` as an evaluation build's
+        does -- so `runs.py` shows what the measurement cost beside what it measured."""
+        model, _ = agreed(finding())
+        code, _, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 0, err)
+        (record,) = self.records()
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertTrue(numbers["goal"].startswith("case: one"), numbers["goal"])
+        self.assertEqual(numbers["head"], git(self.repo, "rev-parse", "HEAD").strip())
+
+    def test_the_set_gets_a_rate_and_its_error(self):
+        """seed: the-catch-rate-that-decides-the-role. A single number with no error is the thing
+        that makes a four look like a nine, so the set's rate is printed with its standard error
+        under a uniform prior, as `evals.py` already gives the builder's."""
+        self.case("two")
+        model, _ = agreed(finding())
+        code, lines, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 0, err)
+        tail = "\n".join(lines[-3:])
+        self.assertIn("+-", tail.replace("±", "+-"), f"no error beside the rate in {tail}")
+
+    def test_a_capped_review_is_not_a_measurement(self):
+        """seed: the-catch-rate-that-decides-the-role. A review landed by its ceiling read less than
+        it was given, so what it did not find says nothing about what it could not find. The run
+        still reports what it has, and says so in its exit."""
+        model, _ = agreed(finding())
+        with mock.patch.object(reviewer.builder, "price", lambda usage, model, base_url=None: 1.0):
+            code, _, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 1, err)
+
+
+if __name__ == "__main__":
+    unittest.main()

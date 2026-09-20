@@ -1,0 +1,27 @@
+# A review case: a commit of this repository and what that commit is known to hold.
+#
+# The answers are findings the attended agent verified in docs/reviews/, narrowed to ones a pass
+# that reads and cannot run could have reached. The four mutation findings of that note -- `X can be
+# changed and the whole suite stays green` -- are not here: `reviewer.py` is never offered `check`,
+# so scoring it against a finding that needed a suite run would buy a low number for a reason that
+# has nothing to do with reviewing.
+#
+# Lines are lines of the file at `commit`, not of the file today.
+
+commit = "3e01d73"
+seed = "docs/seeds/reviewer-role.md"
+note = "The commit that created reviewer.py: the whole file is the diff, so every answer is inside it."
+
+[[finding]]
+review = "20260920T000130Z"
+title = "The reviewer role's key is POSTed to the provider the role did not name"
+path = "reviewer.py"
+lines = [125, 140]
+why = "build_agent takes no base_url and hardwires DeepSeekProvider at 134, so a role served elsewhere sends its own key to DeepSeek in an Authorization header for a model DeepSeek does not serve. The wire redacts that header, so the record would not show it."
+
+[[finding]]
+review = "20260920T000130Z"
+title = "A seed path with the `.md` forgotten is not refused; it becomes the goal"
+path = "reviewer.py"
+lines = [186, 193]
+why = "read_seed reads docs/seeds/<name>.md as a seed and anything else as goal text, which is right for the builder and wrong here: reviewer.py prints `usage: reviewer.py <checkout> <seed>` and records a seed field. The argument becomes a one-line pseudo-goal and a full priced review is spent on it."

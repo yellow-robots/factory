@@ -1,0 +1,20 @@
+# A review case, and a harder one than its neighbour on purpose.
+#
+# This commit changes `build.py` alone. The defect it lets through is four lines of `builder.py`,
+# which the diff does not touch, so a pass that reads only what changed cannot reach it: it has to
+# notice that the change makes a clause load-bearing and then go and read the thing now carrying the
+# load. The reviewer has `list`, `read` and `search` over the whole checkout and may do exactly
+# that. Whether it does is a real question about the role and is worth a case of its own.
+#
+# Lines are lines of the file at `commit`, not of the file today.
+
+commit = "8125f19"
+seed = "docs/seeds/the-work-a-capped-run-leaves.md"
+note = "The answer is outside the diff. A pass that reads only the diff scores zero here and should."
+
+[[finding]]
+review = "20260919T225154Z"
+title = "A capped run is pushed on a check that never saw the tree it left"
+path = "builder.py"
+lines = [545, 560]
+why = "check_final swallows every exception -- `except Exception: pass` at 555, with the correct reason that a sandbox which cannot run must not lose the record -- so a final check that could not run leaves `check` reading whatever the model's own last check said, which is a verdict on an earlier tree. This commit makes `check == green` the whole acceptance test for a capped run, and capped runs are by construction the likeliest to have written since their last check."
