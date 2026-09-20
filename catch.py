@@ -33,7 +33,9 @@ numbers. There is no default allowance.
 model, and no allowance, because there is nothing to allow. A record says which case it was in its
 own goal -- its first line is `case: <name>` -- so scoring needs no telling, and a key that was
 corrected after a review is scored again for the price of the arithmetic. It prints the same table
-and rates as a run, one row per case, against the latest record that names it.
+and rates as a run, one row per case, against the latest record that names it. A case the store
+holds no record of is shown as unmeasured and left out of the rate, because a review that never ran
+is not a review that caught nothing.
 
 Exit 0 when every review answered and every record scored, 1 when a review was capped or errored,
 2 on a usage error: a case that is missing or not whole, an allowance that is not a non-negative
@@ -61,6 +63,9 @@ import reviewer
 # The set's own name at the checkout root, one file per case, as `cases/` is the evaluation set's.
 CASES_DIR = "catches"
 COLUMNS = ("case", "strict", "path", "known", "passes", "cost_usd", "seconds")
+# A case the store holds no record of is shown with this in its count cells and left out of the
+# rate: a review that never ran is not a review that caught nothing.
+UNMEASURED = "unmeasured"
 
 
 def usage_error(reason: str = "") -> int:
@@ -360,9 +365,10 @@ def _rates(stats: list[tuple[int, int, int]]) -> list[str]:
 
 def _score(store: Path, cases: list[Case]) -> int:
     """Score the records the store already holds, without a worktree, a pass or a model: for each
-    case, the latest record whose goal names it, against the case's answers. A case with no record
-    is a row of zeros, since a review that was never made caught nothing. Nothing is read from a
-    record but its goal, its numbers and the findings it reported; nothing is written."""
+    case, the latest record whose goal names it, against the case's answers. A case with no record is
+    shown as unmeasured and left out of the rate, because a review that was never made is not a
+    review that caught nothing. Nothing is read from a record but its goal, its numbers and the
+    findings it reported; nothing is written."""
     latest: dict[str, Path] = {}
     if store.is_dir():
         for record in sorted(p for p in store.iterdir() if p.is_dir() and p.name != ".git"):
@@ -374,9 +380,9 @@ def _score(store: Path, cases: list[Case]) -> int:
     failed = False
     for case in cases:
         record = latest.get(case.name)
-        if record is None:
-            rows.append("\t".join(_cells(case, 0, 0, {})))
-            stats.append((len(case.findings), 0, 0))
+        if record is None:  # never run: shown as unmeasured and left out of the rate
+            rows.append("\t".join(
+                [case.name, UNMEASURED, UNMEASURED, str(len(case.findings)), "", "", ""]))
             continue
         numbers = _numbers(record)
         strict, loose = _counts(case, _reported(record))
