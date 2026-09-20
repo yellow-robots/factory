@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import gzip
 import hashlib
+import inspect
 import io
 import json
 import os
@@ -600,6 +601,46 @@ class RoleServedElsewhereTest(unittest.TestCase):
                       "DeepSeek's answer to its own hazard is not claimed of another model")  # fmt: skip
 
 
+class RolePriceTest(unittest.TestCase):
+    """seed: the-role-priced-as-another. A ceiling derived from another model's rate is not a
+    ceiling, and the spend ceilings are the only thing between a run and a runaway."""
+
+    class Usage:
+        def __init__(self, input_tokens: int, cache_read_tokens: int, output_tokens: int):
+            self.input_tokens = input_tokens
+            self.cache_read_tokens = cache_read_tokens
+            self.output_tokens = output_tokens
+            self.cost = None
+            self.details: dict = {}
+
+    def test_the_table_answers_for_the_model_it_was_written_for(self):
+        """`PRICE` is DeepSeek's published peak rate for `deepseek-flash`. Every record ever written
+        was priced by it and must stay comparable with every record written after this, so what it
+        says about that model does not move by a hundredth of a cent."""
+        usage = self.Usage(1557544, 1489152, 19130)  # the first build of v0.17, run 20260919T225154Z
+        self.assertEqual(round(builder.price(usage, builder.MODEL), 5), 0.05241)
+
+    def test_a_model_the_table_was_not_written_for_is_not_priced_by_it(self):
+        """Measured on run 20260920T103528Z, the first run on a model that is not the builder's: the
+        table said $0.001065 for tokens the library prices at $0.000197 as `zhipuai/GLM-5.3-Flash`.
+        **The table overstates that model by 5.41 times.** It is not a reporting error. A pass is
+        landed at `SOFT_SPEND`, so a pass priced five times too high is landed after a fifth of the
+        work it was given -- and the record says $0.125 either way."""
+        usage = self.Usage(2427, 1088, 547)  # that run's own tokens
+        priced = builder.price(usage, "glm-5.3-flash")
+        self.assertAlmostEqual(priced, 0.000197, places=5)
+        self.assertLess(priced, builder.price(usage, builder.MODEL) / 4)
+
+    def test_a_model_nothing_can_price_is_refused_before_anything_is_made(self):
+        """The honest default. A role whose price nobody knows is a role that cannot be bounded, and
+        the factory does not run unbounded: refused before a model is called and before a record is
+        made, exit 2, naming the role and the model it could not price."""
+        with self.assertRaises(builder.UnknownPrice) as caught:
+            builder.price(self.Usage(10, 0, 10), "a-model-nobody-has-priced")
+        self.assertIn("a-model-nobody-has-priced", str(caught.exception))
+
+
+
 class PriceTest(unittest.TestCase):
     """seed: the-budget-that-counts-files. One place prices tokens, so the bound on a run and the
     number in its record cannot drift apart."""
@@ -615,20 +656,29 @@ class PriceTest(unittest.TestCase):
         tokens of which 1,489,152 were cache reads, 19,130 output, and `cost_usd` 0.05241 written
         by `main`. Moving the arithmetic must not move the answer: the tokens a cache read served
         are priced at the cache-hit rate and only the rest at the miss rate."""
-        self.assertEqual(round(builder.price(self.Usage(1557544, 1489152, 19130)), 5), 0.05241)
+        self.assertEqual(round(builder.price(self.Usage(1557544, 1489152, 19130), builder.MODEL), 5), 0.05241)
 
     def test_price_charges_the_cache_hit_rate_for_what_the_cache_served(self):
         """A million tokens, all of them cache reads, against a million that were all misses: the
         published rates differ by fifty times and so must the price."""
-        hit = builder.price(self.Usage(1_000_000, 1_000_000, 0))
-        miss = builder.price(self.Usage(1_000_000, 0, 0))
+        hit = builder.price(self.Usage(1_000_000, 1_000_000, 0), builder.MODEL)
+        miss = builder.price(self.Usage(1_000_000, 0, 0), builder.MODEL)
         self.assertAlmostEqual(hit, builder.PRICE["cache_hit"])
         self.assertAlmostEqual(miss, builder.PRICE["cache_miss"])
-        self.assertAlmostEqual(builder.price(self.Usage(0, 0, 1_000_000)), builder.PRICE["output"])
+        self.assertAlmostEqual(builder.price(self.Usage(0, 0, 1_000_000), builder.MODEL), builder.PRICE["output"])
+
+    def test_the_model_being_priced_has_no_default(self):
+        """seed: the-role-priced-as-another. A default would price every role as the builder's own,
+        which is the defect itself and the quiet kind: the record would read `table` and look right.
+        No default, so a caller that does not name a model is a TypeError from the call."""
+        with self.assertRaises(TypeError):
+            builder.price(self.Usage(10, 0, 10))
+        self.assertIs(inspect.signature(builder.price).parameters["model"].default,
+                      inspect.Parameter.empty)  # fmt: skip
 
     def test_a_run_that_has_used_nothing_has_spent_nothing(self):
         """The first tool call of a run is made before any answer has been paid for."""
-        self.assertEqual(builder.price(self.Usage(0, 0, 0)), 0.0)
+        self.assertEqual(builder.price(self.Usage(0, 0, 0), builder.MODEL), 0.0)
 
 
 class SandboxTest(unittest.TestCase):
