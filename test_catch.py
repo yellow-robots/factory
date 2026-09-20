@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -108,6 +109,16 @@ class CatchBase(unittest.TestCase):
                      f'path = "{path}"', f"lines = [{first}, {last}]"]  # fmt: skip
         (self.catches / f"{name}.toml").write_text("\n".join(body) + "\n")
 
+    def record(self, name="one", findings=(), passes_ran=20, cost=2.5787, seconds=6836.8):
+        """A review's record as the store holds one, without having run a review to get it."""
+        made = self.runs / "20260101T000000Z"
+        made.mkdir(parents=True, exist_ok=True)
+        (made / "goal.txt").write_text(f"case: {name}\nthe goal that was reviewed\n")
+        (made / "review.json").write_text(json.dumps({"findings": list(findings)}))
+        (made / "numbers.json").write_text(json.dumps(
+            {"passes_ran": passes_ran, "cost_usd": cost, "seconds": seconds, "stopped": "answer"}))
+        return made
+
     def records(self):
         if not self.runs.exists():
             return []
@@ -190,16 +201,6 @@ class SpendTest(CatchBase):
 class ScoreTest(CatchBase):
     """Scoring a record the store already holds: arithmetic, not a review."""
 
-    def record(self, name="one", findings=(), passes_ran=20, cost=2.5787, seconds=6836.8):
-        """A review's record as the store holds one, without having run a review to get it."""
-        made = self.runs / "20260101T000000Z"
-        made.mkdir(parents=True, exist_ok=True)
-        (made / "goal.txt").write_text(f"case: {name}\nthe goal that was reviewed\n")
-        (made / "review.json").write_text(json.dumps({"findings": list(findings)}))
-        (made / "numbers.json").write_text(json.dumps(
-            {"passes_ran": passes_ran, "cost_usd": cost, "seconds": seconds, "stopped": "answer"}))
-        return made
-
     def test_a_record_already_made_is_scored_without_being_reviewed_again(self):
         """seed: the-catch-rate-that-decides-the-role. The first run cost $2.5787 and printed a
         number that was wrong, because an answer's span was too wide. Correcting the span is a
@@ -261,6 +262,120 @@ class ScoreTest(CatchBase):
         rate = [line for line in lines if line.startswith("strict rate")]
         self.assertTrue(any("1.0" in line or "0.5" in line for line in rate),
                         f"the rate is not the measured case's: {rate}")  # fmt: skip
+
+
+    def test_scoring_when_nothing_was_measured_is_an_answer_and_not_a_crash(self):
+        """seed: the-catch-rate-that-decides-the-role. Write a case's answers, score, then decide
+        whether to spend on it -- that is the ordinary order, and it ends in a ZeroDivisionError
+        because a rate was computed over no measurements at all. There is no rate to print when
+        nothing was measured, and no rate is an answer rather than a failure."""
+        self.case("two")
+        code, lines, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Traceback", err)
+        self.assertTrue(any(line.startswith(("one\t", "two\t")) for line in lines), lines)
+        self.assertFalse([line for line in lines if line.startswith("strict rate")],
+                         f"a rate over nothing: {lines}")  # fmt: skip
+
+    def test_a_review_that_could_not_be_started_is_unmeasured_too(self):
+        """seed: the-catch-rate-that-decides-the-role. The same thing on the running path as on the
+        scoring one. A commit git cannot check out, a reviewer that refused, a review that raised:
+        none of them is a review that found nothing, and counting them as misses drags a rate down
+        with cases that were never asked. Exit still says something went wrong; the printed number
+        is the one people quote and it must not be wrong."""
+        (self.catches / "bad.toml").write_text(
+            'commit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"\nseed = "docs/seeds/a-seed.md"\n'
+            '\n[[finding]]\nreview = "r"\ntitle = "t"\npath = "f.py"\nlines = [1, 4]\n'
+        )
+        model, _ = agreed(finding(path="f.py", line=3))
+        code, lines, err = self.run_catch("--spend", "10", model=model)
+        (bad,) = [line for line in lines if line.startswith("bad\t")]
+        self.assertNotIn("0", bad.split("\t")[1:3], f"a case never reviewed is counted in {bad}")
+        (rate,) = [line for line in lines if line.startswith("strict rate")]
+        self.assertIn("1.0", rate, f"the rate is not the measured case's: {rate}")
+        self.assertEqual(code, 1, err)
+
+    def test_a_case_that_knows_no_findings_is_not_a_case(self):
+        """seed: the-catch-rate-that-decides-the-role. A case with no answers scored zero of zero
+        and averaged a flat 0.0 into the rate, so adding one halved the number. Catching cannot be
+        measured against nothing: a case that names no finding is not whole and is refused, the way
+        the gate refuses a seed whose status has facts missing."""
+        (self.catches / "empty.toml").write_text(
+            f'commit = "{self.commit}"\nseed = "docs/seeds/a-seed.md"\n'
+        )
+        code, _, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 2, err)
+        self.assertIn("empty", err)
+
+
+class PinTest(CatchBase):
+    """Mutants that survived the whole suite. The code is right; nothing held it."""
+
+    def test_the_error_beside_a_rate_is_the_error_of_that_rate(self):
+        """seed: the-catch-rate-that-decides-the-role. `a wrong error bar is the exact failure this
+        exists to prevent`, and three separate mutations of it survived every test: zeroing it,
+        leaving it undivided, and dropping the numerator of the variance. One catch of two known is
+        the Beta(k+1, n-k+1) posterior's 0.500 and 0.224, which is `evals.py`'s own arithmetic."""
+        self.record(findings=[finding(path="f.py", line=3)])
+        self.case("one", findings=((("f.py"), (1, 4)), (("f.py"), (6, 8))))
+        code, lines, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+        (rate,) = [line for line in lines if line.startswith("strict rate")]
+        self.assertIn("0.500", rate, rate)
+        self.assertIn("0.224", rate, f"the error is not the rate's: {rate}")
+
+    def test_the_rate_is_counted_over_what_the_case_knows(self):
+        """seed: the-catch-rate-that-decides-the-role. The denominator was unheld: a mutant counting
+        catches over catches printed 1.000 for any case that caught anything at all."""
+        self.record(findings=[finding(path="f.py", line=3)])
+        self.case("one", findings=((("f.py"), (1, 4)), (("f.py"), (6, 8))))
+        code, lines, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+        (row,) = [line for line in lines if line.startswith("one\t")]
+        self.assertEqual(row.split("\t")[1:4], ["1", "2", "2"], row)  # both answers are in f.py
+
+    def test_a_span_holds_its_own_ends_and_nothing_before_them(self):
+        """seed: the-catch-rate-that-decides-the-role. Dropping the lower bound survived, and so did
+        making both ends exclusive. The corpus turns on this: the span `[186, 191]` was narrowed to
+        exactly that so 191 is inside and 192 is out, and without a lower bound a finding anywhere
+        earlier in the file would score."""
+        self.case("one", findings=((("f.py"), (4, 6)),))
+        for line, caught in ((4, "1"), (6, "1"), (3, "0"), (1, "0")):
+            for record in self.records():
+                shutil.rmtree(record)
+            self.record(findings=[finding(path="f.py", line=line)])
+            code, lines, err = self.run_catch("--score", model=agreed()[0])
+            self.assertEqual(code, 0, err)
+            (row,) = [line_ for line_ in lines if line_.startswith("one\t")]
+            self.assertEqual(row.split("\t")[1], caught, f"line {line}: {row}")
+
+    def test_one_known_finding_is_caught_once_however_many_name_its_file(self):
+        """seed: the-catch-rate-that-decides-the-role. The path count de-duplicates on the answer's
+        side and a mutant counting every report that named the file survived. On the first real
+        record fourteen of sixteen findings name `reviewer.py`, so that mutant would have printed a
+        path rate of fourteen against two known."""
+        self.record(findings=[finding(path="f.py", line=1), finding(path="f.py", line=7),
+                              finding(path="f.py", line=9)])  # fmt: skip
+        code, lines, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+        (row,) = [line for line in lines if line.startswith("one\t")]
+        self.assertEqual(row.split("\t")[2], "1", f"one answer caught more than once: {row}")
+
+    def test_a_case_is_reviewed_at_the_commit_it_names_and_not_at_the_head(self):
+        """seed: the-catch-rate-that-decides-the-role. The whole measurement rests on the case's
+        commit being checked out, and the fixture made that commit the head, so replacing it with
+        `HEAD` passed every test. Real cases name old commits: 3e01d73 and 8125f19, both with
+        descendants."""
+        (self.repo / "later.py").write_text("y = 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "after the case")
+        self.assertNotEqual(git(self.repo, "rev-parse", "HEAD").strip()[:7], self.commit[:7])
+        model, _ = agreed(finding())
+        code, _, err = self.run_catch("--spend", "10", model=model)
+        self.assertEqual(code, 0, err)
+        (record,) = self.records()
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertTrue(numbers["head"].startswith(self.commit), f'{numbers["head"]} is not {self.commit}')
 
 
 class CaughtTest(CatchBase):
