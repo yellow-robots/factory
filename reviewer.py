@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The reviewer: five cold sessions over a delivered tree that say what they found, together.
+"""The reviewer: several dimensions, each several cold sessions over a delivered tree, together.
 
     uv run reviewer.py <checkout> <seed>
 
@@ -10,18 +10,22 @@ are never offered, so a reviewer never becomes a builder and never acquires an i
 less. It builds no container and runs nothing of the project's.
 
 Each pass is given the seed's `## Goal`, read the way the builder reads one out of the head's
-commit, and the change under review: the diff from the checkout's head to the commit before it,
-which is the build the head is. `PASSES` is five, fixed and recorded, and no pass sees what another
-found -- the same agent is asked afresh, with no history. What two or more passes reached is the
-report; what one reached alone stays in the record, and the numbers count everything seen. It runs
-as the role `reviewer`, whose model and key the instance's configuration names, exactly as a build
-runs as the role `builder`.
+commit, the change under review -- the diff from the checkout's head to the commit before it, which
+is the build the head is -- and, last, one of `DIMENSIONS`: the fixed goals a pass pursues, each
+there because something got past a green check. `PASSES` is the passes each dimension gets, five,
+fixed and recorded, and no pass sees what another found -- the same agent is asked afresh, with no
+history. A finding carries the dimension that found it, and what two or more passes of one dimension
+reached is the report; what one reached alone stays in the record, and the numbers count everything
+seen. It runs as the role `reviewer`, whose model and key the instance's configuration names,
+exactly as a build runs as the role `builder`.
 
 A review is recorded like a build: a directory of its own in the instance's store, named by its
-stamp, holding goal.txt, messages.json, wire.jsonl.gz, review.json and numbers.json, with the
-record's path the first line printed. The review carries the findings with the count of passes
-behind each, how many passes ran, and `agreement`, the share of everything seen that more than one
-pass reached -- never a claim that a contract is met. The numbers name the role, its model, the
+stamp, holding goal.txt, messages.json, wire.jsonl.gz, review.json, review.md and numbers.json,
+with the record's path the first line printed. review.md is the note the review template's shape
+gives, for the attended agent to reproduce and judge -- written into the record, never the vault.
+The review carries each finding's dimension and the count of passes of that dimension behind it,
+how many passes ran, and `agreement`, the share of everything seen that more than one pass reached
+-- never a claim that a contract is met. The numbers name the role, its model, the
 head it reviewed and the seed it was given. The record is searched for every key the configuration
 names before the store takes it, as a build's is, and a record the store would not take is not
 committed.
@@ -81,16 +85,31 @@ class ReviewReport(BaseModel):
     findings: list[Finding] = Field(description="What the review found, one finding each.")
 
 
-# Five passes, fixed: `PASSES` is the run's depth and is recorded in its numbers, so two reviews
-# are comparable. One reading finds a minority of what is there and five agree on very little,
-# which is the point -- what several reached is what the report is made of.
+# Five passes, fixed: `PASSES` is the passes each dimension gets and is recorded in its numbers, so
+# two reviews are comparable. One reading finds a minority of what is there and five agree on very
+# little, which is the point -- what several reached is what the report is made of.
 PASSES = 5
+
+# The fixed goals a pass pursues, one per pass, each phrased as a goal rather than a question and
+# each there because something got past a green check: a change that met its tests without meeting
+# the Goal, a clause of the Goal no test would catch being broken, work the program already does,
+# and documentation left describing what is gone. A dimension that catches nothing over the cases
+# is dropped, which the catch-rate harness is for. The order is the order they are run in and does
+# not matter to what is found; what matters is that each gets `PASSES` passes of its own.
+DIMENSIONS = (
+    "Find every place the change satisfies its tests without meeting the goal.",
+    "Find every claim the goal makes that no test would catch being broken.",
+    "Find work the program already does.",
+    "Find what now describes something that is gone.",
+)
 
 
 class ReportedFinding(Finding):
-    """A finding more than one pass reached: where it is, what is wrong, and how many reached it."""
+    """A finding more than one pass of one dimension reached: where it is, what is wrong, which
+    dimension pursued it and how many of that dimension's passes reached it."""
 
-    passes: int = Field(description="How many passes reached it, by the path and the line.")
+    dimension: str = Field(description="The dimension the passes that found it were pursuing.")
+    passes: int = Field(description="How many passes of that dimension reached it, by path and line.")
 
 
 class Review(BaseModel):
@@ -98,7 +117,9 @@ class Review(BaseModel):
     correct: no number of passes can warrant that, so nothing here says a contract is met."""
 
     passes: int = Field(description="How many passes ran.")
-    matched_by: str = Field(description="What makes two findings one: the path and the line.")
+    matched_by: str = Field(
+        description="What makes two findings one: the dimension, the path and the line."
+    )
     seen: int = Field(description="Every finding the passes saw, reported or not.")
     agreement: float = Field(
         description="The share of everything seen that more than one pass reached."
@@ -108,35 +129,60 @@ class Review(BaseModel):
     )
 
 
-def combine(reports: list[ReviewReport]) -> Review:
-    """The passes made into one answer. Two findings are one when they name the same path and the
-    same line -- never their prose, because that would need a second model's judgement -- so the
-    measure is crude and the record says so. What two or more passes reached is reported with its
-    count; what one pass reached alone stays out of the report but is still counted in `seen` and
-    in the agreement between all of them."""
-    counts: dict[tuple[str, int], int] = {}
-    first: dict[tuple[str, int], Finding] = {}
-    order: list[tuple[str, int]] = []
-    for report in reports:
-        named = {(finding.path, finding.line) for finding in report.findings}
+def combine(reports: list[tuple[str, ReviewReport]]) -> Review:
+    """The passes made into one answer, each report with the dimension its pass pursued. Two findings
+    are one when they name the same dimension and the same path and line -- never their prose,
+    because that would need a second model's judgement -- so the measure is crude and the record
+    says so. Agreement is counted inside a dimension: two passes asked different questions that
+    land on one line found two things, and collapsing them would report agreement that was never
+    had. What two or more passes of one dimension reached is reported with its count; what one pass
+    reached alone stays out of the report but is still counted in `seen` and in the agreement."""
+    counts: dict[tuple[str, str, int], int] = {}
+    first: dict[tuple[str, str, int], Finding] = {}
+    order: list[tuple[str, str, int]] = []
+    for dimension, report in reports:
+        named = {(dimension, finding.path, finding.line) for finding in report.findings}
         for finding in report.findings:
-            key = (finding.path, finding.line)
+            key = (dimension, finding.path, finding.line)
             if key not in first:  # the earliest pass's words stand for the finding
                 first[key] = finding
                 order.append(key)
         for key in named:
             counts[key] = counts.get(key, 0) + 1
     seen = [
-        ReportedFinding(severity=first[key].severity, path=key[0], line=key[1],
-                        what=first[key].what, passes=counts[key])  # fmt: skip
+        ReportedFinding(severity=first[key].severity, path=key[1], line=key[2],
+                        what=first[key].what, dimension=key[0], passes=counts[key])  # fmt: skip
         for key in order
     ]
     reported = [finding for finding in seen if finding.passes > 1]
     agreement = len(reported) / len(seen) if seen else 0.0
     return Review(
-        passes=len(reports), matched_by="path and line", seen=len(seen), agreement=agreement,
-        findings=reported,
+        passes=len(reports), matched_by="dimension, path and line", seen=len(seen),
+        agreement=agreement, findings=reported,
     )
+
+
+def render_note(review: Review) -> str:
+    """The review as the note `docs/templates/review.md` gives: a heading per finding with its
+    severity and its dimension, ready for the attended agent to move into `docs/reviews/` once they
+    have reproduced it. It is written into the record and never the vault, and it fills neither
+    `verified` nor `judged` in: those mean the attended agent reproduced the finding and decided
+    what it became, and a role that could fill them would be marking its own homework."""
+    lines = ["## Findings", ""]
+    for finding in review.findings:
+        title = " ".join(finding.what.split()) or f"{finding.path}:{finding.line}"
+        lines += [
+            f"### {title}",
+            "",
+            f"severity: {finding.severity}",
+            f"dimension: {finding.dimension}",
+            "",
+            finding.what,
+            "",
+            f"{finding.path}:{finding.line}",
+            "",
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def usage_error(reason: str = "") -> int:
@@ -347,42 +393,58 @@ def main(argv: list[str], model: Any = None) -> int:
     run_model = None if model is None else WireModel(model, wire)
     agent = build_agent(tools, key=key, http_client=wire.client, model=run_model, model_name=role.model,
                         base_url=role.base_url)  # fmt: skip
-    prompt = f"{goal_text}\n\nThe change under review:\n\n{diff}"
+    # The shared material first and the dimension last, so every session of the review -- every
+    # pass of every dimension -- shares one cached prefix. The dimension is what differs, so it is
+    # the tail; getting the order backwards costs real money silently and nothing catches it.
+    shared = f"{goal_text}\n\nThe change under review:\n\n{diff}"
+    # The review stops starting passes once it has spent what its passes were worth: every
+    # dimension's `PASSES` at the soft ceiling, derived from the product rather than from `PASSES`
+    # alone, or it shrinks by a quarter the moment a fourth dimension is added. A pass may run to
+    # `HARD_SPEND`, above the ceiling the total is counted in, so a review of runaway passes ends
+    # early and one of ordinary passes never reaches it. What it must not do is kill a pass already
+    # running: it decides whether to start the next one, and the passes that already answered are
+    # what the review has.
+    ceiling = len(DIMENSIONS) * PASSES * builder.SOFT_SPEND
     t0 = time.time()
-    # Five cold sessions over the same checkout, goal and diff. No pass sees another's messages:
-    # the same agent is asked afresh, with no history, so nothing one pass found reaches the next.
-    reports: list[ReviewReport] = []
+    # Every dimension gets `PASSES` cold sessions over the same checkout, goal and diff. No pass
+    # sees another's messages: the same agent is asked afresh, with no history, so nothing one pass
+    # found reaches the next, and agreement counted inside a dimension is agreement really had.
+    reports: list[tuple[str, ReviewReport]] = []
     messages: list[Any] = []
     stopped, detail = "answer", ""
-    for _ in range(PASSES):
-        tools.calls = 0  # a cold session reads on its own count, not the passes' before it
-        usage = builder.RunUsage()
-        inflight.append(usage)  # the one in flight: `pass_spent` sees it while it runs
-        report, answered, _, stopped, detail = builder.run(agent, prompt, usage=usage)
-        inflight.pop()
-        usages.append(usage)
-        messages.extend(answered)
-        if report is not None:
-            reports.append(report)
-        if stopped != "answer":  # a pass that did not answer ends the review
+    stop = False
+    for dimension in DIMENSIONS:
+        if stop:
             break
-        # The review stops starting passes once it has spent what its passes were worth: `PASSES`
-        # at the soft ceiling, derived so it scales with `PASSES` rather than being guessed again.
-        # A pass may run to `HARD_SPEND`, above the ceiling the total is counted in, so a review of
-        # runaway passes ends early and one of ordinary passes never reaches it. What it must not
-        # do is kill a pass already running: it decides whether to start the next one, and the
-        # passes that already answered are what the review has.
-        if review_spent() >= PASSES * builder.SOFT_SPEND:
-            break
+        for _ in range(PASSES):
+            tools.calls = 0  # a cold session reads on its own count, not the passes' before it
+            usage = builder.RunUsage()
+            inflight.append(usage)  # the one in flight: `pass_spent` sees it while it runs
+            prompt = f"{shared}\n\n{dimension}"
+            report, answered, _, stopped, detail = builder.run(agent, prompt, usage=usage)
+            inflight.pop()
+            usages.append(usage)
+            messages.extend(answered)
+            if report is not None:
+                reports.append((dimension, report))
+            # A pass that did not answer ends the review, and so does one that leaves it having
+            # spent what its passes were worth; both decide whether to start the next pass.
+            if stopped != "answer" or review_spent() >= ceiling:
+                stop = True
+                break
     seconds = round(time.time() - t0, 1)
 
     review = combine(reports)
     (run_dir / "messages.json").write_bytes(builder.ModelMessagesTypeAdapter.dump_json(messages, indent=1))
     # The passes that answered are the review, however the run ended: a review capped after some
     # passes answered still writes what they found, as a capped build's tree is still its work.
-    # A review no pass answered has nothing to say and writes no report.
+    # A review no pass answered has nothing to say and writes no report. The note beside the report
+    # is the shape the template gives, for the attended agent to reproduce and judge -- the
+    # reviewer fills none of `verified` or `judged` in, because a role that could would be marking
+    # its own homework.
     if reports:
         (run_dir / "review.json").write_text(review.model_dump_json(indent=1) + "\n")
+        (run_dir / "review.md").write_text(render_note(review))
     priced = bool(usages) and all(u.cost is not None for u in usages)  # no deepseek-flash row; ours is the source
     cost_usd = round(sum(float(u.cost) if priced else builder.price(u) for u in usages), 5)
     numbers = {
@@ -396,6 +458,7 @@ def main(argv: list[str], model: Any = None) -> int:
         "seed": seed,
         "stopped": stopped,
         "cap": builder.which_cap(stopped, detail),
+        "dimensions": len(DIMENSIONS),
         "passes": PASSES,
         "passes_ran": len(reports),
         "requests": sum(u.requests for u in usages),
