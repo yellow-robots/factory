@@ -369,12 +369,24 @@ def main(argv: list[str], model: Any = None) -> int:
     usages: list[Any] = []  # every pass's usage, in order
     inflight: list[Any] = []  # the pass in flight, so `pass_spent` sees it while it runs
 
+    def one_price(u: Any) -> float:
+        """The one function's price for this role's model: the library's row when it has one, the
+        table when the model is ours, and the table's arithmetic for a model neither can price, so a
+        pass still lands rather than crashing. A caller that replaced `builder.price` with a
+        usage-only stand-in is called with the usage alone, which is what its signature takes."""
+        try:
+            return builder.price(u, role.model)
+        except builder.UnknownPrice:
+            return builder.table_price(u)
+        except TypeError:
+            return builder.price(u)
+
     def cost(seen: list[Any]) -> float:
         """What those usages cost, in the record's own arithmetic: the library's price where it
-        names one, the table where it does not."""
+        names one, the one function's answer for the role's own model otherwise."""
         if seen and all(u.cost is not None for u in seen):
             return sum(float(u.cost) for u in seen)
-        return sum(builder.price(u) for u in seen)
+        return sum(one_price(u) for u in seen)
 
     def pass_spent() -> float:
         """What the pass in flight has spent: the ceiling is a pass's own, against the same two
@@ -445,8 +457,9 @@ def main(argv: list[str], model: Any = None) -> int:
     if reports:
         (run_dir / "review.json").write_text(review.model_dump_json(indent=1) + "\n")
         (run_dir / "review.md").write_text(render_note(review))
-    priced = bool(usages) and all(u.cost is not None for u in usages)  # no deepseek-flash row; ours is the source
-    cost_usd = round(sum(float(u.cost) if priced else builder.price(u) for u in usages), 5)
+    priced = bool(usages) and all(u.cost is not None for u in usages)
+    cost_usd = round(sum(float(u.cost) if priced else one_price(u) for u in usages), 5)
+    cost_source = "table" if role.model == builder.MODEL else "genai-prices"
     numbers = {
         "role_name": "reviewer",
         "role": builder.sha256(ROLE),
@@ -471,7 +484,7 @@ def main(argv: list[str], model: Any = None) -> int:
         "cache_read_tokens": sum(u.cache_read_tokens for u in usages),
         "reasoning_tokens": sum(u.details.get("reasoning_tokens", 0) for u in usages),
         "cost_usd": cost_usd,
-        "cost_source": "genai-prices" if priced else "table",
+        "cost_source": cost_source,
         "spend_cap": builder.SOFT_SPEND,
         "hard_spend_cap": builder.HARD_SPEND,
         "lists": len(tools.listed),

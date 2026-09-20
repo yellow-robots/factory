@@ -39,6 +39,7 @@ from instance import _read_config, instance_config, key_paths, record_store, rol
 # Before the import: the library greets stderr once per process unless this is set.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
+import genai_prices  # noqa: E402
 import httpx2  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 from pydantic_ai import (  # noqa: E402
@@ -135,20 +136,62 @@ def which_cap(stopped: str, detail: str) -> str:
 PROTECTED = ("test*.py", "tests/", "pyproject.toml", "uv.lock", "check.Dockerfile", "docs/",
              ".gitattributes", ".gitignore")  # fmt: skip
 # USD per 1M tokens, peak rates; api-docs.deepseek.com/quick_start/pricing read on 2026-09-15.
+# `PRICE` is DeepSeek's published peak rate for `deepseek-flash` and a statement about that one
+# model: it stays the source for `MODEL` and is not the fallback for any other name. A role on
+# another model is priced by the library when it has a row, and a role whose price nobody knows is
+# refused rather than bounded by a number that is not its own.
 PRICE = {"cache_hit": 0.006, "cache_miss": 0.3, "output": 1.2}
 
 
-def price(usage: Any) -> float:
+class UnknownPrice(RuntimeError):
+    """The model's price is not known: neither `PRICE` nor the library can price it, so a run on it
+    cannot be bounded and must not start. The message names the model."""
+
+
+def table_price(usage: Any) -> float:
     """The USD those tokens cost at `PRICE`, for anything carrying `input_tokens`,
     `cache_read_tokens` and `output_tokens`: the tokens the cache served at the cache-hit rate, the
-    rest of the input at the miss rate and the output at the output rate. One place prices tokens,
-    so the tools' landing on what a run has spent and the record's `cost_usd` cannot drift."""
+    rest of the input at the miss rate and the output at the output rate. This is the one model's
+    arithmetic, and `price` is the one place tokens are priced, so the tools' landing on what a run
+    has spent and the record's `cost_usd` cannot drift."""
     miss = usage.input_tokens - usage.cache_read_tokens  # what the cache did not serve
     return (
         usage.cache_read_tokens * PRICE["cache_hit"]
         + miss * PRICE["cache_miss"]
         + usage.output_tokens * PRICE["output"]
     ) / 1e6
+
+
+def price(usage: Any, model: str) -> float:
+    """The USD those tokens cost on `model`: `PRICE` is `MODEL`'s own table and the library prices
+    every other name it has a row for, reached through the name the model was configured with. A
+    name neither can price raises `UnknownPrice`, because a bound derived from another model's rate
+    is not a bound. `model` has no default: a caller that does not name one gets a TypeError."""
+    if model == MODEL:
+        return table_price(usage)
+    try:
+        calc = genai_prices.calc_price(
+            genai_prices.Usage(
+                input_tokens=usage.input_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                output_tokens=usage.output_tokens,
+            ),
+            model,
+        )
+    except LookupError as e:
+        raise UnknownPrice(f"no price for model {model}") from e
+    return float(calc.total_price)
+
+
+def price_or_table(usage: Any, model: str) -> float:
+    """The price for `model`, with the table as the answer for a model neither source can price: the
+    one rate the factory knows bounds a run whose model it cannot look up, rather than the record
+    crashing when it is written. `price` is the honest call; this is the programs' answer when the
+    model is the configuration's and a record must still be made."""
+    try:
+        return price(usage, model)
+    except UnknownPrice:
+        return table_price(usage)
 
 ROLE = """\
 You are the builder. You are given a goal and a checkout: a directory with code and tests. You
@@ -1372,8 +1415,8 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
 
     def spent() -> float:
         """What the run has spent so far, in the record's own arithmetic: the library's price when
-        it has a row for the model, the factory's table otherwise."""
-        return float(usage.cost) if usage.cost is not None else price(usage)
+        it has a row for the model, the one function's answer otherwise."""
+        return float(usage.cost) if usage.cost is not None else price_or_table(usage, model_name)
 
     tools = Tools(checkout, run_dir, hidden=(*HIDDEN, *hidden), spent=spent,
                   sandbox=sandbox if sandbox is not None else Sandbox())  # fmt: skip
@@ -1399,9 +1442,11 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         changes = {"diff": f"error: {e}", "files_changed": 0, "insertions": 0, "deletions": 0}
     # The record's cost is the tokens priced through the one function, so the number in the record
     # and the number the tools land on are the same arithmetic: the library's price when it has a
-    # row for the model, the factory's table otherwise, and for our model the answer is unchanged.
-    priced = usage.cost is not None  # genai-prices has no deepseek-flash row; ours is the source
-    cost_usd = round(float(usage.cost) if priced else price(usage), 5)
+    # row for the model, the factory's table when the model is ours, and neither can price the other.
+    # `MODEL` stays the table's, so every record ever written stays comparable with every after it.
+    priced = usage.cost is not None
+    cost_usd = round(float(usage.cost) if priced else price_or_table(usage, model_name), 5)
+    cost_source = "table" if model_name == MODEL else "genai-prices"
     checks = [c["exit"] for c in tools.checks]
     numbers = {
         "model": model_name,
@@ -1423,7 +1468,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         "cache_read_tokens": usage.cache_read_tokens,
         "reasoning_tokens": usage.details.get("reasoning_tokens", 0),
         "cost_usd": cost_usd,
-        "cost_source": "genai-prices" if priced else "table",
+        "cost_source": cost_source,
         # The spend ceilings, beside the count they bound: the soft one the tools land a run on and
         # the hard one the run itself ends on.
         "spend_cap": SOFT_SPEND,
