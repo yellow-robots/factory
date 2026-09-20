@@ -1,11 +1,11 @@
 ---
 created: 2026-09-16
 type: seed
-status: open
+status: building
 summary: A second role, read only, that answers whether a build's code does what its tests claim and what else it changed, with findings it has reproduced and a verdict, recorded like any other run.
 value: 5
 effort: M
-version:
+version: v0.18
 ---
 
 ## Evidence
@@ -79,3 +79,21 @@ It does not become a comment in the code, and the reasoning should be stated bec
 **D. The catch rate, which is the shipping gate.** `cases/` holds changes with known seeded defects and held-out tests that know the answer. The harness runs the reviewer over them and counts what it caught, and that number is what this role is. It also settles by measurement what the Idea above settles by argument: whether a dimension phrased as a goal beats one phrased as a question, whether more passes beat fewer, and whether the stronger model is the better reviewer. A dimension that catches nothing is dropped.
 
 `quality-checks` is not underneath this and does not block it. The deterministic layer is an input this role reads when a project declares one and does without when it does not, which is the same thing it does for a project that declares no linter at all.
+
+## Goal
+
+This is goal **A** of the four in *How it is built* above. B, C and D follow as their own goals once A exists, and this section is amended to each in turn; nothing here asks for passes, dimensions or a catch rate.
+
+A second program of the factory's, `reviewer.py`, that reads a delivered tree and says what it found.
+
+`uv run reviewer.py <checkout> <seed>` runs one cold model session over the checkout. What it is given is the seed's `## Goal`, read the way the builder reads one, and the change under review: the diff from the checkout's head to the commit before it, which is the build the head is. It runs as the role `reviewer`, so the model and the key are the instance's configuration's and not the program's, exactly as `builder` already is.
+
+**It cannot do anything but read.** The model is offered `list`, `read` and `search` -- the builder's three, with their walls, their caps and their shapes unchanged -- and the tool its report comes back through, and nothing else. `write`, `edit` and `check` are not refused at the wall, they are never offered, because a model told it has a hand it does not have spends calls discovering otherwise. A reviewer that could fix what it finds would become a builder and acquire an interest in finding less. It builds no container and runs nothing of the project's.
+
+**Its report is typed.** `ReviewReport` carries findings, each one a severity the notes already use, the path it points at, the line, and what is wrong. Nothing in it and nothing in `ROLE` asks the model how sure it is: a model's account of its own certainty has been measured to be worse in places than a constant guess, so no field of the report and no word of the role asks for one, and no threshold is ever put on such a number.
+
+**It is recorded like a build.** A directory of its own in the instance's store, named by its stamp: `goal.txt`, `wire.jsonl.gz`, `review.json` and `numbers.json`, the record's path the first line printed. The numbers say which role ran it, which model, the head it reviewed and the seed it was given. A role that cannot be measured cannot be given a responsibility, so the record comes before anything that reads it.
+
+**What it cannot review is a usage error**, refused before a model is called and before a record is made, exit 2 and its own words for each: a directory that is not a checkout git can read, a head with no commit before it to compare against, and a seed the head's commit does not hold. Exit 0 when it reported, 1 on a cap or a provider error.
+
+The store, the key scan and the wire are the builder's and are reused rather than rewritten: a review's record is searched for every key the configuration names before the store takes it, as a build's is, and a record the store would not take is not committed.
