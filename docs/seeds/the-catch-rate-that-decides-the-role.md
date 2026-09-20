@@ -40,6 +40,48 @@ The key must hold only what a read-only pass could reach. Of the six verified fi
 
 And the key is a floor, never a ceiling. It holds what somebody found, so a pass that finds something real and new scores nothing for it. A catch rate measured this way cannot be read as a fraction of the defects that were there, only as a fraction of the defects we know were there.
 
+### The first run, 2026-09-20
+
+Run 20260920T124559Z, case `reviewer-role`, on `deepseek-flash` for comparability with the only
+other review this factory has numbers for. Twenty passes over four dimensions, **$2.5787 and 6,837
+seconds**, agreement 0.36, sixteen findings reported.
+
+**The instrument works end to end.** The right commit, a throwaway worktree, the review run
+unchanged, the record in the store with its goal beginning `case: reviewer-role`, the scoring done
+and a rate printed with its error. That was the thing being proved and it is proved.
+
+**The first number it printed was wrong, in the flattering direction.** It said two of two on both
+counts. One of those is a real catch: `reviewer.py:134`, the role's key sent to the provider the
+role did not name, inside the answer's span and unmistakably the same defect. The other was a
+**span collision**: the answer's span was `[186, 193]` and the reviewer reported a finding at 192
+that is a different defect entirely -- `goal.split("\n", 1)[1]` chopping the seed's name off the
+goal, which is [[the-goal-a-review-does-not-record]] and was in nobody's key. Nothing in the run
+reported the seed-path defect the answer was written for. **The honest score is one of two.** The
+span is now `[186, 191]`, which is the seed-reading block and not the statement after it.
+
+The scoring code did exactly what it was told. The answer key was too loose, and a key written by
+hand against line numbers will go on being too loose unless each span is checked against what else
+lives in it. That is a cost of crude-and-visible and it is payable; what is not payable is a number
+that reads two when it is one.
+
+**The path-only count says nothing on a single-file case.** This commit created `reviewer.py`, so
+the whole diff is that file, and every reported finding matches every answer on the path alone. The
+second count earns its place only where a case spans several files, which is worth saying before
+anyone reads a path rate of 1.000 as a result.
+
+**The allowance does not bound what a run can spend.** The projection is
+`dimensions x passes x SOFT_SPEND`, $2.50 here, and it is checked against `--spend`. But a pass may
+run to `HARD_SPEND`, so the real ceiling is `dimensions x passes x HARD_SPEND`, **$5.00**, and this
+run was allowed $3.00. It came in at $2.5787 -- $0.1289 a pass against the $0.1155 measured before,
+and 342 seconds a pass against 244 -- so nothing was overspent. It could have been, and the Goal's
+sentence is that a run costing more than it was allowed does not start.
+
+**Wall clock is the thing to plan around, not cost.** One case at four dimensions is under three
+dollars and just under two hours. The twelve-case set is not principally an $83 decision, it is a
+several-day one, and a model served at a lower rate spends its ceiling on more tokens and therefore
+more minutes: correcting GLM's price this morning made a GLM pass roughly 3.6 times longer for the
+same dollar.
+
 ## Goal
 
 The harness runs the reviewer over cases whose answers are already known, and counts what it caught.
@@ -53,6 +95,8 @@ The harness runs the reviewer over cases whose answers are already known, and co
 **What it prints is a rate and its error.** One row per case: how many of the known findings were caught on each count, how many passes ran, what it cost and how long it took. Then the set: the rate on each count with its standard error under a uniform prior, as `evals.py` already gives the builder's. A single number with no error is the thing that makes a four look like a nine.
 
 **It says what it will cost before it spends anything.** A review's cost is chosen and not emergent -- `dimensions x passes x SOFT_SPEND` for each case -- so the harness can say what the whole run comes to before the first pass starts, and does. A run that would cost more than it was told it may spend does not start: refused before a model is called and before a record is made, naming what it would have cost and what it was allowed. The full set is a decision somebody takes on purpose, not one they discover afterwards.
+
+**What it may spend bounds what it can spend.** A pass may run to `HARD_SPEND`, above the ceiling the projection is counted in, so the allowance is checked against what the run could cost and not against what it is expected to cost. Both numbers are said, because the difference between them is the difference between a plan and a promise.
 
 Exit 1 when a review was capped or errored, because a capped review is not a measurement; 2 for a usage error.
 

@@ -23,5 +23,5 @@ why = "build_agent takes no base_url and hardwires DeepSeekProvider at 134, so a
 review = "20260920T000130Z"
 title = "A seed path with the `.md` forgotten is not refused; it becomes the goal"
 path = "reviewer.py"
-lines = [186, 193]
+lines = [186, 191]
 why = "read_seed reads docs/seeds/<name>.md as a seed and anything else as goal text, which is right for the builder and wrong here: reviewer.py prints `usage: reviewer.py <checkout> <seed>` and records a seed field. The argument becomes a one-line pseudo-goal and a full priced review is spent on it."
