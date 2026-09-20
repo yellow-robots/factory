@@ -435,12 +435,15 @@ def main(argv: list[str], root: Any = None, model: Any = None) -> int:
         except (ValueError, OSError) as e:
             return usage_error(str(e))
         return _score(store, cases)
-    # A review is `dimensions x passes x SOFT_SPEND` expected and `dimensions x passes x HARD_SPEND`
-    # at most, every factor known before the first pass, so what the whole run is expected to cost
-    # and what it could cost are both arithmetic and are both said before anything is spent.
+    # A review is `dimensions x passes x SOFT_SPEND` expected, every factor known before the first
+    # pass, so what the whole run is expected to cost is arithmetic and is said before anything is
+    # spent. What one review *can* reach is its own stopping rule and not its passes at their worst:
+    # it stops *starting* passes once it has spent `dimensions x passes x SOFT_SPEND`, so the most
+    # it can reach is that plus the pass already running, which may go to `HARD_SPEND`. The set's
+    # ceiling counts that pass once per case, not every pass at its worst.
     passes = len(cases) * len(reviewer.DIMENSIONS) * reviewer.PASSES
     projected = passes * builder.SOFT_SPEND
-    ceiling = passes * builder.HARD_SPEND
+    ceiling = projected + len(cases) * builder.HARD_SPEND
     print(f"projected spend {projected:.2f} USD for {len(cases)} cases, allowed {spend:.2f} USD")
     print(f"a pass may run to {builder.HARD_SPEND:.2f} USD, so the run could cost {ceiling:.2f} USD")
     # The allowance bounds what the run could spend and not what it is expected to: a pass that
