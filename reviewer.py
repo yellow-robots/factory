@@ -134,7 +134,7 @@ def combine(reports: list[ReviewReport]) -> Review:
     reported = [finding for finding in seen if finding.passes > 1]
     agreement = len(reported) / len(seen) if seen else 0.0
     return Review(
-        passes=PASSES, matched_by="path and line", seen=len(seen), agreement=agreement,
+        passes=len(reports), matched_by="path and line", seen=len(seen), agreement=agreement,
         findings=reported,
     )
 
@@ -321,17 +321,27 @@ def main(argv: list[str], model: Any = None) -> int:
     # Each pass counts into its own usage, so the library's caps are the pass's own and a second
     # pass is not cut off by the first; every pass's usage is kept, so the record prices them all.
     usages: list[Any] = []  # every pass's usage, in order
-    inflight: list[Any] = []  # the pass in flight, so `spent` sees it while it runs
+    inflight: list[Any] = []  # the pass in flight, so `pass_spent` sees it while it runs
 
-    def spent() -> float:
-        """What the review has spent so far, in the record's own arithmetic: the passes that ended
-        and the one in flight."""
-        seen = [*usages, *inflight]
+    def cost(seen: list[Any]) -> float:
+        """What those usages cost, in the record's own arithmetic: the library's price where it
+        names one, the table where it does not."""
         if seen and all(u.cost is not None for u in seen):
             return sum(float(u.cost) for u in seen)
         return sum(builder.price(u) for u in seen)
 
-    tools = builder.Tools(checkout, run_dir, spent=spent)
+    def pass_spent() -> float:
+        """What the pass in flight has spent: the ceiling is a pass's own, against the same two
+        ceilings a build gets, so a review of five passes is not landed on the third pass's first
+        tool call because the first two already spent a review's worth."""
+        return cost(inflight)
+
+    def review_spent() -> float:
+        """What every pass of the review has spent, the one in flight included: the total the
+        review's own ceiling is counted in."""
+        return cost([*usages, *inflight])
+
+    tools = builder.Tools(checkout, run_dir, spent=pass_spent)
     # A scripted model does not go over HTTP, so it is wrapped to record on the wire what it was
     # offered; a real model's own requests are recorded by the wire's HTTP hooks.
     run_model = None if model is None else WireModel(model, wire)
@@ -347,7 +357,7 @@ def main(argv: list[str], model: Any = None) -> int:
     for _ in range(PASSES):
         tools.calls = 0  # a cold session reads on its own count, not the passes' before it
         usage = builder.RunUsage()
-        inflight.append(usage)  # the one in flight: `spent` sees it while it runs
+        inflight.append(usage)  # the one in flight: `pass_spent` sees it while it runs
         report, answered, _, stopped, detail = builder.run(agent, prompt, usage=usage)
         inflight.pop()
         usages.append(usage)
@@ -356,11 +366,22 @@ def main(argv: list[str], model: Any = None) -> int:
             reports.append(report)
         if stopped != "answer":  # a pass that did not answer ends the review
             break
+        # The review stops starting passes once it has spent what its passes were worth: `PASSES`
+        # at the soft ceiling, derived so it scales with `PASSES` rather than being guessed again.
+        # A pass may run to `HARD_SPEND`, above the ceiling the total is counted in, so a review of
+        # runaway passes ends early and one of ordinary passes never reaches it. What it must not
+        # do is kill a pass already running: it decides whether to start the next one, and the
+        # passes that already answered are what the review has.
+        if review_spent() >= PASSES * builder.SOFT_SPEND:
+            break
     seconds = round(time.time() - t0, 1)
 
     review = combine(reports)
     (run_dir / "messages.json").write_bytes(builder.ModelMessagesTypeAdapter.dump_json(messages, indent=1))
-    if stopped == "answer":
+    # The passes that answered are the review, however the run ended: a review capped after some
+    # passes answered still writes what they found, as a capped build's tree is still its work.
+    # A review no pass answered has nothing to say and writes no report.
+    if reports:
         (run_dir / "review.json").write_text(review.model_dump_json(indent=1) + "\n")
     priced = bool(usages) and all(u.cost is not None for u in usages)  # no deepseek-flash row; ours is the source
     cost_usd = round(sum(float(u.cost) if priced else builder.price(u) for u in usages), 5)
@@ -376,6 +397,7 @@ def main(argv: list[str], model: Any = None) -> int:
         "stopped": stopped,
         "cap": builder.which_cap(stopped, detail),
         "passes": PASSES,
+        "passes_ran": len(reports),
         "requests": sum(u.requests for u in usages),
         "requests_cap": builder.limits().request_limit,
         "wire_attempts": wire.attempts,
