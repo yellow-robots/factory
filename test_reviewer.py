@@ -332,5 +332,114 @@ class RoleServedElsewhereTest(ReviewerBase):
         self.assertEqual(seen.get("model_name"), "glm-5.3-flash")
 
 
+
+class WhatTheSuiteDidNotHoldTest(ReviewerBase):
+    """seed: reviewer-role. From the review of run 20260920T000130Z: the load-bearing claims of the
+    Goal were true of the code and held by nothing. Each test here kills a one-line mutant that
+    passed the whole suite."""
+
+    def test_the_record_reaches_the_store_and_not_only_the_disk(self):
+        """The record is committed to the store's git, which is where the key scan happens. Replacing
+        `commit_record` with `pass` left every test green: they assert the record's files exist in a
+        directory, and a directory is not a commit. A reviewer that writes the diff under review and
+        the model's own words somewhere and never scans or commits them is the thing this forbids."""
+        model, _ = five()
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        log = subprocess.run(["git", "-C", str(self.runs), "log", "--format=%s"],
+                             capture_output=True, encoding="utf-8", env=reviewer.builder.store_env())  # fmt: skip
+        self.assertIn(record.name, log.stdout, "the store's git holds the record")
+        files = subprocess.run(["git", "-C", str(self.runs), "show", "--name-only", "--format=", "HEAD"],
+                               capture_output=True, encoding="utf-8", env=reviewer.builder.store_env())  # fmt: skip
+        self.assertIn(f"{record.name}/numbers.json", files.stdout)
+
+    def test_the_record_is_searched_for_every_key_the_configuration_names(self):
+        """Not only the key this run was given. `commit_record(store, run_dir, key=key)` -- one
+        keyword -- narrows the scan to the reviewer's own key and passes the whole suite, which is
+        the exact regression keys-of-the-instance exists to prevent. Here the value planted in the
+        change under review belongs to the *builder's* key, which this run never reads."""
+        other = self.base / "builder.key"
+        other.write_text("key=a-different-secret\n")
+        self.instance.write_text(
+            f'records = "{self.runs}"\nwork = "{self.base / "work"}"\n'
+            f'\n[roles.reviewer]\nmodel = "a-reviewers-model"\nkey = "{self.key}"\n'
+            f'\n[roles.builder]\nmodel = "deepseek-flash"\nkey = "{other}"\n'
+        )
+        (self.checkout / "f.py").write_text("x = 2\nTOKEN = 'a-different-secret'\n")
+        git(self.checkout, "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+        git(self.checkout, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--amend", "--no-edit")
+        model, _ = five()
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 1, "the store would not take a record holding any configured key")
+        self.assertNotIn("a-different-secret", err, "the reason never carries the value")
+        log = subprocess.run(["git", "-C", str(self.runs), "log", "--format=%s"],
+                             capture_output=True, encoding="utf-8", env=reviewer.builder.store_env())  # fmt: skip
+        self.assertNotIn(record.name, log.stdout, "and the store holds no commit for it")
+
+    def test_the_role_does_not_tell_the_model_it_can_change_anything(self):
+        """The Goal's reason for never offering the three is that a model told it has a hand it does
+        not have spends calls discovering otherwise. `ROLE = builder.ROLE` -- which says "change it
+        with `write` and `edit`, and test it with `check`" -- passed all 262 tests, because the only
+        test that read ROLE scanned it for four words about confidence."""
+        role = reviewer.ROLE
+        self.assertNotEqual(role, reviewer.builder.ROLE)
+        for tool in ("`write`", "`edit`", "`check`"):
+            self.assertNotIn(tool, role, tool)
+        for tool in ("`list`", "`read`", "`search`"):
+            self.assertIn(tool, role, tool)
+
+    def test_the_tools_are_rooted_at_the_checkout_and_nowhere_else(self):
+        """No test ever called list, read or search through the reviewer, so rooting them at /etc
+        passed the whole suite. The walls are the builder's and are tested there; what was untested
+        is that this program hands them the right root."""
+        reads = iter([("read", {"path": "f.py"}), ("read", {"path": "../outside.txt"}),
+                      ("list", {"path": "."})])  # fmt: skip
+        (self.base / "outside.txt").write_text("not the checkout\n")
+        returns: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for m in messages:
+                for part in getattr(m, "parts", []):
+                    if type(part).__name__ == "ToolReturnPart":
+                        returns.append(str(part.content))
+            play = next(reads, None)
+            if play is None:
+                return ModelResponse(parts=[ToolCallPart("final_result", {"findings": []}, tool_call_id="z")])
+            return ModelResponse(parts=[ToolCallPart(play[0], play[1], tool_call_id=f"c{len(returns)}")])
+
+        code, lines, err, record = self.review(FunctionModel(model))
+        self.assertEqual(code, 0, err)
+        self.assertTrue(any("x = 2" in r for r in returns), "the checkout's own file is readable")
+        self.assertTrue(any("outside the checkout" in r for r in returns), "and nothing above it is")
+        self.assertFalse(any("not the checkout" in r for r in returns), "the file above it never arrives")
+
+    def test_the_change_is_shown_in_the_direction_it_was_made(self):
+        """Swapping the two ends of the diff shows the model the change backwards and passed the
+        suite, because the old assertion looked for `x = 2` and a reversed diff still contains it as
+        a removal. What the build added must arrive as an addition."""
+        model, told = five()
+        code, lines, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        asked = told[0]
+        self.assertIn("+x = 2", asked, "what the build added arrives as an addition")
+        self.assertNotIn("-x = 2", asked, "and not as a removal")
+        self.assertIn("-x = 1", asked, "what it replaced arrives as a removal")
+
+    def test_a_run_that_did_not_report_says_so_in_its_exit(self):
+        """`return 0 if stopped == "answer" else 1` could be `return 0` and no test noticed: nothing
+        ever reached a cap. A review that did not report is not a review, whatever it left behind,
+        and the record still holds what happened."""
+        def forever(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            n = sum(1 for m in messages if isinstance(m, ModelResponse))
+            return ModelResponse(parts=[ToolCallPart("read", {"path": "f.py"}, tool_call_id=f"c{n}")])
+
+        with mock.patch.object(reviewer.builder, "CALLS_CEILING", 2):
+            code, lines, err, record = self.review(FunctionModel(forever))
+        self.assertEqual(code, 1)
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(numbers["stopped"], "cap")
+        self.assertFalse((record / "review.json").is_file(), "a run that did not report has no report")
+
+
 if __name__ == "__main__":
     unittest.main()
