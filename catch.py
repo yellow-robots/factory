@@ -22,10 +22,11 @@ alone. One row per case gives how many of the known findings were caught on each
 passes ran, what the review cost and how long it took. Then the set's rate on each count with its
 standard error under a uniform prior, as `evals.py` gives the builder's.
 
-A review's cost is chosen and not emergent -- `dimensions x passes x SOFT_SPEND` for each case --
-so what the whole run comes to is said before the first pass starts, and a run that would cost
-more than it was told it may spend is refused before a model is called and before a record is
-made, naming both numbers. There is no default allowance.
+A review's cost is chosen and not emergent -- `dimensions x passes x SOFT_SPEND` for each case,
+and a pass may run to `HARD_SPEND` above it -- so both what the run is expected to cost and what
+it could cost are said before the first pass starts. A run that could cost more than it was told
+it may spend is refused before a model is called and before a record is made, naming both
+numbers. There is no default allowance.
 
 Exit 0 when every review answered, 1 when a review was capped or errored, 2 on a usage error: a
 case that is missing or not whole, an allowance that is not a non-negative number, no allowance,
@@ -324,12 +325,19 @@ def main(argv: list[str], root: Any = None, model: Any = None) -> int:
     cases, reason = _cases(base, names)
     if cases is None:
         return usage_error(reason)
-    # A review is `dimensions x passes x SOFT_SPEND`, every factor known before the first pass, so
-    # what the whole run comes to is arithmetic and is said before anything is spent.
-    projected = len(cases) * len(reviewer.DIMENSIONS) * reviewer.PASSES * builder.SOFT_SPEND
+    # A review is `dimensions x passes x SOFT_SPEND` expected and `dimensions x passes x HARD_SPEND`
+    # at most, every factor known before the first pass, so what the whole run is expected to cost
+    # and what it could cost are both arithmetic and are both said before anything is spent.
+    passes = len(cases) * len(reviewer.DIMENSIONS) * reviewer.PASSES
+    projected = passes * builder.SOFT_SPEND
+    ceiling = passes * builder.HARD_SPEND
     print(f"projected spend {projected:.2f} USD for {len(cases)} cases, allowed {spend:.2f} USD")
-    if projected > spend:
-        print(f"the run would cost {projected:.2f} USD, more than the {spend:.2f} USD allowed",
+    print(f"a pass may run to {builder.HARD_SPEND:.2f} USD, so the run could cost {ceiling:.2f} USD")
+    # The allowance bounds what the run could spend and not what it is expected to: a pass that
+    # crossed the soft ceiling keeps going to the hard one, so a run allowed its projection but not
+    # its ceiling is refused.
+    if ceiling > spend:
+        print(f"the run could cost {ceiling:.2f} USD, more than the {spend:.2f} USD allowed",
               file=sys.stderr)  # fmt: skip
         return 2
     rows: list[str] = ["\t".join(COLUMNS)]
