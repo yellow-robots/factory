@@ -117,6 +117,11 @@ class ReviewerBase(unittest.TestCase):
             f'\n[roles.reviewer]\nmodel = "a-reviewers-model"\nkey = "{self.key}"\n'
         )
         self.enterContext(mock.patch.dict(os.environ, {"FACTORY_INSTANCE": str(self.instance)}))
+        # A review is one set of passes per dimension. Every test here but DimensionTest's is about
+        # what happens across the passes of one dimension, so it runs with one and a review is
+        # PASSES sessions long; the dimensions themselves are DimensionTest's subject.
+        self.all_dimensions = tuple(reviewer.DIMENSIONS)
+        self.enterContext(mock.patch.object(reviewer, "DIMENSIONS", self.all_dimensions[:1]))
 
     def records(self) -> list[Path]:
         if not self.runs.exists():
@@ -576,11 +581,15 @@ class DimensionTest(ReviewerBase):
     """seed: reviewer-role. Not "review this change" but one pass per named goal, each dimension
     there because something got past a green check."""
 
+    def setUp(self):
+        super().setUp()  # and then the whole set, which is what this class is about
+        self.enterContext(mock.patch.object(reviewer, "DIMENSIONS", self.all_dimensions))
+
     def test_a_review_is_every_dimension_pursued_its_own_passes_over(self):
         """Four dimensions and `PASSES` passes each, none of them told what another found. The count
         is the product: a dimension that shares its passes with the others is three quarters less
         read than the one before it."""
-        self.assertEqual(len(reviewer.DIMENSIONS), 4)
+        self.assertEqual(len(self.all_dimensions), 4)
         model, asked = watching({"findings": [FINDING]})
         code, lines, err, record = self.review(model)
         self.assertEqual(code, 0, err)
