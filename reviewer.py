@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
-"""The reviewer: a cold session that reads a delivered tree and says what it found.
+"""The reviewer: five cold sessions over a delivered tree that say what they found, together.
 
     uv run reviewer.py <checkout> <seed>
 
 The checkout is the delivered tree, reachable only through three tools -- `list`, `read` and
 `search`, the builder's own, with their walls, their caps and their shapes unchanged -- and the
-`final_result` function its report comes back through. It cannot write, edit or check: those tools
+`final_result` function a report comes back through. It cannot write, edit or check: those tools
 are never offered, so a reviewer never becomes a builder and never acquires an interest in finding
 less. It builds no container and runs nothing of the project's.
 
-The session is given the seed's `## Goal`, read the way the builder reads one out of the head's
+Each pass is given the seed's `## Goal`, read the way the builder reads one out of the head's
 commit, and the change under review: the diff from the checkout's head to the commit before it,
-which is the build the head is. It runs as the role `reviewer`, whose model and key the instance's
-configuration names, exactly as a build runs as the role `builder`.
+which is the build the head is. `PASSES` is five, fixed and recorded, and no pass sees what another
+found -- the same agent is asked afresh, with no history. What two or more passes reached is the
+report; what one reached alone stays in the record, and the numbers count everything seen. It runs
+as the role `reviewer`, whose model and key the instance's configuration names, exactly as a build
+runs as the role `builder`.
 
 A review is recorded like a build: a directory of its own in the instance's store, named by its
 stamp, holding goal.txt, messages.json, wire.jsonl.gz, review.json and numbers.json, with the
-record's path the first line printed. The numbers name the role, its model, the head it reviewed
-and the seed it was given. The record is searched for every key the configuration names before the
-store takes it, as a build's is, and a record the store would not take is not committed.
+record's path the first line printed. The review carries the findings with the count of passes
+behind each, how many passes ran, and `agreement`, the share of everything seen that more than one
+pass reached -- never a claim that a contract is met. The numbers name the role, its model, the
+head it reviewed and the seed it was given. The record is searched for every key the configuration
+names before the store takes it, as a build's is, and a record the store would not take is not
+committed.
 
 Exit 0 when the model reported, 1 on a cap or a provider error, 2 on what it cannot review: a
 directory that is not a checkout git can read, a head with no commit before it to compare against,
@@ -70,9 +76,67 @@ class Finding(BaseModel):
 
 
 class ReviewReport(BaseModel):
-    """What the review found: its findings and nothing else."""
+    """What one pass found: its findings and nothing else."""
 
     findings: list[Finding] = Field(description="What the review found, one finding each.")
+
+
+# Five passes, fixed: `PASSES` is the run's depth and is recorded in its numbers, so two reviews
+# are comparable. One reading finds a minority of what is there and five agree on very little,
+# which is the point -- what several reached is what the report is made of.
+PASSES = 5
+
+
+class ReportedFinding(Finding):
+    """A finding more than one pass reached: where it is, what is wrong, and how many reached it."""
+
+    passes: int = Field(description="How many passes reached it, by the path and the line.")
+
+
+class Review(BaseModel):
+    """What the passes together found and how far they agreed. Never whether the change is
+    correct: no number of passes can warrant that, so nothing here says a contract is met."""
+
+    passes: int = Field(description="How many passes ran.")
+    matched_by: str = Field(description="What makes two findings one: the path and the line.")
+    seen: int = Field(description="Every finding the passes saw, reported or not.")
+    agreement: float = Field(
+        description="The share of everything seen that more than one pass reached."
+    )
+    findings: list[ReportedFinding] = Field(
+        description="What more than one pass reached, each with the count of passes behind it."
+    )
+
+
+def combine(reports: list[ReviewReport]) -> Review:
+    """The passes made into one answer. Two findings are one when they name the same path and the
+    same line -- never their prose, because that would need a second model's judgement -- so the
+    measure is crude and the record says so. What two or more passes reached is reported with its
+    count; what one pass reached alone stays out of the report but is still counted in `seen` and
+    in the agreement between all of them."""
+    counts: dict[tuple[str, int], int] = {}
+    first: dict[tuple[str, int], Finding] = {}
+    order: list[tuple[str, int]] = []
+    for report in reports:
+        named = {(finding.path, finding.line) for finding in report.findings}
+        for finding in report.findings:
+            key = (finding.path, finding.line)
+            if key not in first:  # the earliest pass's words stand for the finding
+                first[key] = finding
+                order.append(key)
+        for key in named:
+            counts[key] = counts.get(key, 0) + 1
+    seen = [
+        ReportedFinding(severity=first[key].severity, path=key[0], line=key[1],
+                        what=first[key].what, passes=counts[key])  # fmt: skip
+        for key in order
+    ]
+    reported = [finding for finding in seen if finding.passes > 1]
+    agreement = len(reported) / len(seen) if seen else 0.0
+    return Review(
+        passes=PASSES, matched_by="path and line", seen=len(seen), agreement=agreement,
+        findings=reported,
+    )
 
 
 def usage_error(reason: str = "") -> int:
@@ -238,11 +302,18 @@ def main(argv: list[str], model: Any = None) -> int:
     (run_dir / "goal.txt").write_text(goal_text + "\n")
 
     wire = builder.Wire(run_dir / "wire.jsonl")
-    usage = builder.RunUsage()  # the run counts into it; the tools ask it, the record prices it
+    # Each pass counts into its own usage, so the library's caps are the pass's own and a second
+    # pass is not cut off by the first; every pass's usage is kept, so the record prices them all.
+    usages: list[Any] = []  # every pass's usage, in order
+    inflight: list[Any] = []  # the pass in flight, so `spent` sees it while it runs
 
     def spent() -> float:
-        """What the run has spent so far, in the record's own arithmetic."""
-        return float(usage.cost) if usage.cost is not None else builder.price(usage)
+        """What the review has spent so far, in the record's own arithmetic: the passes that ended
+        and the one in flight."""
+        seen = [*usages, *inflight]
+        if seen and all(u.cost is not None for u in seen):
+            return sum(float(u.cost) for u in seen)
+        return sum(builder.price(u) for u in seen)
 
     tools = builder.Tools(checkout, run_dir, spent=spent)
     # A scripted model does not go over HTTP, so it is wrapped to record on the wire what it was
@@ -251,14 +322,33 @@ def main(argv: list[str], model: Any = None) -> int:
     agent = build_agent(tools, key=key, http_client=wire.client, model=run_model, model_name=role.model)
     prompt = f"{goal_text}\n\nThe change under review:\n\n{diff}"
     t0 = time.time()
-    report, messages, usage, stopped, detail = builder.run(agent, prompt, tools.budget, usage=usage)
+    # Five cold sessions over the same checkout, goal and diff. No pass sees another's messages:
+    # the same agent is asked afresh, with no history, so nothing one pass found reaches the next.
+    reports: list[ReviewReport] = []
+    messages: list[Any] = []
+    stopped, detail = "answer", ""
+    for _ in range(PASSES):
+        tools.calls = 0  # a cold session reads on its own budget, not the passes' before it
+        usage = builder.RunUsage()
+        inflight.append(usage)  # the one in flight: `spent` sees it while it runs
+        report, answered, _, stopped, detail = builder.run(
+            agent, prompt, tools.budget, usage=usage
+        )
+        inflight.pop()
+        usages.append(usage)
+        messages.extend(answered)
+        if report is not None:
+            reports.append(report)
+        if stopped != "answer":  # a pass that did not answer ends the review
+            break
     seconds = round(time.time() - t0, 1)
 
+    review = combine(reports)
     (run_dir / "messages.json").write_bytes(builder.ModelMessagesTypeAdapter.dump_json(messages, indent=1))
-    if report is not None:
-        (run_dir / "review.json").write_text(report.model_dump_json(indent=1) + "\n")
-    priced = usage.cost is not None  # genai-prices has no deepseek-flash row; ours is the source
-    cost_usd = round(float(usage.cost) if priced else builder.price(usage), 5)
+    if stopped == "answer":
+        (run_dir / "review.json").write_text(review.model_dump_json(indent=1) + "\n")
+    priced = bool(usages) and all(u.cost is not None for u in usages)  # no deepseek-flash row; ours is the source
+    cost_usd = round(sum(float(u.cost) if priced else builder.price(u) for u in usages), 5)
     numbers = {
         "role_name": "reviewer",
         "role": builder.sha256(ROLE),
@@ -270,15 +360,16 @@ def main(argv: list[str], model: Any = None) -> int:
         "seed": seed,
         "stopped": stopped,
         "cap": builder.which_cap(stopped, detail),
-        "requests": usage.requests,
+        "passes": PASSES,
+        "requests": sum(u.requests for u in usages),
         "requests_cap": builder.limits(tools.budget).request_limit,
         "wire_attempts": wire.attempts,
-        "tool_calls": usage.tool_calls,
+        "tool_calls": sum(u.tool_calls for u in usages),
         "calls_cap": tools.budget,
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "cache_read_tokens": usage.cache_read_tokens,
-        "reasoning_tokens": usage.details.get("reasoning_tokens", 0),
+        "input_tokens": sum(u.input_tokens for u in usages),
+        "output_tokens": sum(u.output_tokens for u in usages),
+        "cache_read_tokens": sum(u.cache_read_tokens for u in usages),
+        "reasoning_tokens": sum(u.details.get("reasoning_tokens", 0) for u in usages),
         "cost_usd": cost_usd,
         "cost_source": "genai-prices" if priced else "table",
         "spend_cap": builder.SOFT_SPEND,
@@ -288,7 +379,10 @@ def main(argv: list[str], model: Any = None) -> int:
         "files_read": len(set(tools.read_paths)),
         "lines_read": tools.lines_read,
         "searches": len(tools.searched),
-        "findings": len(report.findings) if report is not None else 0,
+        "findings": len(review.findings),
+        "findings_seen": review.seen,
+        "findings_reported": len(review.findings),
+        "agreement": review.agreement,
         "seconds": seconds,
     }
     recorded = numbers | {"detail": detail} if detail else numbers  # why it stopped, if not answer
