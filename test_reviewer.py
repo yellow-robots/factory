@@ -379,6 +379,19 @@ class RoleServedElsewhereTest(ReviewerBase):
         self.assertEqual(called, [], "no model is called before the configuration is usable")
         self.assertIsNone(record, "and no record is made")
 
+    def test_a_review_s_record_names_the_arithmetic_that_priced_it(self):
+        """seed: the-role-priced-as-another. `cost_source` was read off the role's model name rather
+        than off which source answered, in both programs, and nothing held the reviewer's copy at
+        all: inverting it survived all 293 tests. The name is not the arithmetic -- the day the
+        library gains a row for our own model, a record priced by the table would still say so."""
+        model, _ = five({"findings": []})
+        code, _, err, record = self.review(model)
+        self.assertEqual(code, 0, err)
+        numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
+        self.assertEqual(numbers["model"], "glm-5.3-flash")
+        self.assertEqual(numbers["cost_source"], "genai-prices")
+        self.assertEqual(reviewer.builder.price(reviewer.builder.RunUsage(), "glm-5.3-flash"), 0.0)
+
 
 class WhatTheSuiteDidNotHoldTest(ReviewerBase):
     """seed: reviewer-role. From the review of run 20260920T000130Z: the load-bearing claims of the
@@ -534,7 +547,7 @@ class PassCeilingTest(ReviewerBase):
         soft ceiling and the review costs four times it: all five passes run and the review reports,
         which is false the moment the ceiling is the review's rather than the pass's."""
         model, told = five({"findings": [FINDING]})
-        with mock.patch.object(reviewer.builder, "price", lambda usage: 0.10):
+        with mock.patch.object(reviewer.builder, "price", lambda usage, model: 0.10):
             code, lines, err, record = self.review(model)
         self.assertEqual(code, 0, err)
         self.assertEqual(len(told), 5, "every pass ran")
@@ -548,7 +561,7 @@ class PassCeilingTest(ReviewerBase):
         touches it. Five passes at 0.20 each cross five times `SOFT_SPEND` after the fourth, so the
         fifth is never started and what the four found is the review."""
         model, told = five({"findings": [FINDING]})
-        with mock.patch.object(reviewer.builder, "price", lambda usage: 0.20):
+        with mock.patch.object(reviewer.builder, "price", lambda usage, model: 0.20):
             code, lines, err, record = self.review(model)
         self.assertEqual(len(told), 4, "the fifth pass is never started")
         numbers = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))

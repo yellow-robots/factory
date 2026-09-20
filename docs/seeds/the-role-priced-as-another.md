@@ -51,7 +51,11 @@ carry the table's arithmetic under the library's name.
 
 A run is priced by what it ran on, or it does not run.
 
-**The library prices what it can.** A role reached at its own address is reached in a way the library can still price: what `usage.cost` needs is a provider and a model it can look up together, and the model name is already right. Today `glm-5.3-flash` is asked of DeepSeek's provider and matches nothing. When the library can answer, `cost_source` says `genai-prices` and that answer is the run's cost.
+**The library prices what it can, asked at the address the role is served at.** What `usage.cost` needs is a provider and a model it can look up together, and the model name is already right. Today `glm-5.3-flash` is asked of DeepSeek's provider and matches nothing.
+
+The address is half the question and not a detail: **the same model name is served by more than one vendor at different rates.** Measured 2026-09-20 on the tokens of run 20260920T103528Z, `glm-5.3-flash` is $0.000196624 at `open.bigmodel.cn` and $0.000253495 at `api.z.ai`, and the bare name resolves to the first -- which is not the address this host's configuration names. Asked by name alone the library scans providers and answers with whichever it finds first, so a role is bounded by a rate that is not the one it is billed at. `base_url` is what the role is reached at and it is what the role is priced at; the name alone is the answer only when there is no address or the library does not know the one there is.
+
+When the library answers, `cost_source` says `genai-prices` and that answer is the run's cost. `cost_source` names the source that answered and never the name that was configured.
 
 **The table answers for the model it was written for, and for nothing else.** `PRICE` is DeepSeek's peak rate for `deepseek-flash`. It stays, it is still the source for that model, and it stops being the fallback for every other -- a wrong number is worse than no number when a wrong number is what bounds the run.
 
@@ -61,8 +65,18 @@ Both programs, because both reach their role the same way and both are bounded t
 
 What must not change: `deepseek-flash` keeps costing exactly what it costs today, by the same table, with `cost_source` still reading `table`, so every record ever written stays comparable with every record written after this.
 
-**One function prices tokens.** That is what `AGENTS.md` already claims of this code, and the reason
-is the same reason as everything above: the number the tools land a run on and the number its record
-carries are the same arithmetic, so they cannot drift. A second way to price, with a laxer answer
-than the first, is a way for them to drift again. With the refusal above in place nothing reaches a
-record that the one function cannot price, so there is nothing for a second one to do.
+**One function prices tokens, and it prices the whole run.** That is what `AGENTS.md` already
+claims of this code, and the reason is the same reason as everything above: the number the tools
+land a run on and the number its record carries are the same arithmetic, so they cannot drift. A
+second way to price, with a laxer answer than the first, is a way for them to drift again. With the
+refusal above in place nothing reaches a record that the one function cannot price, so there is
+nothing for a second one to do.
+
+The library's own running total is such a second way, and a quiet one. `RunUsage` adds a response's
+cost only when the library gave one for that response and adds its tokens always, so a run in which
+one answer could not be priced carries a total that is a sum of the others -- not `None`, so nothing
+falls back, and not the run's price either. Measured 2026-09-20: a priced response of $0.001
+followed by one of a million input and a hundred thousand output tokens that the library could not
+price records $0.001, bounding the run about seventy times too loosely. A sum of some of a run's
+responses is not the one function's answer, and what bounds the run and what its record carries are
+that function's price for every token the run used.

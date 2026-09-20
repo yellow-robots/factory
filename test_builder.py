@@ -631,10 +631,12 @@ class RolePriceTest(unittest.TestCase):
         self.assertAlmostEqual(priced, 0.000197, places=5)
         self.assertLess(priced, builder.price(usage, builder.MODEL) / 4)
 
-    def test_a_model_nothing_can_price_is_refused_before_anything_is_made(self):
-        """The honest default. A role whose price nobody knows is a role that cannot be bounded, and
-        the factory does not run unbounded: refused before a model is called and before a record is
-        made, exit 2, naming the role and the model it could not price."""
+    def test_a_model_nothing_can_price_has_no_price(self):
+        """seed: the-role-priced-as-another. The one function refuses rather than guessing: a model
+        neither `PRICE` nor the library can price raises, naming the model. That a *run* on such a
+        model is then refused before anything is made is the programs' behaviour and is held where
+        it happens, in `test_keys` and `test_reviewer`; this holds only the arithmetic's own answer,
+        which is what the earlier name of this test claimed more than it kept."""
         with self.assertRaises(builder.UnknownPrice) as caught:
             builder.price(self.Usage(10, 0, 10), "a-model-nobody-has-priced")
         self.assertIn("a-model-nobody-has-priced", str(caught.exception))

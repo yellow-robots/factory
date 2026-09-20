@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -261,6 +262,106 @@ class PriceOfTheRoleTest(KeysBase):
         numbers = json.loads((record / "numbers.json").read_text())
         self.assertEqual(numbers["cost_source"], "genai-prices")
         self.assertAlmostEqual(numbers["cost_usd"], 0.000197, places=5)
+
+    def at(self, base_url: str, model: str = "glm-5.3-flash") -> None:
+        """A builder role on `model`, served at `base_url`: the shape a role served elsewhere has."""
+        self.configure(roles=f'\n[roles.builder]\nmodel = "{model}"\nkey = "{self.deepseek}"\n'
+                             f'base_url = "{base_url}"\n')  # fmt: skip
+
+    def turns(self, *turns):
+        """A scripted model answering turn i with its parts and the tokens that turn reported. A
+        turn is `(parts, usage_kwargs_or_None)`, and a `cost` in the kwargs is the library's own
+        answer for that one response, which is how a real one arrives."""
+        seq = list(turns)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            parts, kw = seq.pop(0) if seq else ([ToolCallPart("final_result", REPORT, tool_call_id="end")], None)
+            if kw is None:
+                return ModelResponse(parts=list(parts))
+            cost = kw.pop("cost", None)
+            reported = RequestUsage(**kw)
+            if cost is not None:
+                reported.cost = cost
+            return ModelResponse(parts=list(parts), usage=reported)
+
+        return FunctionModel(model)
+
+    def ran(self, model):
+        """One run of the builder on that scripted model: its exit code and its record's numbers."""
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = builder.main(["builder.py", str(self.checkout), "make x bigger"],
+                                model=model, sandbox=FakeSandbox([]))  # fmt: skip
+        records = self.records()
+        numbers = json.loads((records[0] / "numbers.json").read_text()) if records else None
+        return code, numbers, out.getvalue()
+
+    def test_the_tools_land_a_run_on_the_price_of_its_own_model(self):
+        """seed: the-role-priced-as-another. The number the tools land a run on was held by nothing:
+        putting the table back into `main`'s `spent` -- the defect this seed exists to remove, on
+        the path the seed says matters -- left all 293 tests green, because every test asserted the
+        record's number and none asserted the tools'. 500,000 uncached input tokens cost $0.15 by
+        the table, over the $0.125 ceiling, and $0.0375 at the rate of the address this role is
+        served at: the tool answers, and it refuses only if it is bounded by a rate that is not its
+        model's."""
+        self.at("https://api.z.ai/api/paas/v4")
+        code, numbers, said = self.ran(self.turns(
+            ([ToolCallPart("list", {"path": "."}, tool_call_id="c1")],
+             {"input_tokens": 500_000, "cache_read_tokens": 0, "output_tokens": 0}),
+        ))
+        self.assertEqual(code, 0, said)
+        self.assertEqual(numbers["lists"], 1, "the tool answered rather than landing the run early")
+
+    def test_a_role_is_priced_by_the_row_for_the_address_it_is_served_at(self):
+        """seed: the-role-priced-as-another. `price` is handed the model's name alone, so the
+        library scans providers and answers with whichever it finds first. `glm-5.3-flash` is served
+        by two, and the bare name resolves to the one this host does not use: measured on the tokens
+        of run 20260920T103528Z, $0.000196624 at `open.bigmodel.cn` against $0.000253495 at
+        `api.z.ai`, which is the address the owner's configuration names. The Goal says what the
+        library needs in as many words -- *a provider and a model it can look up together* -- so the
+        address the role is reached at is the address it is priced at."""
+        tokens = {"input_tokens": 500_000, "cache_read_tokens": 0, "output_tokens": 0}
+        priced = {}
+        for name, url in (("zai", "https://api.z.ai/api/paas/v4"),
+                          ("zhipuai", "https://open.bigmodel.cn/api/paas/v4")):
+            self.at(url)
+            code, numbers, said = self.ran(self.turns(([], tokens.copy())))
+            self.assertEqual(code, 0, said)
+            priced[name] = numbers["cost_usd"]
+            for record in self.records():  # each run answers for itself
+                shutil.rmtree(record)
+        self.assertAlmostEqual(priced["zai"], 0.0375, places=4)
+        self.assertAlmostEqual(priced["zhipuai"], 0.0275, places=4)
+
+    def test_a_run_the_library_priced_only_in_part_is_priced_by_the_one_function(self):
+        """seed: the-role-priced-as-another. `RunUsage` adds a response's cost only when the library
+        gave one and adds its tokens always, and a partial sum is not `None`, so the fallback never
+        fires and the partial sum becomes the whole run's price. Measured: one priced response of
+        $0.001 followed by one the library could not price, 1,000,000 input and 100,000 output
+        tokens, recorded as $0.001 -- the run bounded some seventy times too loosely. One function
+        prices tokens, and a sum of some of them is not that function's answer."""
+        self.at("https://api.z.ai/api/paas/v4")
+        code, numbers, said = self.ran(self.turns(
+            ([ToolCallPart("list", {"path": "."}, tool_call_id="c1")],
+             {"input_tokens": 1000, "cache_read_tokens": 0, "output_tokens": 100, "cost": 0.001}),
+            ([], {"input_tokens": 1_000_000, "cache_read_tokens": 0, "output_tokens": 100_000}),
+        ))
+        self.assertEqual(code, 0, said)
+        every = builder.price(RequestUsage(input_tokens=1_001_000, cache_read_tokens=0,
+                                           output_tokens=100_100), "glm-5.3-flash")  # fmt: skip
+        self.assertAlmostEqual(numbers["cost_usd"], round(every, 5), places=5)
+        self.assertGreater(numbers["cost_usd"], 0.01, "not the one response the library could price")
+
+    def test_a_run_is_not_admitted_because_the_price_could_not_be_asked(self):
+        """seed: the-role-priced-as-another. The check that a model can be priced swallowed
+        `TypeError` and returned quietly, so anything that made the asking itself fail -- a library
+        whose keywords moved, a usage object it would not take -- admitted every unpriceable model
+        there is. Reproduced by the review: the refusal gone, the model called, and a half-made
+        record left in the store. A price that could not be asked is not a price that said yes."""
+        self.configure(model="a-model-of-its-own")
+        with mock.patch.object(builder, "price", side_effect=TypeError("the library's keywords moved")):
+            code, said = self.refused()
+        self.assertEqual(code, 2, said)
 
     def test_our_own_model_still_costs_what_it_has_always_cost(self):
         """seed: the-role-priced-as-another. `PRICE` is DeepSeek's peak rate for `deepseek-flash`
