@@ -82,6 +82,34 @@ several-day one, and a model served at a lower rate spends its ceiling on more t
 more minutes: correcting GLM's price this morning made a GLM pass roughly 3.6 times longer for the
 same dollar.
 
+### The second case, and what it answers, 2026-09-20
+
+Run 20260920T150230Z, case `the-work-a-capped-run-leaves`, twenty passes, **$2.5421 and 6,767
+seconds**, agreement 0.60. **It caught none of the one defect known to be in it.**
+
+That case was built to be hard in one specific way and it did its job. The commit changes `build.py`
+alone; the defect it lets through is four lines of `builder.py`, which the diff does not touch, so
+finding it means noticing that the change makes a clause load-bearing and then going to read the
+thing now carrying the load. The reviewer has `list`, `read` and `search` over the whole checkout
+and may do exactly that.
+
+**It did not, and it is not that it found nothing.** It reported nine findings, four of them
+defects, at an agreement of 0.60 -- and every one of them is inside `build.py` or in the spec the
+change was built from. `build.py:281` three times over, `build.py:163` twice, and two findings
+saying the seed's own Goal still describes the behaviour the change removed, which is a real and
+useful thing to notice. Not one finding names `builder.py`.
+
+So the answer this case gives is precise and it is about the role rather than about the model:
+**the reviewer reviews the diff, thoroughly, and does not ask what the diff made load-bearing
+elsewhere.** That is a property worth knowing before anyone routes a decision through it, it is
+invisible in a rate on its own, and it is the kind of thing a case set exists to find.
+
+Over both cases: **strict 0.250 +- 0.162, path 0.500 +- 0.153**, three answers, $5.12 and 3.8 hours.
+The error bars are wider than the estimates. What these two cases have established is the
+instrument, one real catch, one real and specific blind spot, and the cost and wall clock of asking.
+What they have not established is a catch rate, and the honest reading of 0.250 +- 0.162 is that it
+is not yet a number at all.
+
 ## Goal
 
 The harness runs the reviewer over cases whose answers are already known, and counts what it caught.
