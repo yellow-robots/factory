@@ -246,6 +246,23 @@ class ScoreTest(CatchBase):
                          f"the span made no difference: {wide} / {narrow}")  # fmt: skip
 
 
+    def test_a_case_with_no_record_is_unmeasured_rather_than_missed(self):
+        """seed: the-catch-rate-that-decides-the-role. Scoring the two cases of 2026-09-20 with one
+        never run read a strict rate of 0.250 where the measured half alone read 0.500, because a
+        case with no findings to score was counted as a case whose findings were all missed. Those
+        are different things: a review that found nothing is evidence and a review that never ran is
+        not. The unmeasured case is shown, so nobody forgets it is owed, and it is not in the rate."""
+        self.record(name="one", findings=[finding(path="f.py", line=3)])
+        self.case("two")  # a second case, never run
+        code, lines, err = self.run_catch("--score", model=agreed()[0])
+        self.assertEqual(code, 0, err)
+        (unmeasured,) = [line for line in lines if line.startswith("two\t")]
+        self.assertNotIn("0", unmeasured.split("\t")[1:3], f"an unrun case is counted in {unmeasured}")
+        rate = [line for line in lines if line.startswith("strict rate")]
+        self.assertTrue(any("1.0" in line or "0.5" in line for line in rate),
+                        f"the rate is not the measured case's: {rate}")  # fmt: skip
+
+
 class CaughtTest(CatchBase):
     """What a catch is: crude, visible, and counted twice."""
 
