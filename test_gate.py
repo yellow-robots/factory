@@ -153,7 +153,7 @@ def make_repo(base: Path) -> Path:
     write(root, "docs/versions/v0.2.md", V02)
     write(root, "AGENTS.md", AGENTS)
     write(root, "test_repo.py", TEST_GREEN)
-    write(root, ".gitignore", "__pycache__/\n")
+    write(root, ".gitignore", "__pycache__/\ndist/\n")  # dist/ ignored, as this repository ignores it
     git(root, "init", "-q")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "one")
@@ -830,6 +830,19 @@ class ReleaseTest(GateTest):
         self.assertEqual(git(self.root, "cat-file", "-t", "v0.2").strip(), "tag")
         self.assertFalse((self.root / "CHANGELOG.md").exists())
         self.assertFalse((self.root / WHEEL).exists())
+
+    def test_a_path_under_dist_that_git_does_not_ignore_still_refuses_the_release(self):
+        """seed: installation-and-surfaces. `dist/` is the release's own output only where git
+        ignores it, as this repository does; in a repository that does not, a path there is an
+        uncommitted change like any other and the tree is not clean. Found by the review of build
+        e92ce0e, which skipped `dist/` to pass a fixture that did not ignore it."""
+        self.ready()
+        self.edit(".gitignore", "__pycache__/\n")
+        self.commit("dist/ no longer ignored")
+        stray = self.root / "dist" / "notes.txt"
+        stray.parent.mkdir()
+        stray.write_text("stray\n")
+        self.assert_refused("dist/")
 
     def build(self, *paragraphs: str, amend: bool = False) -> str:
         """Everything committed as a build whose message is `feature` and then each paragraph, a
