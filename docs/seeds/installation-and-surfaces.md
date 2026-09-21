@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: building
+status: done
 summary: An instance is a clone of the whole repository at a tag, 151 MB of vault, tests and case sets around the five modules a build runs, and a build learns which factory it is by asking git where it lives; a deployment is the executable product built in the repository, a wheel the release builds at the tag and an instance installs as one tool.
 value: 5
 effort: M
