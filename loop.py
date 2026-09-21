@@ -4,32 +4,31 @@
     uv run gate.py next
 
 `gather(root)` reads every fact once -- the vault through `vault.Vault.read`, git through `repo`
-and the gate's own problems through `gate.problems_check` -- and answers a frozen `Facts`, with an
-`unknown` line for every fact it could not read and never a guess. `RULES` is the loop's order:
-each row a `Rule(name, applies, step)`, `applies` a predicate over `Facts` and `step` a function
-returning the text to print. `next_step(facts)` is the first row that applies. Nothing in a rule
-reads a file or runs a command: the reading is here, at the edge, and the rules are data over it.
+and the gate's own problems through `gate.problems_check` over the one vault -- and answers a
+frozen `Facts`, with an `unknown` line for every fact it could not read and never a guess. `RULES`
+is the loop's order: each row a `Rule(name, applies, step)`, `applies` a predicate over `Facts`
+and `step` a function of `Facts` returning the text to print. `next_step(facts)` is the first row
+that applies, read top to bottom. Nothing in a rule reads a file or runs a command: the reading is
+here, at the edge, and the rules are data over it.
 """
 
 from __future__ import annotations
 
-import ast
 import re
-import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-import builder
 import gate
 import repo
 import vault as vaults
 
-# A commit's `Built-By` value ends `run <stamp>`; the stamp is the builder's, a UTC second and,
-# when a second run shares it, a dash and that run's number.
+# The run stamp a commit's `Built-By` value ends with; a second run in one second shares the
+# second and adds a dash and its number, so the shape allows both.
 STAMP = re.compile(r"\d{8}T\d{6}Z(?:-\d+)?", re.ASCII)
-SEED_IN_DOC = r"seed:\s*{}(?![\w-])"
+# How long a seed's own tests, or a remote asked after a tag, are given before they are unknown.
+TEST_TIMEOUT = 300
+REMOTE_TIMEOUT = 60
 
 
 @dataclass(frozen=True)
@@ -42,13 +41,13 @@ class Build:
 
 @dataclass(frozen=True)
 class SeedFacts:
-    """One seed of the version in flight, read once."""
+    """One seed of the version in flight, read once: its name, its status, the ids of the tests
+    that name it, their colour, the builds since the tag and whether the latest was reviewed."""
 
     name: str
     status: str
-    has_goal: bool
     tests: tuple[str, ...]
-    colour: str
+    colour: str | None
     builds: tuple[Build, ...]
     reviewed: bool | None
 
@@ -63,11 +62,12 @@ class Facts:
     highest: str | None
     head: str | None
     branch: str | None
+    attached: bool | None
     in_flight: str | None
     seeds: tuple[SeedFacts, ...]
     agents_changed: bool | None
     bullets: bool | None
-    dirty: tuple[str, ...]
+    dirty: tuple[str, ...] | None
     after_tag: bool | None
     changelog_current: bool | None
     main_at_head: bool | None
@@ -93,79 +93,6 @@ class Rule:
     step: Callable[[Facts], str]
 
 
-def _read(path: Path) -> str:
-    """The file's text with what cannot be decoded replaced, or the empty string when unreadable."""
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
-
-
-def _named_tests(root: Path) -> list[tuple[str, str]]:
-    """Every test method or class of each `test*.py` at the root as `(id, docstring)`, the id
-    `module.Class.method` or `module.Class`; a file that cannot be read or does not parse is left
-    for the gate's own problem and answers nothing here."""
-    found: list[tuple[str, str]] = []
-    for path in sorted(root.glob("test*.py")):
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(text)
-        except (OSError, SyntaxError):
-            continue
-        _walk_tests(tree, path.stem, [], found)
-    return found
-
-
-def _walk_tests(node, module: str, classes: list[str], found: list[tuple[str, str]]) -> None:
-    """Walk one node's children, qualifying each test class and method with its module and class."""
-    for child in ast.iter_child_nodes(node):
-        if isinstance(child, ast.ClassDef):
-            doc = ast.get_docstring(child)
-            if doc:
-                found.append((".".join([module, *classes, child.name]), doc))
-            _walk_tests(child, module, [*classes, child.name], found)
-        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name.startswith(
-            "test"
-        ):
-            doc = ast.get_docstring(child)
-            if doc:
-                found.append((".".join([module, *classes, child.name]), doc))
-            _walk_tests(child, module, classes, found)
-
-
-def _names_seed(doc: str, name: str) -> bool:
-    """Whether a docstring names the seed `name`, as the gate reads it."""
-    return bool(re.compile(SEED_IN_DOC.format(re.escape(name))).search(doc))
-
-
-def _colour(root: Path, ids: tuple[str, ...]) -> str:
-    """`green`, `red` or `none`: the seed's own tests run in the root, alone, or none naming it."""
-    if not ids:
-        return "none"
-    try:
-        done = subprocess.run(
-            [sys.executable, "-B", "-m", "unittest", *ids],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "none"
-    return "green" if done.returncode == 0 else "red"
-
-
-def _has_goal(body: str) -> bool:
-    """Whether the seed's `## Goal` has text, read as the builder reads it."""
-    try:
-        text = builder.goal_section(builder.note_text(body))
-    except ValueError:
-        return False
-    return bool(text)
-
-
 def _stamp(entries: list[str]) -> str:
     """The run stamp in a commit's `Built-By` trailer entries, or the empty string when there is
     none."""
@@ -176,141 +103,269 @@ def _stamp(entries: list[str]) -> str:
     return ""
 
 
+def _named_ids(tests: list[repo.Test], name: str) -> tuple[str, ...]:
+    """The ids of the tests whose docstring names the seed `name`, as the gate reads it."""
+    pattern = re.compile(rf"seed:\s*{re.escape(name)}(?![\w-])")
+    return tuple(test.id for test in tests if pattern.search(test.doc))
+
+
+def _colour(root: Path, name: str, ids: tuple[str, ...]) -> tuple[str | None, str | None]:
+    """`green` or `red` from running exactly `ids`, `none` when no test names the seed, or `None`
+    and a line when the run could not happen."""
+    if not ids:
+        return "none", None
+    try:
+        return repo.run_tests(root, ids, TEST_TIMEOUT), None
+    except repo.RepoError as e:
+        return None, f"tests of {name}: {e}"
+
+
+def _seed_records(
+    root: Path, commits: list[str], unknown: list[str]
+) -> list[tuple[str, str, str]]:
+    """Every commit since the tag as `(commit, subject, stamp)`, oldest first, each read once; a
+    commit whose subject and `Built-By` trailer cannot be read is unknown."""
+    records: list[tuple[str, str, str]] = []
+    for commit in reversed(commits):
+        try:
+            subject = repo.subject(root, commit)
+        except repo.RepoError as e:
+            unknown.append(f"build {commit}: {e}")
+            continue
+        try:
+            entries = repo.trailers(root, commit)
+        except repo.RepoError as e:
+            unknown.append(f"build {commit}: {e}")
+            continue
+        stamp = _stamp(entries)
+        if stamp:
+            records.append((commit, subject, stamp))
+    return records
+
+
+def _seeds(
+    root: Path,
+    vault: vaults.Vault,
+    in_flight: str,
+    commits: list[str],
+    unknown: list[str],
+) -> tuple[SeedFacts, ...]:
+    """One `SeedFacts` per seed whose version is `in_flight`, in name order."""
+    notes = [
+        note
+        for note in vault.notes()
+        if note.kind == "seed" and note.fm and note.fm.get("version") == in_flight
+    ]
+    if not notes:
+        return ()
+    try:
+        tests = repo.tests(root)
+    except repo.RepoError as e:
+        tests = list(getattr(e, "tests", None) or [])
+    records = _seed_records(root, commits, unknown)
+    found: list[SeedFacts] = []
+    for note in sorted(notes, key=lambda n: n.path.stem):
+        name = note.path.stem
+        ids = _named_ids(tests, name)
+        builds = tuple(Build(commit, stamp) for commit, subj, stamp in records if subj == name)
+        reviewed = (
+            vault.holds(root / "docs" / "reviews" / f"{builds[-1].stamp}.md") if builds else None
+        )
+        colour, line = _colour(root, name, ids)
+        if line:
+            unknown.append(line)
+        found.append(
+            SeedFacts(
+                name=name,
+                status=note.fm.get("status", ""),
+                tests=ids,
+                colour=colour,
+                builds=builds,
+                reviewed=reviewed,
+            )
+        )
+    return tuple(found)
+
+
+def _changelog_current(root: Path, tag: str) -> bool:
+    """Whether `CHANGELOG.md`'s first `## ` heading names `tag` whole, `## <tag>:` or `## <tag>`
+    alone."""
+    text = vaults.text_of(root / "CHANGELOG.md")
+    if text is None:
+        return False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            heading = stripped[3:].strip()
+            return heading == tag or heading.startswith(f"{tag}:")
+    return False
+
+
+def _version_bullets(vault: vaults.Vault, version: str) -> bool | None:
+    """Whether the version note has a changelog bullet, or `None` when the vault holds none."""
+    rel = f"docs/versions/{version}.md"
+    for note in vault.notes():
+        if note.rel == rel:
+            return bool(vaults.changelog_bullets(note.body))
+    return None
+
+
 def gather(root: Path) -> Facts:
-    """Read every fact once through the gate's readers, answering `unknown` lines rather than
-    guessing. Nothing is written and no rule runs here."""
+    """Read every fact once, answering `unknown` lines rather than guessing; nothing is written
+    and no rule runs here."""
     root = Path(root)
     unknown: list[str] = []
-
-    problems = tuple(str(problem) for problem in gate.problems_check(root))
-
-    try:
-        tags: frozenset[str] | None = frozenset(repo.tags(root))
-    except repo.RepoError as e:
-        tags = None
-        unknown.append(f"tags: {e}")
-    highest = repo.highest(set(tags)) if tags is not None else None
-
-    done = repo.git(root, "rev-parse", "HEAD")
-    if done.code == 0 and done.out.strip():
-        head: str | None = done.out.strip()
-    else:
-        head = None
-        unknown.append(f"head: git rev-parse HEAD failed: {' '.join(done.err.split())}")
-
-    done = repo.git(root, "branch", "--show-current")
-    branch: str | None = done.out.strip() if done.code == 0 else None
 
     try:
         vault = vaults.Vault.read(root)
     except repo.RepoError as e:
-        vault = None
+        vault = vaults.Vault(root, root / "docs", None)
         unknown.append(f"vault: {e}")
+    checkout = not vault.whole
+
+    tags_error: repo.RepoError | None = None
+    try:
+        raw_tags: frozenset[str] | None = frozenset(repo.tags(root))
+    except repo.RepoError as e:
+        raw_tags = None
+        tags_error = e
+
+    raw_highest = repo.highest(set(raw_tags)) if raw_tags is not None else None
+    highest = raw_highest if checkout else None
+
+    commits_error: repo.RepoError | None = None
+    try:
+        commits = list(repo.builds(root, raw_highest))
+    except repo.RepoError as e:
+        commits = []
+        commits_error = e
+
+    head: str | None = None
+    branch: str | None = None
+    attached: bool | None = None
+    dirty: tuple[str, ...] | None = None
+    if checkout:
+        try:
+            head = repo.head(root)
+        except repo.RepoError as e:
+            unknown.append(f"head: {e}")
+        try:
+            current: str | None = repo.branch(root)
+        except repo.RepoError as e:
+            current = None
+            unknown.append(f"branch: {e}")
+        if current is not None:
+            branch, attached = current, True
+        elif head is not None:
+            try:
+                at = repo.branches_at(root, head)
+            except repo.RepoError as e:
+                at = ()
+                unknown.append(f"branch: {e}")
+            branch, attached = (at[0], False) if len(at) == 1 else (None, False)
+        else:
+            branch, attached = None, False
+        try:
+            dirty = repo.status(root)
+        except repo.RepoError as e:
+            dirty = None
+            unknown.append(f"dirty: {e}")
+    else:
+        unknown.append("head: not a git checkout")
+        unknown.append("branch: not a git checkout")
+        unknown.append("dirty: not a git checkout")
+
+    if raw_tags is None:
+        unknown.append(f"tags: {tags_error}")
 
     in_flight: str | None = None
-    if vault is not None:
+    if checkout and raw_tags is not None:
         untagged = [
             note.path.stem
             for note in vault.notes()
-            if note.kind == "version" and (tags is None or note.path.stem not in tags)
+            if note.kind == "version" and note.path.stem not in raw_tags
         ]
         if len(untagged) == 1:
             in_flight = untagged[0]
         elif len(untagged) > 1:
             unknown.append(f"in flight: {len(untagged)} version notes are no tag")
 
-    seeds: list[SeedFacts] = []
-    if vault is not None and in_flight is not None:
-        tests = _named_tests(root)
-        for note in vault.notes():
-            if note.kind != "seed" or not note.fm or note.fm.get("version") != in_flight:
-                continue
-            name = note.path.stem
-            ids = tuple(qual for qual, doc in tests if _names_seed(doc, name))
-            builds = _seed_builds(root, highest, name, unknown)
-            reviewed = None
-            if builds:
-                reviewed = (root / "docs" / "reviews" / f"{builds[-1].stamp}.md").is_file()
-            seeds.append(
-                SeedFacts(
-                    name=name,
-                    status=note.fm.get("status", ""),
-                    has_goal=_has_goal(note.body),
-                    tests=ids,
-                    colour=_colour(root, ids),
-                    builds=builds,
-                    reviewed=reviewed,
-                )
-            )
+    seeds = (
+        _seeds(root, vault, in_flight, commits, unknown) if in_flight is not None else ()
+    )
 
-    if highest is not None:
-        done = repo.git(root, "diff", "--name-only", highest, "--", "AGENTS.md")
-        agents_changed: bool | None = bool(done.out.strip()) if done.code == 0 else None
-    else:
-        agents_changed = None
-
-    bullets: bool | None = None
     version = in_flight if in_flight is not None else highest
-    if version is not None:
-        body = vaults.frontmatter(_read(root / "docs" / "versions" / f"{version}.md"))[1]
-        bullets = bool(vaults.changelog_bullets(body))
+    bullets = _version_bullets(vault, version) if version is not None and checkout else None
 
-    dirty: list[str] = []
-    done = repo.git(root, "status", "--porcelain")
-    if done.code == 0:
-        for line in done.out.splitlines():
-            if not line.strip():
-                continue
-            dirty.append(line[3:].strip() if len(line) > 3 else line.strip())
+    agents_changed: bool | None = None
+    if checkout and highest is not None:
+        try:
+            agents_changed = repo.changed_since(root, highest, "AGENTS.md")
+        except repo.RepoError as e:
+            unknown.append(f"agents_changed: {e}")
+        else:
+            agents_changed = agents_changed or bool(dirty and "AGENTS.md" in dirty)
+    elif not checkout:
+        unknown.append("agents_changed: not a git checkout")
 
-    after_tag = False
-    if in_flight is None and highest is not None and head is not None:
-        tagged = repo.git(root, "rev-parse", f"{highest}^{{commit}}")
-        if tagged.code == 0 and tagged.out.strip():
-            commit = tagged.out.strip()
-            if commit == head:
-                after_tag = True
-            else:
-                parent = repo.git(root, "rev-parse", "HEAD~1")
-                after_tag = parent.code == 0 and parent.out.strip() == commit
+    after_tag: bool | None = None
+    if not checkout:
+        unknown.append("after_tag: not a git checkout")
+    elif in_flight is not None:
+        after_tag = False
+    elif highest is None or head is None:
+        after_tag = False
+    else:
+        try:
+            distance = repo.distance(root, highest, head)
+        except repo.RepoError as e:
+            unknown.append(f"after_tag: {e}")
+        else:
+            after_tag = distance in (0, 1)
 
     changelog_current: bool | None = None
-    if highest is not None:
-        changelog_current = False
-        for line in _read(root / "CHANGELOG.md").splitlines():
-            stripped = line.strip()
-            if stripped.startswith("## "):
-                changelog_current = highest in stripped
-                break
-
     main_at_head: bool | None = None
-    if head is not None:
-        done = repo.git(root, "rev-parse", "--verify", "refs/heads/main")
-        main_at_head = done.code == 0 and done.out.strip() == head
+    mirror_at_head: bool | None = None
+    instance_version: str | None = None
+    if after_tag is True:
+        changelog_current = _changelog_current(root, highest)
+        if head is not None:
+            try:
+                main_at_head = "main" in repo.branches_at(root, head)
+            except repo.RepoError as e:
+                unknown.append(f"main: {e}")
+            try:
+                mirror_at_head = repo.ls_remote(root, "origin", "main", REMOTE_TIMEOUT) == head
+            except repo.RepoError as e:
+                unknown.append(f"mirror: {e}")
+        try:
+            instance_version = repo.instance_version()
+        except repo.RepoError as e:
+            unknown.append(f"instance: {e}")
+        else:
+            if instance_version is None:
+                unknown.append("instance: uv tool list names no factory")
 
-    done = repo.git(root, "ls-remote", "origin", "main")
-    if done.code != 0:
-        mirror_at_head: bool | None = None
-        unknown.append(f"mirror: git ls-remote origin main failed: {' '.join(done.err.split())}")
-    else:
-        mirror_at_head = bool(head) and any(
-            line.split()[0] == head for line in done.out.splitlines() if line.split()
-        )
-
-    instance_version = _instance(unknown)
+    kwargs: dict = {}
+    if tags_error is None:
+        kwargs["tags"] = raw_tags
+    if commits_error is None:
+        kwargs["commits"] = commits
+    problems = tuple(str(problem) for problem in gate.problems_check(root, vault, **kwargs))
 
     return Facts(
         root=root,
         problems=problems,
-        tags=tags,
+        tags=raw_tags if checkout else None,
         highest=highest,
         head=head,
         branch=branch,
+        attached=attached,
         in_flight=in_flight,
-        seeds=tuple(seeds),
+        seeds=seeds,
         agents_changed=agents_changed,
         bullets=bullets,
-        dirty=tuple(dirty),
+        dirty=dirty,
         after_tag=after_tag,
         changelog_current=changelog_current,
         main_at_head=main_at_head,
@@ -320,165 +375,146 @@ def gather(root: Path) -> Facts:
     )
 
 
-def _seed_builds(
-    root: Path, highest: str | None, name: str, unknown: list[str]
-) -> tuple[Build, ...]:
-    """One `Build` per commit since the highest tag whose message's first line is the seed's name,
-    the stamp from its `Built-By` trailer, oldest first."""
-    try:
-        commits = repo.builds(root, highest)
-    except repo.RepoError as e:
-        unknown.append(f"builds of {name}: {e}")
-        return ()
-    builds: list[Build] = []
-    for commit in reversed(commits):
-        done = repo.git(root, "log", "-1", "--format=%s", commit, "--")
-        if done.code != 0 or done.out.strip() != name:
-            continue
-        try:
-            entries = repo.trailers(root, commit)
-        except repo.RepoError as e:
-            unknown.append(f"build {commit}: {e}")
-            continue
-        builds.append(Build(commit, _stamp(entries)))
-    return tuple(builds)
+# The seven rows a seed can have, in the table's order. A seed at `done` or `rejected`, or one
+# whose colour could not be read, has none of them whatever its tests say.
+SEED_ROWS = (
+    "write the goal",
+    "write red tests",
+    "set to building",
+    "build",
+    "green with no build",
+    "review build",
+    "set to done",
+)
 
 
-def _instance(unknown: list[str]) -> str | None:
-    """The product's version from `uv tool list`, `v` stripped, or an unknown line."""
-    try:
-        done = subprocess.run(["uv", "tool", "list"], capture_output=True, text=True)
-    except (OSError, subprocess.SubprocessError) as e:
-        unknown.append(f"instance: uv tool list failed: {' '.join(str(e).split())}")
-        return None
-    if done.returncode != 0:
-        said = done.stderr.strip() or done.stdout.strip()
-        unknown.append(f"instance: uv tool list failed: {' '.join(said.split())}")
-        return None
-    for line in done.stdout.splitlines():
-        words = line.split()
-        if len(words) >= 2 and words[0] == "factory":
-            return words[1].removeprefix("v")
-    unknown.append("instance: uv tool list names no factory")
+def _seed_row(seed: SeedFacts) -> str:
+    """The seed's row, or the empty string when the seed has none."""
+    if seed.status in ("done", "rejected") or seed.colour is None:
+        return ""
+    if seed.status == "open":
+        return "write the goal"
+    if seed.status in ("spec", "building") and not seed.tests:
+        return "write red tests"
+    if seed.status == "spec":
+        return "set to building"
+    if seed.colour != "green":
+        return "build"
+    if not seed.builds:
+        return "green with no build"
+    if seed.reviewed is False:
+        return "review build"
+    if seed.reviewed is True:
+        return "set to done"
+    return ""
+
+
+def _chosen(facts: Facts) -> tuple[str, SeedFacts] | None:
+    """The first seed in name order that any of the seven rows applies to, with its row."""
+    for seed in facts.seeds:
+        row = _seed_row(seed)
+        if row:
+            return row, seed
     return None
 
 
-def _pick(seeds: tuple[SeedFacts, ...], ok) -> SeedFacts | None:
-    """The first seed, in name order, the predicate holds of, or None."""
-    for seed in seeds:
-        if ok(seed):
-            return seed
-    return None
+def _seed_applies(row: str) -> Callable[[Facts], bool]:
+    """A predicate that holds when the seed stepped is one whose row is `row`."""
+
+    def applies(facts: Facts) -> bool:
+        found = _chosen(facts)
+        return found is not None and found[0] == row
+
+    return applies
 
 
-def _at_open(seed: SeedFacts) -> bool:
-    return seed.status == "open"
-
-
-def _spec_untested(seed: SeedFacts) -> bool:
-    return seed.status == "spec" and not seed.tests
-
-
-def _named_not_building(seed: SeedFacts) -> bool:
-    return bool(seed.tests) and seed.status not in ("building", "done")
-
-
-def _red(seed: SeedFacts) -> bool:
-    return seed.colour == "red"
-
-
-def _green_unbuilt(seed: SeedFacts) -> bool:
-    return (
-        seed.colour == "green"
-        and not seed.builds
-        and seed.status not in ("done", "rejected")
-    )
-
-
-def _green_unreviewed(seed: SeedFacts) -> bool:
-    return (
-        seed.colour == "green"
-        and bool(seed.builds)
-        and seed.reviewed is False
-        and seed.status not in ("done", "rejected")
-    )
-
-
-def _green_reviewed(seed: SeedFacts) -> bool:
-    return (
-        seed.colour == "green"
-        and bool(seed.builds)
-        and seed.reviewed is True
-        and seed.status not in ("done", "rejected")
-    )
-
-
-def _settled(facts: Facts) -> bool:
-    return bool(facts.seeds) and all(s.status in ("done", "rejected") for s in facts.seeds)
+def _seed_text(facts: Facts, kind: str) -> str:
+    """The text of the row `kind`, taken from the seed stepped."""
+    seed = _chosen(facts)[1]
+    if kind == "write the goal":
+        return f"write the Goal of {seed.name}; status spec"
+    if kind == "write red tests":
+        return f"write red tests naming seed: {seed.name}; commit them; status building"
+    if kind == "set to building":
+        return f"set {seed.name} to building: its tests name it"
+    if kind == "build":
+        branch = facts.branch if facts.branch is not None else "<branch>"
+        text = f"build {seed.name}: factory-build {facts.root} {branch} docs/seeds/{seed.name}.md"
+        if facts.attached:
+            text += " -- detach first: git switch --detach"
+        return text
+    if kind == "green with no build":
+        return (
+            f"{seed.name} is green with no build: commit the work with a Built-By trailer, "
+            "or set it done and say why"
+        )
+    if kind == "review build":
+        stamp = seed.builds[-1].stamp
+        return (
+            f"review build {stamp} of {seed.name}: brief a subagent, "
+            f"write docs/reviews/{stamp}.md"
+        )
+    return f"set {seed.name} to done"
 
 
 def _number(facts: Facts) -> str:
-    return (facts.highest or "").removeprefix("v")
+    """The highest tag without its `v`, for the wheel the loop names."""
+    tag = facts.highest or ""
+    return tag[1:] if tag.startswith("v") else tag
 
 
-def _after_ok(facts: Facts) -> bool:
-    return (
-        facts.after_tag is True
-        and facts.changelog_current is True
+def _after_tag_text(facts: Facts) -> str:
+    """The first act after a tag that holds, and the version is out when none does, including
+    when an act's own fact could not be read."""
+    if facts.changelog_current is False:
+        return "commit CHANGELOG.md"
+    if facts.changelog_current is True and facts.main_at_head is False:
+        return f"fast-forward main: git merge --ff-only heads/{facts.highest}"
+    if (
+        facts.changelog_current is True
+        and facts.main_at_head is True
+        and facts.mirror_at_head is False
+    ):
+        return "push: git push origin main --tags"
+    if (
+        facts.changelog_current is True
         and facts.main_at_head is True
         and facts.mirror_at_head is not False
-    )
-
-
-def _install(facts: Facts) -> bool:
-    return (
-        _after_ok(facts)
         and facts.instance_version is not None
         and facts.instance_version != _number(facts)
-    )
+    ):
+        return (
+            f"install: uv tool install --reinstall "
+            f"dist/factory-{_number(facts)}-py3-none-any.whl"
+        )
+    return f"{facts.highest} is out: open the next version"
 
 
-def _out(facts: Facts) -> bool:
-    return (
-        _after_ok(facts)
-        and facts.instance_version is not None
-        and facts.instance_version == _number(facts)
-    )
+def _settled(facts: Facts) -> bool:
+    """Whether every seed of the version in flight is terminal, and there is one."""
+    return bool(facts.seeds) and all(s.status in ("done", "rejected") for s in facts.seeds)
+
+
+def _release_text(facts: Facts) -> str:
+    """The first precondition of a release that is not met, and the release when all are."""
+    if facts.agents_changed is False:
+        return f"revise AGENTS.md: unchanged since {facts.highest}"
+    if facts.bullets is False:
+        return f"write a ## Changelog bullet in docs/versions/{facts.in_flight}.md"
+    if facts.dirty:
+        return f"commit: {' '.join(facts.dirty)}"
+    return f"release: uv run gate.py release {facts.in_flight}"
+
+
+def _unknown_text(facts: Facts) -> str:
+    """The final row: nothing known enough to step, naming the first line that was not read."""
+    first = facts.unknown[0] if facts.unknown else "no step applies"
+    return f"nothing to do that is known: {first}"
 
 
 RULES: tuple[Rule, ...] = (
-    Rule(
-        "fix",
-        lambda f: bool(f.problems) and f.after_tag is not True,
-        lambda f: f"fix: {f.problems[0]}",
-    ),
-    Rule(
-        "commit changelog",
-        lambda f: f.after_tag is True and f.changelog_current is False,
-        lambda f: "commit CHANGELOG.md",
-    ),
-    Rule(
-        "fast-forward main",
-        lambda f: f.after_tag is True
-        and f.changelog_current is True
-        and f.main_at_head is False,
-        lambda f: f"fast-forward main: git merge --ff-only heads/{f.highest}",
-    ),
-    Rule(
-        "push",
-        lambda f: f.after_tag is True
-        and f.changelog_current is True
-        and f.main_at_head is True
-        and f.mirror_at_head is False,
-        lambda f: "push: git push origin main --tags",
-    ),
-    Rule(
-        "install",
-        _install,
-        lambda f: f"install: uv tool install --reinstall "
-        f"dist/factory-{_number(f)}-py3-none-any.whl",
-    ),
-    Rule("out", _out, lambda f: f"{f.highest} is out: open the next version"),
+    Rule("fix", lambda f: bool(f.problems), lambda f: f"fix: {f.problems[0]}"),
+    Rule("after a tag", lambda f: f.after_tag is True, _after_tag_text),
     Rule(
         "open a version",
         lambda f: f.in_flight is None and f.after_tag is not True,
@@ -491,80 +527,34 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         "write the goal",
-        lambda f: _pick(f.seeds, _at_open) is not None,
-        lambda f: f"write the Goal of {_pick(f.seeds, _at_open).name}; status spec",
+        _seed_applies("write the goal"),
+        lambda f: _seed_text(f, "write the goal"),
     ),
     Rule(
         "write red tests",
-        lambda f: _pick(f.seeds, _spec_untested) is not None,
-        lambda f: f"write red tests naming seed: {_pick(f.seeds, _spec_untested).name}; "
-        "commit them; status building",
+        _seed_applies("write red tests"),
+        lambda f: _seed_text(f, "write red tests"),
     ),
     Rule(
         "set to building",
-        lambda f: _pick(f.seeds, _named_not_building) is not None,
-        lambda f: f"set {_pick(f.seeds, _named_not_building).name} to building: its tests name it",
+        _seed_applies("set to building"),
+        lambda f: _seed_text(f, "set to building"),
     ),
-    Rule(
-        "build",
-        lambda f: _pick(f.seeds, _red) is not None,
-        lambda f: _build_text(f, _pick(f.seeds, _red)),
-    ),
+    Rule("build", _seed_applies("build"), lambda f: _seed_text(f, "build")),
     Rule(
         "green with no build",
-        lambda f: _pick(f.seeds, _green_unbuilt) is not None,
-        lambda f: f"{_pick(f.seeds, _green_unbuilt).name} is green with no build: commit the work "
-        "with a Built-By trailer, or set it done and say why",
+        _seed_applies("green with no build"),
+        lambda f: _seed_text(f, "green with no build"),
     ),
     Rule(
         "review build",
-        lambda f: _pick(f.seeds, _green_unreviewed) is not None,
-        lambda f: _review_text(f, _pick(f.seeds, _green_unreviewed)),
+        _seed_applies("review build"),
+        lambda f: _seed_text(f, "review build"),
     ),
-    Rule(
-        "set to done",
-        lambda f: _pick(f.seeds, _green_reviewed) is not None,
-        lambda f: f"set {_pick(f.seeds, _green_reviewed).name} to done",
-    ),
-    Rule(
-        "revise AGENTS.md",
-        lambda f: _settled(f) and f.agents_changed is False,
-        lambda f: f"revise AGENTS.md: unchanged since {f.highest}",
-    ),
-    Rule(
-        "changelog bullet",
-        lambda f: _settled(f) and f.bullets is False,
-        lambda f: f"write a ## Changelog bullet in docs/versions/{f.in_flight}.md",
-    ),
-    Rule(
-        "commit",
-        lambda f: _settled(f) and bool(f.dirty),
-        lambda f: f"commit: {' '.join(f.dirty)}",
-    ),
-    Rule(
-        "release",
-        _settled,
-        lambda f: f"release: uv run gate.py release {f.in_flight}",
-    ),
-    Rule("wait", lambda f: True, lambda f: "wait: some fact could not be read; read the unknowns"),
+    Rule("set to done", _seed_applies("set to done"), lambda f: _seed_text(f, "set to done")),
+    Rule("release", _settled, _release_text),
+    Rule("nothing to do that is known", lambda f: True, _unknown_text),
 )
-
-
-def _build_text(facts: Facts, seed: SeedFacts) -> str:
-    """The build step for a red seed, with the detach when the branch is checked out."""
-    text = (
-        f"build {seed.name}: factory-build {facts.root} {facts.in_flight} "
-        f"docs/seeds/{seed.name}.md"
-    )
-    if facts.branch is not None:
-        text += " -- detach first: git switch --detach"
-    return text
-
-
-def _review_text(facts: Facts, seed: SeedFacts) -> str:
-    """The review step for a green, built, unreviewed seed: the latest build's stamp."""
-    stamp = seed.builds[-1].stamp
-    return f"review build {stamp} of {seed.name}: brief a subagent, write docs/reviews/{stamp}.md"
 
 
 def next_step(facts: Facts) -> Step:
@@ -572,7 +562,7 @@ def next_step(facts: Facts) -> Step:
     for rule in RULES:
         if rule.applies(facts):
             return Step(rule.name, rule.step(facts))
-    return Step("wait", "wait: no step applies")
+    return Step("nothing to do that is known", _unknown_text(facts))
 
 
 def render(facts: Facts) -> str:
