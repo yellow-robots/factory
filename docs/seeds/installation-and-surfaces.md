@@ -1,7 +1,7 @@
 ---
 created: 2026-09-16
 type: seed
-status: spec
+status: building
 summary: An instance is a clone of the whole repository at a tag, 151 MB of vault, tests and case sets around the five modules a build runs, and a build learns which factory it is by asking git where it lives; a deployment is the executable product built in the repository, a wheel the release builds at the tag and an instance installs as one tool.
 value: 5
 effort: M
@@ -26,7 +26,7 @@ A deployment is the executable product built in the repository, not a copy of th
 
 **The product is a wheel, and the release builds it.** `pyproject.toml` already declares it and is not to be changed: the version derived from the git tag at build time; five modules and nothing else -- `build.py`, `builder.py`, `reviewer.py`, `instance.py`, `runs.py`; and four console scripts, `factory-build`, `factory-builder`, `factory-review` and `factory-runs`. `gate.py release <version>` builds it once the tag is cut and before the changelog is rendered, while the tree is still clean, because the version is read from the tree and a dirty tree is marked as one: `uv build --wheel`, into `dist/`, which git ignores, and the wheel's path is printed as the release's last line. A build that fails is the release's failure, exit 1, naming what `uv build` said, with the tag standing and the changelog unrendered -- nothing has been pushed, and a tag is not a deployment. `check` and `render` are unchanged.
 
-**Each program has an entry a console script can name.** `cli()` in each of `build.py`, `builder.py`, `reviewer.py` and `runs.py` takes no argument, calls that program's `main` with `sys.argv[1:]` and exits with what `main` returned; the `if __name__ == "__main__"` guard of each calls it, so `uv run build.py ...` behaves exactly as it does today. `main` keeps its signature and every caller of it.
+**Each program has an entry a console script can name.** `cli()` in each of `build.py`, `builder.py`, `reviewer.py` and `runs.py` takes no argument, calls that program's `main` with `sys.argv` whole, as its guard does today, and exits with what `main` returned; the `if __name__ == "__main__"` guard of each calls it, so `uv run build.py ...` behaves exactly as it does today. `main` keeps its signature and every caller of it.
 
 **A build names the factory that made it by the product's own version.** `build.py` stops asking git where it lives: `git describe` is not run, so the version is never a checkout's guess at a tag and never `-dirty`. The version in `Built-By: factory at v<version>, run <stamp>` is `importlib.metadata.version("factory")` with `v` before it, so an instance installed from the wheel of `v0.20` writes `factory at v0.20`, exactly what the tag says; where the product is not installed -- a checkout, where `pyproject.toml` says it is no package -- it writes `factory at unknown`, the meaning that word already has. The trailer's shape does not change and the gate's reading of it does not change.
 

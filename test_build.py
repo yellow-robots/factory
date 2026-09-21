@@ -12,6 +12,7 @@ the instance works in, both temporary.
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import io
 import json
 import os
@@ -656,40 +657,29 @@ class BuildTest(unittest.TestCase):
 
 
 class VersionTest(unittest.TestCase):
-    """seed: build-from-a-pushed-branch. The version a trailer names is the instance's own, read
-    from git where the program lives and nothing of the project's."""
+    """seed: installation-and-surfaces. The version a trailer names is the product's own, read
+    from the installed package's metadata with `v` before it and never from git: an instance
+    installed from the wheel of v0.20 says v0.20, exactly what the tag says, and a checkout, where
+    the product is not installed, says unknown -- the meaning that word already has."""
 
-    def described(self) -> str:
-        """What git says of the instance, the checkout `build.py` lives in, or `unknown`."""
-        done = subprocess.run(["git", "describe", "--tags", "--always", "--dirty"],
-                              cwd=Path(build.__file__).resolve().parent, capture_output=True, text=True)  # fmt: skip
-        return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else "unknown"
+    def test_the_version_is_the_installed_products_with_v_before_it(self):
+        with mock.patch("importlib.metadata.version", return_value="0.20") as version:
+            self.assertEqual(build.version(), "v0.20")
+        version.assert_called_once_with("factory")
 
-    def test_the_version_is_what_git_describes_of_the_instance(self):
-        self.assertEqual(build.version(), self.described())
-        self.assertNotIn(" ", build.version())
-        self.assertTrue(build.version())
+    def test_where_the_product_is_not_installed_the_version_is_unknown(self):
+        missing = importlib.metadata.PackageNotFoundError("factory")
+        with mock.patch("importlib.metadata.version", side_effect=missing):
+            self.assertEqual(build.version(), "unknown")
 
-    def test_the_version_is_read_where_the_program_lives_and_not_where_it_is_run(self):
-        """seed: build-from-a-pushed-branch. From the review: the version must be the instance's own,
-        so it is read where `build.py` lives; run inside another repository with a tag of its own,
-        the version is still the instance's."""
-        with tempfile.TemporaryDirectory() as tmp:
-            other = Path(tmp) / "other"
-            other.mkdir()
-            subprocess.run(["git", "init", "-q", str(other)], check=True)
-            (other / "f.txt").write_text("x\n")
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"], cwd=other, check=True)
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"],
-                           cwd=other, check=True)  # fmt: skip
-            subprocess.run(["git", "tag", "vOTHER"], cwd=other, check=True)
-            here = Path.cwd()
-            os.chdir(other)
-            try:
-                self.assertEqual(build.version(), self.described())
-            finally:
-                os.chdir(here)
-            self.assertNotIn("vOTHER", build.version())
+    def test_git_is_not_asked(self):
+        """A checkout's guess at a tag, `-dirty` and all, is not the product's version: read where
+        git would gladly answer, the version is read without asking it."""
+        def refuse(*args, **kwargs):
+            raise AssertionError(f"git was asked: {args[0] if args else kwargs}")
+        with mock.patch("importlib.metadata.version", return_value="0.20"), \
+                mock.patch.object(subprocess, "run", refuse):  # fmt: skip
+            self.assertEqual(build.version(), "v0.20")
 
 
 if __name__ == "__main__":

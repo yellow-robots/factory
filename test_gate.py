@@ -104,6 +104,7 @@ V02 = fm(type="version") + (
 AGENTS = "# repo\n\nOrient yourself.\n"
 TEMPLATE_REVIEW = fm(created='"{{date}}"', type="review", runs="", reviewer="") + "\n## Findings\n\n### Title\n\nseverity:\nverified:\njudged:\n"
 STAMP = "20260917T000000Z"
+WHEEL = "dist/factory-0.2-py3-none-any.whl"
 REVIEW = fm(created="2026-09-17", type="review", runs=STAMP, reviewer="a cold session") + (
     "\n## Findings\n\n### The first thing misses an edge\n\nseverity: defect\nverified: yes\njudged: test test_d\n\n"
     "What happens, and how it was reproduced.\n"
@@ -675,11 +676,34 @@ class ReleaseTest(GateTest):
     """seed: the-gate. release refuses until everything derived agrees, then tags and renders."""
 
     def ready(self):
-        """v0.2 ready: its seed done and named by a test, AGENTS.md changed since v0.1, committed."""
+        """v0.2 ready: its seed done and named by a test, AGENTS.md changed since v0.1, committed;
+        and a `uv` on PATH that builds, since a release builds the product."""
         self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
         self.edit("test_repo.py", TEST_GREEN_B)
         self.edit("AGENTS.md", AGENTS + "\nRevised for v0.2.\n")
         self.commit("two")
+        self.shim_uv()
+
+    def shim_uv(self, fail: bool = False) -> Path:
+        """seed: installation-and-surfaces. A `uv` first on PATH standing in for the real one: it
+        logs its arguments, the directory it was run in and whether CHANGELOG.md existed when it
+        ran, then makes the wheel and says so as uv does -- or fails, saying why."""
+        bin_dir = Path(self.tmp.name) / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        log = Path(self.tmp.name) / "uv.log"
+        body = f"#!/bin/sh\nprintf '%s\\n' \"$*\" \"$PWD\" >> '{log}'\n"
+        body += f"if [ -e CHANGELOG.md ]; then echo rendered >> '{log}'; fi\n"
+        if fail:
+            body += "echo 'error: no build backend' >&2\nexit 1\n"
+        else:
+            body += f"mkdir -p dist && : > '{WHEEL}'\necho 'Successfully built {WHEEL}'\n"
+        shim = bin_dir / "uv"
+        shim.write_text(body)
+        shim.chmod(0o755)
+        path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+        self.enterContext(mock.patch.dict(os.environ, {"PATH": path}))
+        self.uv_log = log
+        return log
 
     def release(self, version: str = "v0.2") -> tuple[int, str, str]:
         return run(self.root, "release", version)
@@ -695,7 +719,8 @@ class ReleaseTest(GateTest):
     def test_a_ready_version_is_tagged_annotated_with_the_changelog_and_rendered(self):
         self.ready()
         head = git(self.root, "rev-parse", "HEAD").strip()
-        self.assertEqual(self.release(), (0, "", ""))
+        code, out, err = self.release()
+        self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(git(self.root, "cat-file", "-t", "v0.2").strip(), "tag")
         self.assertEqual(git(self.root, "rev-parse", "v0.2^{commit}").strip(), head)
         message = git(self.root, "tag", "-l", "--format=%(contents)", "v0.2")
@@ -756,6 +781,37 @@ class ReleaseTest(GateTest):
         self.edit("docs/versions/v0.2.md", V02.replace("- The next thing, built.\n", "At release.\n"))
         self.commit("three")
         self.assert_refused("Changelog")
+
+    def test_release_builds_the_product_at_the_clean_tag_and_says_where_it_is(self):
+        """seed: installation-and-surfaces. Once the tag is cut and before the changelog is
+        rendered -- the version is read from the tree, and a dirty tree is marked as one --
+        `uv build --wheel` runs at the root, and the wheel's path is the release's last line."""
+        self.ready()
+        code, out, _ = self.release()
+        self.assertEqual(code, 0, out)
+        log = self.uv_log.read_text().splitlines()
+        self.assertEqual(log[0].split()[:2], ["build", "--wheel"])
+        self.assertEqual(Path(log[1]).resolve(), self.root.resolve())
+        self.assertNotIn("rendered", log)
+        self.assertEqual(git(self.root, "cat-file", "-t", "v0.2").strip(), "tag")
+        self.assertTrue((self.root / "CHANGELOG.md").exists())
+        last = out.rstrip("\n").splitlines()[-1]
+        self.assertTrue(last.endswith(WHEEL), last)
+        self.assertTrue((self.root / last).exists(), last)
+
+    def test_a_build_that_fails_is_the_releases_failure_with_the_tag_standing_and_nothing_rendered(self):
+        """seed: installation-and-surfaces. Nothing has been pushed and a tag is not a deployment:
+        exit 1, naming the version and what `uv build` said; the tag stands, the changelog is not
+        rendered, and there is no wheel."""
+        self.ready()
+        self.shim_uv(fail=True)
+        code, out, _ = self.release()
+        self.assertEqual(code, 1, out)
+        self.assertIn("v0.2", out)
+        self.assertIn("no build backend", out)
+        self.assertEqual(git(self.root, "cat-file", "-t", "v0.2").strip(), "tag")
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
+        self.assertFalse((self.root / WHEEL).exists())
 
     def build(self, *paragraphs: str, amend: bool = False) -> str:
         """Everything committed as a build whose message is `feature` and then each paragraph, a
