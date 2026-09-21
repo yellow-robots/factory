@@ -105,12 +105,15 @@ class RepoTest(unittest.TestCase):
 
     def test_the_tests_of_the_root_are_read_once_with_their_names_and_docstrings(self):
         found = repo.tests(self.root)
-        self.assertIn(repo.Test("test_repo.RepoTest.test_d", "test_d", "seed: d. The first thing holds."), found)
-        self.assertIn(("test_repo.RepoTest", "RepoTest"), [(test.id, test.name) for test in found])
+        self.assertIn(repo.Test("test_repo.RepoTest.test_d", "test_d", "seed: d. The first thing holds."), found.found)
+        self.assertIn(("test_repo.RepoTest", "RepoTest"), [(test.id, test.name) for test in found.found])
+        self.assertEqual(found.unparseable, ())
         write(self.root, "test_bad.py", "def (\n")
-        with self.assertRaises(repo.RepoError) as raised:
-            repo.tests(self.root)
-        self.assertIn("test_bad.py", str(raised.exception))
+        found = repo.tests(self.root)  # from the second review: a typed value, not a smuggling error
+        self.assertIn("test_d", [test.name for test in found.found])
+        self.assertEqual([path for path, _ in found.unparseable], ["test_bad.py"])
+        self.assertIn("does not parse", found.unparseable[0][1])
+        self.assertNotIn(str(self.root), found.unparseable[0][1])
 
     def test_the_status_a_diff_since_a_tag_and_a_commits_message_raise_when_git_cannot_answer(self):
         """seed: the-gate-in-three. From the review: the release read `git status` and `git diff`

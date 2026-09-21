@@ -492,6 +492,38 @@ class CheckTest(GateTest):
         twice = sorted({path for path in notes if notes.count(path) > 1})
         self.assertEqual(twice, [], "read twice: " + ", ".join(twice))
 
+    def test_a_wikilink_anywhere_in_any_file_the_vault_holds_is_still_read(self):
+        """seed: the-gate-in-three. From the second review: the scan over the Vault's notes lost
+        four inputs the old gate read -- a template, a note's frontmatter, a note with no
+        frontmatter, and a file that is no note -- and this vault's own version template carries
+        `![[backlog.base#Specs]]`. Every file the vault holds, whole, each read once."""
+        self.edit("docs/templates/seed.md", TEMPLATE_SEED + "\n[[nowhere-from-template]]\n")
+        self.edit("docs/seeds/a.md", SEED_A.replace("summary: an idea", 'summary: "[[nowhere-in-fm]]"'))
+        self.edit("docs/seeds/g.md", "no frontmatter here [[nowhere-nofm]]\n")
+        self.edit("docs/notes.txt", "[[nowhere-txt]]\n")
+        self.commit("four links to nowhere")
+        out = self.assert_problem("docs/templates/seed.md: wikilink nowhere-from-template does not resolve")
+        for line in (
+            "docs/seeds/a.md: wikilink nowhere-in-fm does not resolve",
+            "docs/seeds/g.md: wikilink nowhere-nofm does not resolve",
+            "docs/seeds/g.md: no frontmatter",
+            "docs/notes.txt: wikilink nowhere-txt does not resolve",
+        ):
+            self.assertIn(line, out.splitlines(), out)
+
+    def test_an_unreadable_template_is_one_problem_even_with_no_note_of_its_kind(self):
+        """seed: the-gate-in-three. From the second review: the template's `cannot be read` was
+        emitted from inside the check of each note of its kind, so with no such note it was
+        silent, and the base's check skipped under a comment saying it was reported elsewhere."""
+        for name in ("a", "b", "d"):
+            (self.root / "docs" / "seeds" / f"{name}.md").unlink()
+        self.commit("no seed at all")
+        template = self.root / "docs" / "templates" / "seed.md"
+        template.chmod(0)
+        self.addCleanup(template.chmod, 0o644)
+        out = self.assert_problem("docs/templates/seed.md: cannot be read")
+        self.assertEqual(out.count("docs/templates/seed.md: cannot be read"), 1, out)
+
     def test_a_vault_git_answers_about_somebody_else_is_read_whole(self):
         """seed: the-vault-as-git-tracks-it. From the review: a copy of the vault inside a repository
         that ignores it had git answer about that repository, which tracks nothing of the copy, so
@@ -947,6 +979,47 @@ class ReleaseTest(GateTest):
         self.assertIn("docs/versions/v0.1.md: cannot be read", out)
         self.assertFalse((self.root / "CHANGELOG.md").exists())
         self.assert_refused("docs/versions/v0.1.md")
+
+    def test_a_render_that_fails_after_the_tag_is_one_problem_and_no_traceback(self):
+        """seed: the-gate-in-three. From the second review: a git failure while rendering after
+        the tag escaped `release` as a traceback, and `render` printed the one failure once per
+        tag. One line, the tag standing as after a failed wheel, nothing written."""
+        import repo
+
+        self.ready()
+        git(self.root, "tag", "v0.0")  # a second tag, so a failure per tag would be two lines
+        failing = repo.RepoError("git log -1 --format=%cs v0.2", "boom")
+        with mock.patch.object(repo, "tag_date", side_effect=failing):
+            code, out, err = self.release()
+        self.assertEqual((code, err), (1, ""), out)
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 1, out)
+        self.assertTrue(lines[0].startswith("docs/versions/"), out)
+        self.assertIn("git log", lines[0])
+        self.assertIn("failed: boom", lines[0])
+        self.assertEqual(git(self.root, "cat-file", "-t", "v0.2").strip(), "tag")
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
+        with mock.patch.object(repo, "tag_date", side_effect=failing):
+            code, out, _ = run(self.root, "render")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(len(out.splitlines()), 1, out)
+
+    def test_a_status_failure_is_filed_under_the_version_note(self):
+        """seed: the-gate-in-three. From the second review: `git status` reads the whole tree, and
+        its failure was filed under `docs/`; a release precondition that cannot be read is the
+        version's problem."""
+        self.ready()
+        real = subprocess.run
+
+        def failing(argv, *args, **kwargs):
+            if "status" in argv:
+                raise OSError("git died")
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", failing):
+            code, out, _ = self.release()
+        self.assertEqual(code, 1, out)
+        self.assertTrue(out.startswith("docs/versions/v0.2.md: git status"), out)
 
     def test_release_refuses_a_note_without_changelog_bullets(self):
         self.ready()
