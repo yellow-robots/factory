@@ -336,7 +336,9 @@ def branch(root: Path) -> str | None:
 def branches_at(root: Path, commit: str) -> tuple[str, ...]:
     """The branches whose tip is `commit`, or `RepoError` when git cannot answer."""
     command = f"git for-each-ref --points-at={commit} refs/heads/"
-    done = git(root, "for-each-ref", "--format=%(refname:short)", f"--points-at={commit}", "refs/heads/")
+    done = git(
+        root, "for-each-ref", "--format=%(refname:short)", f"--points-at={commit}", "refs/heads/"
+    )
     if done.code != 0:
         raise RepoError(command, done.err)
     return tuple(line.strip() for line in done.out.splitlines() if line.strip())

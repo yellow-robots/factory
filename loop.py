@@ -120,9 +120,7 @@ def _colour(root: Path, name: str, ids: tuple[str, ...]) -> tuple[str | None, st
         return None, f"tests of {name}: {e}"
 
 
-def _seed_records(
-    root: Path, commits: list[str], unknown: list[str]
-) -> list[tuple[str, str, str]]:
+def _seed_records(root: Path, commits: list[str], unknown: list[str]) -> list[tuple[str, str, str]]:
     """Every commit since the tag as `(commit, subject, stamp)`, oldest first, each read once; a
     commit whose subject and `Built-By` trailer cannot be read is unknown."""
     records: list[tuple[str, str, str]] = []
@@ -290,9 +288,7 @@ def gather(root: Path) -> Facts:
         elif len(untagged) > 1:
             unknown.append(f"in flight: {len(untagged)} version notes are no tag")
 
-    seeds = (
-        _seeds(root, vault, in_flight, commits, unknown) if in_flight is not None else ()
-    )
+    seeds = _seeds(root, vault, in_flight, commits, unknown) if in_flight is not None else ()
 
     version = in_flight if in_flight is not None else highest
     bullets = _version_bullets(vault, version) if version is not None and checkout else None
@@ -446,8 +442,7 @@ def _seed_text(facts: Facts, kind: str) -> str:
     if kind == "review build":
         stamp = seed.builds[-1].stamp
         return (
-            f"review build {stamp} of {seed.name}: brief a subagent, "
-            f"write docs/reviews/{stamp}.md"
+            f"review build {stamp} of {seed.name}: brief a subagent, write docs/reviews/{stamp}.md"
         )
     return f"set {seed.name} to done"
 
@@ -479,8 +474,7 @@ def _after_tag_text(facts: Facts) -> str:
         and facts.instance_version != _number(facts)
     ):
         return (
-            f"install: uv tool install --reinstall "
-            f"dist/factory-{_number(facts)}-py3-none-any.whl"
+            f"install: uv tool install --reinstall dist/factory-{_number(facts)}-py3-none-any.whl"
         )
     return f"{facts.highest} is out: open the next version"
 
