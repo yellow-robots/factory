@@ -53,6 +53,7 @@ from pydantic_ai import (  # noqa: E402
     UsageLimits,
     capture_run_messages,
 )
+from pydantic_ai.messages import RetryPromptPart  # noqa: E402
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings  # noqa: E402
 from openai import AsyncOpenAI  # noqa: E402
 from pydantic_ai.profiles.openai import OpenAIModelProfile  # noqa: E402
@@ -75,8 +76,8 @@ REQUEST_LIMIT = 250  # requests the library allows; above CALLS_LIMIT, so a land
 SOFT_SPEND = 0.125  # USD a run may spend before every tool refuses and says report now
 HARD_SPEND = 0.25  # USD, twice the soft ceiling: the runaway's backstop, derived from nothing
 LIST_CAP = 500  # entries per list
-READ_LINES_CAP = 300  # lines per read
-READ_BYTES_CAP = 32_000  # bytes per read
+READ_LINES_CAP = 1000  # lines per read
+READ_BYTES_CAP = 64_000  # bytes per read
 SEARCH_LINES_CAP = 100  # matches per search
 SEARCH_BYTES_CAP = 32_000  # bytes per search
 SEARCH_FILE_CAP = 1_000_000  # bytes of one file search will read; a larger file is not searched
@@ -291,6 +292,7 @@ class Tools:
         self.read_paths: list[str] = []
         self.searched: list[str] = []
         self.lines_read = 0
+        self.bytes_read = 0
         self.written: list[str] = []
         self.edited: list[str] = []
         self.checks: list[dict[str, Any]] = []
@@ -387,13 +389,16 @@ class Tools:
         self.listed.append(rel)
         return "\n".join(lines) or "(empty)"
 
-    def read(self, path: str, start: int = 1) -> str:
-        """Read a file of the checkout as numbered lines, from line `start` (1-based), at most 300
-        lines or 32000 bytes per call; a truncated read says where to continue.
+    def read(self, path: str, start: int = 1, limit: int | None = None) -> str:
+        """Read a file of the checkout as numbered lines, from line `start` (1-based): at most
+        `limit` lines, at most 1000 lines and at most 64000 bytes per call, whichever is met first,
+        and a read cut short by any of the three says where to continue. `limit` omitted or above
+        the line cap is the line cap; below one is one.
 
         Args:
             path: The file to read, relative to the checkout root.
             start: The first line to read, 1-based.
+            limit: The most lines to return; omitted or above the line cap is the line cap.
         """
         self.calls += 1
         if capped := self._over_limit():
@@ -403,6 +408,9 @@ class Tools:
             if not p.is_file():
                 raise ValueError(f"not a file: {path}")
             start = max(1, int(start))
+            # Omitted or zero is the line cap, above it is the cap, below one is one.
+            limit = int(limit) if limit else READ_LINES_CAP
+            limit = max(1, min(limit, READ_LINES_CAP))
             out: list[str] = []
             n = nbytes = 0
             with p.open("r", encoding="utf-8", errors="replace") as f:
@@ -410,7 +418,7 @@ class Tools:
                     if i < start:
                         continue
                     size = len(line.encode())
-                    if n >= READ_LINES_CAP or nbytes + size > READ_BYTES_CAP:
+                    if n >= limit or nbytes + size > READ_BYTES_CAP:
                         if n:  # one line per call at least, or a long line dead-ends the read
                             out.append(f"...\ttruncated; continue with start={i}")
                             break
@@ -424,6 +432,7 @@ class Tools:
             return f"error: {e}"
         self.read_paths.append(rel)
         self.lines_read += n
+        self.bytes_read += nbytes
         return "\n".join(out) or "(empty)"
 
     def _files(self, directory: Path, rel: str, unlistable: list[int]):
@@ -807,7 +816,10 @@ def build_agent(
         # No temperature: DeepSeek ignores it in thinking mode, and the settings should say what
         # the request actually is. Thinking stays at the API default.
         model_settings=OpenAIChatModelSettings(timeout=180),
-        retries={"tools": 1, "output": 2},
+        # A call of the wrong shape is the library's to answer, with a retry prompt the model reads
+        # and moves on from, so the tool retries sit above what a run can afford -- one request each,
+        # and no more requests than REQUEST_LIMIT -- and never end a run; the output retries stay.
+        retries={"tools": REQUEST_LIMIT, "output": 2},
     )
     return agent
 
@@ -834,6 +846,19 @@ def run(agent: Agent[None, BuildReport], goal: str,
         except (UnexpectedModelBehavior, ModelAPIError) as e:  # ModelHTTPError is one of these
             stopped, detail = "error", str(e)
     return report, list(messages), usage, stopped, detail
+
+
+def shape_retries(messages: list) -> dict[str, int]:
+    """How many times the library answered a call of each tool for its shape, counted from a run's
+    messages: every retry prompt part a tool names, by that name, and nothing for one that names no
+    tool -- a plain-text answer retried for the output is no tool's shape. `{}` when none did."""
+    retries: dict[str, int] = {}
+    for message in messages:
+        for part in getattr(message, "parts", []):
+            name = getattr(part, "tool_name", None)
+            if isinstance(part, RetryPromptPart) and name:
+                retries[name] = retries.get(name, 0) + 1
+    return retries
 
 
 # The environment's own GIT_* pointers are not the checkout's: git runs without them, so it
@@ -1501,6 +1526,9 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         "seed": seed,
         "stopped": stopped,
         "cap": which_cap(stopped, detail),
+        # The shape errors the library answered, by the tool each named: what a run spent learning a
+        # call it did not have, and `{}` when the library corrected none of them.
+        "retries": shape_retries(messages),
         "requests": usage.requests,
         "requests_cap": limits().request_limit,
         "wire_attempts": wire.attempts,
@@ -1520,6 +1548,7 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None,
         "reads": len(tools.read_paths),
         "files_read": len(set(tools.read_paths)),
         "lines_read": tools.lines_read,
+        "bytes_read": tools.bytes_read,
         "searches": len(tools.searched),
         "writes": len(tools.written),
         "edits": len(tools.edited),
