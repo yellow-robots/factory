@@ -137,12 +137,17 @@ against, an argument that names no seed note, and a seed the head's commit does 
 
 ## The instance
 
-An instance is a checkout of the factory's code apart from every project it builds, pinned at a
-released tag, with a configuration of its own. Installing one is two commands and a file:
+An instance is the product installed as a tool, apart from every project it builds, with a
+configuration of its own. The product is the wheel a release builds: `build.py`, `builder.py`,
+`reviewer.py`, `instance.py` and `runs.py`, the dependency `pyproject.toml` pins, and four console
+scripts, `factory-build`, `factory-builder`, `factory-review` and `factory-runs`, each the program
+of that name; its version is the tag's, derived when the wheel is built and written nowhere, so the
+wheel of `v0.20` is `factory-0.20-py3-none-any.whl` and one built past a tag says which commit it
+is. Installing one is one command and a file, and moving one to a new version is the same command
+over the last:
 
 ```sh
-git clone --branch <tag> <repository> <path>   # the code, at a released tag
-cd <path> && uv sync                           # its environment, from the pinned uv.lock
+uv tool install --reinstall dist/factory-<version>-py3-none-any.whl   # the product, at a released version
 ```
 
 `~/.config/factory/instance.toml`, or the file `FACTORY_INSTANCE` names, holds `records` and `work`
@@ -153,9 +158,11 @@ cannot use, a role it does not hold, and a key file with no key in it are usage 
 anything is made or read. `instance.py` is what reads it, and it answers with a key's place and
 never with its value.
 
-Deploying a version is an act: after a release the instance is moved to the new tag, so a version is
-built by the one before it, as a compiler's stage builds the next. The trailer of every commit a
-build pushes names the tag the instance stood at, which is how a commit says which factory made it.
+Deploying a version is an act: after a release the wheel it built is installed over the last, so a
+version is built by the one before it, as a compiler's stage builds the next. The trailer of every
+commit a build pushes, `Built-By: factory at v<version>, run <stamp>`, names the product's own
+version, read from the installed package and never from git, which is how a commit says which
+factory made it; run from a checkout, where the product is not installed, it says `unknown`.
 
 ## The gate
 
@@ -184,8 +191,12 @@ whole. `render` writes `CHANGELOG.md` from the tags, newest first, from each ver
 note's title, first paragraph and `## Changelog` bullets. `release <version>` refuses unless check
 passes, the note exists and the tag does not, its seeds are done or rejected, the note has
 changelog bullets, the tree is clean, `AGENTS.md` changed since the previous tag and the suite is
-green; then it cuts an annotated tag at HEAD with the paragraph and the bullets as its message
-and renders. Silent and exit 0 when there is nothing to report; usage errors exit 2.
+green; then it cuts an annotated tag at HEAD with the paragraph and the bullets as its message,
+builds the product -- `uv build --wheel` at the root, while the tree is still clean and the version
+the build reads from it is the tag's -- renders, and prints the wheel's path as its last line. A
+build that fails is exit 1 naming what `uv build` said, the tag standing and the changelog
+unrendered, because nothing has been pushed and a tag is not a deployment. Silent and exit 0 when
+there is nothing to report; usage errors exit 2.
 
 ## The evaluation set
 
