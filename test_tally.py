@@ -187,6 +187,42 @@ class TallyTest(TallyBase):
         self.assertEqual(self.row(found, "v0.2")[:10], ("v0.2", 1, 3, 3, 1, 2, 2, 1, 0.75, 65))
         self.assertEqual(self.row(found, "v0.2")[17:], (7, 4))
 
+    def test_a_seed_or_version_note_that_cannot_be_read_is_unknown(self):
+        """seed: the-loop-in-numbers. From the second review: a seed note the vault could not
+        read gave its version zero seeds, zero runs and no cost while the store held three of
+        its runs, and a version note it could not read dropped the row in flight; both silent.
+        Which version an unreadable seed belongs to cannot be read either, so every column that
+        depends on a seed is None on every row, with one line naming the note."""
+        seed = self.root / "docs" / "seeds" / "b.md"
+        seed.chmod(0)
+        self.addCleanup(seed.chmod, 0o644)
+        found = tally.gather(self.root)
+        self.assertEqual(len(found.unknown), 1)
+        self.assertIn("docs/seeds/b.md", found.unknown[0])
+        for version in ("v0.1", "v0.2"):
+            row = self.row(found, version)
+            self.assertEqual((row[1], row[2]) + row[4:7] + row[8:17], (None,) * 14, version)
+        self.assertEqual(tuple(self.row(found, "v0.2")[i] for i in (0, 3, 7, 17, 18)), ("v0.2", 3, 1, 7, 4))
+        seed.chmod(0o644)
+        note = self.root / "docs" / "versions" / "v0.2.md"
+        note.chmod(0)
+        self.addCleanup(note.chmod, 0o644)
+        found = tally.gather(self.root)
+        self.assertEqual([r.version for r in found.rows], ["v0.1"])
+        self.assertEqual(len(found.unknown), 1)
+        self.assertIn("docs/versions/v0.2.md", found.unknown[0])
+
+    def test_a_review_note_without_frontmatter_is_unknown(self):
+        """seed: the-loop-in-numbers. From the second review: a review note the vault read but
+        could not parse -- no frontmatter -- was dropped without a line, while the gate names it."""
+        write(self.root, f"docs/reviews/{STAMP}.md", "# a note without frontmatter\n\n### A finding\n\nseverity: defect\n")
+        found = tally.gather(self.root)
+        self.assertEqual(len(found.unknown), 1)
+        self.assertIn(f"docs/reviews/{STAMP}.md", found.unknown[0])
+        for version in ("v0.1", "v0.2"):
+            self.assertEqual(self.row(found, version)[10:17], (None,) * 7, version)
+        self.assertEqual(self.row(found, "v0.2")[:10], ("v0.2", 1, 3, 3, 1, 2, 2, 1, 0.75, 65))
+
     def test_two_version_notes_that_are_no_tag_are_unknown(self):
         """seed: the-loop-in-numbers. From the first build's review: two untagged notes gave an
         empty table with no reason. The loop says `in_flight: ...` for the same facts; so does
