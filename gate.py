@@ -48,6 +48,9 @@ ASCII_RUN = re.compile(r"[^ \t\n\r\x0b\x0c]+")
 # in ASCII alone, so a dash with nothing after it, with something that is not a number or with a
 # second dash names no run.
 STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z(-\d+)?", re.ASCII)
+# A full commit hash is forty lowercase hex digits: a problem abbreviates one where git names it,
+# so a printed problem never names a commit by its full hash.
+FULL_HASH = re.compile(r"\b[0-9a-f]{40}\b")
 TRAILERS_FORMAT = repo.TRAILERS_FORMAT
 
 
@@ -96,8 +99,9 @@ def _ascii_words(value: str) -> list[str]:
 
 def _repo_problem(path: str, error: repo.RepoError) -> Problem:
     """A `RepoError` as one problem: the thing being read, the command that failed and git's
-    words."""
-    return Problem(path, f"{error.command} failed: {error.err}")
+    words, with any full commit hash abbreviated to seven characters."""
+    said = f"{error.command} failed: {error.err}"
+    return Problem(path, FULL_HASH.sub(lambda match: match.group()[:7], said))
 
 
 def _dedup(problems: list[Problem]) -> list[Problem]:
@@ -111,15 +115,6 @@ def _dedup(problems: list[Problem]) -> list[Problem]:
         seen.add(key)
         unique.append(problem)
     return unique
-
-
-def _read_vault(root: Path, problems: list[Problem]) -> vaults.Vault:
-    """The vault at `root`, with a listing git could not answer for one problem naming it."""
-    try:
-        return vaults.Vault.read(root)
-    except repo.RepoError as e:
-        problems.append(_repo_problem("docs/", e))
-        return vaults.Vault(root, root / "docs", None)
 
 
 def _field_sets(vault: vaults.Vault):
@@ -553,7 +548,11 @@ def problems_check(root: Path, vault: vaults.Vault | None = None) -> list[Proble
         return [Problem("docs/", "missing")]
     problems: list[Problem] = []
     if vault is None:
-        vault = _read_vault(root, problems)
+        try:
+            vault = vaults.Vault.read(root)
+        except repo.RepoError as e:
+            problems.append(_repo_problem("docs/", e))
+            vault = vaults.Vault(root, docs, None)
     try:
         tests = repo.tests(root)
     except repo.RepoError as e:
@@ -708,7 +707,11 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
             return _usage()
         version = args[2].strip()
         problems: list[Problem] = []
-        vault = _read_vault(root, problems)
+        try:
+            vault = vaults.Vault.read(root)
+        except repo.RepoError as e:
+            problems.append(_repo_problem("docs/", e))
+            vault = vaults.Vault(root, root / "docs", None)
         problems.extend(problems_check(root, vault))
         if not problems:
             problems = _release_problems(root, version, vault)
