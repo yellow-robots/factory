@@ -145,6 +145,71 @@ class RepoTest(unittest.TestCase):
         self.assertNotIn("\n", raised.exception.err)
         self.assertNotIn("  ", raised.exception.err)
 
+    def test_the_readers_the_loop_needs_of_the_head_the_branches_a_subject_and_a_distance(self):
+        """seed: the-step-nobody-noticed. From the loop's first review: it ran nine raw git
+        commands of its own; these are their homes."""
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        current = git(self.root, "branch", "--show-current").strip()
+        self.assertEqual(repo.toplevel(self.root), self.root.resolve())
+        self.assertEqual(repo.head(self.root), head)
+        self.assertEqual(repo.branch(self.root), current)
+        self.assertEqual(repo.branches_at(self.root, head), (current,))
+        self.assertEqual(repo.subject(self.root, head), "one")
+        self.assertEqual(repo.distance(self.root, "v0.1", head), 0)
+        write(self.root, "f.txt", "x\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "two")
+        two = git(self.root, "rev-parse", "HEAD").strip()
+        self.assertEqual(repo.distance(self.root, "v0.1", two), 1)
+        self.assertIsNone(repo.distance(self.root, two, "v0.1"))  # not an ancestor
+        git(self.root, "switch", "-q", "--detach")
+        self.assertIsNone(repo.branch(self.root))
+        self.assertEqual(repo.branches_at(self.root, two), (current,))
+        copy = self.copy_without_git()
+        self.assertIsNone(repo.toplevel(copy))
+        for read in (
+            lambda: repo.head(copy),
+            lambda: repo.branch(copy),
+            lambda: repo.branches_at(copy, head),
+            lambda: repo.subject(copy, head),
+            lambda: repo.distance(copy, "v0.1", head),
+        ):
+            with self.assertRaises(repo.RepoError):
+                read()
+
+    def test_a_remote_is_asked_with_a_timeout_and_raises_when_it_cannot_answer(self):
+        """seed: the-step-nobody-noticed."""
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        with self.assertRaises(repo.RepoError):
+            repo.ls_remote(self.root, "origin", "main", timeout=5)  # no origin
+        bare = Path(self.tmp.name) / "bare.git"
+        git(self.root, "clone", "-q", "--bare", str(self.root), str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        current = git(self.root, "branch", "--show-current").strip()
+        self.assertEqual(repo.ls_remote(self.root, "origin", current, timeout=5), head)
+        calls = []
+        real = subprocess.run
+
+        def recording(argv, *args, **kwargs):
+            calls.append((list(argv), kwargs))
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", recording):
+            repo.ls_remote(self.root, "origin", current, timeout=7)
+        remote = [kwargs for argv, kwargs in calls if "ls-remote" in argv]
+        self.assertEqual([kwargs.get("timeout") for kwargs in remote], [7])
+
+    def test_a_seeds_tests_are_run_alone_and_a_run_that_could_not_happen_raises(self):
+        """seed: the-step-nobody-noticed."""
+        self.assertEqual(repo.run_tests(self.root, ("test_repo.RepoTest.test_d",), timeout=60), "green")
+        write(self.root, "test_repo.py", TEST_RED_B)
+        self.assertEqual(repo.run_tests(self.root, ("test_repo.RepoTest.test_b",), timeout=60), "red")
+        self.assertEqual(repo.run_tests(self.root, ("test_repo.RepoTest.test_d",), timeout=60), "green")
+        with mock.patch.object(subprocess, "run", side_effect=subprocess.TimeoutExpired("unittest", 60)):
+            with self.assertRaises(repo.RepoError) as raised:
+                repo.run_tests(self.root, ("test_repo.RepoTest.test_b",), timeout=60)
+        self.assertIn("unittest", raised.exception.command)
+
     def test_the_suite_says_which_of_four_things_it_was(self):
         self.assertEqual(repo.suite(self.root), "green")
         write(self.root, "test_repo.py", TEST_RED_B)
