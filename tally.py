@@ -274,7 +274,10 @@ def gather(root: Path) -> Tally:
             else:
                 unrecorded = sum(1 for stamp in stamps if stamp not in recorded)
 
-        if unreadable_reviews:
+        if unreadable_reviews or store is None:
+            # Without the store, a review of a run git does not hold cannot be placed, and a count
+            # of the reviews git can place would mean something else; an unreadable note leaves
+            # every row's review columns unknown.
             reviews = findings = defects = None
             judged_test = judged_seed = judged_case = judged_none = None
         else:
