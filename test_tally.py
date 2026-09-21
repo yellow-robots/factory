@@ -223,6 +223,22 @@ class TallyTest(TallyBase):
             self.assertEqual(self.row(found, version)[10:17], (None,) * 7, version)
         self.assertEqual(self.row(found, "v0.2")[:10], ("v0.2", 1, 3, 3, 1, 2, 2, 1, 0.75, 65))
 
+    def test_an_unreadable_note_beside_the_note_in_flight_keeps_its_row(self):
+        """seed: the-loop-in-numbers. From the third review: an unreadable note under
+        docs/versions/ beside the readable note in flight dropped the row in flight and said two
+        notes were no tag, while the loop counts a version note by its type, which an unreadable
+        note has not, and names the version in flight."""
+        write(self.root, "docs/versions/v0.3.md", "---\ntype: version\n---\n\n# v0.3: another\n\nAnother.\n\n## Changelog\n\n-\n")
+        self.commit("a note that will not be readable")
+        other = self.root / "docs" / "versions" / "v0.3.md"
+        other.chmod(0)
+        self.addCleanup(other.chmod, 0o644)
+        found = tally.gather(self.root)
+        self.assertEqual([r.version for r in found.rows], ["v0.1", "v0.2"])
+        self.assertEqual(len(found.unknown), 1)
+        self.assertTrue(found.unknown[0].startswith("versions: cannot read "), found.unknown)
+        self.assertEqual(tuple(self.row(found, "v0.2")[i] for i in (0, 3, 17, 18)), ("v0.2", 3, 8, 5))
+
     def test_two_version_notes_that_are_no_tag_are_unknown(self):
         """seed: the-loop-in-numbers. From the first build's review: two untagged notes gave an
         empty table with no reason. The loop says `in_flight: ...` for the same facts; so does
