@@ -184,16 +184,22 @@ def trailers(root: Path, commit: str) -> list[str]:
     return text.split("\x00")
 
 
+# An entry's words, split at ASCII whitespace alone, so a no-break space stays part of a word as
+# the gate keeps it.
+ASCII_WORD = re.compile(r"[^ \t\n\r\x0b\x0c]+")
 # The `run <stamp>` a `Built-By` trailer ends with: the builder's stamp, digits in ASCII alone,
 # whole. `...000Zjunk` is no stamp and names no run.
-RUN_STAMP = re.compile(r"\brun ([0-9]{8}T[0-9]{6}Z(?:-[0-9]+)?)$")
+RUN_STAMP = re.compile(r"[0-9]{8}T[0-9]{6}Z(?:-[0-9]+)?")
 
 
 def run_stamp(entry: str) -> str | None:
-    """The run stamp a `Built-By` trailer names, `run <stamp>` at the end of `entry`, or None for
-    anything but that whole; the one reading the gate and the loop share."""
-    match = RUN_STAMP.search(entry.strip())
-    return match.group(1) if match else None
+    """The run stamp a `Built-By` trailer names, `run <stamp>` as the entry's last two words, or
+    None for anything but that whole; the entry is split at ASCII whitespace alone, so a no-break
+    space stays part of a word. The one reading the gate and the loop share."""
+    words = ASCII_WORD.findall(entry)
+    if len(words) >= 2 and words[-2] == "run" and RUN_STAMP.fullmatch(words[-1]):
+        return words[-1]
+    return None
 
 
 def tag_date(root: Path, tag: str) -> str:
@@ -252,13 +258,25 @@ def message(root: Path, commit: str) -> str:
     return done.out[:-1] if done.out.endswith("\n") else done.out
 
 
+def _elsewhere(root: Path, command: str) -> None:
+    """Raise `RepoError` when `root` is inside another repository's top level: a reader that
+    reads files and no git of its own -- `tests` -- still refuses to read the enclosing
+    repository's tree, while a directory that is no checkout at all is nobody's and is read as it
+    always was."""
+    done = git(root, "rev-parse", "--show-toplevel")
+    if done.code == 0 and done.out.strip():
+        if Path(done.out.strip()).resolve() != Path(root).resolve():
+            raise RepoError(command, "not the top level of its own checkout")
+
+
 def tests(root: Path) -> Tests:
     """Every test method or class of each `test*.py` at the root, read once, with its unittest id,
     its name and its docstring; a file that cannot be read or parsed is one `(file, why)` in
     `unparseable` under its name alone, its tests of no account, and the other files' tests still
-    count; `RepoError` only when the root's files cannot be listed."""
+    count; `RepoError` only when the root is inside another repository's top level, never for a
+    directory that is no checkout, whose files are read as they always were."""
     root = Path(root)
-    _owned(root, "list test*.py")
+    _elsewhere(root, "list test*.py")
     try:
         paths = sorted(root.glob("test*.py"))
     except OSError as e:
