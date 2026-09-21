@@ -238,6 +238,23 @@ class RepoTest(unittest.TestCase):
         ):
             self.assertIsNone(repo.run_stamp(entry), entry)
 
+    def test_a_remote_is_asked_with_nothing_that_prompts(self):
+        """seed: the-step-nobody-noticed. From the loop's third review: an SSH key that prompts
+        would stall next for the whole timeout after every tag."""
+        calls = []
+        real = subprocess.run
+
+        def recording(argv, *args, **kwargs):
+            calls.append((list(argv), kwargs))
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", recording):
+            with self.assertRaises(repo.RepoError):
+                repo.ls_remote(self.root, "origin", "main", timeout=5)
+        env = [kwargs.get("env") or {} for argv, kwargs in calls if "ls-remote" in argv][0]
+        self.assertEqual(env.get("GIT_TERMINAL_PROMPT"), "0")
+        self.assertIn("BatchMode=yes", env.get("GIT_SSH_COMMAND", ""))
+
     def test_a_seeds_tests_are_run_alone_and_a_run_that_could_not_happen_raises(self):
         """seed: the-step-nobody-noticed."""
         self.assertEqual(repo.run_tests(self.root, ("test_repo.RepoTest.test_d",), timeout=60), "green")

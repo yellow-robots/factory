@@ -341,6 +341,25 @@ class GatherTest(unittest.TestCase):
         found = loop.gather(self.root)
         self.assertEqual(loop.next_step(found).text, "release: uv run gate.py release v0.2")
 
+    def test_a_review_note_naming_several_runs_reviews_each_of_them(self):
+        """Found live, the first time next ran on the finished loop: this repository's review
+        notes name several runs in `runs:`, as the gate reads them, and the loop looked only for
+        a note named after the latest stamp."""
+        write(self.root, "test_repo.py", TEST_GREEN_B)
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        write(self.root, "docs/templates/review.md", REVIEW.replace("2026-09-17", '"{{date}}"').replace(STAMP, ""))
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", f"b\n\nBuilt-By: factory at v0.1, run {STAMP}")
+        write(self.root, "feature.py", "X = 2\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", f"b\n\nBuilt-By: factory at v0.1, run {STAMP}-2")
+        write(self.root, f"docs/reviews/{STAMP}.md", REVIEW.replace(f"runs: {STAMP}", f"runs: {STAMP} {STAMP}-2"))
+        self.commit("one note, two runs")
+        found = loop.gather(self.root)
+        self.assertEqual([build.stamp for build in found.seeds[0].builds], [STAMP, f"{STAMP}-2"])
+        self.assertTrue(found.seeds[0].reviewed)
+        self.assertEqual(loop.next_step(found).text, "set b to done")
+
     def test_a_commit_named_like_the_seed_without_a_trailer_is_no_build(self):
         write(self.root, "test_repo.py", TEST_GREEN_B)
         write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
@@ -644,6 +663,67 @@ class GatherTest(unittest.TestCase):
             found = loop.gather(self.root)
         self.assertFalse([argv for argv in calls if "unittest" in argv], calls)
         self.assertEqual(loop.next_step(found).text, "write the Goal of c; status spec")
+
+    def test_a_class_with_no_test_of_its_own_is_no_test_and_is_never_run_whole(self):
+        """From the third review: a base class, a mixin or an empty TestCase whose docstring named
+        a seed was handed to unittest as an id and run whole -- `TypeError: not a test`, `NO TESTS
+        RAN` -- and the seed went red for no test of its own."""
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        write(
+            self.root,
+            "test_repo.py",
+            "import unittest\n\n\n"
+            'class Mixin:\n    """seed: b. A helper, no test."""\n\n\n'
+            'class Empty(unittest.TestCase):\n    """seed: b. Nothing yet."""\n\n\n'
+            "class RepoTest(unittest.TestCase):\n"
+            '    def test_d(self):\n        """seed: d. The first thing holds."""\n        self.assertEqual(1, 1)\n',
+        )
+        self.commit("classes naming b with no test of their own")
+        found = loop.gather(self.root)
+        b = found.seeds[0]
+        self.assertEqual((b.tests, b.colour), ((), "none"))
+        self.assertEqual(loop.next_step(found).text, "write red tests naming seed: b; commit them; status building")
+
+    def test_reviewed_is_read_from_the_notes_and_not_from_membership(self):
+        """From the third review: `reviewed` asked the Vault whether it held the note's path, and
+        with the vault read whole after a failed listing, `holds` answered True for every path, so
+        a build with no review note read as reviewed."""
+        write(self.root, "test_repo.py", TEST_GREEN_B)
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", f"b\n\nBuilt-By: factory at v0.1, run {STAMP}")
+        real = subprocess.run
+
+        def failing(argv, *args, **kwargs):
+            if "ls-files" in argv:
+                raise OSError("git died")
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", failing):
+            found = loop.gather(self.root)
+        self.assertEqual([build.stamp for build in found.seeds[0].builds], [STAMP])
+        self.assertIs(found.seeds[0].reviewed, False)  # the notes, read whole, hold none
+
+    def test_no_branch_at_a_detached_head_is_said_plainly(self):
+        """From the third review: a head at the tip of no branch printed `branch: 0 branches at
+        the head: ` with an empty list after the colon."""
+        write(self.root, "test_repo.py", TEST_RED_B)
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        self.commit("red")
+        git(self.root, "switch", "-q", "--detach")
+        write(self.root, "later.txt", "x\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "a commit on no branch")
+        found = loop.gather(self.root)
+        self.assertEqual((found.branch, found.attached), (None, False))
+        line = next((line for line in found.unknown if line.startswith("branch:")), "")
+        self.assertIn("no branch", line)
+        self.assertFalse(line.rstrip().endswith(":"), line)
+
+    def test_the_seed_rows_are_not_dispatched_beside_the_table(self):
+        """From the third review: seven predicates in a tuple and an if-chain on an index decided
+        a seed's row beside RULES, which the Goal forbids and the earlier pin missed."""
+        self.assertEqual([name for name in dir(loop) if name.upper().startswith("_SEED")], [])
 
     def test_the_loop_reads_through_vault_and_repo_and_nothing_else(self):
         """From the first build's review: `loop.py` imported `ast` and `subprocess`, read files
