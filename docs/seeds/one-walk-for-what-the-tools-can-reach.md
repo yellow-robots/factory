@@ -1,7 +1,7 @@
 ---
 created: 2026-09-19
 type: seed
-status: open
+status: rejected
 summary: The budget's walk of the checkout and the tools' own walk are the same policy written twice, so a change to what the tools hide would silently leave the budget counting files the run can no longer read.
 value: 3
 effort: S
@@ -9,6 +9,8 @@ reporter: review
 kind: quality
 version:
 ---
+
+Rejected 2026-09-21 by the owner, at 87b2bcb: the budget's walk went with [[the-walk-that-bounds-nothing]] at v0.20, so only `Tools._files` remains and there is no second walk to unify.
 
 ## Evidence
 
