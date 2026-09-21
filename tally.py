@@ -171,7 +171,15 @@ def _review_row(
             for word in dict.fromkeys(_judgements(section)):
                 if word in judged:
                     judged[word] += 1
-    return (reviews, findings, defects, judged["test"], judged["seed"], judged["case"], judged["none"])
+    return (
+        reviews,
+        findings,
+        defects,
+        judged["test"],
+        judged["seed"],
+        judged["case"],
+        judged["none"],
+    )
 
 
 def gather(root: Path) -> Tally:
@@ -202,9 +210,7 @@ def gather(root: Path) -> Tally:
         unknown.append(f"docs: {e}")
     notes = list(held.notes())
 
-    bad_reviews = [
-        note.rel for note in notes if _under(note.rel, "reviews") and _unreadable(note)
-    ]
+    bad_reviews = [note.rel for note in notes if _under(note.rel, "reviews") and _unreadable(note)]
     for rel in bad_reviews:
         unknown.append(f"reviews: cannot read {rel}")
     bad_seeds = [note.rel for note in notes if _under(note.rel, "seeds") and _unreadable(note)]
@@ -250,9 +256,7 @@ def gather(root: Path) -> Tally:
             unknown.append(f"in_flight: {len(untagged)} version notes are no tag")
 
     bad_version_stems = {
-        note.path.stem
-        for note in notes
-        if _under(note.rel, "versions") and _unreadable(note)
+        note.path.stem for note in notes if _under(note.rel, "versions") and _unreadable(note)
     }
     versions: list[tuple[str, str | None, str]] = []
     for index, tag in enumerate(ordered):

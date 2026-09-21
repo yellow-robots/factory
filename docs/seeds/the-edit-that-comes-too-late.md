@@ -27,6 +27,8 @@ The rule flags 40 runs and catches **11 of the 13 capped builds in the whole sto
 
 What it is measuring is not difficulty. It is the exploration that [[caps-for-the-checkout-as-it-is]] found the budget being spent on -- a run that cannot find where to start does not stop trying, and the twentieth call is early enough that something could still be done about it.
 
+2026-09-22, at 6f9ed57, by the attended agent from the review of run 20260921T230705Z (docs/reviews/20260921T230705Z.md). For the Goal that builds this, since it is the next to touch `runs.py`: the module's docstring at `runs.py:14` to `16` says `capped` reads a record's numbers, and since v0.22 the function is handed the numbers already read and reads the messages alone; given `None` it does not open them. A sentence to correct, no behaviour.
+
 ## Idea
 
 The record says when the first edit came, beside the counts it already carries, so a version can read off its own table which of its runs went looking and never found. That is the whole of the cheap half and it needs no judgement.

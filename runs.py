@@ -196,9 +196,11 @@ def main(argv: list[str], runs: Any = None) -> int:
         numbers = _numbers(record)
         lines.append(
             "\t".join(
-                _field(record.name) if column == "stamp" else
-                _field(_first_line(record / "goal.txt")) if column == "goal" else
-                _cell(record, numbers, column)
+                _field(record.name)
+                if column == "stamp"
+                else _field(_first_line(record / "goal.txt"))
+                if column == "goal"
+                else _cell(record, numbers, column)
                 for column in COLUMNS
             )
         )

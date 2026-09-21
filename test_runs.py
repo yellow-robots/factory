@@ -212,6 +212,22 @@ class ToolErrorsTest(unittest.TestCase):
     def test_the_module_docstring_names_the_column(self):
         self.assertIn("tool_errors", runs.__doc__)
 
+    def test_capped_reads_the_numbers_it_is_given_and_the_messages_alone(self):
+        """seed: the-loop-in-numbers. From the last review of the tally: `capped` is handed the
+        numbers already read and reads the messages alone, so a record's numbers are read once;
+        given None it does not open them. A pin added after the build, green."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            capped = record(base, "20260917T000000Z", {"stopped": "cap"}, "goal")
+            messages(capped)
+            self.assertTrue(runs.capped(capped, {"stopped": "cap"}))
+            self.assertFalse(runs.capped(capped, None))
+            landed = record(base, "20260917T000001Z", {"stopped": "answer"}, "goal")
+            messages(landed, "error: cap reached (0.125 USD spent); report now")
+            self.assertTrue(runs.capped(landed, {"stopped": "answer"}))
+            self.assertTrue(runs.capped(landed, None))
+            self.assertIsNone(runs.capped(None, None))
+
 
 if __name__ == "__main__":
     unittest.main()
