@@ -1,18 +1,24 @@
 # factory
 
-v0.14: the factory as a deployment that is sent a seed of a project. `build.py` takes a repository,
-a branch and a seed's path and answers with one commit pushed to that branch, or leaves the branch
-alone and a note on the head it was asked of; a build's record is the factory's own log and lives in
+v0.19: the factory as a deployment with two programs and a number for each. `build.py` takes a
+repository, a branch and a seed's path and answers with one commit pushed to that branch, or leaves
+the branch alone and a note on the head it was asked of; a run that was capped and left a green
+tree is taken like any other, its commit carrying `Stopped-By` beside `Built-By`. `reviewer.py` is
+a read-only session over a delivered tree, and what it catches is measured over `catches/` as what
+the builder builds is measured over `cases/`. A run's record is the factory's own log and lives in
 its store, a git repository outside every project. Every line of code since v0.3 was written by the
-factory itself, from tests written before each build.
+factory itself, from tests written before each build, but one: the check's task limit, raised by
+hand in v0.17 when the suite crossed it.
 
 ```sh
 uv run build.py <repository> <branch> <seed>  # one build asked through git: a pushed branch in, a commit on it out
 uv run builder.py <checkout> "<goal>" # one build in place; the goal is text or the path of a seed, docs/seeds/<name>.md
+uv run reviewer.py <checkout> <seed>  # one review of the checkout's head, read-only; the note is in the record
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run runs.py                        # the records of the store as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
-uv run python -m unittest -v          # 212 tests, no provider, no network, no docker
+uv run catch.py --score               # the reviewer's catch rate from the records already made; --spend USD runs the cases
+uv run python -m unittest -q          # the suite: no provider, no network, no docker
 ```
 
 Needs uv 0.8+, Python 3.12, and Docker; the dependency is pinned in `pyproject.toml`/`uv.lock`:
@@ -48,19 +54,29 @@ anything under `tests/`, `pyproject.toml`, `uv.lock`, `check.Dockerfile`, anythi
 toolchain is what check runs against, the vault is where the goals come from, and a filter or an
 ignore rule the model wrote would change what git records of the run). The six tools run one at a
 time, in the order the model gave them, since v0.12: the library would otherwise overlap the calls
-of one response, and two edits of one file raced. Caps: 30 writes and edits, 8 checks per run in the tools, and a
-budget of tool calls the checkout earns -- a share of what one pass over everything the tools can
-reach costs to read, plus those writes and checks, floored at 80 and bounded at 200. The tools
-refuse past the budget and say so, so a run that has spent it reports instead of being cut off; the
-library's own limits sit above the budget as a backstop, and the record says which of them ended a
-run when one did. The check: `docker run --rm --network none --user <uid>:<gid> -v <checkout>:/w:ro ...
+of one response, and two edits of one file raced. Caps: `WRITE_CAP`, 30 writes and edits together,
+and `CHECK_CAP`, 8 checks, per run in the tools, and what the run has spent, asked at every call
+and priced by the one function the record's cost comes from: at `SOFT_SPEND`, 0.125 USD, every
+tool refuses and says report now, so a run that has spent it reports instead of being cut off; at
+`HARD_SPEND`, 0.25 USD, the run itself ends. Two backstops sit above the spend, fixed and derived
+from nothing: `CALLS_LIMIT`, 200 tool calls, at which the tools land the run the same way, and
+`REQUEST_LIMIT`, 250 requests in the library, above it so a landed run can still report; the
+record's `cap` says which of them ended a run when one did. The check: `docker run --rm --network none --user <uid>:<gid> -v <checkout>:/w:ro ...
 python -P -m unittest discover -q`, in an image built once per checkout from `check.Dockerfile` and
 the checkout's `uv.lock` (`factory-check:<hash>`, git installed because the checkout's tests use it),
 120 s timeout then the container is killed. `-P` because a checkout-root `unittest.py` would
 otherwise shadow the standard library and turn any suite green. Model-written code never runs on
-the host and cannot reach the key or the network. Provider DeepSeek `deepseek-flash`, key in
-`~/.config/factory/deepseek.key` (bare key or one `name=value` line), thinking at the API
-default; no temperature is sent because DeepSeek ignores it in thinking mode.
+the host and cannot reach the key or the network. The model and its key are the role's: a build
+runs as the role `builder` of the instance's configuration, which names the model, the key file
+(bare key or one `name=value` line) and, for a model served somewhere other than the provider used
+by default, its `base_url`; a configuration naming neither `roles` nor `work` runs `deepseek-flash`
+with the key in `~/.config/factory/deepseek.key`. `deepseek-flash` runs with thinking at the API
+default and no temperature sent, because DeepSeek ignores it in thinking mode. A run is priced by
+what it ran on: `PRICE`, the builder's own table, for `deepseek-flash`, and `genai_prices` for any
+other model, asked at the address the role is served at, because one name is served by several
+vendors at different rates; a role neither can price is refused before a model is called and
+before a record is made, exit 2, naming the role and the model, since a ceiling derived from
+another model's rate is not a ceiling.
 
 A run leaves `<store>/<utc-stamp>/`: `goal.txt`; `wire.jsonl.gz` (every HTTP attempt, headers
 with secrets redacted, JSON bodies as JSON, other bodies as text, compressed when the run ends
@@ -72,8 +88,9 @@ Changed, Did, Check, Failing, Unsure; only when there is a report); and `numbers
 `key=value` line on stdout: model, role and wrapper hashes, library version, checkout and
 `head` (the checkout's commit), `seed` (the seed's name, null for a text goal), `stopped`
 (`answer`/`cap`/`error`),
-requests, attempts, tool calls, tokens (input, output, cache read, reasoning), cost and its
-source (`table`: our price table, genai-prices has no row for this model), lists, reads, files
+requests, attempts, tool calls, tokens (input, output, cache read, reasoning), cost and
+`cost_source`, the source that priced it, `table` or `genai-prices`, never the name that was
+configured, lists, reads, files
 and lines read, writes, edits, checks, `check` (green/red/none: the tools' own verdict on the
 tree the run left, the builder's own check added when the model wrote after its last, next to the
 report's claim), check seconds, files changed, insertions, deletions,
@@ -84,6 +101,39 @@ baseline of every measurement, and `runs.py` prints its records as one table, a 
 record in stamp order, every value as `numbers.json` has it, an empty cell for a key a record
 lacks, `head` read from `head` or, in records before v0.5, `world_head`, and the goal's first
 line.
+
+## The reviewer
+
+`reviewer.py <checkout> <seed>` is a cold session over a delivered tree that reads and cannot
+write. The checkout is reachable through three tools, `list`, `read` and `search`, the builder's
+own with their walls, caps and shapes unchanged, and the function a report comes back through;
+`write`, `edit` and `check` are never offered, not refused at a wall, so a reviewer never becomes
+a builder and never acquires an interest in finding less. It builds no container and runs nothing
+of the project's. A review is `PASSES`, five, independent sessions per dimension over
+`DIMENSIONS`, four fixed goals a pass pursues, each there because something got past a green
+check: every place the change satisfies its tests without meeting the goal; every claim the goal
+makes that no test would catch being broken; work the program already does; what now describes
+something that is gone. Each pass is given the seed's `## Goal`, read out of the head's commit as
+the builder reads one, the change under review, the diff from the commit before the head to the
+head, which is the build the head is, and, last, its dimension, so every session of the review
+shares one cached prefix; no pass sees what another found. A finding two or more passes of one
+dimension reached, by path and line and never by prose, is the report; what one pass reached alone
+stays in the record; `agreement` is the share of everything seen that more than one pass reached,
+and nothing says a contract is met, because no number of passes can warrant that. It runs as the
+role `reviewer`, whose model, key and address the instance's configuration names, and stops
+starting passes once it has spent `len(DIMENSIONS) x PASSES x SOFT_SPEND`, 2.50 USD; a pass
+already running may go to `HARD_SPEND`, and the passes that answered are the review. The record
+is a build's shape in the store, `goal.txt`, `messages.json`, `wire.jsonl.gz`, `review.json`,
+`review.md` and `numbers.json`, its path the first line printed. `review.json` is what the passes
+together found, each finding with its dimension and the passes behind it, how many passes ran and
+`agreement`; `review.md` is that as a note in the review template's shape, for the attended
+agent to reproduce, verify and judge, written into the record and never into the vault;
+`numbers.json` names the role, its model, the head reviewed and the seed beside the counts a
+build's has. The record is searched for every key the configuration names before the store takes
+it, as a build's is. Exit 0 when the model reported, 1 on a cap or a provider error, 2 on what it
+cannot review, refused in its own words before a model is called and before a record is made: a
+directory that is not a checkout git can read, a head with no commit before it to compare
+against, an argument that names no seed note, and a seed the head's commit does not hold.
 
 ## The instance
 
@@ -171,14 +221,48 @@ n the runs, summed over the cases, rooted and divided by the case count, so a pe
 three runs is not read as certain and one run still carries an error; a difference between two
 runs of the set under twice the standard error of the difference is not read as a change. Three
 runs by default; a case that varies is run at ten alone, `--runs 10 <case>`, and a full set at
-ten when a version changes what the model sees. Eleven cases probe known ways to fail: a change
+ten when a version changes what the model sees. Twelve cases probe known ways to fail: a change
 across two files, a new module, an edit whose anchor is not unique, a goal without a place, a
 test that needs the network the check does not have, a test only a deleted wall passes, a test
-that cannot pass, a goal that asks to change the test, a rename across thirty docstrings, and two
-with held-out tests: a behaviour change whose docstrings must follow, and a debit that does not
-lower a balance, whose root is in the line parser and not in the sum.
+that cannot pass, a goal that asks to change the test, a rename across thirty docstrings, and three
+with held-out tests: a behaviour change whose docstrings must follow, a debit that does not
+lower a balance, whose root is in the line parser and not in the sum, and a missing argument that
+must be the call's own error and not one the function raises.
+
+## The catch rate
+
+`catches/<name>.toml` is a review case: a commit of this repository, the seed that commit was
+built from, and one `[[finding]]` per defect the commit is known to hold, a `path` and `lines` or
+`line` of the file at that commit, each with the review note it came from. The answers are the
+findings in `docs/reviews/` that the attended agent verified and that a pass which reads and
+cannot run could have reached: `cases/` is the builder's set and this is the reviewer's.
+`catch.py --spend USD [case ...]` reviews each case named, or every case, the way anything is
+reviewed: a throwaway worktree at the case's commit, `reviewer.py` over it as over any delivered
+tree, nothing special-cased for being measured, the record in the store key-scanned like any
+other with a goal beginning `case: <name>`, so `runs.py` shows what the measurement cost beside
+everything else it shows. A catch is crude and visible, and it is counted twice: a reported
+finding catches a known one when it names that path and its line falls within the span, and the
+same set is counted again on the path alone. One row per case, tab-separated: `strict` and
+`path`, the known findings caught on each count; `known`, how many the case holds; `passes`,
+`cost_usd` and `seconds`; then, after one empty line, the set's rate on each count with its
+standard error under a uniform prior, as `evals.py` gives the builder's. A review's cost is chosen
+and not emergent, `dimensions x passes x SOFT_SPEND` for each case, and a pass may run to
+`HARD_SPEND` above it, so the run says what it is expected to cost and what it could cost before
+the first pass starts, and one that could cost more than `--spend` allows is refused before a
+model is called and before a record is made, naming both numbers; there is no default allowance.
+`--score` scores the records the store already holds and spends nothing: no worktree, no pass, no
+model and no allowance. Each case is scored against the latest record naming it, so a key
+corrected after a review is scored again for the price of the arithmetic, and a case the store
+holds no record of is `unmeasured` and left out of the rate, because a review that never ran is
+not a review that caught nothing. Exit 0 when every review answered and every record scored, 1
+when a review was capped or errored, 2 on a usage error: a case that is missing or not whole, an
+allowance that is not a non-negative number, no allowance for a run, or a run over what it was
+allowed.
 
 ## Runs
+
+Through v0.14; each version since is in `CHANGELOG.md`, rendered by the gate from the version
+notes, and in its note under `docs/versions/`.
 
 G1, a real change to the factory itself: the wire should record a body that parses as JSON as
 the parsed value, any other body as text; the acceptance test was written first. 12 requests,
