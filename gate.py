@@ -1038,10 +1038,9 @@ def _release_problems(root: Path, version: str, vault: _Vault | None = None) -> 
         if not line.strip():
             continue
         path = line[3:].strip() if len(line) > 3 else line.strip()
-        # `dist/` is the release's own output, which git ignores; a wheel an earlier build left
-        # there is not the project's change, and the build puts this release's beside it.
-        if path == WHEEL_DIR or path.startswith(f"{WHEEL_DIR}/"):
-            continue
+        # `dist/` is the release's own output only where git ignores it, as this repository does;
+        # `git status` leaves an ignored path out already, so a path there in a repository that
+        # does not ignore it is an uncommitted change like any other and the tree is not clean.
         problems.append(f"{path}: uncommitted change")
 
     previous = _highest_tag(tags)
