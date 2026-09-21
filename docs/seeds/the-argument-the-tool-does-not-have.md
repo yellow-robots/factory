@@ -1,7 +1,7 @@
 ---
 created: 2026-09-21
 type: seed
-status: spec
+status: building
 summary: A tool call whose arguments have the wrong shape is answered by the library, not the tools, and a second one ends the run with no report and no diff; twice the model has invented `limit` for `read`, been told, and done it again, and both runs died at about three cents.
 value: 3
 effort: S

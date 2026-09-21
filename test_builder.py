@@ -167,14 +167,19 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(self.tools.listed, [])
 
     def test_read_numbers_lines_and_truncates_with_a_continuation(self):
+        # Amended before the build of the-argument-the-tool-does-not-have: sub/b.txt is 1,000
+        # lines, which was above the cap and is now the cap, so the file read here is longer than
+        # any cap by eleven lines.
+        cap = builder.READ_LINES_CAP
+        (self.root / "long.txt").write_text("".join(f"line {i}\n" for i in range(1, cap + 12)))
         self.assertEqual(self.tools.read("a.txt"), "1\tone\n2\ttwo\n3\tthree")
-        out = self.tools.read("sub/b.txt")
+        out = self.tools.read("long.txt")
         self.assertTrue(out.startswith("1\tline 1\n"))
-        self.assertIn(f"...\ttruncated; continue with start={builder.READ_LINES_CAP + 1}", out)
-        out = self.tools.read("sub/b.txt", start=990)
-        self.assertTrue(out.startswith("990\tline 990\n"))
-        self.assertTrue(out.endswith("1000\tline 1000"))
-        self.assertEqual(self.tools.lines_read, 3 + builder.READ_LINES_CAP + 11)
+        self.assertIn(f"...\ttruncated; continue with start={cap + 1}", out)
+        out = self.tools.read("long.txt", start=cap + 1)
+        self.assertTrue(out.startswith(f"{cap + 1}\tline {cap + 1}\n"))
+        self.assertTrue(out.endswith(f"{cap + 11}\tline {cap + 11}"))
+        self.assertEqual(self.tools.lines_read, 3 + cap + 11)
 
     def test_a_line_longer_than_the_byte_cap_is_cut_and_the_next_line_continues(self):
         (self.root / "wide.txt").write_text("x" * 40_000 + "\nshort\n")
@@ -191,6 +196,42 @@ class ToolsTest(unittest.TestCase):
         self.assertTrue(self.tools.read("nope.txt").startswith("error: not a file"))
         self.assertTrue(self.tools.read("loop").startswith("error:"))
         self.assertTrue(self.tools.list("loop").startswith("error:"))
+
+    def test_a_read_takes_a_limit_and_says_where_to_continue(self):
+        """seed: the-argument-the-tool-does-not-have. Twice a run died on `limit`, the argument the
+        model keeps reaching for; `read(path, start, limit)` has it, bounded by the line cap: below
+        one is one, zero or above the cap is the cap."""
+        out = self.tools.read("sub/b.txt", start=10, limit=5)
+        self.assertEqual(out, "10\tline 10\n11\tline 11\n12\tline 12\n13\tline 13\n14\tline 14\n...\ttruncated; continue with start=15")
+        self.assertEqual(self.tools.read("sub/b.txt", start=999, limit=-3), "999\tline 999\n...\ttruncated; continue with start=1000")
+        cap = builder.READ_LINES_CAP
+        (self.root / "long.txt").write_text("".join(f"line {i}\n" for i in range(1, cap + 12)))
+        for limit in (0, cap + 5):
+            out = self.tools.read("long.txt", limit=limit)
+            self.assertEqual(out.count("\n"), cap, limit)  # the cap's lines, then the truncation line
+            self.assertTrue(out.endswith(f"...\ttruncated; continue with start={cap + 1}"), limit)
+
+    def test_the_read_caps_fit_a_module_of_this_repository(self):
+        """seed: the-read-that-costs-a-request. A read was 300 lines and 32,000 bytes since v0.2,
+        set against a program of three hundred lines; builder.py is 1,579 lines and 78,941 bytes,
+        six reads and six requests to see, and reasoning is priced per request. A thousand lines
+        and sixty-four thousand bytes: two."""
+        self.assertEqual(builder.READ_LINES_CAP, 1000)
+        self.assertEqual(builder.READ_BYTES_CAP, 64_000)
+        out = self.tools.read("sub/b.txt")
+        self.assertTrue(out.endswith("1000\tline 1000"), out[-40:])  # a thousand lines in one read
+        (self.root / "wide.txt").write_text("".join(f"{i:03d} " + "x" * 95 + "\n" for i in range(1, 801)))  # 100 bytes a line
+        out = self.tools.read("wide.txt")
+        self.assertEqual(out.count("\n"), 640)  # 64,000 bytes of lines, then the truncation line
+        self.assertTrue(out.endswith("...\ttruncated; continue with start=641"), out[-60:])
+
+    def test_the_bytes_a_read_returned_are_counted(self):
+        """seed: the-read-that-costs-a-request. What a larger read costs in tokens against what it
+        saves in requests is the thing to measure, so the tools count the bytes beside the lines."""
+        self.tools.read("a.txt")
+        self.assertEqual((self.tools.lines_read, self.tools.bytes_read), (3, 14))
+        self.tools.read("sub/b.txt", start=990)
+        self.assertEqual((self.tools.lines_read, self.tools.bytes_read), (14, 114))
 
     def test_the_docstrings_state_the_caps(self):
         self.assertIn(str(builder.READ_LINES_CAP), Tools.read.__doc__)
@@ -947,6 +988,24 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(len(retries), 1)
         self.assertIn("Fix the errors and try again", retries[0].model_response())
 
+    def test_a_call_of_the_wrong_shape_costs_a_request_and_never_the_run(self):
+        """seed: the-argument-the-tool-does-not-have. Runs 20260917T215410Z and 20260921T093954Z
+        died at the second `read` with an argument the tool does not have, the library's one retry
+        spent, no report and no diff. A shape error is answered like every other error, and the
+        run goes on under the spend."""
+        tools = self.tools([])
+        model = scripted(
+            [call("read", {"path": "f.py", "lines": 5}, "c1")],
+            [call("read", {"path": "f.py", "lines": 5}, "c2")],
+            [call("read", {"path": "f.py"}, "c3")],
+        )
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=model), "goal")
+        self.assertEqual((stopped, detail), ("answer", ""))
+        self.assertIsInstance(report, BuildReport)
+        retries = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
+        self.assertEqual([p.tool_name for p in retries], ["read", "read"])
+        self.assertEqual(tools.read_paths, ["f.py"])
+
     def test_a_provider_error_stops_the_run_without_a_report(self):
         tools = self.tools([])
 
@@ -1521,6 +1580,23 @@ class MainTest(unittest.TestCase):
         self.assertEqual(numbers["stopped"], "error")
         self.assertIn("boom", numbers["detail"])
         self.assertNotIn("detail=", lines[1])
+
+    def test_the_record_counts_the_calls_the_library_answered_for_their_shape(self):
+        """seed: the-argument-the-tool-does-not-have. The record says which tool and how often, as
+        `cap` says which cap: `retries` by tool name, `{}` for a run the library never corrected;
+        and `bytes_read` beside `lines_read`."""
+        model = scripted(
+            [call("read", {"path": "f.py", "lines": 5}, "c1")],
+            [call("read", {"path": "f.py", "lines": 5}, "c2")],
+            [call("read", {"path": "f.py"}, "c3")],
+        )
+        code, lines, run_dir = self.main(model, FakeSandbox([]))
+        numbers = json.loads((run_dir / "numbers.json").read_text())
+        self.assertEqual(numbers["stopped"], "answer")
+        self.assertEqual(numbers["retries"], {"read": 2})
+        self.assertEqual((numbers["reads"], numbers["lines_read"], numbers["bytes_read"]), (1, 1, 6))
+        self.main(scripted([call("read", {"path": "f.py"}, "c1")]), FakeSandbox([]))
+        self.assertEqual(json.loads((self.records()[1] / "numbers.json").read_text())["retries"], {})
 
     def test_the_head_is_recorded_for_a_git_checkout(self):
         """seed: world-pinned-to-commit; seed: terms-checkout-and-tools. A run is comparable only
