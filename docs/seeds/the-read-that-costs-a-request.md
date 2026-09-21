@@ -1,7 +1,7 @@
 ---
 created: 2026-09-19
 type: seed
-status: building
+status: done
 summary: A read returns 300 lines, so covering the checkout the builder now works on costs 44 reads and 44 requests; the same bytes in fewer, larger reads would cost the same tokens and a third of the requests.
 value: 4
 effort: S
@@ -17,6 +17,8 @@ version: v0.22
 What makes this worth its own seed is where the money goes. A run's cost is driven by requests, not by tokens read: every request re-sends the conversation, and the deepest runs of the store cost about a fifth of a cent each. The same content read in fewer, larger calls is the same new tokens and fewer requests. At 300 lines a read, a file of 1,877 lines costs seven requests to see; the bytes cap would allow about 800 lines of Python in one, so the same file could be four. Nothing in the record says the model reads more than it needs; it says the model reads in small bites because that is all a read gives it.
 
 Filed rather than built with [[caps-for-the-checkout-as-it-is]], because the two are separable and the budget there divides by whatever a read returns, so raising the read lowers the budget by itself and the change can be judged on its own numbers.
+
+2026-09-22, at c3baaad, by the attended agent. Done with no build of its own, by the loop's ninth row: its two tests went green with [[the-argument-the-tool-does-not-have]]'s runs 20260921T212814Z and 20260921T215305Z, whose Goal carried both seeds. `READ_LINES_CAP` is 1000 and `READ_BYTES_CAP` 64,000: `builder.py`, 1,579 lines and 78,941 bytes, is two reads where it was six. The measurement this seed asked for -- what the larger read costs in tokens against what it saves in requests, on this repository's next builds and on the evaluation set -- is made after v0.22 ships and its wheel is installed, since a build runs on the installed product.
 
 ## Idea
 
