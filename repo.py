@@ -87,7 +87,9 @@ def git(root: Path, *args: str) -> Result:
 
 
 def tags(root: Path) -> set[str]:
-    """Every tag git lists, or `RepoError` when git cannot answer."""
+    """Every tag git lists, or `RepoError` when git cannot answer or `root` is not the top level
+    of its own checkout."""
+    _owned(root, "git tag -l")
     done = git(root, "tag", "-l")
     if done.code != 0:
         raise RepoError("git tag -l", done.err)
@@ -159,6 +161,7 @@ def builds(root: Path, previous: str | None) -> list[str]:
     from HEAD when there is none; `RepoError` when git cannot list them."""
     revision = f"{previous}..HEAD" if previous is not None else "HEAD"
     command = f"git rev-list {revision} --"
+    _owned(root, command)
     done = git(root, "rev-list", revision, "--")
     if done.code != 0:
         raise RepoError(command, done.err)
@@ -169,6 +172,7 @@ def trailers(root: Path, commit: str) -> list[str]:
     """The entries git's own trailer parser reads as `Built-By` for `commit`, each `<key>:
     <value>` and never empty, or `RepoError` when git cannot answer."""
     command = f"git log -1 --format={TRAILERS_FORMAT}"
+    _owned(root, command)
     done = git(root, "log", "-1", f"--format={TRAILERS_FORMAT}", commit, "--")
     if done.code != 0:
         raise RepoError(command, done.err)
@@ -180,8 +184,21 @@ def trailers(root: Path, commit: str) -> list[str]:
     return text.split("\x00")
 
 
+# The `run <stamp>` a `Built-By` trailer ends with: the builder's stamp, digits in ASCII alone,
+# whole. `...000Zjunk` is no stamp and names no run.
+RUN_STAMP = re.compile(r"\brun ([0-9]{8}T[0-9]{6}Z(?:-[0-9]+)?)$")
+
+
+def run_stamp(entry: str) -> str | None:
+    """The run stamp a `Built-By` trailer names, `run <stamp>` at the end of `entry`, or None for
+    anything but that whole; the one reading the gate and the loop share."""
+    match = RUN_STAMP.search(entry.strip())
+    return match.group(1) if match else None
+
+
 def tag_date(root: Path, tag: str) -> str:
     """The commit date of `tag`, `YYYY-MM-DD`, or `RepoError` when git cannot answer."""
+    _owned(root, "git log -1 --format=%cs")
     done = git(root, "log", "-1", "--format=%cs", tag)
     if done.code != 0:
         raise RepoError("git log -1 --format=%cs", done.err)
@@ -191,6 +208,7 @@ def tag_date(root: Path, tag: str) -> str:
 def short_hash(root: Path, commit: str) -> str:
     """git's unique abbreviation of `commit`, at least seven characters whatever `core.abbrev`
     says, or `RepoError` when git cannot answer."""
+    _owned(root, "git rev-parse --short=7")
     done = git(root, "rev-parse", "--short=7", commit)
     short = done.out.strip()
     if done.code != 0 or not short:
@@ -201,6 +219,7 @@ def short_hash(root: Path, commit: str) -> str:
 def status(root: Path) -> tuple[str, ...]:
     """The uncommitted paths `git status --porcelain` names, or `RepoError` when git cannot
     answer."""
+    _owned(root, "git status --porcelain")
     done = git(root, "status", "--porcelain")
     if done.code != 0:
         raise RepoError("git status --porcelain", done.err)
@@ -216,6 +235,7 @@ def changed_since(root: Path, tag: str, path: str) -> bool:
     """Whether `path` differs between `tag` and the head, or `RepoError` when git cannot
     answer."""
     command = f"git diff --name-only {tag} HEAD -- {path}"
+    _owned(root, command)
     done = git(root, "diff", "--name-only", tag, "HEAD", "--", path)
     if done.code != 0:
         raise RepoError(command, done.err)
@@ -224,6 +244,7 @@ def changed_since(root: Path, tag: str, path: str) -> bool:
 
 def message(root: Path, commit: str) -> str:
     """`commit`'s whole message, or `RepoError` when git cannot answer."""
+    _owned(root, "git log -1 --format=%B")
     done = git(root, "log", "-1", "--format=%B", commit, "--")
     if done.code != 0:
         raise RepoError("git log -1 --format=%B", done.err)
@@ -237,6 +258,7 @@ def tests(root: Path) -> Tests:
     `unparseable` under its name alone, its tests of no account, and the other files' tests still
     count; `RepoError` only when the root's files cannot be listed."""
     root = Path(root)
+    _owned(root, "list test*.py")
     try:
         paths = sorted(root.glob("test*.py"))
     except OSError as e:
@@ -325,9 +347,21 @@ def toplevel(root: Path) -> Path | None:
     return top if top == Path(root).resolve() else None
 
 
+def _owned(root: Path, command: str) -> None:
+    """Raise `RepoError` naming `command` when `root` is no checkout, or git answers about another
+    top level for it: the guard every reader makes so a directory inside another repository never
+    reads that repository's head, tags or commits as its own."""
+    done = git(root, "rev-parse", "--show-toplevel")
+    if done.code != 0 or not done.out.strip():
+        raise RepoError(command, done.err or "not a git checkout")
+    if Path(done.out.strip()).resolve() != Path(root).resolve():
+        raise RepoError(command, "not the top level of its own checkout")
+
+
 def head(root: Path) -> str:
     """The head's full hash, or `RepoError` when git cannot answer."""
     command = "git rev-parse HEAD"
+    _owned(root, command)
     done = git(root, "rev-parse", "HEAD")
     if done.code != 0 or not done.out.strip():
         raise RepoError(command, done.err)
@@ -337,6 +371,7 @@ def head(root: Path) -> str:
 def branch(root: Path) -> str | None:
     """The branch the head is on, None when detached, or `RepoError` when git cannot answer."""
     command = "git branch --show-current"
+    _owned(root, command)
     done = git(root, "branch", "--show-current")
     if done.code != 0:
         raise RepoError(command, done.err)
@@ -346,6 +381,7 @@ def branch(root: Path) -> str | None:
 def branches_at(root: Path, commit: str) -> tuple[str, ...]:
     """The branches whose tip is `commit`, or `RepoError` when git cannot answer."""
     command = f"git for-each-ref --points-at={commit} refs/heads/"
+    _owned(root, command)
     done = git(
         root, "for-each-ref", "--format=%(refname:short)", f"--points-at={commit}", "refs/heads/"
     )
@@ -357,6 +393,7 @@ def branches_at(root: Path, commit: str) -> tuple[str, ...]:
 def subject(root: Path, commit: str) -> str:
     """`commit`'s subject, or `RepoError` when git cannot answer."""
     command = f"git log -1 --format=%s {commit}"
+    _owned(root, command)
     done = git(root, "log", "-1", "--format=%s", commit, "--")
     if done.code != 0:
         raise RepoError(command, done.err)
@@ -367,6 +404,7 @@ def distance(root: Path, since: str, to: str) -> int | None:
     """How many commits `to` is past `since`, None when `since` is no ancestor of `to`, or
     `RepoError` when git cannot answer."""
     command = f"git rev-list --count {since}..{to}"
+    _owned(root, command)
     ancestor = git(root, "merge-base", "--is-ancestor", since, to)
     if ancestor.code == 1:
         return None
@@ -382,6 +420,7 @@ def ls_remote(root: Path, remote: str, ref: str, timeout: int) -> str:
     """The hash `remote` names for `ref`, asked with `timeout`; `RepoError` when the remote
     cannot be asked, times out, or names no ref."""
     command = f"git ls-remote {remote} {ref}"
+    _owned(root, command)
     try:
         done = subprocess.run(
             ["git", *GIT_READ, "ls-remote", remote, ref],
@@ -420,28 +459,6 @@ def run_tests(root: Path, ids: tuple[str, ...], timeout: int) -> str:
     except (OSError, subprocess.SubprocessError) as e:
         raise RepoError(command, " ".join(str(e).split())) from e
     return "green" if done.returncode == 0 else "red"
-
-
-# A terminal colour escape, as `uv` writes it around the product's name; stripped before the
-# version is read so a coloured `tool list` answers the same as a plain one.
-COLOUR = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-
-def instance_version() -> str | None:
-    """The product's version from `uv tool list`, its colour escapes stripped, or None when it
-    names no factory; `RepoError` when uv cannot be run or fails."""
-    command = "uv tool list"
-    try:
-        done = subprocess.run(["uv", "tool list"], capture_output=True, text=True, errors="replace")
-    except (OSError, subprocess.SubprocessError) as e:
-        raise RepoError(command, " ".join(str(e).split())) from e
-    if done.returncode != 0:
-        raise RepoError(command, " ".join((done.stderr or done.stdout).split()))
-    for line in COLOUR.sub("", done.stdout).splitlines():
-        words = line.split()
-        if len(words) >= 2 and words[0] == "factory":
-            return words[1][1:] if words[1].startswith("v") else words[1]
-    return None
 
 
 def build_wheel(root: Path) -> tuple[str, str]:

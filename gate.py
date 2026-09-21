@@ -187,9 +187,8 @@ def _goal_problems(rel: str, body: str) -> list[Problem]:
 
 
 def _named_by_a_test(stem: str, tests: list[repo.Test]) -> bool:
-    """Whether a test's docstring names the seed `stem`."""
-    pattern = re.compile(rf"seed:\s*{re.escape(stem)}(?![\w-])")
-    return any(pattern.search(test.doc) for test in tests)
+    """Whether a test's docstring names the seed `stem`, as `vault.names_seed` reads it."""
+    return any(vault.names_seed(test.doc, stem) for test in tests)
 
 
 def _seed_problems(
@@ -528,9 +527,7 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[Probl
         )
     for value in values:
         text = _line_text(value)
-        words = _ascii_words(value)
-        stamp = words[-1] if len(words) >= 2 and words[-2] == "run" else ""
-        if not STAMP_SHAPE.fullmatch(stamp):
+        if repo.run_stamp(value) is None:
             problems.append(Problem(rel_note, f"{short}: `Built-By: {text}` names no run"))
     return problems
 

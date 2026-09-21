@@ -196,6 +196,12 @@ def frontmatter(text: str) -> tuple[dict[str, str] | None, str]:
     return None, text
 
 
+def names_seed(text: str, name: str) -> bool:
+    """Whether `text` names the seed `name` as `seed: <name>`, whole: the one reading of a
+    docstring's seed, shared by the gate and the loop."""
+    return bool(re.search(rf"seed:\s*{re.escape(name)}(?![\w-])", text))
+
+
 def title(body: str) -> str:
     """The body's first level-one heading, or the empty string when it has none."""
     for line in body.splitlines():
