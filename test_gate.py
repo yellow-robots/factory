@@ -708,6 +708,14 @@ class ReleaseTest(GateTest):
     def release(self, version: str = "v0.2") -> tuple[int, str, str]:
         return run(self.root, "release", version)
 
+    def assert_released(self) -> str:
+        """seed: installation-and-surfaces. A release that went through: exit 0, nothing on
+        stderr, and the wheel it built as the last line of stdout. Returns stdout."""
+        code, out, err = self.release()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertTrue(out.rstrip("\n").endswith(WHEEL), out)
+        return out
+
     def assert_refused(self, *words: str, version: str = "v0.2") -> None:
         code, out, _ = self.release(version)
         self.assertEqual(code, 1, out)
@@ -875,7 +883,7 @@ class ReleaseTest(GateTest):
         self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}")
         self.assert_refused_with("docs/versions/v0.2.md:", one_of_two, "as a trailer")
         self.build(built_by + "\nCo-Authored-By: t <t@t>", amend=True)
-        self.assertEqual(self.release(), (0, "", ""))
+        self.assert_released()
 
     def test_release_refuses_a_build_that_names_no_run(self):
         """seed: built-by-trailer. seed: records-outside-the-project. A `Built-By` whose value does
@@ -908,7 +916,7 @@ class ReleaseTest(GateTest):
         self.assertFalse((self.root / "runs").exists())
         self.edit(f"runs/{STAMP}", "a file named like the run, none of the gate's\n")
         self.commit("a file named like the run")
-        self.assertEqual(self.release(), (0, "", ""))
+        self.assert_released()
 
     def test_the_stamp_of_a_second_run_in_one_second_is_a_run(self):
         """seed: records-outside-the-project. From the review: two runs that share a UTC second leave
@@ -920,7 +928,7 @@ class ReleaseTest(GateTest):
         self.edit("feature.py", "X = 1\n")
         second = self.build(f"Built-By: factory at 1234567, run {STAMP}-2\nCo-Authored-By: t <t@t>")
         self.assertEqual(self.built_by(), f"factory at 1234567, run {STAMP}-2")
-        self.assertEqual(self.release(), (0, "", ""))
+        self.assert_released()
         git(self.root, "tag", "-d", "v0.2")
         (self.root / "CHANGELOG.md").unlink()
         for stamp in (f"{STAMP}-", f"{STAMP}-x", f"{STAMP}-2-3", f"{STAMP}-\u0662"):
@@ -949,7 +957,7 @@ class ReleaseTest(GateTest):
             return real_run(argv, *args, **kwargs)
 
         with mock.patch.object(subprocess, "run", counting):
-            self.assertEqual(self.release(), (0, "", ""))
+            self.assert_released()
         self.assertEqual(len(listings), 1, listings)
 
     def test_every_problem_of_every_build_is_printed_in_one_release(self):
@@ -1039,7 +1047,7 @@ class ReleaseTest(GateTest):
             ).encode(),
             amend=True,
         )
-        self.assertEqual(self.release(), (0, "", ""))
+        self.assert_released()
 
     def test_a_git_failure_refuses_the_release_and_no_path_hides_the_builds(self):
         """seed: built-by-trailer. From the reviews: the commits are listed, and each read, as
@@ -1076,7 +1084,7 @@ class ReleaseTest(GateTest):
         self.assert_refused_with("docs/versions/v0.2.md:", apart, "as a trailer")
         git(self.root, "config", "i18n.logOutputEncoding", "ISO-8859-1")
         self.build("a feature, not a build", amend=True)
-        self.assertEqual(self.release(), (0, "", ""))
+        self.assert_released()
 
 
 class UsageTest(GateTest):
