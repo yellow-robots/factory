@@ -18,9 +18,7 @@ import repo
 BASE_LANGUAGE = {"this", "file", "formula", "true", "false", "null"}
 BASE_MEMBER_ROOTS = {"this", "file", "formula"}
 BASE_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-BASE_HEADER = re.compile(
-    r"^(properties|order|sort|groupBy|filters|formulas|summaries):\s*(.*)$"
-)
+BASE_HEADER = re.compile(r"^(properties|order|sort|groupBy|filters|formulas|summaries):\s*(.*)$")
 BASE_GROUP = re.compile(r"^(and|or|not)\s*:(.*)$")
 BASE_PROPERTY = re.compile(r"property:\s*(.*)$")
 
@@ -113,9 +111,7 @@ class Vault:
         name = target.rsplit("/", 1)[-1]
         stem = name[:-3] if name.endswith(".md") else name
         for found in self.docs.rglob("*"):
-            if found.is_file() and self.part(found) and (
-                found.name == name or found.stem == stem
-            ):
+            if found.is_file() and self.part(found) and (found.name == name or found.stem == stem):
                 return True
         return False
 
@@ -143,7 +139,7 @@ def frontmatter(text: str) -> tuple[dict[str, str] | None, str]:
                 key, sep, value = line.partition(":")
                 if sep:
                     fields[key.strip()] = value.strip()
-            return fields, "\n".join(lines[i + 1:])
+            return fields, "\n".join(lines[i + 1 :])
     return None, text
 
 
@@ -273,7 +269,7 @@ def _dot_root(text: str, dot: int) -> str:
     end = i + 1
     while i >= 0 and (text[i].isalnum() or text[i] == "_"):
         i -= 1
-    return text[i + 1:end]
+    return text[i + 1 : end]
 
 
 def expression_names(expression: str) -> list[str]:
@@ -289,7 +285,7 @@ def expression_names(expression: str) -> list[str]:
     names: list[str] = []
     for match in BASE_IDENT.finditer(text):
         name = match.group()
-        after = text[match.end():].lstrip()
+        after = text[match.end() :].lstrip()
         if after.startswith("("):
             continue
         if match.start() and text[match.start() - 1] == ".":

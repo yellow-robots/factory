@@ -188,9 +188,7 @@ def _seed_problems(
     if not status:
         return problems + [Problem(rel, "seed has no status")]
     if status not in STATUSES:
-        return problems + [
-            Problem(rel, f"status {status} is not one of {', '.join(STATUSES)}")
-        ]
+        return problems + [Problem(rel, f"status {status} is not one of {', '.join(STATUSES)}")]
     # rejected is a way out at any stage: it needs only what open needs, never a version,
     # a Goal or a test.
     rank = 0 if status == "rejected" else STATUSES.index(status)
@@ -259,7 +257,7 @@ def _judged_problems(
     if not judged.strip():
         return [Problem(rel, f"finding {heading_title} has no judged")]
     if judged.startswith("none:"):
-        if not judged[len("none:"):].strip():
+        if not judged[len("none:") :].strip():
             return [Problem(rel, f"finding {heading_title} judged none: has no reason")]
         return []
     problems: list[Problem] = []
@@ -433,7 +431,9 @@ def _version_problems(
     if len(untagged) > 1:
         for note in untagged:
             problems.append(
-                Problem(note.rel, f"at most one version note may not be a tag ({len(untagged)} are)")
+                Problem(
+                    note.rel, f"at most one version note may not be a tag ({len(untagged)} are)"
+                )
             )
     return problems, untagged
 
@@ -490,7 +490,7 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[Probl
         return [Problem(rel_note, f"git log -1 --format=%B failed for {short}")]
     message = done.out
     lines = [
-        line[match.end():].strip(ASCII_WHITESPACE)
+        line[match.end() :].strip(ASCII_WHITESPACE)
         for line in message.split("\n")
         if (match := BUILT_BY.match(line))
     ]

@@ -67,9 +67,7 @@ def git(root: Path, *args: str) -> Result:
     """Run git at `root` with the same `-c` options everywhere; a git that cannot start is a
     non-zero `Result` with the exception's words in `err`, never a raise."""
     try:
-        done = subprocess.run(
-            ["git", *GIT_READ, *args], cwd=str(root), capture_output=True
-        )
+        done = subprocess.run(["git", *GIT_READ, *args], cwd=str(root), capture_output=True)
     except (OSError, subprocess.SubprocessError) as e:
         return Result(1, "", " ".join(str(e).split()))
     return Result(done.returncode, _utf8(done.stdout), _utf8(done.stderr))
