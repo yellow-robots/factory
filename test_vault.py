@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from test_gate import BASE, IDENTITY, git, make_repo, write
+from test_gate import BASE, IDENTITY, TEMPLATE_REVIEW, git, make_repo, write
 
 import vault
 
@@ -109,6 +109,7 @@ class VaultTest(unittest.TestCase):
 
     def test_the_fields_a_kind_needs_are_read_from_its_template_and_written_nowhere_else(self):
         docs = self.root / "docs"
+        write(self.root, "docs/templates/review.md", TEMPLATE_REVIEW)  # the fixture ships no review template
         self.assertEqual(
             vault.template_fields(docs, "seed"),
             {"created", "type", "status", "summary", "value", "effort", "version"},
