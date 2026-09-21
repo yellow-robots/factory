@@ -32,7 +32,7 @@ import builder
 import repo
 import vault as vaults
 
-USAGE = "usage: gate.py check|render|release <version>"
+USAGE = "usage: gate.py check|render|release <version>|next"
 STATUSES = ("open", "spec", "building", "done", "rejected")
 SEVERITIES = ("defect", "smell")
 VERIFIEDS = ("yes", "no")
@@ -695,6 +695,13 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
     command = args[1].strip()
     if command == "check":
         return _emit(problems_check(root))
+    if command == "next":
+        if len(args) != 2:
+            return _usage()
+        import loop  # the gate's readers do not import their reader's reader
+
+        sys.stdout.write(loop.render(loop.gather(root)))
+        return 0
     if command == "render":
         try:
             text = render(root)
