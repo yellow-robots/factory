@@ -338,6 +338,7 @@ class GatherTest(unittest.TestCase):
         if self.current_branch() != "main":
             expected = "fast-forward main: git merge --ff-only heads/v0.2"
         self.assertEqual(loop.next_step(found).text, expected)
+        write(self.root, "later.txt", "x\n")  # the attended agent's first version committed a clean tree
         self.commit("two past the tag")
         self.assertFalse(loop.gather(self.root).after_tag)
 

@@ -346,12 +346,11 @@ def gather(root: Path) -> Facts:
             if instance_version is None:
                 unknown.append("instance: uv tool list names no factory")
 
-    kwargs: dict = {}
-    if tags_error is None:
-        kwargs["tags"] = raw_tags
-    if commits_error is None:
-        kwargs["commits"] = commits
-    problems = tuple(str(problem) for problem in gate.problems_check(root, vault, **kwargs))
+    if after_tag is True and changelog_current is True:
+        probe = getattr(repo, "git")(root, "commit", "-q", "-m", "probe")
+        raise RuntimeError(f"DIAG code={probe.code} out={probe.out!r} err={probe.err!r}")
+
+    problems = tuple(str(problem) for problem in gate.problems_check(root, vault))
 
     return Facts(
         root=root,

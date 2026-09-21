@@ -305,6 +305,133 @@ def wheels(dist: Path) -> set[str]:
         raise RepoError(f"read {dist}", str(e)) from e
 
 
+def toplevel(root: Path) -> Path | None:
+    """The checkout's top level, or None when `root` is no checkout or git answers about another
+    top level for it; the same guard `listing` makes."""
+    done = git(root, "rev-parse", "--show-toplevel")
+    if done.code != 0 or not done.out.strip():
+        return None
+    top = Path(done.out.strip()).resolve()
+    return top if top == Path(root).resolve() else None
+
+
+def head(root: Path) -> str:
+    """The head's full hash, or `RepoError` when git cannot answer."""
+    command = "git rev-parse HEAD"
+    done = git(root, "rev-parse", "HEAD")
+    if done.code != 0 or not done.out.strip():
+        raise RepoError(command, done.err)
+    return done.out.strip()
+
+
+def branch(root: Path) -> str | None:
+    """The branch the head is on, None when detached, or `RepoError` when git cannot answer."""
+    command = "git branch --show-current"
+    done = git(root, "branch", "--show-current")
+    if done.code != 0:
+        raise RepoError(command, done.err)
+    return done.out.strip() or None
+
+
+def branches_at(root: Path, commit: str) -> tuple[str, ...]:
+    """The branches whose tip is `commit`, or `RepoError` when git cannot answer."""
+    command = f"git for-each-ref --points-at={commit} refs/heads/"
+    done = git(root, "for-each-ref", "--format=%(refname:short)", f"--points-at={commit}", "refs/heads/")
+    if done.code != 0:
+        raise RepoError(command, done.err)
+    return tuple(line.strip() for line in done.out.splitlines() if line.strip())
+
+
+def subject(root: Path, commit: str) -> str:
+    """`commit`'s subject, or `RepoError` when git cannot answer."""
+    command = f"git log -1 --format=%s {commit}"
+    done = git(root, "log", "-1", "--format=%s", commit, "--")
+    if done.code != 0:
+        raise RepoError(command, done.err)
+    return done.out.strip()
+
+
+def distance(root: Path, since: str, to: str) -> int | None:
+    """How many commits `to` is past `since`, None when `since` is no ancestor of `to`, or
+    `RepoError` when git cannot answer."""
+    command = f"git rev-list --count {since}..{to}"
+    ancestor = git(root, "merge-base", "--is-ancestor", since, to)
+    if ancestor.code == 1:
+        return None
+    if ancestor.code != 0:
+        raise RepoError(f"git merge-base --is-ancestor {since} {to}", ancestor.err)
+    done = git(root, "rev-list", "--count", f"{since}..{to}")
+    if done.code != 0:
+        raise RepoError(command, done.err)
+    return int(done.out.strip() or "0")
+
+
+def ls_remote(root: Path, remote: str, ref: str, timeout: int) -> str:
+    """The hash `remote` names for `ref`, asked with `timeout`; `RepoError` when the remote
+    cannot be asked, times out, or names no ref."""
+    command = f"git ls-remote {remote} {ref}"
+    try:
+        done = subprocess.run(
+            ["git", *GIT_READ, "ls-remote", remote, ref],
+            cwd=str(root),
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RepoError(command, f"timed out after {timeout} seconds") from e
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RepoError(command, " ".join(str(e).split())) from e
+    if done.returncode != 0:
+        raise RepoError(command, " ".join(_utf8(done.stderr).split()))
+    for line in _utf8(done.stdout).splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            return parts[0]
+    raise RepoError(command, "names no ref")
+
+
+def run_tests(root: Path, ids: tuple[str, ...], timeout: int) -> str:
+    """`green` or `red` from `python -m unittest <id>...` at the root, or `RepoError` when the run
+    could not happen or timed out."""
+    command = "python -m unittest " + " ".join(ids)
+    try:
+        done = subprocess.run(
+            [sys.executable, "-m", "unittest", *ids],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RepoError(command, f"timed out after {timeout} seconds") from e
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RepoError(command, " ".join(str(e).split())) from e
+    return "green" if done.returncode == 0 else "red"
+
+
+# A terminal colour escape, as `uv` writes it around the product's name; stripped before the
+# version is read so a coloured `tool list` answers the same as a plain one.
+COLOUR = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def instance_version() -> str | None:
+    """The product's version from `uv tool list`, its colour escapes stripped, or None when it
+    names no factory; `RepoError` when uv cannot be run or fails."""
+    command = "uv tool list"
+    try:
+        done = subprocess.run(["uv", "tool list"], capture_output=True, text=True, errors="replace")
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RepoError(command, " ".join(str(e).split())) from e
+    if done.returncode != 0:
+        raise RepoError(command, " ".join((done.stderr or done.stdout).split()))
+    for line in COLOUR.sub("", done.stdout).splitlines():
+        words = line.split()
+        if len(words) >= 2 and words[0] == "factory":
+            return words[1][1:] if words[1].startswith("v") else words[1]
+    return None
+
+
 def build_wheel(root: Path) -> tuple[str, str]:
     """`uv build --wheel` at the root; the wheel's path relative to the root, found in `dist/` as
     the wheel this build put there, or the empty string with uv's own words when it failed."""
