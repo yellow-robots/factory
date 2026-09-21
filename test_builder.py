@@ -201,8 +201,9 @@ class ToolsTest(unittest.TestCase):
 
     def test_a_read_takes_a_limit_and_says_where_to_continue(self):
         """seed: the-argument-the-tool-does-not-have. Twice a run died on `limit`, the argument the
-        model keeps reaching for; `read(path, start, limit)` has it, bounded by the line cap: below
-        one is one, zero or above the cap is the cap."""
+        model keeps reaching for; `read(path, start, limit)` has it, bounded by the line cap: a
+        negative limit is one; omitted, zero or above the cap is the cap, and the docstring the
+        model reads says so of zero, which the first build's review found it did not."""
         out = self.tools.read("sub/b.txt", start=10, limit=5)
         self.assertEqual(out, "10\tline 10\n11\tline 11\n12\tline 12\n13\tline 13\n14\tline 14\n...\ttruncated; continue with start=15")
         self.assertEqual(self.tools.read("sub/b.txt", start=999, limit=-3), "999\tline 999\n...\ttruncated; continue with start=1000")
@@ -212,6 +213,8 @@ class ToolsTest(unittest.TestCase):
             out = self.tools.read("long.txt", limit=limit)
             self.assertEqual(out.count("\n"), cap, limit)  # the cap's lines, then the truncation line
             self.assertTrue(out.endswith(f"...\ttruncated; continue with start={cap + 1}"), limit)
+        self.assertIn("zero", Tools.read.__doc__)
+        self.assertNotIn("below one is one", Tools.read.__doc__)
 
     def test_the_read_caps_fit_a_module_of_this_repository(self):
         """seed: the-read-that-costs-a-request. A read was 300 lines and 32,000 bytes since v0.2,
@@ -234,6 +237,10 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual((self.tools.lines_read, self.tools.bytes_read), (3, 14))
         self.tools.read("sub/b.txt", start=990)
         self.assertEqual((self.tools.lines_read, self.tools.bytes_read), (14, 114))
+        # From the first build's review: a line cut at the byte cap counted its whole size.
+        (self.root / "wide.txt").write_text("x" * (builder.READ_BYTES_CAP + 8_000) + "\nshort\n")
+        self.tools.read("wide.txt", limit=1)
+        self.assertEqual((self.tools.lines_read, self.tools.bytes_read), (15, 114 + builder.READ_BYTES_CAP))
 
     def test_the_docstrings_state_the_caps(self):
         self.assertIn(str(builder.READ_LINES_CAP), Tools.read.__doc__)
@@ -1008,6 +1015,38 @@ class LoopTest(unittest.TestCase):
         self.assertEqual([p.tool_name for p in retries], ["read", "read"])
         self.assertEqual(tools.read_paths, ["f.py"])
 
+    def test_a_run_past_the_hard_spend_ends_on_a_wrong_shaped_call_too(self):
+        """seed: the-argument-the-tool-does-not-have. From the first build's review: the spend was
+        asked only inside a tool, and a call of the wrong shape never reaches one, so a model wrong
+        at every turn ran to the request limit past the hard ceiling. The spend is asked at every
+        request."""
+        tools = Tools(self.root, self.run_dir, sandbox=FakeSandbox([]), spent=lambda: 0.30)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[call("read", {"path": "f.py", "lines": 5}, "c")])
+
+        report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
+        self.assertEqual((stopped, builder.which_cap(stopped, detail)), ("cap", "spend"))
+        self.assertIsNone(report)
+        self.assertLessEqual(usage.requests, 3)
+        self.assertEqual(tools.calls, 0)
+
+    def test_a_model_wrong_forever_is_bound_by_the_requests_when_it_spends_nothing(self):
+        """seed: the-argument-the-tool-does-not-have. From the first build's review: a wrong-shaped
+        call moves neither the library's tool calls nor the tools' own count, so the requests alone
+        bound a run that spends nothing and is wrong at every turn."""
+        tools = self.tools([])
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[call("read", {"path": "f.py", "lines": 5}, "c")])
+
+        with mock.patch.object(builder, "REQUEST_LIMIT", 4):
+            report, messages, usage, stopped, detail = run(build_agent(tools, model=FunctionModel(model)), "goal")
+        self.assertEqual((stopped, builder.which_cap(stopped, detail)), ("cap", "requests"))
+        self.assertEqual((usage.requests, usage.tool_calls, tools.calls), (4, 0, 0))
+        retries = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
+        self.assertEqual([p.tool_name for p in retries], ["read"] * 4)
+
     def test_a_provider_error_stops_the_run_without_a_report(self):
         tools = self.tools([])
 
@@ -1599,6 +1638,9 @@ class MainTest(unittest.TestCase):
         self.assertEqual((numbers["reads"], numbers["lines_read"], numbers["bytes_read"]), (1, 1, 6))
         self.main(scripted([call("read", {"path": "f.py"}, "c1")]), FakeSandbox([]))
         self.assertEqual(json.loads((self.records()[1] / "numbers.json").read_text())["retries"], {})
+        # From the first build's review: a tool that does not exist is counted under the name used.
+        self.main(scripted([call("grep", {"pattern": "x"}, "c1")]), FakeSandbox([]))
+        self.assertEqual(json.loads((self.records()[2] / "numbers.json").read_text())["retries"], {"grep": 1})
 
     def test_the_head_is_recorded_for_a_git_checkout(self):
         """seed: world-pinned-to-commit; seed: terms-checkout-and-tools. A run is comparable only
