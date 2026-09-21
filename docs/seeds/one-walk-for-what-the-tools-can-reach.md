@@ -5,6 +5,8 @@ status: open
 summary: The budget's walk of the checkout and the tools' own walk are the same policy written twice, so a change to what the tools hide would silently leave the budget counting files the run can no longer read.
 value: 3
 effort: S
+reporter: review
+kind: quality
 version:
 ---
 

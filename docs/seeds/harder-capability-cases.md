@@ -5,6 +5,8 @@ status: open
 summary: Every green case passed every run of v0.12's set, so the set can show a regression and not an improvement; the reviews already made cases the builder failed, a first test it passed and the tests a review added after.
 value: 4
 effort: M
+reporter: attended agent
+kind: measurement
 version:
 ---
 

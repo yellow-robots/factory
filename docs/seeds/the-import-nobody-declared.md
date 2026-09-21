@@ -5,6 +5,8 @@ status: open
 summary: Two libraries the factory imports by name are declared by nothing; they resolve because something else happens to depend on them.
 value: 2
 effort: S
+reporter: review
+kind: integrity
 version:
 ---
 

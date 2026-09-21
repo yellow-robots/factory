@@ -5,6 +5,8 @@ status: open
 summary: The check is the test suite and nothing else; a version built the wrong way passes it. Quality checks belong inside check.
 value: 3
 effort: M
+reporter: owner
+kind: quality
 version:
 ---
 

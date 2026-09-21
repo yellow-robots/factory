@@ -5,6 +5,8 @@ status: open
 summary: A review chops the first line off the goal it was given, so its goal.txt holds a different goal than a build's for the same seed and no longer names the seed it was of.
 value: 3
 effort: S
+reporter: reviewer
+kind: quality
 version:
 ---
 

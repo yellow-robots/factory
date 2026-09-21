@@ -5,6 +5,8 @@ status: open
 summary: A record's cost is the work at one flat rate and the bill is the work at the rate of the day it ran, so the two differ by up to half and nothing says which day a record was.
 value: 3
 effort: M
+reporter: owner
+kind: cost
 version:
 ---
 

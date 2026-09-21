@@ -5,6 +5,8 @@ status: open
 summary: The reviewer reviews the diff thoroughly and never asks what the diff made load-bearing elsewhere, so a defect the change lets through in code it does not touch is invisible to it.
 value: 4
 effort: M
+reporter: review
+kind: quality
 version:
 ---
 

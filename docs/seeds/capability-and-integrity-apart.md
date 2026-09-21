@@ -5,6 +5,8 @@ status: open
 summary: A builder that runs the check once, changes nothing and reports red passes four of the eleven cases, a rate of 0.364; the set's one rate mixes what the builder can build with whether it keeps faith, and neither is read beside what doing nothing scores.
 value: 4
 effort: M
+reporter: research
+kind: measurement
 version:
 ---
 

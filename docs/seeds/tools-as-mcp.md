@@ -5,6 +5,8 @@ status: open
 summary: Expose the tools as an MCP server so a frontier model in a subscription harness works under the same walls, paid by subscription; two claims to verify first.
 value: 5
 effort: L
+reporter: owner
+kind: autonomy
 version:
 ---
 

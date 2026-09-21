@@ -5,6 +5,8 @@ status: open
 summary: loop.py decides a seed's row in a tuple of predicates and an if-chain beside RULES, which its Goal forbade three times; the pin was a test of names, and the last build satisfied it by renaming.
 value: 2
 effort: S
+reporter: review
+kind: quality
 version:
 ---
 

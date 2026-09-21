@@ -5,6 +5,8 @@ status: open
 summary: The gate checks that a building seed has tests and never that a seed with tests is building, so a seed can carry a status its own evidence contradicts for a whole version.
 value: 3
 effort: S
+reporter: owner
+kind: integrity
 version:
 ---
 

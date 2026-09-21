@@ -5,6 +5,8 @@ status: open
 summary: The line after the table prints a posterior standard deviation beside the observed rate and reads twice it as a change, which holds for these eleven cases only and cannot show one case falling from 3 of 3 to 0 of 3; each case gets its posterior interval, set runs are compared case by case, and the runs a question needs are counted before it is run.
 value: 3
 effort: M
+reporter: research
+kind: measurement
 version:
 ---
 

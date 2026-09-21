@@ -5,6 +5,8 @@ status: open
 summary: The set's table is printed once, at the end of a live run, and a record does not say which run of the set it was part of, so a set on file cannot be read again under a new measure without paying for its runs again; the table is derived from the records.
 value: 3
 effort: S
+reporter: attended agent
+kind: measurement
 version:
 ---
 

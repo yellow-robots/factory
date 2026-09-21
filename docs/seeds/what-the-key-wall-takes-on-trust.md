@@ -5,6 +5,8 @@ status: open
 summary: The wall proves a record holds none of the keys the configuration names, and takes three things on trust: that the key it searches for is the key the run used, that redaction worked, and that a file's name says what its bytes are.
 value: 4
 effort: M
+reporter: research
+kind: integrity
 version:
 ---
 

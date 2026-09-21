@@ -5,6 +5,8 @@ status: open
 summary: A review reads the working tree while its prompt describes the committed diff, records nothing about the difference, and is indistinguishable from a build in the table of runs.
 value: 3
 effort: S
+reporter: review
+kind: integrity
 version:
 ---
 

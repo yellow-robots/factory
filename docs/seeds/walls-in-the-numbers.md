@@ -5,6 +5,8 @@ status: open
 summary: A run that spends itself against a wall looks in the numbers exactly like one that did not, so a goal asking for what the walls forbid is invisible until somebody reads the wire.
 value: 4
 effort: S
+reporter: attended agent
+kind: measurement
 version:
 ---
 

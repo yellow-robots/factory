@@ -5,6 +5,8 @@ status: open
 summary: Two set runs on two days differ in the builder, the harness, the cases, the notes and the day at once, so a change between them has no one cause; two builders run on one world, alternated in one sitting, have one.
 value: 4
 effort: M
+reporter: owner
+kind: measurement
 version:
 ---
 

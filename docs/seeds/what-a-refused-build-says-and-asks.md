@@ -5,6 +5,8 @@ status: open
 summary: The refusal path of a build asks the store a weaker question than it means, asks it without a guard, and no longer says how the run ended.
 value: 3
 effort: S
+reporter: review
+kind: integrity
 version:
 ---
 

@@ -5,6 +5,8 @@ status: open
 summary: The older records-only configuration is a path no instance takes any more; it is what keeps MODEL alive, and it is where the key wall still commits a record it has not searched.
 value: 4
 effort: S
+reporter: attended agent
+kind: integrity
 version:
 ---
 

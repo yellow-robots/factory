@@ -5,6 +5,8 @@ status: open
 summary: The catch harness refuses runs it could afford, matches a finding's path by exact string, and overwrites a record's numbers when it cannot read them.
 value: 3
 effort: S
+reporter: review
+kind: integrity
 version:
 ---
 

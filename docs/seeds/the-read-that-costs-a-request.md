@@ -5,6 +5,8 @@ status: open
 summary: A read returns 300 lines, so covering the checkout the builder now works on costs 44 reads and 44 requests; the same bytes in fewer, larger reads would cost the same tokens and a third of the requests.
 value: 4
 effort: S
+reporter: attended agent
+kind: cost
 version:
 ---
 

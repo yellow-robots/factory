@@ -5,6 +5,8 @@ status: open
 summary: The record says which cap ended a run by matching English in the library's exception message, so a library that rewords it turns every later record's answer to the empty string and nothing in the suite fails.
 value: 3
 effort: S
+reporter: review
+kind: integrity
 version:
 ---
 

@@ -5,6 +5,8 @@ status: open
 summary: A seed's effort is a guess, its definition is circular, and it does not predict; the records hold what each seed actually cost and nothing writes it back.
 value: 3
 effort: S
+reporter: research
+kind: measurement
 version:
 ---
 

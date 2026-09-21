@@ -5,6 +5,8 @@ status: open
 summary: Can an affordable API model turn a seed into a spec and its red tests, so the attended agent moves up to deciding with the owner?
 value: 5
 effort: M
+reporter: owner
+kind: autonomy
 version:
 ---
 

@@ -5,6 +5,8 @@ status: open
 summary: The pricing call catches one of the two errors the library documents, so a provider's bad token counts become an uncaught crash that loses the record.
 value: 2
 effort: S
+reporter: review
+kind: integrity
 version:
 ---
 

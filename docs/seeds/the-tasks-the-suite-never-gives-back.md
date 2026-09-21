@@ -5,6 +5,8 @@ status: open
 summary: Every test module of the factory passes alone inside the check's container and the suite together does not, because tasks accumulate across it until git cannot fork.
 value: 4
 effort: M
+reporter: attended agent
+kind: integrity
 version:
 ---
 

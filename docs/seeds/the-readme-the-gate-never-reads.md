@@ -5,6 +5,8 @@ status: open
 summary: README names constants of builder.py by value; the gate never reads it, so a release can carry a page describing caps the program no longer has, and v0.16 did.
 value: 3
 effort: S
+reporter: review
+kind: integrity
 version:
 ---
 

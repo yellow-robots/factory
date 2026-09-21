@@ -5,6 +5,8 @@ status: open
 summary: The key wall guards the record, which is the second copy; a credential sitting in a customer's checkout is sent to the provider the moment the model reads it, and nothing stops the read.
 value: 4
 effort: M
+reporter: research
+kind: integrity
 version:
 ---
 

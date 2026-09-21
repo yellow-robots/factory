@@ -5,6 +5,8 @@ status: open
 summary: A run that has not edited anything by its twentieth tool call caps four times as often as one that has, and the factory already records the fact it would need to say so.
 value: 3
 effort: S
+reporter: research
+kind: measurement
 version:
 ---
 

@@ -5,6 +5,8 @@ status: open
 summary: What the model is given of a case says what the case probes, the goal's first line its name and the test's docstring its trap, so a pass may be the model reading the label; the goal and the test say what to do and nothing more.
 value: 4
 effort: M
+reporter: research
+kind: integrity
 version:
 ---
 

@@ -5,6 +5,8 @@ status: open
 summary: A cold build of this repository now spends the whole soft cap reading before its first write, so a seed whose red tests span the modules cannot be built in one run at all; two runs in a row read 20 and 32 requests, wrote nothing, and landed at $0.14 and $0.20.
 value: 5
 effort: M
+reporter: attended agent
+kind: cost
 version:
 ---
 

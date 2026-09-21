@@ -66,7 +66,7 @@ These are the ones nothing can hold, so they are written down.
 
 This file is not the place. It is the entry point and it stays short.
 
-- A **defect or an idea** → a seed in `docs/seeds/`, from the template, with dated evidence.
+- A **defect or an idea** → a seed in `docs/seeds/`, from the template, with dated evidence pinned to the commit it was read at.
 - A **review's findings** → `docs/reviews/<stamp>.md`, each verified and judged.
 - **What a version did and why** → its note in `docs/versions/`.
 - A **behaviour that must hold** → a test. That is the only thing that makes it true.

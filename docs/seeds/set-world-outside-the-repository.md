@@ -5,6 +5,8 @@ status: open
 summary: A run of the set works in a worktree of the whole repository, where the tools hide the answers but code the model has `check` run can read them; each run's world is built outside the repository from a pinned commit, with nothing of the set, its records or its notes in it.
 value: 5
 effort: M
+reporter: research
+kind: integrity
 version:
 ---
 

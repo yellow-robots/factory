@@ -5,6 +5,8 @@ status: open
 summary: A review that did everything right exited 139, a segmentation fault at interpreter shutdown, after its record was safely committed.
 value: 4
 effort: S
+reporter: attended agent
+kind: integrity
 version:
 ---
 

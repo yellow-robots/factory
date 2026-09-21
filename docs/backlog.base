@@ -16,6 +16,10 @@ properties:
     displayName: Value
   effort:
     displayName: Effort
+  reporter:
+    displayName: Reporter
+  kind:
+    displayName: Kind
   version:
     displayName: Version
   created:
@@ -36,7 +40,31 @@ views:
       - formula.rank
       - value
       - effort
+      - kind
+      - reporter
       - created
+    sort:
+      - property: formula.rank
+        direction: DESC
+      - property: created
+        direction: ASC
+  - type: table
+    name: By kind
+    filters:
+      or:
+        - status == "open"
+        - status == "spec"
+        - status == "building"
+    groupBy:
+      property: kind
+      direction: ASC
+    order:
+      - file.name
+      - status
+      - version
+      - summary
+      - formula.rank
+      - reporter
     sort:
       - property: formula.rank
         direction: DESC
@@ -53,6 +81,7 @@ views:
       - summary
       - formula.rank
       - effort
+      - kind
     sort:
       - property: formula.rank
         direction: DESC
