@@ -149,16 +149,18 @@ class TallyTest(TallyBase):
         self.assertTrue(found.unknown[0].startswith("store: "), found.unknown)
         row = self.row(found, "v0.2")
         self.assertEqual((row[0], row[1], row[3]), ("v0.2", 1, 3))
-        self.assertEqual((row[2],) + row[4:10], (None,) * 7)
-        self.assertEqual(row[10:], (2, 5, 1, 2, 1, 0, 1, 7, 4))
+        # The review columns too: a review of a run git does not hold cannot be placed without
+        # the store, and a count of the reviews git can place would mean something else.
+        self.assertEqual((row[2],) + row[4:17], (None,) * 14)
+        self.assertEqual(row[17:], (7, 4))
         self.configure(Path(self.tmp.name) / "nowhere")
         found = tally.gather(self.root)
         self.assertEqual(len(found.unknown), 1)
         self.assertTrue(found.unknown[0].startswith("store: "), found.unknown)
-        self.assertEqual((self.row(found, "v0.2")[2],) + self.row(found, "v0.2")[4:10], (None,) * 7)
+        self.assertEqual((self.row(found, "v0.2")[2],) + self.row(found, "v0.2")[4:17], (None,) * 14)
         text = tally.render(found)
         cells = text.splitlines()[2].split("\t")
-        self.assertEqual([cells[2]] + cells[4:10], [""] * 7)
+        self.assertEqual([cells[2]] + cells[4:17], [""] * 14)
         self.assertTrue(text.splitlines()[-1].startswith("unknown: store: "), text)
 
     def test_a_record_whose_numbers_cannot_be_read_is_no_run_and_its_build_is_unrecorded(self):
