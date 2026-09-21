@@ -23,33 +23,22 @@ with nothing to report it prints nothing and exits 0. Usage errors go to stderr 
 
 from __future__ import annotations
 
-import ast
 import re
-import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import builder
+import repo
+import vault as vaults
 
 USAGE = "usage: gate.py check|render|release <version>"
-WHEEL_DIR = "dist"  # where the release's build puts the wheel; git ignores it
 STATUSES = ("open", "spec", "building", "done", "rejected")
-SEED_FIELDS = {"type", "status", "summary", "value", "effort", "version", "created"}
-REVIEW_FIELDS = {"type", "created", "runs", "reviewer"}
 SEVERITIES = ("defect", "smell")
 VERIFIEDS = ("yes", "no")
 EFFORTS = {"S", "M", "L"}
-BASE_LANGUAGE = {"this", "file", "formula", "true", "false", "null"}
-BASE_MEMBER_ROOTS = {"this", "file", "formula"}
-BASE_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-BASE_HEADER = re.compile(
-    r"^(properties|order|sort|groupBy|filters|formulas|summaries):\s*(.*)$"
-)
-BASE_GROUP = re.compile(r"^(and|or|not)\s*:(.*)$")
-BASE_PROPERTY = re.compile(r"property:\s*(.*)$")
 CREATED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 VERSION_NAME = re.compile(r"^v(\d+)\.(\d+)\.md$")
-VERSION = re.compile(r"^v(\d+)\.(\d+)$")
 WIKILINK = re.compile(r"\[\[([^\[\]]+)\]\]")
 BUILT_BY = re.compile(r"^Built-By[ \t]*:", re.IGNORECASE | re.ASCII)
 ASCII_WHITESPACE = " \t\n\r\x0b\x0c"
@@ -59,183 +48,32 @@ ASCII_RUN = re.compile(r"[^ \t\n\r\x0b\x0c]+")
 # in ASCII alone, so a dash with nothing after it, with something that is not a number or with a
 # second dash names no run.
 STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z(-\d+)?", re.ASCII)
-# The build reads ask git for UTF-8 and for no signature whatever the repository's display
-# settings say, so a message in another log encoding is not a build git cannot read and a
-# signature is never counted as a trailer.
-GIT_READ = ("-c", "i18n.logOutputEncoding=UTF-8", "-c", "log.showSignature=false")
+TRAILERS_FORMAT = repo.TRAILERS_FORMAT
+
+
+@dataclass(frozen=True)
+class Problem:
+    """One problem of the gate: the path it names and what is wrong with it."""
+
+    path: str
+    message: str
+
+    def __str__(self) -> str:
+        """The problem as one printed line, `path: message`."""
+        return f"{self.path}: {self.message}"
 
 
 def _read(path: Path) -> str:
+    """The file's text with what cannot be decoded replaced, or the empty string when it cannot
+    be read."""
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
 
 
-def frontmatter(text: str) -> tuple[dict[str, str] | None, str]:
-    """The `key: value` block between the leading `---` lines, and the body after it."""
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return None, text
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
-            fields: dict[str, str] = {}
-            for line in lines[1:i]:
-                key, sep, value = line.partition(":")
-                if sep:
-                    fields[key.strip()] = value.strip()
-            return fields, "\n".join(lines[i + 1:])
-    return None, text
-
-
-def _notes(docs: Path, root: Path, vault: _Vault) -> list[Path]:
-    """Every `.md` under `docs/` that git does not ignore, the templates excepted."""
-    templates = docs / "templates"
-    return [
-        p
-        for p in sorted(docs.rglob("*.md"))
-        if templates not in p.parents and _in_vault(p, root, vault)
-    ]
-
-
-def _git_out(root: Path, *args: str) -> tuple[int, str]:
-    """git's exit status and stdout: status 1 and no output when git cannot run, and output in an
-    encoding other than UTF-8 read with what cannot be decoded replaced, never a traceback."""
-    try:
-        done = subprocess.run(
-            ["git", *args], cwd=str(root), capture_output=True, text=True, errors="replace"
-        )
-    except (OSError, subprocess.SubprocessError):
-        return 1, ""
-    return done.returncode, done.stdout
-
-
-def _git(root: Path, *args: str) -> str:
-    return _git_out(root, *args)[1]
-
-
-def _git_bytes(root: Path, *args: str) -> tuple[int, bytes]:
-    """git's exit status and stdout as bytes, status 1 and no output when git cannot run. Nothing
-    git prints is turned into text before it is decoded, so a carriage return stays a carriage
-    return."""
-    try:
-        done = subprocess.run(["git", *args], cwd=str(root), capture_output=True)
-    except (OSError, subprocess.SubprocessError):
-        return 1, b""
-    return done.returncode, done.stdout
-
-
-def _utf8(data: bytes) -> str:
-    """The bytes decoded as UTF-8 with what cannot be decoded replaced; never raises."""
-    return data.decode("utf-8", "replace")
-
-
-class _Vault:
-    """The vault as git tracks it, asked once: `kept` the paths `git ls-files` lists -- what is
-    tracked and what is untracked and not ignored -- and `ignored` the paths `git check-ignore`
-    says an ignore rule matches, both relative to the root, or `kept` `None` when git cannot
-    answer, so the vault is then read whole from the filesystem. `note` reads a path by `kept`
-    alone, so a path git tracks is read as it is now; `part` also drops a path an ignore rule
-    matches, so a template, a base or a version note git is told to ignore is no part of the vault
-    even when it is tracked."""
-
-    def __init__(self, kept: set[str] | None, ignored: set[str] | None = None) -> None:
-        self.kept = kept
-        self.ignored = ignored or set()
-
-    @property
-    def whole(self) -> bool:
-        return self.kept is None
-
-    def note(self, rel: str) -> bool:
-        return self.kept is None or rel in self.kept
-
-    def part(self, rel: str) -> bool:
-        return self.kept is None or (rel in self.kept and rel not in self.ignored)
-
-
-def _listed_paths(root: Path) -> set[str] | None:
-    """The paths under `root` git lists, relative to `root`, or `None` when git cannot answer (a
-    directory that is no checkout, or a git that fails). `git ls-files` lists what is tracked and
-    what is untracked and not ignored in one call; nothing is read from `.gitignore`."""
-    code, out = _git_bytes(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
-    if code != 0:
-        return None
-    return {path for path in _utf8(out).split("\0") if path}
-
-
-def _ignored_paths(root: Path, docs: Path) -> set[str] | None:
-    """The paths under `docs/` git is told to ignore, relative to `root`, or `None` when git cannot
-    answer. One `git check-ignore --no-index` for the whole vault, never a read of `.gitignore`:
-    `--no-index` so a path git tracks is reported when an ignore rule matches it, which `git
-    ls-files` alone cannot say."""
-    rels: list[str] = []
-    for path in docs.rglob("*"):
-        try:
-            if path.is_file():
-                rels.append(path.relative_to(root).as_posix())
-        except (OSError, ValueError):
-            continue
-    if not rels:
-        return set()
-    try:
-        done = subprocess.run(
-            ["git", "check-ignore", "--no-index", "-z", "--stdin"],
-            cwd=str(root),
-            input="\0".join(rels).encode("utf-8", "surrogateescape"),
-            capture_output=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if done.returncode not in (0, 1):
-        return None
-    return {path for path in _utf8(done.stdout).split("\0") if path}
-
-
-def _read_vault(root: Path, docs: Path) -> _Vault:
-    """What git says of the whole vault, or a vault read whole when git cannot answer: a directory
-    that is no checkout, a git that fails, or a git whose top level is not `root` itself -- a copy
-    of the vault inside a repository that ignores it must not be answered for by that repository.
-    The top level is `git rev-parse --show-toplevel`, as the builder asks of a checkout."""
-    code, out = _git_bytes(root, "rev-parse", "--show-toplevel")
-    top = _utf8(out).strip() if code == 0 else ""
-    if not top or Path(top).resolve() != Path(root).resolve():
-        return _Vault(None)
-    kept = _listed_paths(root)
-    if kept is None:
-        return _Vault(None)
-    ignored = _ignored_paths(root, docs)
-    if ignored is None:
-        return _Vault(None)
-    return _Vault(kept, ignored)
-
-
-def _in_vault(path: Path, root: Path, vault: _Vault) -> bool:
-    """Whether `path` is a note the vault holds: git lists it, or git could not answer."""
-    if vault.whole:
-        return True
-    try:
-        rel = path.relative_to(root).as_posix()
-    except ValueError:
-        return True
-    return vault.note(rel)
-
-
-def _in_part(path: Path, root: Path, vault: _Vault) -> bool:
-    """Whether `path` is part of the vault wherever the gate reads a note by it: git lists it and
-    no ignore rule matches it, or git could not answer."""
-    if vault.whole:
-        return True
-    try:
-        rel = path.relative_to(root).as_posix()
-    except ValueError:
-        return True
-    return vault.part(rel)
-
-
 def _line_text(value: str) -> str:
-    """A value with its control characters escaped, so a problem that quotes it stays one line and
-    nothing but a control character changes."""
+    """A value with its control characters escaped, so a problem that quotes it stays one line."""
     out: list[str] = []
     for ch in value:
         if ch == "\n":
@@ -256,696 +94,387 @@ def _ascii_words(value: str) -> list[str]:
     return ASCII_RUN.findall(value)
 
 
-def _tags(root: Path) -> set[str]:
-    return {line.strip() for line in _git(root, "tag", "-l").splitlines() if line.strip()}
+def _repo_problem(path: str, error: repo.RepoError) -> Problem:
+    """A `RepoError` as one problem: the thing being read, the command that failed and git's
+    words."""
+    return Problem(path, f"{error.command} failed: {error.err}")
 
 
-def _highest_tag(tags: set[str]) -> str | None:
-    best, best_key = None, None
-    for tag in tags:
-        match = VERSION.match(tag)
-        if not match:
+def _dedup(problems: list[Problem]) -> list[Problem]:
+    """`problems` in order, each path and message once."""
+    seen: set[tuple[str, str]] = set()
+    unique: list[Problem] = []
+    for problem in problems:
+        key = (problem.path, problem.message)
+        if key in seen:
             continue
-        key = (int(match.group(1)), int(match.group(2)))
-        if best_key is None or key > best_key:
-            best, best_key = tag, key
-    return best
+        seen.add(key)
+        unique.append(problem)
+    return unique
 
 
-def _resolve(target: str, docs: Path, root: Path, vault: _Vault) -> bool:
-    """A note in `docs/` git holds, by path or by name, or a `.base` file; a path git is told to
-    ignore names nothing, tracked or not."""
-    target = target.strip()
-    if not target:
-        return False
-    direct = docs / target
-    if direct.is_file() and _in_part(direct, root, vault):
-        return True
-    if direct.suffix == "":
-        named = docs / (target + ".md")
-        if named.is_file() and _in_part(named, root, vault):
-            return True
-    name = target.rsplit("/", 1)[-1]
-    stem = name[:-3] if name.endswith(".md") else name
-    for found in docs.rglob("*"):
-        if found.is_file() and _in_part(found, root, vault) and (
-            found.name == name or found.stem == stem
-        ):
-            return True
-    return False
+def _read_vault(root: Path, problems: list[Problem]) -> vaults.Vault:
+    """The vault at `root`, with a listing git could not answer for one problem naming it."""
+    try:
+        return vaults.Vault.read(root)
+    except repo.RepoError as e:
+        problems.append(_repo_problem("docs/", e))
+        return vaults.Vault(root, root / "docs", None)
 
 
-def _goal_problems(rel: str, body: str) -> list[str]:
+def _field_sets(vault: vaults.Vault):
+    """A reader of the templates' field sets, each kind read from its template once."""
+    cache: dict[str, set[str] | None] = {}
+
+    def fields(kind: str) -> set[str] | None:
+        """The field names of `kind`'s template, read once, or None when it cannot be read."""
+        if kind not in cache:
+            cache[kind] = vaults.template_fields(vault.docs, kind)
+        return cache[kind]
+
+    return fields
+
+
+def _wikilink_problems(vault: vaults.Vault) -> list[Problem]:
+    """Every wikilink of a note the vault holds that does not resolve."""
+    problems: list[Problem] = []
+    for path in sorted(vault.docs.rglob("*"), key=lambda p: str(p)):
+        if not path.is_file() or not vault.holds(path):
+            continue
+        rel = path.relative_to(vault.root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            problems.append(Problem(rel, "cannot be read"))
+            continue
+        if "[[" not in text:
+            continue
+        for match in WIKILINK.finditer(text):
+            target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
+            if not vault.resolves(target):
+                problems.append(Problem(rel, f"wikilink {target} does not resolve"))
+    return problems
+
+
+def _goal_problems(rel: str, body: str) -> list[Problem]:
     """The seed's `## Goal` as `builder.read_seed` reads it: the builder's `note_text` and
-    `goal_section`, so the gate refuses exactly the notes the builder would. A `%%` comment left
-    open is its own problem; a note with no heading outside a fence or a comment, or no text under
-    it once the comments are out, has no Goal with text."""
+    `goal_section`, so the gate refuses exactly the notes the builder would."""
     try:
         text = builder.note_text(body)
     except ValueError:
-        return [f"{rel}: seed has a %% comment left open"]
+        return [Problem(rel, "seed has a %% comment left open")]
     if not builder.goal_section(text):
-        return [f"{rel}: seed has no ## Goal with text"]
+        return [Problem(rel, "seed has no ## Goal with text")]
     return []
 
 
-def _test_docstrings(root: Path) -> list[str]:
-    """The docstrings of every test method or class in a `test*.py` at the root."""
-    found: list[str] = []
-    for path in sorted(root.glob("test*.py")):
-        if not path.is_file():
-            continue
-        try:
-            tree = ast.parse(_read(path))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) or (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name.startswith("test")
-            ):
-                doc = ast.get_docstring(node)
-                if doc:
-                    found.append(doc)
-    return found
-
-
-def _test_names(root: Path) -> set[str]:
-    """The name of every test method or class in a `test*.py` at the root."""
-    names: set[str] = set()
-    for path in sorted(root.glob("test*.py")):
-        if not path.is_file():
-            continue
-        try:
-            tree = ast.parse(_read(path))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) or (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name.startswith("test")
-            ):
-                names.add(node.name)
-    return names
-
-
-def _named_by_a_test(root: Path, stem: str, docstrings: list[str]) -> bool:
+def _named_by_a_test(stem: str, tests: list[repo.Test]) -> bool:
+    """Whether a test's docstring names the seed `stem`."""
     pattern = re.compile(rf"seed:\s*{re.escape(stem)}(?![\w-])")
-    return any(pattern.search(doc) for doc in docstrings)
-
-
-def _unquoted(text: str) -> str:
-    """An expression with one layer of Obsidian's YAML quotes, around it, removed."""
-    text = text.strip()
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
-        quote, text = text[0], text[1:-1]
-        if quote == '"':
-            text = text.replace('\\"', '"').replace("\\\\", "\\")
-        else:
-            text = text.replace("''", "'")
-    return text
-
-
-def _dot_root(text: str, dot: int) -> str:
-    """The identifier immediately before the `.` at `dot`, if there is one."""
-    i = dot - 1
-    while i >= 0 and text[i].isspace():
-        i -= 1
-    end = i + 1
-    while i >= 0 and (text[i].isalnum() or text[i] == "_"):
-        i -= 1
-    return text[i + 1:end]
-
-
-def _expression_names(expression: str) -> list[str]:
-    """The bare identifiers an Obsidian expression names: quoted strings, regex literals,
-    `#` comments, members of `file.`/`formula.`/`this.`, functions (`name(`), and the language
-    names `this`, `file`, `formula`, `true`, `false` and `null` removed. A `note.` prefix is a
-    property's, so the name after it is checked."""
-    text = _unquoted(expression)
-    text = re.sub(r'"[^"]*"', " ", text)
-    text = re.sub(r"'[^']*'", " ", text)
-    text = re.sub(r"#[^\n]*", " ", text)
-    text = re.sub(r"/[^/\n]*/", " ", text)
-    names: list[str] = []
-    for match in BASE_IDENT.finditer(text):
-        name = match.group()
-        after = text[match.end():].lstrip()
-        if after.startswith("("):
-            continue
-        if match.start() and text[match.start() - 1] == ".":
-            if _dot_root(text, match.start() - 1) != "note":
-                continue
-            names.append(name)
-            continue
-        if name in BASE_LANGUAGE:
-            continue
-        if after.startswith("."):
-            continue
-        names.append(name)
-    return names
-
-
-def _plain_names(name: str) -> list[str]:
-    """A property named under `properties:`, `order:`, `property:` or `summaries:`, where a
-    hyphen is part of the name; a `file.`, `formula.` or `this.` prefix is never reported, while
-    the name after a `note.` prefix is checked."""
-    name = _unquoted(name).strip()
-    if not name:
-        return []
-    root, _, rest = name.partition(".")
-    if root in BASE_MEMBER_ROOTS:
-        return []
-    if root == "note" and rest:
-        return [rest]
-    return [name]
-
-
-def _base_named(text: str) -> list[tuple[str, str]]:
-    """Every property `text` names, tagged as a plain name or an expression: keys under
-    `properties:` and `summaries:`, entries of `order:`, the `property:` of a `sort` or
-    `groupBy`, and filter and formula expressions. A nested `and:`/`or:`/`not:` group names no
-    property; its items, or its inline expression, do."""
-    named: list[tuple[str, str]] = []
-    lines = text.splitlines()
-    i = 0
-    while i < len(lines):
-        raw = lines[i]
-        stripped = raw.strip()
-        indent = len(raw) - len(raw.lstrip())
-        i += 1
-        if not stripped or stripped.startswith("#"):
-            continue
-        header = BASE_HEADER.match(stripped)
-        if not header:
-            continue
-        key, rest = header.group(1), header.group(2).strip()
-        if key == "order" and rest.startswith("["):
-            for entry in rest.strip("[]").split(","):
-                named.append(("name", entry.strip()))
-            continue
-        block: list[tuple[int, str]] = []
-        while i < len(lines):
-            line = lines[i]
-            content = line.strip()
-            if content and not content.startswith("#"):
-                if len(line) - len(line.lstrip()) <= indent:
-                    break
-                block.append((len(line) - len(line.lstrip()), content))
-            i += 1
-        if key in ("properties", "summaries"):
-            child = min((depth for depth, _ in block), default=indent)
-            for depth, content in block:
-                if depth == child and ":" in content and not content.startswith("-"):
-                    named.append(("name", content.split(":", 1)[0].strip()))
-        elif key == "order":
-            for _, content in block:
-                if content.startswith("- "):
-                    named.append(("name", content[2:].strip()))
-        elif key in ("sort", "groupBy"):
-            for _, content in block:
-                match = BASE_PROPERTY.search(content)
-                if match:
-                    named.append(("name", match.group(1).strip()))
-        else:
-            if rest:
-                named.append(("expr", rest))
-            for _, content in block:
-                if content.startswith("- "):
-                    item = content[2:].strip()
-                    group = BASE_GROUP.match(item)
-                    if group is None:
-                        named.append(("expr", item))
-                    elif group.group(2).strip():
-                        named.append(("expr", group.group(2).strip()))
-                elif ":" in content:
-                    value = content.split(":", 1)[1].strip()
-                    if value:
-                        named.append(("expr", value))
-    return named
-
-
-def _base_problems(docs: Path, root: Path, vault: _Vault) -> list[str]:
-    """The properties `docs/backlog.base` names that are not seed template fields; a base git is
-    told to ignore is no part of the vault."""
-    base = docs / "backlog.base"
-    if not base.is_file() or not _in_part(base, root, vault):
-        return []
-    template = docs / "templates" / "seed.md"
-    if not _in_part(template, root, vault):
-        # The missing template is reported once, elsewhere.
-        return []
-    fields_, _ = frontmatter(_read(template))
-    if fields_ is None:
-        # The missing template is reported once, elsewhere.
-        return []
-    fields = set(fields_)
-    problems: list[str] = []
-    seen: set[str] = set()
-    for kind, name in _base_named(_read(base)):
-        identifiers = _plain_names(name) if kind == "name" else _expression_names(name)
-        for identifier in identifiers:
-            if identifier in seen:
-                continue
-            seen.add(identifier)
-            if identifier not in fields:
-                problems.append(
-                    f"docs/backlog.base: {identifier} is not a field of docs/templates/seed.md"
-                )
-    return problems
-
-
-def problems_check(root: Path, vault: _Vault | None = None) -> list[str]:
-    root = Path(root)
-    docs = root / "docs"
-    if not docs.is_dir():
-        return ["docs/: missing"]
-    problems: list[str] = []
-    vault = vault if vault is not None else _read_vault(root, docs)
-    tags = _tags(root)
-    docstrings = _test_docstrings(root)
-    test_names = _test_names(root)
-
-    for path in docs.rglob("*"):
-        if not path.is_file() or not _in_vault(path, root, vault):
-            continue
-        text = _read(path)
-        if "[[" not in text:
-            continue
-        rel = path.relative_to(root).as_posix()
-        for match in WIKILINK.finditer(text):
-            target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
-            if not _resolve(target, docs, root, vault):
-                problems.append(f"{rel}: wikilink {target} does not resolve")
-
-    version_notes: list[tuple[Path, str, dict[str, str], str]] = []
-    for path in _notes(docs, root, vault):
-        rel = path.relative_to(root).as_posix()
-        fm, body = frontmatter(_read(path))
-        if fm is None:
-            problems.append(f"{rel}: no frontmatter")
-            continue
-        kind = fm.get("type", "")
-        if not kind:
-            problems.append(f"{rel}: frontmatter has no type")
-            continue
-        template = docs / "templates" / f"{kind}.md"
-        if not template.is_file() or not _in_part(template, root, vault):
-            problems.append(f"{rel}: type {kind} has no template docs/templates/{kind}.md")
-            continue
-        if kind == "seed":
-            problems.extend(_seed_problems(path, rel, fm, body, root, tags, docstrings, vault))
-        elif kind == "version":
-            version_notes.append((path, rel, fm, body))
-        elif kind == "review":
-            problems.extend(_review_problems(path, rel, fm, body, root, test_names))
-
-    for path, rel, fm, body in version_notes:
-        for field in sorted(set(fm) - {"type"}):
-            problems.append(f"{rel}: version note has field {field}")
-        if not VERSION_NAME.match(path.name):
-            problems.append(f"{rel}: version note is not named v<major>.<minor>.md")
-    untagged = [(path, rel) for path, rel, _, _ in version_notes if path.stem not in tags]
-    if len(untagged) > 1:
-        for _, rel in untagged:
-            problems.append(f"{rel}: at most one version note may not be a tag ({len(untagged)} are)")
-    problems.extend(_base_problems(docs, root, vault))
-    in_flight = untagged[0][1] if len(untagged) == 1 else "docs/versions/"
-    problems.extend(_build_problems(root, in_flight, _highest_tag(tags)))
-    return problems
+    return any(pattern.search(test.doc) for test in tests)
 
 
 def _seed_problems(
-    path: Path,
-    rel: str,
-    fm: dict[str, str],
-    body: str,
-    root: Path,
-    tags: set[str],
-    docstrings: list[str],
-    vault: _Vault,
-) -> list[str]:
-    docs = root / "docs"
-    problems: list[str] = []
-    for field in sorted(set(fm) - SEED_FIELDS):
-        problems.append(f"{rel}: seed has field {field}")
+    note: vaults.Note,
+    vault: vaults.Vault,
+    tags: set[str] | None,
+    tests: list[repo.Test] | None,
+    fields,
+) -> list[Problem]:
+    """A seed note: the template's fields, its status and the fields that status needs."""
+    rel, fm, body = note.rel, note.fm, note.body
+    seed_fields = fields("seed")
+    if seed_fields is None:
+        return [Problem("docs/templates/seed.md", "cannot be read")]
+    problems: list[Problem] = []
+    for field in sorted(set(fm) - seed_fields):
+        problems.append(Problem(rel, f"seed has field {field}"))
     status = fm.get("status", "")
     if not status:
-        return problems + [f"{rel}: seed has no status"]
+        return problems + [Problem(rel, "seed has no status")]
     if status not in STATUSES:
         return problems + [
-            f"{rel}: status {status} is not one of {', '.join(STATUSES)}"
+            Problem(rel, f"status {status} is not one of {', '.join(STATUSES)}")
         ]
     # rejected is a way out at any stage: it needs only what open needs, never a version,
     # a Goal or a test.
     rank = 0 if status == "rejected" else STATUSES.index(status)
 
     if not fm.get("summary", ""):
-        problems.append(f"{rel}: seed has no summary")
+        problems.append(Problem(rel, "seed has no summary"))
     value = fm.get("value", "")
     try:
         number = int(value)
         if not 1 <= number <= 5:
-            problems.append(f"{rel}: value {value} is not in 1 to 5")
+            problems.append(Problem(rel, f"value {value} is not in 1 to 5"))
     except ValueError:
-        problems.append(f"{rel}: value {value!r} is not in 1 to 5")
+        problems.append(Problem(rel, f"value {value!r} is not in 1 to 5"))
     effort = fm.get("effort", "")
     if effort not in EFFORTS:
-        problems.append(f"{rel}: effort {effort!r} is not S, M or L")
+        problems.append(Problem(rel, f"effort {effort!r} is not S, M or L"))
     created = fm.get("created", "")
     if not created:
-        problems.append(f"{rel}: seed has no created")
+        problems.append(Problem(rel, "seed has no created"))
     elif not CREATED.match(created):
-        problems.append(f"{rel}: created {created!r} is not YYYY-MM-DD")
+        problems.append(Problem(rel, f"created {created!r} is not YYYY-MM-DD"))
 
     version = fm.get("version", "")
     if rank >= STATUSES.index("spec"):
-        note = docs / "versions" / f"{version}.md"
+        note_path = vault.docs / "versions" / f"{version}.md"
         if not version:
-            problems.append(f"{rel}: seed has no version")
-        elif not note.is_file() or not _in_part(note, root, vault):
-            problems.append(f"{rel}: version {version} has no note docs/versions/{version}.md")
+            problems.append(Problem(rel, "seed has no version"))
+        elif not note_path.is_file() or not vault.part(note_path):
+            problems.append(
+                Problem(rel, f"version {version} has no note docs/versions/{version}.md")
+            )
         problems.extend(_goal_problems(rel, body))
-    if version and version in tags and status not in ("done", "rejected"):
-        problems.append(f"{rel}: version {version} is tagged but the seed is {status}")
-    if rank >= STATUSES.index("building") and not _named_by_a_test(root, path.stem, docstrings):
-        problems.append(f"{rel}: no test names it (seed: {path.stem})")
+    if tags is not None and version and version in tags and status not in ("done", "rejected"):
+        problems.append(Problem(rel, f"version {version} is tagged but the seed is {status}"))
+    if rank >= STATUSES.index("building") and tests is not None:
+        if not _named_by_a_test(note.path.stem, tests):
+            problems.append(Problem(rel, f"no test names it (seed: {note.path.stem})"))
     return problems
 
 
 def _segment(name: str) -> bool:
-    """Whether `name` is one path segment: not empty, not `.` or `..`, with no `/` or `\\`, so it
-    is never a path joined to a directory and looked up."""
+    """Whether `name` is one path segment: not empty, not `.` or `..`, with no `/` or `\\`."""
     return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
 
 
-def _review_runs_problems(rel: str, path: Path, fm: dict[str, str]) -> list[str]:
+def _review_runs_problems(rel: str, path: Path, fm: dict[str, str]) -> list[Problem]:
     """The run stamps the review names: each one path segment, at least one, and the note named
-    after one of them, `<stamp>.md`. The records themselves are the factory's, kept in its store
-    outside the project, so no stamp needs a directory `runs/<stamp>` here."""
+    after one of them, `<stamp>.md`."""
     stamps = fm.get("runs", "").split()
     if not stamps:
-        return [f"{rel}: review has no runs"]
-    problems: list[str] = []
+        return [Problem(rel, "review has no runs")]
+    problems: list[Problem] = []
     for stamp in stamps:
         if not _segment(stamp):
-            problems.append(f"{rel}: run {stamp} is not one path segment")
+            problems.append(Problem(rel, f"run {stamp} is not one path segment"))
     if path.stem not in stamps:
-        problems.append(f"{rel}: review is not named after a run ({path.name})")
+        problems.append(Problem(rel, f"review is not named after a run ({path.name})"))
     return problems
 
 
-def _review_findings(text: str) -> list[tuple[str, str]]:
-    """The review's findings: each level-three heading of the body with its section's text, a
-    fenced code block belonging whole."""
-    findings: list[list] = []
-    current: list | None = None
-    fence: tuple[str, int] | None = None
-    for line in text.split("\n"):
-        if fence is not None:
-            if current is not None:
-                current[1].append(line)
-            if builder.closing_fence(line, fence):
-                fence = None
-            continue
-        opened = builder.opening_fence(line)
-        if opened is not None:
-            if current is not None:
-                current[1].append(line)
-            fence = opened
-            continue
-        level, title = builder.heading(line)
-        if level == 3:
-            current = [title, []]
-            findings.append(current)
-        elif level in (1, 2):  # the next section of the note ends the finding
-            current = None
-        elif current is not None:
-            current[1].append(line)
-    return [(title, "\n".join(section)) for title, section in findings]
-
-
 def _judged_problems(
-    rel: str, title: str, judged: str, root: Path, test_names: set[str]
-) -> list[str]:
+    rel: str, heading_title: str, judged: str, root: Path, test_names: set[str] | None
+) -> list[Problem]:
     """Every `judged:` entry that does not name what exists, `none:` without a reason, or a line
     with nothing after it or an empty piece between commas."""
     if not judged.strip():
-        return [f"{rel}: finding {title} has no judged"]
+        return [Problem(rel, f"finding {heading_title} has no judged")]
     if judged.startswith("none:"):
         if not judged[len("none:"):].strip():
-            return [f"{rel}: finding {title} judged none: has no reason"]
+            return [Problem(rel, f"finding {heading_title} judged none: has no reason")]
         return []
-    problems: list[str] = []
+    problems: list[Problem] = []
     for piece in judged.split(","):
         piece = piece.strip()
         if not piece:
-            return [f"{rel}: finding {title} has no judged"]
+            return [Problem(rel, f"finding {heading_title} has no judged")]
         kind, _, name = piece.partition(" ")
         name = name.strip()
         if kind in ("test", "case", "seed") and not _segment(name):
             problems.append(
-                f"{rel}: finding {title} judged {piece!r} names {name!r}, not one path segment"
+                Problem(
+                    rel,
+                    f"finding {heading_title} judged {piece!r} names {name!r}, "
+                    "not one path segment",
+                )
             )
         elif kind == "test":
-            if name not in test_names:
+            if test_names is not None and name not in test_names:
                 problems.append(
-                    f"{rel}: finding {title} is judged by test {name}, which no test*.py names"
+                    Problem(
+                        rel,
+                        f"finding {heading_title} is judged by test {name}, "
+                        "which no test*.py names",
+                    )
                 )
         elif kind == "case":
             if not (root / "cases" / name).is_dir():
                 problems.append(
-                    f"{rel}: finding {title} is judged by case {name}, which has no directory cases/{name}"
+                    Problem(
+                        rel,
+                        f"finding {heading_title} is judged by case {name}, "
+                        f"which has no directory cases/{name}",
+                    )
                 )
         elif kind == "seed":
             if not (root / "docs" / "seeds" / f"{name}.md").is_file():
                 problems.append(
-                    f"{rel}: finding {title} is judged by seed {name}, which has no note docs/seeds/{name}.md"
+                    Problem(
+                        rel,
+                        f"finding {heading_title} is judged by seed {name}, "
+                        f"which has no note docs/seeds/{name}.md",
+                    )
                 )
         else:
             problems.append(
-                f"{rel}: finding {title} has judged {piece!r}, which is not test, case, seed or none:"
+                Problem(
+                    rel,
+                    f"finding {heading_title} has judged {piece!r}, "
+                    "which is not test, case, seed or none:",
+                )
             )
     return problems
 
 
-def _prose_lines(section: str) -> list[str]:
-    """A finding section's prose lines: a fenced code block, as `builder.note_text` reads one, and
-    an indented code block (four spaces or more) belong whole and are no line of the prose."""
-    lines: list[str] = []
-    fence: tuple[str, int] | None = None
-    for line in section.split("\n"):
-        if fence is not None:
-            if builder.closing_fence(line, fence):
-                fence = None
-            continue
-        opened = builder.opening_fence(line)
-        if opened is not None:
-            fence = opened
-            continue
-        if line.startswith(("    ", "\t")):
-            continue
-        lines.append(line)
-    return lines
-
-
 def _finding_problems(
-    rel: str, title: str, section: str, root: Path, test_names: set[str]
-) -> list[str]:
+    rel: str, heading_title: str, section: str, root: Path, test_names: set[str] | None
+) -> list[Problem]:
     """A finding's `severity:`, `verified:` and `judged:` lines, read anywhere in its prose."""
     lines: dict[str, str] = {}
-    for line in _prose_lines(section):
+    for line in vaults.prose_lines(section):
         key, sep, value = line.partition(":")
         key = key.strip()
         if sep and key in ("severity", "verified", "judged") and key not in lines:
             lines[key] = value.strip()
-    problems: list[str] = []
+    problems: list[Problem] = []
     severity = lines.get("severity")
     if severity is None:
-        problems.append(f"{rel}: finding {title} has no severity")
+        problems.append(Problem(rel, f"finding {heading_title} has no severity"))
     elif severity not in SEVERITIES:
-        problems.append(f"{rel}: finding {title} severity {severity} is not defect or smell")
+        problems.append(
+            Problem(rel, f"finding {heading_title} severity {severity} is not defect or smell")
+        )
     verified = lines.get("verified")
     if verified is None:
-        problems.append(f"{rel}: finding {title} has no verified")
+        problems.append(Problem(rel, f"finding {heading_title} has no verified"))
     elif verified not in VERIFIEDS:
-        problems.append(f"{rel}: finding {title} verified {verified} is not yes or no")
+        problems.append(
+            Problem(rel, f"finding {heading_title} verified {verified} is not yes or no")
+        )
     judged = lines.get("judged")
     if judged is None:
         if verified == "yes":
-            problems.append(f"{rel}: finding {title} has no judged")
+            problems.append(Problem(rel, f"finding {heading_title} has no judged"))
     else:
-        problems.extend(_judged_problems(rel, title, judged, root, test_names))
+        problems.extend(_judged_problems(rel, heading_title, judged, root, test_names))
     return problems
 
 
 def _review_problems(
-    path: Path,
-    rel: str,
-    fm: dict[str, str],
-    body: str,
-    root: Path,
-    test_names: set[str],
-) -> list[str]:
-    """A review note: the template's fields and no other, a reviewer, a created date, the runs it
-    reviewed and one of them naming it, then its findings with comments out."""
-    problems: list[str] = []
-    for field in sorted(set(fm) - REVIEW_FIELDS):
-        problems.append(f"{rel}: review has field {field}")
+    note: vaults.Note,
+    vault: vaults.Vault,
+    tests: list[repo.Test] | None,
+    fields,
+) -> list[Problem]:
+    """A review note: the template's fields, a reviewer, a created date, the runs it reviewed and
+    one of them naming it, then its findings with comments out."""
+    rel, fm, body = note.rel, note.fm, note.body
+    review_fields = fields("review")
+    if review_fields is None:
+        return [Problem("docs/templates/review.md", "cannot be read")]
+    test_names = {test.name for test in tests} if tests is not None else None
+    problems: list[Problem] = []
+    for field in sorted(set(fm) - review_fields):
+        problems.append(Problem(rel, f"review has field {field}"))
     if not fm.get("reviewer", ""):
-        problems.append(f"{rel}: review has no reviewer")
+        problems.append(Problem(rel, "review has no reviewer"))
     created = fm.get("created", "")
     if not created:
-        problems.append(f"{rel}: review has no created")
+        problems.append(Problem(rel, "review has no created"))
     elif not CREATED.match(created):
-        problems.append(f"{rel}: created {created!r} is not YYYY-MM-DD")
-    problems.extend(_review_runs_problems(rel, path, fm))
+        problems.append(Problem(rel, f"created {created!r} is not YYYY-MM-DD"))
+    problems.extend(_review_runs_problems(rel, note.path, fm))
     try:
         text = builder.note_text(body)
     except ValueError:
-        return problems + [f"{rel}: review has a %% comment left open"]
-    for title, section in _review_findings(text):
-        problems.extend(_finding_problems(rel, title, section, root, test_names))
+        return problems + [Problem(rel, "review has a %% comment left open")]
+    for heading_title, section in vaults.review_findings(text):
+        problems.extend(_finding_problems(rel, heading_title, section, vault.root, test_names))
     return problems
 
 
-def _title(body: str) -> str:
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            return stripped[2:].strip()
-    return ""
-
-
-def _first_paragraph(body: str) -> str:
-    lines = body.splitlines()
-    started = False
-    paragraph: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not started:
-            if stripped.startswith("# "):
-                started = True
+def _note_problems(
+    vault: vaults.Vault,
+    tags: set[str] | None,
+    tests: list[repo.Test] | None,
+    fields,
+) -> tuple[list[Problem], list[vaults.Note]]:
+    """Every problem of one note, and the version notes kept for the check over all of them."""
+    problems: list[Problem] = []
+    version_notes: list[vaults.Note] = []
+    for note in vault.notes():
+        if note.error:
+            problems.append(Problem(note.rel, "cannot be read"))
             continue
-        if not stripped:
-            if paragraph:
-                break
+        if note.fm is None:
+            problems.append(Problem(note.rel, "no frontmatter"))
             continue
-        if stripped.startswith("#") or stripped.startswith("![[") or stripped.startswith("- "):
-            if paragraph:
-                break
+        kind = note.kind
+        if not kind:
+            problems.append(Problem(note.rel, "frontmatter has no type"))
             continue
-        paragraph.append(stripped)
-    return " ".join(paragraph)
-
-
-def _changelog_bullets(body: str) -> list[str]:
-    bullets: list[str] = []
-    inside = False
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            inside = stripped == "## Changelog"
+        template = vault.docs / "templates" / f"{kind}.md"
+        if not template.is_file() or not vault.part(template):
+            problems.append(
+                Problem(note.rel, f"type {kind} has no template docs/templates/{kind}.md")
+            )
             continue
-        if inside and stripped.startswith("- ") and not stripped.startswith("- [["):
-            bullets.append(stripped)
-    return bullets
+        if kind == "seed":
+            problems.extend(_seed_problems(note, vault, tags, tests, fields))
+        elif kind == "version":
+            version_notes.append(note)
+        elif kind == "review":
+            problems.extend(_review_problems(note, vault, tests, fields))
+    return problems, version_notes
 
 
-def _tag_date(root: Path, tag: str) -> str:
-    return _git(root, "log", "-1", "--format=%cs", tag).strip()
+def _version_problems(
+    version_notes: list[vaults.Note], tags: set[str] | None
+) -> tuple[list[Problem], list[vaults.Note]]:
+    """Every problem of the version notes together, and the ones that are not a tag."""
+    problems: list[Problem] = []
+    for note in version_notes:
+        for field in sorted(set(note.fm) - {"type"}):
+            problems.append(Problem(note.rel, f"version note has field {field}"))
+        if not VERSION_NAME.match(note.path.name):
+            problems.append(Problem(note.rel, "version note is not named v<major>.<minor>.md"))
+    if tags is None:
+        return problems, []
+    untagged = [note for note in version_notes if note.path.stem not in tags]
+    if len(untagged) > 1:
+        for note in untagged:
+            problems.append(
+                Problem(note.rel, f"at most one version note may not be a tag ({len(untagged)} are)")
+            )
+    return problems, untagged
 
 
-def problems_render(root: Path) -> list[str]:
-    root = Path(root)
-    docs = root / "docs"
-    tags = _tags(root)
-    ordered = sorted(tags, key=lambda tag: _version_key(tag), reverse=True)
-    out = ["# Changelog", ""]
-    for tag in ordered:
-        note = docs / "versions" / f"{tag}.md"
-        if not note.is_file():
-            continue
-        body = frontmatter(_read(note))[1]
-        out.append(f"## {_title(body)}")
-        out.append("")
-        date = _tag_date(root, tag)
-        if date:
-            out.append(date)
-            out.append("")
-        paragraph = _first_paragraph(body)
-        if paragraph:
-            out.append(paragraph)
-            out.append("")
-        bullets = _changelog_bullets(body)
-        out.extend(bullets)
-        if bullets:
-            out.append("")
-    (root / "CHANGELOG.md").write_text("\n".join(out).rstrip("\n") + "\n", encoding="utf-8")
-    return []
-
-
-def _version_key(tag: str) -> tuple[int, int]:
-    match = VERSION.match(tag)
-    if not match:
-        return (-1, -1)
-    return (int(match.group(1)), int(match.group(2)))
-
-
-def _suite_green(root: Path) -> bool:
-    try:
-        done = subprocess.run(
-            [sys.executable, "-m", "unittest", "-q"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return done.returncode == 0
-
-
-def _short_hash(root: Path, commit: str) -> str:
-    """git's unique abbreviation of `commit`, at least seven characters whatever `core.abbrev`
-    says, never the full hash; the first seven characters of the hash when git cannot say."""
-    code, out = _git_bytes(root, "rev-parse", "--short=7", commit)
-    if code == 0:
-        short = _utf8(out).strip()
-        if short:
-            return short
-    return commit[:7]
-
-
-def _builds(root: Path, previous: str | None) -> tuple[list[str], str | None]:
-    """The full hashes of the commits reachable from HEAD and not from `previous`, or every commit
-    reachable from HEAD when there is no previous tag. They are listed as revisions, `--` ending
-    the revisions so a path named like the range is never read as one; a git that fails is the
-    command that failed, never an empty list of builds."""
-    revision = f"{previous}..HEAD" if previous is not None else "HEAD"
-    command = f"git rev-list {revision} --"
-    code, out = _git_bytes(root, *GIT_READ, "rev-list", revision, "--")
-    if code != 0:
-        return [], command
-    return _utf8(out).split(), None
-
-
-TRAILERS_FORMAT = "%(trailers:key=Built-By,unfold,separator=%x00)"
-
-
-def _build_trailers(root: Path, commit: str) -> list[str] | None:
-    """The entries git's own trailer parser reads as `Built-By` for `commit`, each `<key>:
-    <value>` and never empty, the format's one final newline removed and the rest split at NUL;
-    `None` when the git command fails."""
-    code, out = _git_bytes(root, *GIT_READ, "log", "-1", f"--format={TRAILERS_FORMAT}", commit, "--")
-    if code != 0:
-        return None
-    text = _utf8(out)
-    if text.endswith("\n"):
-        text = text[:-1]
-    if not text:
+def _base_problems(vault: vaults.Vault, fields) -> list[Problem]:
+    """The properties `docs/backlog.base` names that are not seed template fields."""
+    base = vault.docs / "backlog.base"
+    if not base.is_file() or not vault.part(base):
         return []
-    return text.split("\x00")
+    template = vault.docs / "templates" / "seed.md"
+    if not template.is_file() or not vault.part(template):
+        # The missing template is reported once, elsewhere.
+        return []
+    seed_fields = fields("seed")
+    if seed_fields is None:
+        return []
+    try:
+        text = base.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [Problem("docs/backlog.base", "cannot be read")]
+    problems: list[Problem] = []
+    seen: set[str] = set()
+    for kind, name in vaults.base_named(text):
+        identifiers = vaults.plain_names(name) if kind == "name" else vaults.expression_names(name)
+        for identifier in identifiers:
+            if identifier in seen:
+                continue
+            seen.add(identifier)
+            if identifier not in seed_fields:
+                problems.append(
+                    Problem(
+                        "docs/backlog.base",
+                        f"{identifier} is not a field of docs/templates/seed.md",
+                    )
+                )
+    return problems
 
 
 def _entry_value(entry: str) -> str:
@@ -953,17 +482,18 @@ def _entry_value(entry: str) -> str:
     return entry.partition(":")[2].strip(ASCII_WHITESPACE)
 
 
-def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
+def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[Problem]:
     """Every problem of one build, each once: how many `Built-By` lines git's trailer parser does
     not read as a trailer, or a value that does not end `run <stamp>` with the whole stamp in the
-    builder's shape. The record the stamp names is the factory's, kept in its store outside the
-    project, so no stamp is looked up here. Every value, of a line and of an entry, is checked
-    whether git reads it or not; every problem names the commit's abbreviated hash."""
-    short = _short_hash(root, commit)
-    code, message_bytes = _git_bytes(root, *GIT_READ, "log", "-1", "--format=%B", commit, "--")
-    if code != 0:
-        return [f"{rel_note}: git log -1 --format=%B failed for {short}"]
-    message = _utf8(message_bytes)
+    builder's shape."""
+    try:
+        short = repo.short_hash(root, commit)
+    except repo.RepoError as e:
+        return [_repo_problem(rel_note, e)]
+    done = repo.git(root, "log", "-1", "--format=%B", commit, "--")
+    if done.code != 0:
+        return [Problem(rel_note, f"git log -1 --format=%B failed for {short}")]
+    message = done.out
     lines = [
         line[match.end():].strip(ASCII_WHITESPACE)
         for line in message.split("\n")
@@ -971,155 +501,194 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[str]:
     ]
     if not lines:
         return []
-    entries = _build_trailers(root, commit)
-    if entries is None:
-        return [f"{rel_note}: git log -1 --format={TRAILERS_FORMAT} failed for {short}"]
+    try:
+        entries = repo.trailers(root, commit)
+    except repo.RepoError:
+        return [Problem(rel_note, f"git log -1 --format={TRAILERS_FORMAT} failed for {short}")]
     values = [*lines, *(_entry_value(entry) for entry in entries)]
-    problems: list[str] = []
+    problems: list[Problem] = []
     unread = len(lines) - len(entries)
     if unread > 0:
         problems.append(
-            f"{rel_note}: {short}: git does not read {unread} of {len(lines)} "
-            f"`Built-By` lines as a trailer"
+            Problem(
+                rel_note,
+                f"{short}: git does not read {unread} of {len(lines)} "
+                "`Built-By` lines as a trailer",
+            )
         )
     for value in values:
         text = _line_text(value)
         words = _ascii_words(value)
         stamp = words[-1] if len(words) >= 2 and words[-2] == "run" else ""
         if not STAMP_SHAPE.fullmatch(stamp):
-            problems.append(f"{rel_note}: {short}: `Built-By: {text}` names no run")
+            problems.append(Problem(rel_note, f"{short}: `Built-By: {text}` names no run"))
     return problems
 
 
-def _build_problems(root: Path, rel_note: str, previous: str | None) -> list[str]:
-    """Every problem of every build since the previous tag, each once, under the version's note (or
-    `docs/versions/` when no version is in flight); a git command that fails while the builds are
-    read is one problem naming the command."""
-    commits, failed = _builds(root, previous)
-    if failed is not None:
-        return [f"{rel_note}: {failed} failed"]
-    problems: list[str] = []
+def _build_problems(root: Path, rel_note: str, previous: str | None) -> list[Problem]:
+    """Every problem of every build since the previous tag, each once, under the version's note
+    (or `docs/versions/` when no version is in flight); a git command that fails while the builds
+    are read is one problem naming the command."""
+    try:
+        commits = repo.builds(root, previous)
+    except repo.RepoError as e:
+        return [_repo_problem(rel_note, e)]
+    problems: list[Problem] = []
     seen: set[str] = set()
     for commit in commits:
         for problem in _commit_build_problems(root, rel_note, commit):
-            if problem not in seen:
-                seen.add(problem)
-                problems.append(problem)
+            key = f"{problem.path}\0{problem.message}"
+            if key in seen:
+                continue
+            seen.add(key)
+            problems.append(problem)
     return problems
 
 
-def _release_problems(root: Path, version: str, vault: _Vault | None = None) -> list[str]:
+def problems_check(root: Path, vault: vaults.Vault | None = None) -> list[Problem]:
+    """Every problem of the vault and the repository against it, each once."""
     root = Path(root)
     docs = root / "docs"
-    problems: list[str] = []
+    if not docs.is_dir():
+        return [Problem("docs/", "missing")]
+    problems: list[Problem] = []
+    if vault is None:
+        vault = _read_vault(root, problems)
+    try:
+        tests = repo.tests(root)
+    except repo.RepoError as e:
+        problems.append(_repo_problem(e.command, e))
+        tests = None
+    try:
+        tags = repo.tags(root)
+    except repo.RepoError as e:
+        problems.append(_repo_problem("docs/versions/", e))
+        tags = None
+    fields = _field_sets(vault)
+    problems.extend(_wikilink_problems(vault))
+    note_problems, version_notes = _note_problems(vault, tags, tests, fields)
+    problems.extend(note_problems)
+    version_problems, untagged = _version_problems(version_notes, tags)
+    problems.extend(version_problems)
+    in_flight = untagged[0].rel if len(untagged) == 1 else "docs/versions/"
+    problems.extend(_base_problems(vault, fields))
+    previous = repo.highest(tags) if tags is not None else None
+    problems.extend(_build_problems(root, in_flight, previous))
+    return _dedup(problems)
+
+
+def _release_problems(root: Path, version: str, vault: vaults.Vault) -> list[Problem]:
+    """Every problem a release of `version` has that check does not already report."""
+    root = Path(root)
+    docs = root / "docs"
+    problems: list[Problem] = []
     rel_note = f"docs/versions/{version}.md"
     note = docs / "versions" / f"{version}.md"
-    tags = _tags(root)
-    vault = vault if vault is not None else _read_vault(root, docs)
+    try:
+        tags = repo.tags(root)
+    except repo.RepoError as e:
+        problems.append(_repo_problem("docs/versions/", e))
+        tags = set()
 
     if not note.is_file():
-        problems.append(f"{rel_note}: no such version note")
+        problems.append(Problem(rel_note, "no such version note"))
     if version in tags:
-        problems.append(f"{rel_note}: {version} is already tagged")
+        problems.append(Problem(rel_note, f"{version} is already tagged"))
 
-    for path in _notes(docs, root, vault):
-        fm, _ = frontmatter(_read(path))
+    for item in vault.notes():
+        fm = item.fm
         if not fm or fm.get("type") != "seed" or fm.get("version") != version:
             continue
         if fm.get("status") not in ("done", "rejected"):
-            rel = path.relative_to(root).as_posix()
-            problems.append(f"{rel}: seed of {version} is {fm.get('status') or 'unset'}")
+            problems.append(
+                Problem(item.rel, f"seed of {version} is {fm.get('status') or 'unset'}")
+            )
 
-    bullets = _changelog_bullets(frontmatter(_read(note))[1]) if note.is_file() else []
-    if not bullets:
-        problems.append(f"{rel_note}: no ## Changelog bullets")
+    body = vaults.frontmatter(_read(note))[1] if note.is_file() else ""
+    if not vaults.changelog_bullets(body):
+        problems.append(Problem(rel_note, "no ## Changelog bullets"))
 
-    for line in _git(root, "status", "--porcelain").splitlines():
+    status = repo.git(root, "status", "--porcelain")
+    for line in status.out.splitlines():
         if not line.strip():
             continue
         path = line[3:].strip() if len(line) > 3 else line.strip()
         # `dist/` is the release's own output only where git ignores it, as this repository does;
         # `git status` leaves an ignored path out already, so a path there in a repository that
         # does not ignore it is an uncommitted change like any other and the tree is not clean.
-        problems.append(f"{path}: uncommitted change")
+        problems.append(Problem(path, "uncommitted change"))
 
-    previous = _highest_tag(tags)
+    previous = repo.highest(tags)
     if previous is not None:
-        changed = _git(root, "diff", "--name-only", previous, "HEAD", "--", "AGENTS.md").strip()
-        if not changed:
-            problems.append(f"AGENTS.md: unchanged since {previous}")
+        changed = repo.git(root, "diff", "--name-only", previous, "HEAD", "--", "AGENTS.md")
+        if not changed.out.strip():
+            problems.append(Problem("AGENTS.md", f"unchanged since {previous}"))
 
-    if not _suite_green(root):
-        problems.append("test: the unittest suite is red")
-    return problems
+    result = repo.suite(root)
+    if result == "red":
+        problems.append(Problem("test", "the unittest suite is red"))
+    elif result == "timed out":
+        problems.append(Problem("test", "the unittest suite timed out"))
+    elif result == "could not run":
+        problems.append(Problem("test", "the unittest suite could not run"))
+    return _dedup(problems)
 
 
-def _annotate(root: Path, version: str, note: Path) -> bool:
-    body = frontmatter(_read(note))[1]
-    paragraph = _first_paragraph(body)
-    bullets = _changelog_bullets(body)
+def render(root: Path) -> str:
+    """The changelog's text from the tags, newest version first, and writes nothing."""
+    root = Path(root)
+    docs = root / "docs"
+    tags = repo.tags(root)
+    ordered = sorted(tags, key=repo.version_key, reverse=True)
+    out = ["# Changelog", ""]
+    for tag in ordered:
+        note = docs / "versions" / f"{tag}.md"
+        if not note.is_file():
+            continue
+        body = vaults.frontmatter(_read(note))[1]
+        out.append(f"## {vaults.title(body)}")
+        out.append("")
+        date = repo.tag_date(root, tag)
+        if date:
+            out.append(date)
+            out.append("")
+        paragraph = vaults.first_paragraph(body)
+        if paragraph:
+            out.append(paragraph)
+            out.append("")
+        bullets = vaults.changelog_bullets(body)
+        out.extend(bullets)
+        if bullets:
+            out.append("")
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def _tag_message(note: Path) -> str:
+    """The note's first paragraph and changelog bullets, as the tag's annotated message."""
+    body = vaults.frontmatter(_read(note))[1]
+    paragraph = vaults.first_paragraph(body)
+    bullets = vaults.changelog_bullets(body)
     message = paragraph
     if bullets:
         message = (paragraph + "\n" if paragraph else "") + "\n".join(bullets)
-    try:
-        done = subprocess.run(
-            ["git", "tag", "-a", version, "-m", message, "HEAD"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return done.returncode == 0
+    return message
 
 
-def _wheels(dist: Path) -> set[str]:
-    """The wheel filenames `dist/` holds, or none when the directory is not there or cannot be
-    read. `uv build` announces the wheel on stderr, coloured when the environment asks for colour
-    and relative to the root, so the wheel is not read off it: it is found where the build put it."""
-    try:
-        return {p.name for p in dist.iterdir() if p.is_file() and p.name.endswith(".whl")}
-    except OSError:
-        return set()
-
-
-def _build_wheel(root: Path) -> tuple[str, str]:
-    """`uv build --wheel` at the root, once the tag is cut and before the changelog is rendered, so
-    the version is read from the clean tree. Returns the wheel's path relative to the root, found
-    in `dist/` as the wheel this build put there and not an older one left there, and the empty
-    string as the path with uv's own words when the build failed or uv could not run."""
-    dist = root / WHEEL_DIR
-    before = _wheels(dist)
-    try:
-        done = subprocess.run(
-            ["uv", "build", "--wheel"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            errors="replace",
-        )
-    except (OSError, subprocess.SubprocessError) as e:
-        return "", " ".join(str(e).split())
-    if done.returncode != 0:
-        return "", " ".join((done.stderr.strip() or done.stdout.strip()).split())
-    made = sorted(_wheels(dist) - before)
-    if not made:
-        return "", "uv build named no wheel"
-    return f"{WHEEL_DIR}/{made[-1]}", ""
-
-
-def _emit(problems: list[str]) -> int:
+def _emit(problems: list[Problem]) -> int:
+    """Print one line per problem and return 1 when there is any, 0 when there is none."""
     for problem in problems:
         print(problem)
     return 1 if problems else 0
 
 
 def _usage() -> int:
+    """Print the usage line on stderr and return 2."""
     print(USAGE, file=sys.stderr)
     return 2
 
 
 def main(argv: list[str], root: Path | str | None = None) -> int:
+    """Run `check`, `render` or `release <version>` and return the exit code."""
     root = Path(root) if root is not None else Path(__file__).resolve().parent
     args = list(argv)
     if len(args) < 2 or not args[1].strip():
@@ -1128,24 +697,35 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
     if command == "check":
         return _emit(problems_check(root))
     if command == "render":
-        return _emit(problems_render(root))
+        try:
+            text = render(root)
+        except repo.RepoError as e:
+            return _emit([_repo_problem("docs/versions/", e)])
+        (root / "CHANGELOG.md").write_text(text, encoding="utf-8")
+        return 0
     if command == "release":
         if len(args) < 3 or not args[2].strip():
             return _usage()
         version = args[2].strip()
-        vault = _read_vault(root, root / "docs")  # asked once for the whole vault, in release too
-        problems = problems_check(root, vault)
+        problems: list[Problem] = []
+        vault = _read_vault(root, problems)
+        problems.extend(problems_check(root, vault))
         if not problems:
             problems = _release_problems(root, version, vault)
         if problems:
             return _emit(problems)
         note = root / "docs" / "versions" / f"{version}.md"
-        if not _annotate(root, version, note):
-            return _emit([f"docs/versions/{version}.md: git could not create tag {version}"])
-        wheel, said = _build_wheel(root)
+        done = repo.tag(root, version, _tag_message(note))
+        if done.code != 0:
+            return _emit(
+                [Problem(f"docs/versions/{version}.md", f"git tag -a {version} failed: {done.err}")]
+            )
+        wheel, said = repo.build_wheel(root)
         if not wheel:  # the tag stands and nothing is rendered: a tag is not a deployment
-            return _emit([f"docs/versions/{version}.md: uv build --wheel failed: {said}"])
-        problems_render(root)
+            return _emit(
+                [Problem(f"docs/versions/{version}.md", f"uv build --wheel failed: {said}")]
+            )
+        (root / "CHANGELOG.md").write_text(render(root), encoding="utf-8")
         print(wheel)
         return 0
     return _usage()
