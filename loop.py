@@ -232,9 +232,7 @@ def _seeds(
             unknown.append(f"builds of {name}: {builds_error}")
         else:
             builds = tuple(
-                Build(commit, stamp)
-                for commit, subject, stamp in records
-                if subject == name
+                Build(commit, stamp) for commit, subject, stamp in records if subject == name
             )
         reviewed = (
             store.holds(root / "docs" / "reviews" / f"{builds[-1].stamp}.md") if builds else None
@@ -483,8 +481,7 @@ def _seed_text(facts: Facts, index: int) -> str:
     if index == 5:
         stamp = seed.builds[-1].stamp
         return (
-            f"review build {stamp} of {seed.name}: brief a subagent, "
-            f"write docs/reviews/{stamp}.md"
+            f"review build {stamp} of {seed.name}: brief a subagent, write docs/reviews/{stamp}.md"
         )
     return f"set {seed.name} to done"
 
@@ -505,15 +502,15 @@ def _after_tag_text(facts: Facts) -> str:
     if facts.mirror_at_head is False:
         return "push: git push origin main --tags"
     if facts.instance_version is not None and facts.instance_version != _number(facts):
-        return f"install: uv tool install --reinstall dist/factory-{_number(facts)}-py3-none-any.whl"
+        return (
+            f"install: uv tool install --reinstall dist/factory-{_number(facts)}-py3-none-any.whl"
+        )
     return f"{facts.highest} is out: open the next version"
 
 
 def _settled(facts: Facts) -> bool:
     """Whether every seed of the version in flight is terminal, and there is one."""
-    return bool(facts.seeds) and all(
-        seed.status in ("done", "rejected") for seed in facts.seeds
-    )
+    return bool(facts.seeds) and all(seed.status in ("done", "rejected") for seed in facts.seeds)
 
 
 def _release_applies(facts: Facts) -> bool:
