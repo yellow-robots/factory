@@ -10,6 +10,7 @@ when there is none; usage on stderr and exit 2 for a missing or unknown command.
 """
 
 import contextlib
+import dataclasses
 import io
 import os
 import shutil
@@ -389,6 +390,40 @@ class CheckTest(GateTest):
         code, out, err = run(copy, "check")
         self.assertEqual(code, 1, out)
         self.assertIn("docs/scratchpad/notes.md", out)
+
+    def test_a_vault_that_is_not_a_git_checkout_names_git_once_for_the_tags_and_once_for_the_builds(self):
+        """seed: the-gate-in-three. From the review: a git that failed answered with nothing, so a
+        tree that is no checkout got one false problem per version note -- twenty on this
+        repository's own vault -- beside the one true line about the builds. A failure is one
+        problem naming its cause, and what depends on the answer is not checked as if the answer
+        were empty."""
+        copy = Path(self.tmp.name) / "copy"
+        shutil.copytree(self.root, copy, ignore=shutil.ignore_patterns(".git"))
+        code, out, _ = run(copy, "check")
+        self.assertEqual(code, 1, out)
+        versions = [line for line in out.splitlines() if line.startswith("docs/versions/")]
+        self.assertEqual(len(versions), 2, out)
+        self.assertTrue(any("tag" in line and "failed" in line for line in versions), out)
+        self.assertTrue(any("rev-list" in line and "failed" in line for line in versions), out)
+        self.assertNotIn("may not be a tag", out)
+
+    def test_a_test_file_that_does_not_parse_is_one_problem_and_no_seed_is_unnamed_for_it(self):
+        """seed: the-gate-in-three. From the review: a test file with a syntax error was skipped in
+        silence, so every building or done seed was then named by no test and every `judged:
+        test` was unfound, with no line saying why."""
+        self.edit("test_bad.py", "def (\n")
+        self.commit("a test file that does not parse")
+        out = self.assert_problem("test_bad.py", "does not parse")
+        self.assertNotIn("docs/seeds/d.md", out)  # d is named by test_d in test_repo.py, which parses
+
+    def test_a_note_that_cannot_be_read_is_one_problem_and_not_an_empty_note(self):
+        """seed: the-gate-in-three. From the review: an unreadable note read as "" and was reported
+        as having no frontmatter."""
+        note = self.root / "docs" / "seeds" / "a.md"
+        note.chmod(0)
+        self.addCleanup(note.chmod, 0o644)
+        out = self.assert_problem("docs/seeds/a.md", "cannot be read")
+        self.assertNotIn("no frontmatter", out)
 
     def test_a_vault_git_answers_about_somebody_else_is_read_whole(self):
         """seed: the-vault-as-git-tracks-it. From the review: a copy of the vault inside a repository
@@ -786,6 +821,7 @@ class ReleaseTest(GateTest):
         code, out, _ = self.release()
         self.assertEqual(code, 1, out)
         self.assertIn("v0.2", out)
+        self.assertIn("lock", out.lower())  # seed: the-gate-in-three. git's own words, as uv's are kept
         self.assertNotIn("v0.2\n", git(self.root, "tag", "-l"))
         self.assertFalse((self.root / "CHANGELOG.md").exists())
 
@@ -1121,6 +1157,47 @@ class UsageTest(GateTest):
             self.assertEqual(out, "")
         self.assertFalse((self.root / "CHANGELOG.md").exists())
         self.assertEqual(git(self.root, "tag", "-l").split(), ["v0.1"])
+
+
+class ShapeTest(GateTest):
+    """seed: the-gate-in-three. The gate's own shapes once its readers have gone to their
+    modules: a `Problem` that prints as `path: message`, a `check` that returns problems, a
+    `render` that returns the changelog's text and writes nothing, and no reader left behind."""
+
+    def test_a_problem_is_a_path_and_a_message_and_prints_as_one_line(self):
+        problem = gate.Problem("docs/seeds/a.md", "no such thing")
+        self.assertEqual(str(problem), "docs/seeds/a.md: no such thing")
+        self.assertEqual((problem.path, problem.message), ("docs/seeds/a.md", "no such thing"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            problem.path = "elsewhere"
+
+    def test_check_returns_problems_and_render_returns_the_changelog(self):
+        self.assertEqual(gate.problems_check(self.root), [])
+        self.edit("docs/seeds/a.md", SEED_A.replace("value: 3", "value: 9"))
+        problems = gate.problems_check(self.root)
+        self.assertTrue(problems)
+        self.assertTrue(all(isinstance(problem, gate.Problem) for problem in problems))
+        self.assertEqual(problems[0].path, "docs/seeds/a.md")
+        text = gate.render(self.root)
+        self.assertTrue(text.startswith("# Changelog"))
+        self.assertIn("v0.1: the start", text)
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
+        self.assertFalse(hasattr(gate, "problems_render"))
+
+    def test_the_readers_live_in_their_modules_and_not_in_the_gate(self):
+        import repo
+        import vault
+
+        for name in ("frontmatter", "review_findings", "changelog_bullets", "base_named"):
+            self.assertTrue(callable(getattr(vault, name, None)), f"vault.{name}")
+        for name in ("git", "tags", "builds", "trailers", "tests", "suite", "tag", "build_wheel"):
+            self.assertTrue(callable(getattr(repo, name, None)), f"repo.{name}")
+        gone = (
+            "frontmatter", "_read_vault", "_git", "_git_bytes", "_tags", "_builds", "_build_trailers",
+            "_test_docstrings", "_test_names", "_suite_green", "_annotate", "_build_wheel", "_wheels",
+        )  # fmt: skip
+        for name in gone:
+            self.assertFalse(hasattr(gate, name), f"gate.{name}")
 
 
 if __name__ == "__main__":
