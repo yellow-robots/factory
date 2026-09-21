@@ -9,6 +9,7 @@ command and git's own words rather than answering with nothing.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import subprocess
 import sys
@@ -439,12 +440,16 @@ def ls_remote(root: Path, remote: str, ref: str, timeout: int) -> str:
     cannot be asked, times out, or names no ref."""
     command = f"git ls-remote {remote} {ref}"
     _owned(root, command)
+    # Nothing prompts: a terminal prompt is off and an SSH key that would ask is a failure inside
+    # `timeout` rather than a stall for the whole of it.
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND="ssh -o BatchMode=yes")
     try:
         done = subprocess.run(
             ["git", *GIT_READ, "ls-remote", remote, ref],
             cwd=str(root),
             capture_output=True,
             timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired as e:
         raise RepoError(command, f"timed out after {timeout} seconds") from e

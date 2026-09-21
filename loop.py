@@ -123,6 +123,9 @@ def _branch_and_attached(
         return None, None
     if len(at) == 1:
         return at[0], False
+    if not at:
+        unknown.append("branch: no branch has the head as its tip")
+        return None, False
     unknown.append(f"branch: {len(at)} branches at the head: {', '.join(at)}")
     return None, False
 
@@ -143,10 +146,15 @@ def _innermost_seed(
     return None
 
 
-def _seed_test_ids(found: list[repo.Test], seed_names: list[str]) -> dict[str, list[str]]:
+def _ids_by_seed(found: list[repo.Test], seed_names: list[str]) -> dict[str, list[str]]:
     """The ids of the tests of each seed: a test's seed is the innermost docstring that names
-    one, a class id is never run whole, and a method naming its own seed is that seed's."""
-    class_ids = {t.id for t in found if any(o.id.startswith(t.id + ".") for o in found)}
+    one, a class id is never run whole -- a base class, a mixin or an empty `TestCase` whose
+    docstring names a seed contributes no id -- and a method naming its own seed is that seed's."""
+    class_ids = {
+        t.id
+        for t in found
+        if not t.name.startswith("test") or any(o.id.startswith(t.id + ".") for o in found)
+    }
     by_id = {t.id: t for t in found}
     belonging: dict[str, list[str]] = {name: [] for name in seed_names}
     for test in found:
@@ -204,7 +212,16 @@ def _colour(
         return None
 
 
-def _seeds(
+def _reviewed(store: vaults.Vault, stamp: str) -> bool:
+    """Whether a review note of the vault names `stamp` in its `runs:`, one note covering several
+    runs counted for each, read from the notes whole and never from whether a path is held."""
+    for note in store.notes():
+        if note.kind == "review" and note.fm and stamp in note.fm.get("runs", "").split():
+            return True
+    return False
+
+
+def _version_seeds(
     root: Path, store: vaults.Vault, in_flight: str, highest: str | None, unknown: list[str]
 ) -> tuple[SeedFacts, ...]:
     """One `SeedFacts` per seed whose version is `in_flight`, in name order."""
@@ -221,7 +238,7 @@ def _seeds(
         found = []
         unknown.append(f"tests: {e}")
     seed_names = [note.path.stem for note in store.notes() if note.kind == "seed"]
-    belonging = _seed_test_ids(found, seed_names)
+    belonging = _ids_by_seed(found, seed_names)
     records, builds_error = _build_records(root, highest)
     seeds: list[SeedFacts] = []
     for note in sorted(notes, key=lambda note: note.path.stem):
@@ -234,9 +251,7 @@ def _seeds(
             builds = tuple(
                 Build(commit, stamp) for commit, subject, stamp in records if subject == name
             )
-        reviewed = (
-            store.holds(root / "docs" / "reviews" / f"{builds[-1].stamp}.md") if builds else None
-        )
+        reviewed = _reviewed(store, builds[-1].stamp) if builds else None
         status = note.fm.get("status", "") if note.fm else ""
         colour = _colour(root, name, ids, status, unknown)
         seeds.append(SeedFacts(name, status, ids, colour, builds, reviewed))
@@ -330,7 +345,11 @@ def gather(root: Path) -> Facts:
         elif len(untagged) > 1:
             unknown.append(f"in_flight: {len(untagged)} version notes are no tag")
 
-    seeds = _seeds(root, store, in_flight, highest, unknown) if in_flight is not None else ()
+    seeds = (
+        _version_seeds(root, store, in_flight, highest, unknown)
+        if in_flight is not None
+        else ()
+    )
 
     agents_changed: bool | None = None
     if not checkout:
@@ -418,7 +437,7 @@ def gather(root: Path) -> Facts:
 
 # The seven rows a seed can have, in the table's order, each a predicate over one seed. A seed
 # at `done` or `rejected`, or one whose colour or builds could not be read, has none of them.
-_SEED_PREDICATES: tuple[Callable[[SeedFacts], bool], ...] = (
+_ROW_PREDICATES: tuple[Callable[[SeedFacts], bool], ...] = (
     lambda seed: seed.status == "open",
     lambda seed: seed.status in ("spec", "building") and not seed.tests,
     lambda seed: seed.status == "spec",
@@ -429,11 +448,11 @@ _SEED_PREDICATES: tuple[Callable[[SeedFacts], bool], ...] = (
 )
 
 
-def _seed_row(seed: SeedFacts) -> int | None:
+def _row_of(seed: SeedFacts) -> int | None:
     """The index of the seed's row among the seven, or None when the seed has none."""
     if seed.status in ("done", "rejected") or seed.colour is None or seed.builds is None:
         return None
-    for index, predicate in enumerate(_SEED_PREDICATES):
+    for index, predicate in enumerate(_ROW_PREDICATES):
         if predicate(seed):
             return index
     return None
@@ -442,13 +461,13 @@ def _seed_row(seed: SeedFacts) -> int | None:
 def _chosen(facts: Facts) -> tuple[int, SeedFacts] | None:
     """The first seed in name order that any of the seven rows applies to, with its row index."""
     for seed in facts.seeds:
-        index = _seed_row(seed)
+        index = _row_of(seed)
         if index is not None:
             return index, seed
     return None
 
 
-def _seed_applies(index: int) -> Callable[[Facts], bool]:
+def _row_applies(index: int) -> Callable[[Facts], bool]:
     """A predicate that holds when the seed stepped is one whose row is `index`."""
 
     def applies(facts: Facts) -> bool:
@@ -458,7 +477,7 @@ def _seed_applies(index: int) -> Callable[[Facts], bool]:
     return applies
 
 
-def _seed_text(facts: Facts, index: int) -> str:
+def _row_text(facts: Facts, index: int) -> str:
     """The text of the row `index`, taken from the seed stepped."""
     seed = _chosen(facts)[1]
     if index == 0:
@@ -553,13 +572,13 @@ RULES: tuple[Rule, ...] = (
         lambda f: f.in_flight is not None and not f.seeds,
         lambda f: f"promote a seed to {f.in_flight}",
     ),
-    Rule("write the goal", _seed_applies(0), lambda f: _seed_text(f, 0)),
-    Rule("write red tests", _seed_applies(1), lambda f: _seed_text(f, 1)),
-    Rule("set to building", _seed_applies(2), lambda f: _seed_text(f, 2)),
-    Rule("build", _seed_applies(3), lambda f: _seed_text(f, 3)),
-    Rule("green with no build", _seed_applies(4), lambda f: _seed_text(f, 4)),
-    Rule("review build", _seed_applies(5), lambda f: _seed_text(f, 5)),
-    Rule("set to done", _seed_applies(6), lambda f: _seed_text(f, 6)),
+    Rule("write the goal", _row_applies(0), lambda f: _row_text(f, 0)),
+    Rule("write red tests", _row_applies(1), lambda f: _row_text(f, 1)),
+    Rule("set to building", _row_applies(2), lambda f: _row_text(f, 2)),
+    Rule("build", _row_applies(3), lambda f: _row_text(f, 3)),
+    Rule("green with no build", _row_applies(4), lambda f: _row_text(f, 4)),
+    Rule("review build", _row_applies(5), lambda f: _row_text(f, 5)),
+    Rule("set to done", _row_applies(6), lambda f: _row_text(f, 6)),
     Rule("release", _release_applies, _release_text),
     Rule("unknown", lambda f: True, _unknown_text),
 )
