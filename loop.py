@@ -346,9 +346,7 @@ def gather(root: Path) -> Facts:
             unknown.append(f"in_flight: {len(untagged)} version notes are no tag")
 
     seeds = (
-        _version_seeds(root, store, in_flight, highest, unknown)
-        if in_flight is not None
-        else ()
+        _version_seeds(root, store, in_flight, highest, unknown) if in_flight is not None else ()
     )
 
     agents_changed: bool | None = None

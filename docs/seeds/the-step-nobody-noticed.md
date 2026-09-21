@@ -1,7 +1,7 @@
 ---
 created: 2026-09-21
 type: seed
-status: building
+status: done
 summary: The loop exists only as prose in AGENTS.md, so whether a step is taken depends on whether the agent notices it in a context that compression erodes; the next step is derivable from git and the vault, and nothing derives it.
 value: 5
 effort: M
