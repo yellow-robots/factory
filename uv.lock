@@ -166,7 +166,6 @@ wheels = [
 
 [[package]]
 name = "factory"
-version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["openai"] },

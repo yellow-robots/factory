@@ -1,11 +1,11 @@
 ---
 created: 2026-09-16
 type: seed
-status: open
-summary: The factory runs from the main checkout of the repository it builds, at whatever commit that holds; the instance is a checkout of its own pinned at a released tag, with its key, its store and its credential beside it, so deploying a version is an act and a version is built by the one before it.
+status: spec
+summary: An instance is a clone of the whole repository at a tag, 151 MB of vault, tests and case sets around the five modules a build runs, and a build learns which factory it is by asking git where it lives; a deployment is the executable product built in the repository, a wheel the release builds at the tag and an instance installs as one tool.
 value: 5
-effort: S
-version:
+effort: M
+version: v0.20
 ---
 
 ## Evidence
@@ -16,8 +16,18 @@ Owner's item 5, 2026-09-16. Today's surface, by accident: a git worktree carryin
 
 2026-09-19, performed rather than built, by the attended agent. An instance now stands at `/opt/yellow-robots/factory-instance`, a clone of this repository at the v0.14 tag with its environment made from the pinned lock, reading the host's configuration and pushing with the host's credential; every commit of v0.15 carries `Built-By: factory at v0.14`, which is the property this seed exists for and is now a fact in git rather than a plan. README says what an instance is and how one is installed and moved to a tag. Two things were learned in doing it: a checkout is not an installation, since the environment must be made before the instance can run at all; and the key's place, which this seed named as a fault of the surface, moved into the configuration under keys-of-the-instance instead.
 
-The seed cannot be closed as it stands. The gate asks a done seed for a `## Goal` and for a test naming it, and what remains here is an act and a page of README, neither of which a build makes nor a test holds. That is a shape the loop does not have: every other seed is code the factory writes against tests written first. Whether an operational seed closes on evidence rather than on a test, or is split so that its testable half is a seed and its act is not, is the owner's to decide.
+The seed could not be closed as it stood. The gate asks a done seed for a `## Goal` and for a test naming it, and what remained here was an act and a page of README, neither of which a build makes nor a test holds. Whether an operational seed closes on evidence rather than on a test, or is split so that its testable half is a seed and its act is not, was the owner's to decide.
 
-## Idea
+2026-09-21, the owner: the deployment is a copy of the repository when it should not be; a deployment is the executable product built in the repository. Measured that morning: the instance at `/opt/yellow-robots/factory-instance` is 151 MB, a clone at `v0.19` holding `docs/`, `cases/`, `catches/`, ten test modules and the changelog beside the five modules a build or a review runs; `pyproject.toml` had no build system, no entry points and the version `0.0.0`; `build.py:63-78` learns its version by running `git describe` where it lives. That answers the question of 2026-09-19: the testable half is this seed -- the product built by the release, the version read from it, the entry points -- and the act, installing the tool, is the release procedure. Spiked the same day in the version's worktree with the packaging that now stands in `pyproject.toml`: `uv build --wheel` yields `factory-0.20.dev2+gd76084cb5.d20260921-py3-none-any.whl` two commits past `v0.19`, holding exactly the five modules and the four scripts; `uv export --frozen --no-dev`, which the check's image installs, emits no project line, so `[tool.uv] package = false` keeps the checkout a script tree and the image unchanged; `uv.lock` loses the line `version = "0.0.0"`. The version string also fixes an order: hatch-vcs marks a dirty tree with the date, and `render` dirties `CHANGELOG.md`, so the release builds the wheel at the clean tag before it renders.
 
-The instance is a checkout of the factory's code apart from every project, pinned at a released tag, on this host at first and in a droplet later, which is operations and no new design; beside it its configuration, the key's place, the store of records-outside-the-project and the credential it pushes with, which pushes build branches and never main. Deploying a version is an act: after a release the instance is moved to the new tag, so a version is built by the one before it, as a compiler's stage builds the next, and the version a trailer names is a tag. What a project must carry is what build-from-a-pushed-branch refuses the lack of, written in README for whoever prepares a project; this repository is the first such project and no exception. README says how an instance is installed and moved to a tag, for the owner and the attended agent. It comes after the version that makes build-from-a-pushed-branch is released: the first instance is pinned at that tag, and the next version is the first it builds.
+## Goal
+
+A deployment is the executable product built in the repository, not a copy of the repository.
+
+**The product is a wheel, and the release builds it.** `pyproject.toml` already declares it and is not to be changed: the version derived from the git tag at build time; five modules and nothing else -- `build.py`, `builder.py`, `reviewer.py`, `instance.py`, `runs.py`; and four console scripts, `factory-build`, `factory-builder`, `factory-review` and `factory-runs`. `gate.py release <version>` builds it once the tag is cut and before the changelog is rendered, while the tree is still clean, because the version is read from the tree and a dirty tree is marked as one: `uv build --wheel`, into `dist/`, which git ignores, and the wheel's path is printed as the release's last line. A build that fails is the release's failure, exit 1, naming what `uv build` said, with the tag standing and the changelog unrendered -- nothing has been pushed, and a tag is not a deployment. `check` and `render` are unchanged.
+
+**Each program has an entry a console script can name.** `cli()` in each of `build.py`, `builder.py`, `reviewer.py` and `runs.py` takes no argument, calls that program's `main` with `sys.argv[1:]` and exits with what `main` returned; the `if __name__ == "__main__"` guard of each calls it, so `uv run build.py ...` behaves exactly as it does today. `main` keeps its signature and every caller of it.
+
+**A build names the factory that made it by the product's own version.** `build.py` stops asking git where it lives: `git describe` is not run, so the version is never a checkout's guess at a tag and never `-dirty`. The version in `Built-By: factory at v<version>, run <stamp>` is `importlib.metadata.version("factory")` with `v` before it, so an instance installed from the wheel of `v0.20` writes `factory at v0.20`, exactly what the tag says; where the product is not installed -- a checkout, where `pyproject.toml` says it is no package -- it writes `factory at unknown`, the meaning that word already has. The trailer's shape does not change and the gate's reading of it does not change.
+
+What must not change: which files the wheel holds is the import closure of the four scripts, and a record, a check, a review, the key wall and every refusal behave exactly as they do today.

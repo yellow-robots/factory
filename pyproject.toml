@@ -1,8 +1,28 @@
 [project]
 name = "factory"
-# The version of record is the git tag; this field is a PEP 621 placeholder.
-version = "0.0.0"
+# The version is the git tag's, derived when the product is built: at a tag it is that tag, past
+# one it says which commit it is. It is written nowhere.
+dynamic = ["version"]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic-ai-slim[openai]==2.43.0",
 ]
+
+[project.scripts]
+factory-build = "build:cli"
+factory-builder = "builder:cli"
+factory-review = "reviewer:cli"
+factory-runs = "runs:cli"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["build.py", "builder.py", "reviewer.py", "instance.py", "runs.py"]
+
+[tool.uv]
+package = false
