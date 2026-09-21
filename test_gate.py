@@ -687,7 +687,9 @@ class ReleaseTest(GateTest):
     def shim_uv(self, fail: bool = False) -> Path:
         """seed: installation-and-surfaces. A `uv` first on PATH standing in for the real one: it
         logs its arguments, the directory it was run in and whether CHANGELOG.md existed when it
-        ran, then makes the wheel and says so as uv does -- or fails, saying why."""
+        ran, then makes the wheel and says so exactly as uv does -- on stderr, the path relative
+        to the root and wrapped in colour escapes, nothing on stdout, measured 2026-09-21 on uv
+        0.8.0 with FORCE_COLOR set -- or fails, saying why."""
         bin_dir = Path(self.tmp.name) / "bin"
         bin_dir.mkdir(exist_ok=True)
         log = Path(self.tmp.name) / "uv.log"
@@ -696,7 +698,10 @@ class ReleaseTest(GateTest):
         if fail:
             body += "echo 'error: no build backend' >&2\nexit 1\n"
         else:
-            body += f"mkdir -p dist && : > '{WHEEL}'\necho 'Successfully built {WHEEL}'\n"
+            esc = "\\033"
+            body += f"mkdir -p dist && : > '{WHEEL}'\n"
+            body += f"printf '{esc}[1mBuilding wheel...{esc}[0m\\n' >&2\n"
+            body += f"printf 'Successfully built {esc}[36m{esc}[1m{WHEEL}{esc}[0m{esc}[39m\\n' >&2\n"
         shim = bin_dir / "uv"
         shim.write_text(body)
         shim.chmod(0o755)
@@ -793,8 +798,13 @@ class ReleaseTest(GateTest):
     def test_release_builds_the_product_at_the_clean_tag_and_says_where_it_is(self):
         """seed: installation-and-surfaces. Once the tag is cut and before the changelog is
         rendered -- the version is read from the tree, and a dirty tree is marked as one --
-        `uv build --wheel` runs at the root, and the wheel's path is the release's last line."""
+        `uv build --wheel` runs at the root, and the wheel's path is the release's last line -- the
+        wheel this release built, not an older one `dist/` still holds, and not read off uv's
+        chatter, which is on stderr and coloured."""
         self.ready()
+        older = self.root / "dist" / "factory-0.1-py3-none-any.whl"
+        older.parent.mkdir()
+        older.write_text("")
         code, out, _ = self.release()
         self.assertEqual(code, 0, out)
         log = self.uv_log.read_text().splitlines()
