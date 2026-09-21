@@ -26,3 +26,6 @@ only-include = ["build.py", "builder.py", "reviewer.py", "instance.py", "runs.py
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+line-length = 100
