@@ -91,8 +91,9 @@ Changed, Did, Check, Failing, Unsure; only when there is a report); and `numbers
 (`answer`/`cap`/`error`),
 requests, attempts, tool calls, tokens (input, output, cache read, reasoning), cost and
 `cost_source`, the source that priced it, `table` or `genai-prices`, never the name that was
-configured, lists, reads, files
-and lines read, writes, edits, checks, `check` (green/red/none: the tools' own verdict on the
+configured, lists, reads, files,
+lines read and bytes read, `retries` (the shape errors the library answered, by tool), writes,
+edits, checks, `check` (green/red/none: the tools' own verdict on the
 tree the run left, the builder's own check added when the model wrote after its last, next to the
 report's claim), check seconds, files changed, insertions, deletions,
 seconds; cap or error adds `detail` and exits 1. Every record is committed to the store, one

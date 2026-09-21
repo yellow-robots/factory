@@ -55,6 +55,7 @@ from pydantic_ai import (  # noqa: E402
 )
 from pydantic_ai.messages import RetryPromptPart  # noqa: E402
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings  # noqa: E402
+from pydantic_ai.models.wrapper import WrapperModel  # noqa: E402
 from openai import AsyncOpenAI  # noqa: E402
 from pydantic_ai.profiles.openai import OpenAIModelProfile  # noqa: E402
 from pydantic_ai.providers.deepseek import DeepSeekProvider  # noqa: E402
@@ -392,13 +393,14 @@ class Tools:
     def read(self, path: str, start: int = 1, limit: int | None = None) -> str:
         """Read a file of the checkout as numbered lines, from line `start` (1-based): at most
         `limit` lines, at most 1000 lines and at most 64000 bytes per call, whichever is met first,
-        and a read cut short by any of the three says where to continue. `limit` omitted or above
-        the line cap is the line cap; below one is one.
+        and a read cut short by any of the three says where to continue. `limit` omitted, zero or
+        above the line cap is the line cap; a negative `limit` is one.
 
         Args:
             path: The file to read, relative to the checkout root.
             start: The first line to read, 1-based.
-            limit: The most lines to return; omitted or above the line cap is the line cap.
+            limit: The most lines to return; omitted, zero or above the line cap is the line cap,
+                a negative limit is one.
         """
         self.calls += 1
         if capped := self._over_limit():
@@ -424,6 +426,7 @@ class Tools:
                             break
                         cut = line.encode()[:READ_BYTES_CAP].decode("utf-8", "ignore")
                         out.append(f"{i}\t{cut} …(line cut at {READ_BYTES_CAP} bytes)")
+                        size = len(cut.encode())  # the bytes returned, not the whole line's
                     else:
                         out.append(f"{i}\t{line.rstrip(chr(10))}")
                     n += 1
@@ -777,6 +780,29 @@ PROFILE = OpenAIModelProfile(
 )
 
 
+class SpendModel(WrapperModel):
+    """A model that asks what the run has spent at every request after the first: a call of the
+    wrong shape never reaches a tool, so a run whose every call is malformed would otherwise be
+    bounded by `REQUEST_LIMIT` alone and run past `HARD_SPEND`. The first request is answered --
+    nothing has been spent before it -- and a call that does reach a tool is still ended by the
+    tool's own check, so the two do not disagree about where the line is."""
+
+    def __init__(self, wrapped: Any, spent: Any):
+        super().__init__(wrapped)
+        self._spent = spent
+        self._answered = False
+
+    async def request(self, messages: Any, model_settings: Any, model_request_parameters: Any) -> Any:
+        if self._answered and self._spent is not None:
+            spent = self._spent()
+            if spent >= HARD_SPEND:
+                raise UsageLimitExceeded(
+                    f"exceed the hard spend ceiling of {HARD_SPEND} USD, spent {spent:.6f}"
+                )
+        self._answered = True
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
 def build_agent(
     tools: Tools, key: str = "", http_client: Any = None, model: Any = None,
     model_name: str = MODEL, base_url: str | None = None,
@@ -799,6 +825,8 @@ def build_agent(
             else DeepSeekProvider(api_key=key, http_client=http_client)
         )
         model = OpenAIChatModel(model_name, provider=provider, profile=None if base_url else PROFILE)
+    if tools.spent is not None:  # a tool-less caller that bounds nothing is not wrapped
+        model = SpendModel(model, tools.spent)
     agent = Agent(
         model,
         instructions=ROLE,
