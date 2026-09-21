@@ -85,6 +85,28 @@ class RepoTest(unittest.TestCase):
         self.assertTrue(built.startswith(short))
         self.assertGreaterEqual(len(short), 7)
 
+    def test_the_commits_between_two_points_oldest_first(self):
+        """seed: the-loop-in-numbers. `commits(root, since, to)`: the commits after `since` up to
+        and including `to`, oldest first, from the beginning of history when `since` is None;
+        `RepoError` when git cannot answer."""
+        one = git(self.root, "rev-parse", "HEAD").strip()
+        self.assertEqual(repo.commits(self.root, None, "HEAD"), [one])
+        self.assertEqual(repo.commits(self.root, "v0.1", "HEAD"), [])
+        write(self.root, "f.txt", "x\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "two")
+        two = git(self.root, "rev-parse", "HEAD").strip()
+        write(self.root, "f.txt", "y\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "three")
+        three = git(self.root, "rev-parse", "HEAD").strip()
+        self.assertEqual(repo.commits(self.root, "v0.1", "HEAD"), [two, three])
+        self.assertEqual(repo.commits(self.root, None, two), [one, two])
+        self.assertEqual(repo.commits(self.root, "v0.1", two), [two])
+        with self.assertRaises(repo.RepoError) as raised:
+            repo.commits(self.copy_without_git(), None, "HEAD")
+        self.assertIn("rev-list", raised.exception.command)
+
     def test_the_listing_is_gits_and_none_where_git_answers_for_nobody(self):
         listing = repo.listing(self.root, self.root / "docs")
         self.assertIn("docs/seeds/a.md", listing.listed)

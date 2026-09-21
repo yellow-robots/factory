@@ -1,7 +1,7 @@
 ---
 created: 2026-09-17
 type: seed
-status: spec
+status: building
 summary: What a version took, its builds and their cost, the reviews and what they found in green builds, and who made each commit, is counted by the attended agent by hand for every version note; git, the records and the review notes hold all of it, and a reader prints it, so how well the factory works and how much of the loop it runs are numbers.
 value: 4
 effort: M
