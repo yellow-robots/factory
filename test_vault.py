@@ -163,6 +163,16 @@ class TextTest(unittest.TestCase):
         self.assertEqual([line for line in vault.prose_lines(findings[0][1]) if line], ["severity: defect"])
         self.assertEqual([line for line in vault.prose_lines(findings[1][1]) if line], ["verified: yes"])
 
+    def test_a_docstring_naming_a_seed_is_read_by_one_definition(self):
+        """seed: the-step-nobody-noticed. From the loop's second review: the loop re-declared
+        the gate's `seed: <name>` pattern; one reading, here, for both."""
+        self.assertTrue(vault.names_seed("seed: b. The next thing holds.", "b"))
+        self.assertTrue(vault.names_seed("Holds.\n\nseed:the-gate", "the-gate"))
+        self.assertFalse(vault.names_seed("seed: the-gate-in-three.", "the-gate"))
+        self.assertFalse(vault.names_seed("seed: bc.", "b"))
+        self.assertFalse(vault.names_seed("a seed named b", "b"))
+        self.assertFalse(vault.names_seed("", "b"))
+
     def test_a_base_is_read_into_the_names_it_uses(self):
         named = vault.base_named(BASE)
         self.assertTrue(named)

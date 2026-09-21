@@ -620,7 +620,7 @@ class GatherTest(unittest.TestCase):
         self.commit("a class naming b with a method naming c")
         found = loop.gather(self.root)
         by_name = {s.name: s for s in found.seeds}
-        self.assertEqual(by_name["b"].tests, ("test_repo.RepoTest",))
+        self.assertEqual(by_name["b"].tests, ("test_repo.RepoTest.test_b",))  # the class's methods, not the class
         self.assertEqual(by_name["b"].colour, "green")
         self.assertEqual(by_name["c"].tests, ("test_repo.RepoTest.test_c",))
         self.assertEqual(by_name["c"].colour, "red")
