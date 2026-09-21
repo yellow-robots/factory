@@ -182,7 +182,9 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(self.tools.lines_read, 3 + cap + 11)
 
     def test_a_line_longer_than_the_byte_cap_is_cut_and_the_next_line_continues(self):
-        (self.root / "wide.txt").write_text("x" * 40_000 + "\nshort\n")
+        # Amended after run 20260921T212814Z, red on this test alone: the line was 40,000 bytes,
+        # longer than the cap that was and shorter than the cap that is; it is longer than any.
+        (self.root / "wide.txt").write_text("x" * (builder.READ_BYTES_CAP + 8_000) + "\nshort\n")
         out = self.tools.read("wide.txt")
         self.assertTrue(out.startswith("1\t" + "x" * 100))
         self.assertIn(f"(line cut at {builder.READ_BYTES_CAP} bytes)", out)
