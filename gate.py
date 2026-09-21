@@ -6,13 +6,19 @@
     uv run gate.py release <version>
 
 `check` validates `docs/` and the repository against it, `render` writes `CHANGELOG.md` from
-the tags, and `release` refuses until everything derived agrees, then tags and renders. `check`
-and `release` read the builds since the highest tag, every commit whose message carries a
-`Built-By` line, and refuse when git's trailer parser does not read one or its value does not
-name a run; the record the stamp names is the factory's, kept in its store outside the project,
-so no stamp is looked up in the project. Each command prints one line per problem on stdout, starting with
-the path relative to the root, and exits 1 if there is any; with nothing to report it prints
-nothing and exits 0. Usage errors go to stderr and exit 2.
+the tags, and `release` refuses until everything derived agrees, then tags, builds the product
+as a wheel at the clean tag and renders. `release` runs `uv build --wheel` into `dist/`, which
+git ignores, once the tag is cut and before the changelog is rendered, because the version is
+read from the tree and a dirty tree is marked as one; the wheel's path -- found in `dist/` as
+the wheel this release built, never read off what `uv` prints -- is printed as the release's
+last line. A build that fails is the release's failure, exit 1, naming what `uv build` said,
+with the tag standing and the changelog unrendered: nothing has been pushed, and a tag is not a
+deployment. `check` and `release` read the builds since the highest tag, every commit whose
+message carries a `Built-By` line, and refuse when git's trailer parser does not read one or its
+value does not name a run; the record the stamp names is the factory's, kept in its store
+outside the project, so no stamp is looked up in the project. Each command prints one line per
+problem on stdout, starting with the path relative to the root, and exits 1 if there is any;
+with nothing to report it prints nothing and exits 0. Usage errors go to stderr and exit 2.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from pathlib import Path
 import builder
 
 USAGE = "usage: gate.py check|render|release <version>"
+WHEEL_DIR = "dist"  # where the release's build puts the wheel; git ignores it
 STATUSES = ("open", "spec", "building", "done", "rejected")
 SEED_FIELDS = {"type", "status", "summary", "value", "effort", "version", "created"}
 REVIEW_FIELDS = {"type", "created", "runs", "reviewer"}
@@ -1028,9 +1035,14 @@ def _release_problems(root: Path, version: str, vault: _Vault | None = None) -> 
         problems.append(f"{rel_note}: no ## Changelog bullets")
 
     for line in _git(root, "status", "--porcelain").splitlines():
-        if line.strip():
-            path = line[3:].strip() if len(line) > 3 else line.strip()
-            problems.append(f"{path}: uncommitted change")
+        if not line.strip():
+            continue
+        path = line[3:].strip() if len(line) > 3 else line.strip()
+        # `dist/` is the release's own output, which git ignores; a wheel an earlier build left
+        # there is not the project's change, and the build puts this release's beside it.
+        if path == WHEEL_DIR or path.startswith(f"{WHEEL_DIR}/"):
+            continue
+        problems.append(f"{path}: uncommitted change")
 
     previous = _highest_tag(tags)
     if previous is not None:
@@ -1062,10 +1074,23 @@ def _annotate(root: Path, version: str, note: Path) -> bool:
     return done.returncode == 0
 
 
+def _wheels(dist: Path) -> set[str]:
+    """The wheel filenames `dist/` holds, or none when the directory is not there or cannot be
+    read. `uv build` announces the wheel on stderr, coloured when the environment asks for colour
+    and relative to the root, so the wheel is not read off it: it is found where the build put it."""
+    try:
+        return {p.name for p in dist.iterdir() if p.is_file() and p.name.endswith(".whl")}
+    except OSError:
+        return set()
+
+
 def _build_wheel(root: Path) -> tuple[str, str]:
     """`uv build --wheel` at the root, once the tag is cut and before the changelog is rendered, so
-    the version is read from the clean tree. Returns the wheel's path as uv named it, and the empty
+    the version is read from the clean tree. Returns the wheel's path relative to the root, found
+    in `dist/` as the wheel this build put there and not an older one left there, and the empty
     string as the path with uv's own words when the build failed or uv could not run."""
+    dist = root / WHEEL_DIR
+    before = _wheels(dist)
     try:
         done = subprocess.run(
             ["uv", "build", "--wheel"],
@@ -1078,11 +1103,10 @@ def _build_wheel(root: Path) -> tuple[str, str]:
         return "", " ".join(str(e).split())
     if done.returncode != 0:
         return "", " ".join((done.stderr.strip() or done.stdout.strip()).split())
-    for line in reversed(done.stdout.splitlines()):
-        words = line.split()
-        if words and words[-1].endswith(".whl"):
-            return words[-1], ""
-    return "", "uv build named no wheel"
+    made = sorted(_wheels(dist) - before)
+    if not made:
+        return "", "uv build named no wheel"
+    return f"{WHEEL_DIR}/{made[-1]}", ""
 
 
 def _emit(problems: list[str]) -> int:
