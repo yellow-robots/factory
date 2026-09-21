@@ -202,6 +202,29 @@ class RepoTest(unittest.TestCase):
         remote = [kwargs for argv, kwargs in calls if "ls-remote" in argv]
         self.assertEqual([kwargs.get("timeout") for kwargs in remote], [7])
 
+    def test_a_reader_answers_only_for_its_own_top_level(self):
+        """seed: the-step-nobody-noticed. From the loop's second review: a directory that is no
+        checkout inside another repository had the enclosing repository's tags read as its own."""
+        outer = Path(self.tmp.name) / "outer"
+        outer.mkdir()
+        git(outer, "init", "-q")
+        (outer / "x.txt").write_text("x\n")
+        git(outer, "add", "-A")
+        git(outer, "commit", "-q", "-m", "one")
+        git(outer, "tag", "v9.9")
+        inner = outer / "inner"
+        shutil.copytree(self.root, inner, ignore=shutil.ignore_patterns(".git"))
+        self.assertIsNone(repo.toplevel(inner))
+        for read in (
+            lambda: repo.tags(inner),
+            lambda: repo.head(inner),
+            lambda: repo.builds(inner, None),
+            lambda: repo.status(inner),
+            lambda: repo.tests(inner),
+        ):
+            with self.assertRaises(repo.RepoError):
+                read()
+
     def test_a_run_stamp_is_read_by_one_definition(self):
         """seed: the-step-nobody-noticed. From the loop's second review: the loop read a trailer
         with its own regex and took `...000Zjunk` as a run where the gate refuses it."""

@@ -249,6 +249,12 @@ class GatherTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.enterContext(mock.patch.dict(os.environ, IDENTITY))
         self.root = make_repo(Path(self.tmp.name))
+        # The gate's fixture has its head at the v0.1 tag; a version in flight is two commits
+        # past its release at least -- the changelog's and its own -- so the loop's fixture is.
+        write(self.root, "CHANGELOG.md", "# Changelog\n\n## v0.1: the start\n")
+        self.commit("CHANGELOG.md rendered for v0.1")
+        write(self.root, "opened.txt", "v0.2 opens\n")
+        self.commit("v0.2 opens")
         self.shim_uv("factory v0.1\n- factory-build\n")
 
     def shim_uv(self, says: str) -> None:
