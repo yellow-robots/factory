@@ -61,6 +61,15 @@ class Test:
     doc: str
 
 
+@dataclass(frozen=True)
+class Tests:
+    """The tests of the root's `test*.py` files, and one `(file, why)` per file that could not be
+    read or parsed, its name alone and no absolute path."""
+
+    found: tuple[Test, ...]
+    unparseable: tuple[tuple[str, str], ...]
+
+
 def _utf8(data: bytes) -> str:
     """The bytes decoded as UTF-8 with what cannot be decoded replaced; never raises."""
     return data.decode("utf-8", "replace")
@@ -222,33 +231,34 @@ def message(root: Path, commit: str) -> str:
     return done.out[:-1] if done.out.endswith("\n") else done.out
 
 
-def tests(root: Path) -> list[Test]:
+def tests(root: Path) -> Tests:
     """Every test method or class of each `test*.py` at the root, read once, with its unittest id,
-    its name and its docstring; a file that cannot be read or does not parse raises `RepoError`
-    naming it, carrying the tests of the other files."""
+    its name and its docstring; a file that cannot be read or parsed is one `(file, why)` in
+    `unparseable` under its name alone, its tests of no account, and the other files' tests still
+    count; `RepoError` only when the root's files cannot be listed."""
+    root = Path(root)
+    try:
+        paths = sorted(root.glob("test*.py"))
+    except OSError as e:
+        raise RepoError("list test*.py", " ".join(str(e).split())) from e
     found: list[Test] = []
-    reasons: list[tuple[str, str]] = []
-    for path in sorted(root.glob("test*.py")):
+    unparseable: list[tuple[str, str]] = []
+    for path in paths:
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            reasons.append((rel, "cannot be read"))
+            unparseable.append((rel, "cannot be read"))
             continue
         try:
             tree = ast.parse(text)
         except SyntaxError:
-            reasons.append((rel, "does not parse"))
+            unparseable.append((rel, "does not parse"))
             continue
         found.extend(_module_tests(tree, path.stem))
-    if reasons:
-        error = RepoError("parse test files", f"{reasons[0][0]}: {reasons[0][1]}")
-        error.tests = found
-        error.reasons = reasons
-        raise error
-    return found
+    return Tests(tuple(found), tuple(unparseable))
 
 
 def _module_tests(tree: ast.Module, module: str) -> list[Test]:

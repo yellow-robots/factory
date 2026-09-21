@@ -157,9 +157,10 @@ def _seeds(
     if not notes:
         return ()
     try:
-        tests = repo.tests(root)
+        tests = list(repo.tests(root).found)
     except repo.RepoError as e:
-        tests = list(getattr(e, "tests", None) or [])
+        tests = []
+        unknown.append(f"tests: {e}")
     records = _seed_records(root, commits, unknown)
     found: list[SeedFacts] = []
     for note in sorted(notes, key=lambda n: n.path.stem):

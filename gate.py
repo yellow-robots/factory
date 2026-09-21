@@ -134,33 +134,43 @@ def _vault(root: Path) -> tuple[Vault, list[Problem]]:
         return Vault(root, root / "docs", None), [_repo_problem("docs/", error)]
 
 
-def _fields(store: Vault) -> Fields:
-    """The field sets of the seed and review templates, each read once."""
-    return Fields(vault.template(store.docs, "seed"), vault.template(store.docs, "review"))
+def _fields(store: Vault) -> tuple[Fields, list[Problem]]:
+    """The seed's and review's field sets, read once from the Vault, and the problem of a template
+    that is part of the vault but cannot be read or has no frontmatter."""
+    kinds: dict[str, vault.Template] = {}
+    problems: list[Problem] = []
+    for kind in ("seed", "review"):
+        path = store.docs / "templates" / f"{kind}.md"
+        if not path.is_file() or not store.part(path):
+            kinds[kind] = vault.Template(None, "")
+            continue
+        found = store.template(kind)
+        if found.error:
+            problems.append(Problem(f"docs/templates/{kind}.md", found.error))
+        kinds[kind] = found
+    return Fields(kinds["seed"], kinds["review"]), problems
 
 
 def _read_tests(root: Path) -> tuple[list[repo.Test], list[Problem]]:
-    """Every test of the root and, when a test file cannot be read, one problem naming it."""
+    """Every test of the root and, when a test file cannot be read or parsed, one problem naming
+    it."""
     try:
-        return repo.tests(root), []
+        found = repo.tests(root)
     except repo.RepoError as error:
-        tests = getattr(error, "tests", None) or []
-        reasons = getattr(error, "reasons", None) or [(error.command, error.err)]
-        return tests, [Problem(rel, message) for rel, message in reasons]
+        return [], [_repo_problem("test*.py", error)]
+    return list(found.found), [Problem(rel, why) for rel, why in found.unparseable]
 
 
 def _wikilink_problems(store: Vault) -> list[Problem]:
-    """Every wikilink of a note the vault holds that does not resolve."""
+    """Every wikilink of any file the vault holds, whole, that does not resolve."""
     problems: list[Problem] = []
-    for note in store.notes():
-        if note.error or note.fm is None:
-            continue  # the note's own check reports what kept it from being read
-        if "[[" not in note.body:
+    for held in store.files():
+        if held.error or "[[" not in held.text:
             continue
-        for match in WIKILINK.finditer(note.body):
+        for match in WIKILINK.finditer(held.text):
             target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
             if not store.resolves(target):
-                problems.append(Problem(note.rel, f"wikilink {target} does not resolve"))
+                problems.append(Problem(held.rel, f"wikilink {target} does not resolve"))
     return problems
 
 
@@ -186,14 +196,12 @@ def _seed_problems(
     note: Note,
     store: Vault,
     tags: set[str] | None,
-    tests: list[repo.Test] | None,
+    tests: list[repo.Test],
     fields: Fields,
 ) -> list[Problem]:
     """A seed note: the template's fields, its status and the fields that status needs."""
     rel, fm, body = note.rel, note.fm, note.body
     problems: list[Problem] = []
-    if fields.seed.error:
-        problems.append(Problem("docs/templates/seed.md", fields.seed.error))
     seed_fields = set(fields.seed.fields) if fields.seed.fields is not None else None
     if seed_fields is not None:
         for field in sorted(set(fm) - seed_fields):
@@ -237,7 +245,7 @@ def _seed_problems(
         problems.extend(_goal_problems(rel, body))
     if tags is not None and version and version in tags and status not in ("done", "rejected"):
         problems.append(Problem(rel, f"version {version} is tagged but the seed is {status}"))
-    if rank >= STATUSES.index("building") and tests is not None:
+    if rank >= STATUSES.index("building"):
         if not _named_by_a_test(note.path.stem, tests):
             problems.append(Problem(rel, f"no test names it (seed: {note.path.stem})"))
     return problems
@@ -264,7 +272,7 @@ def _review_runs_problems(rel: str, path: Path, fm: dict[str, str]) -> list[Prob
 
 
 def _judged_problems(
-    rel: str, heading_title: str, judged: str, root: Path, test_names: set[str] | None
+    rel: str, heading_title: str, judged: str, root: Path, test_names: set[str]
 ) -> list[Problem]:
     """Every `judged:` entry that does not name what exists, `none:` without a reason, or a line
     with nothing after it or an empty piece between commas."""
@@ -290,7 +298,7 @@ def _judged_problems(
                 )
             )
         elif kind == "test":
-            if test_names is not None and name not in test_names:
+            if name not in test_names:
                 problems.append(
                     Problem(
                         rel,
@@ -328,7 +336,7 @@ def _judged_problems(
 
 
 def _finding_problems(
-    rel: str, heading_title: str, section: str, root: Path, test_names: set[str] | None
+    rel: str, heading_title: str, section: str, root: Path, test_names: set[str]
 ) -> list[Problem]:
     """A finding's `severity:`, `verified:` and `judged:` lines, read anywhere in its prose."""
     lines: dict[str, str] = {}
@@ -364,19 +372,17 @@ def _finding_problems(
 def _review_problems(
     note: Note,
     store: Vault,
-    tests: list[repo.Test] | None,
+    tests: list[repo.Test],
     fields: Fields,
 ) -> list[Problem]:
     """A review note: the template's fields, a reviewer, a created date, the runs it reviewed and
     one of them naming it, then its findings with comments out."""
     rel, fm, body = note.rel, note.fm, note.body
     problems: list[Problem] = []
-    if fields.review.error:
-        problems.append(Problem("docs/templates/review.md", fields.review.error))
     if fields.review.fields is not None:
         for field in sorted(set(fm) - set(fields.review.fields)):
             problems.append(Problem(rel, f"review has field {field}"))
-    test_names = {test.name for test in tests} if tests is not None else None
+    test_names = {test.name for test in tests}
     if not fm.get("reviewer", ""):
         problems.append(Problem(rel, "review has no reviewer"))
     created = fm.get("created", "")
@@ -397,7 +403,7 @@ def _review_problems(
 def _note_problems(
     store: Vault,
     tags: set[str] | None,
-    tests: list[repo.Test] | None,
+    tests: list[repo.Test],
     fields: Fields,
 ) -> tuple[list[Problem], list[Note]]:
     """Every problem of one note, and the version notes kept for the check over all of them."""
@@ -457,14 +463,10 @@ def _base_problems(store: Vault, fields: Fields) -> list[Problem]:
     base = store.docs / "backlog.base"
     if not base.is_file() or not store.part(base):
         return []
-    template = store.docs / "templates" / "seed.md"
-    if not template.is_file() or not store.part(template):
-        # The missing template is reported once, elsewhere.
-        return []
     seed_fields = set(fields.seed.fields) if fields.seed.fields is not None else None
     if seed_fields is None:
         return []
-    text = vault.text_of(base)
+    text = store.text(base)
     if text is None:
         return [Problem("docs/backlog.base", "cannot be read")]
     problems: list[Problem] = []
@@ -564,7 +566,8 @@ def problems_check(root: Path, store: Vault | None = None) -> list[Problem]:
     except repo.RepoError as error:
         problems.append(_repo_problem("docs/versions/", error))
         tags = None
-    fields = _fields(store)
+    fields, field_problems = _fields(store)
+    problems.extend(field_problems)
     problems.extend(_wikilink_problems(store))
     note_problems, version_notes = _note_problems(store, tags, tests, fields)
     problems.extend(note_problems)
@@ -605,17 +608,15 @@ def _release_problems(root: Path, version: str, store: Vault) -> list[Problem]:
             )
 
     version_note = _version_note(store, version)
-    if version_note is not None and version_note.error:
+    if version_note is None or version_note.error:
         problems.append(Problem(rel_note, "cannot be read"))
-    else:
-        body = version_note.body if version_note is not None else ""
-        if not vault.changelog_bullets(body):
-            problems.append(Problem(rel_note, "no ## Changelog bullets"))
+    elif not vault.changelog_bullets(version_note.body):
+        problems.append(Problem(rel_note, "no ## Changelog bullets"))
 
     try:
         dirty = repo.status(root)
     except repo.RepoError as error:
-        problems.append(_repo_problem("docs/", error))
+        problems.append(_repo_problem(rel_note, error))
     else:
         for path in dirty:
             # `dist/` is the release's own output only where git ignores it, as this repository
@@ -629,7 +630,7 @@ def _release_problems(root: Path, version: str, store: Vault) -> list[Problem]:
         try:
             changed = repo.changed_since(root, previous, "AGENTS.md")
         except repo.RepoError as error:
-            problems.append(_repo_problem("AGENTS.md", error))
+            problems.append(_repo_problem(rel_note, error))
         else:
             if not changed:
                 problems.append(Problem("AGENTS.md", f"unchanged since {previous}"))
@@ -666,7 +667,7 @@ def render(root: Path, store: Vault | None = None) -> str:
         tags = repo.tags(root)
     except repo.RepoError as error:
         problems.append(_repo_problem("docs/versions/", error))
-        raise Unrenderable(problems) from error
+        raise Unrenderable(_dedup(problems)) from error
     notes = {note.rel: note for note in store.notes()}
     ordered = sorted(tags, key=repo.version_key, reverse=True)
     out = ["# Changelog", ""]
@@ -697,7 +698,7 @@ def render(root: Path, store: Vault | None = None) -> str:
         if bullets:
             out.append("")
     if problems:
-        raise Unrenderable(problems)
+        raise Unrenderable(_dedup(problems))
     return "\n".join(out).rstrip("\n") + "\n"
 
 
@@ -746,8 +747,6 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
             text = render(root)
         except Unrenderable as error:
             return _emit(error.problems)
-        except repo.RepoError as error:
-            return _emit([_repo_problem("docs/versions/", error)])
         (root / "CHANGELOG.md").write_text(text, encoding="utf-8")
         return 0
     if command == "release":
@@ -762,7 +761,7 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
         if problems:
             return _emit(problems)
         note = _version_note(store, version)
-        done = repo.tag(root, version, _tag_message(note) if note is not None else "")
+        done = repo.tag(root, version, _tag_message(note))
         if done.code != 0:
             return _emit(
                 [Problem(f"docs/versions/{version}.md", f"git tag -a {version} failed: {done.err}")]
@@ -772,7 +771,11 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
             return _emit(
                 [Problem(f"docs/versions/{version}.md", f"uv build --wheel failed: {said}")]
             )
-        (root / "CHANGELOG.md").write_text(render(root, store), encoding="utf-8")
+        try:
+            text = render(root, store)
+        except Unrenderable as error:  # the tag stands, as after a failed wheel
+            return _emit(error.problems)
+        (root / "CHANGELOG.md").write_text(text, encoding="utf-8")
         print(wheel)
         return 0
     return _usage()

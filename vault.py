@@ -40,14 +40,26 @@ class Note:
         return self.fm.get("type", "") if self.fm else ""
 
 
+@dataclass(frozen=True)
+class File:
+    """One file the vault holds: its path, its path relative to the root, its whole text, and the
+    words of the `OSError` when it could not be read."""
+
+    path: Path
+    rel: str
+    text: str
+    error: str = ""
+
+
 class Vault:
     """The vault at a root: its `docs/`, git's listing of it, and the notes read once."""
 
     def __init__(self, root: Path, docs: Path, listing: repo.Listing | None = None) -> None:
-        """Keep the root, its `docs/` and git's listing, with no note read yet."""
+        """Keep the root, its `docs/` and git's listing, with no file read yet."""
         self.root = root
         self.docs = docs
         self.listing = listing
+        self._files: list[File] | None = None
         self._notes: list[Note] | None = None
 
     @classmethod
@@ -85,14 +97,57 @@ class Vault:
             return False
         return self.whole or (rel in self.listing.listed and rel not in self.listing.ignored)
 
+    def files(self) -> list[File]:
+        """Every file the vault holds, read once, in path order."""
+        if self._files is None:
+            found: list[File] = []
+            for path in sorted(self.docs.rglob("*")):
+                if not path.is_file() or not self.holds(path):
+                    continue
+                rel = self._rel(path) or ""
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError as e:
+                    found.append(File(path, rel, "", str(e)))
+                else:
+                    found.append(File(path, rel, text, ""))
+            self._files = found
+        return self._files
+
+    def text(self, path: Path) -> str | None:
+        """The whole text of `path` the vault holds, or None when it holds none or cannot read
+        it."""
+        rel = self._rel(path)
+        if rel is None:
+            return None
+        for held in self.files():
+            if held.rel == rel:
+                return None if held.error else held.text
+        return None
+
+    def template(self, kind: str) -> Template:
+        """The fields of the held `docs/templates/<kind>.md`, `cannot be read` or `no frontmatter`
+        when it has none."""
+        rel = f"docs/templates/{kind}.md"
+        for held in self.files():
+            if held.rel != rel:
+                continue
+            if held.error:
+                return Template(None, "cannot be read")
+            fm, _ = frontmatter(held.text)
+            if fm is None:
+                return Template(None, "no frontmatter")
+            return Template(fm, "")
+        return Template(None, "cannot be read")
+
     def notes(self) -> list[Note]:
         """Every note of the vault, read and parsed once, in path order."""
         if self._notes is None:
             templates = self.docs / "templates"
             self._notes = [
-                _note(self.root, path)
-                for path in sorted(self.docs.rglob("*.md"))
-                if templates not in path.parents and self.holds(path)
+                _note(held)
+                for held in self.files()
+                if held.path.suffix == ".md" and templates not in held.path.parents
             ]
         return self._notes
 
@@ -117,15 +172,12 @@ class Vault:
         return False
 
 
-def _note(root: Path, path: Path) -> Note:
-    """The note at `path`: read once, its frontmatter and body, or the read error and nothing."""
-    rel = path.relative_to(root).as_posix()
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
-        return Note(path, rel, None, "", str(e))
-    fm, body = frontmatter(text)
-    return Note(path, rel, fm, body, "")
+def _note(held: File) -> Note:
+    """The note a held file makes: its frontmatter and body, or the read error and nothing."""
+    if held.error:
+        return Note(held.path, held.rel, None, "", held.error)
+    fm, body = frontmatter(held.text)
+    return Note(held.path, held.rel, fm, body, "")
 
 
 def frontmatter(text: str) -> tuple[dict[str, str] | None, str]:
