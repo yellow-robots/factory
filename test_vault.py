@@ -160,8 +160,8 @@ class TextTest(unittest.TestCase):
         findings = vault.review_findings(text)
         self.assertEqual([title for title, _ in findings], ["One", "Two"])
         self.assertIn("### not a heading", findings[0][1])  # a fence belongs whole
-        self.assertEqual([l for l in vault.prose_lines(findings[0][1]) if l], ["severity: defect"])
-        self.assertEqual([l for l in vault.prose_lines(findings[1][1]) if l], ["verified: yes"])
+        self.assertEqual([line for line in vault.prose_lines(findings[0][1]) if line], ["severity: defect"])
+        self.assertEqual([line for line in vault.prose_lines(findings[1][1]) if line], ["verified: yes"])
 
     def test_a_base_is_read_into_the_names_it_uses(self):
         named = vault.base_named(BASE)

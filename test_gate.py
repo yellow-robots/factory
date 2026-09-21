@@ -425,6 +425,73 @@ class CheckTest(GateTest):
         out = self.assert_problem("docs/seeds/a.md", "cannot be read")
         self.assertNotIn("no frontmatter", out)
 
+    def test_a_problem_is_one_line_starting_with_its_path_whatever_git_said(self):
+        """seed: the-gate-in-three. From the review: git's words carry newlines and advice, and a
+        failure line carried them whole -- four lines for two problems on a tree that is no
+        checkout. One line per problem, starting with its path, git's words collapsed to one."""
+        copy = Path(self.tmp.name) / "copy"
+        shutil.copytree(self.root, copy, ignore=shutil.ignore_patterns(".git"))
+        code, out, _ = run(copy, "check")
+        self.assertEqual(code, 1, out)
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 2, out)
+        for line in lines:
+            self.assertTrue(line.startswith("docs/versions/: git "), line)
+            self.assertIn("failed: fatal: not a git repository", line)
+
+    def test_a_template_without_frontmatter_is_its_own_problem_and_an_unreadable_one_hides_nothing(self):
+        """seed: the-gate-in-three. From the review: a template with no frontmatter was called
+        unreadable, and an unreadable template silenced every check of every note of its kind --
+        status, value, effort, Goal, findings -- none of which derives from the template."""
+        self.edit("docs/templates/seed.md", "# a template with no frontmatter\n")
+        self.commit("a template without frontmatter")
+        out = self.assert_problem("docs/templates/seed.md", "no frontmatter")
+        self.assertNotIn("cannot be read", out)
+        self.edit("docs/templates/seed.md", TEMPLATE_SEED)
+        self.edit("docs/seeds/a.md", SEED_A.replace("status: open", "status: later"))
+        self.commit("a status that is not one")
+        template = self.root / "docs" / "templates" / "seed.md"
+        template.chmod(0)
+        self.addCleanup(template.chmod, 0o644)
+        out = self.assert_problem("docs/templates/seed.md", "cannot be read")
+        self.assertIn("docs/seeds/a.md: status later", out)
+
+    def test_a_test_file_that_does_not_parse_is_one_line_and_the_other_files_still_count(self):
+        """seed: the-gate-in-three. From the review: the line repeated the file's name and leaked
+        an absolute path, and one broken file dropped every test-derived check, so a seed named by
+        no test went unreported for as long as any unrelated test file was broken."""
+        self.edit("test_bad.py", "def (\n")
+        self.edit("docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        self.commit("a broken test file and a building seed no test names")
+        out = self.assert_problem("test_bad.py: does not parse")
+        self.assertNotIn("test_bad.py: test_bad.py", out)
+        self.assertNotIn(str(self.root), out)
+        self.assertIn("docs/seeds/b.md: no test names it", out)
+        self.assertNotIn("docs/seeds/d.md", out)
+
+    def test_notes_are_read_in_path_order_and_once(self):
+        """seed: the-gate-in-three. From the review: notes were sorted as strings, so a directory
+        with `-` in its name came before its neighbour where it used to come after; and every note
+        was read twice per check, once for its fields and once for its links."""
+        self.edit("docs/x/y.md", SEED_A.replace("value: 3", "value: 9"))
+        self.edit("docs/x-y/z.md", SEED_A.replace("value: 3", "value: 9"))
+        self.commit("two")
+        reads: list[Path] = []
+        real = Path.read_text
+
+        def counting(path, *args, **kwargs):
+            reads.append(path)
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", counting):
+            code, out, _ = self.check()
+        self.assertEqual(code, 1, out)
+        lines = out.splitlines()
+        self.assertLess(lines.index("docs/x/y.md: value 9 is not in 1 to 5"), lines.index("docs/x-y/z.md: value 9 is not in 1 to 5"))
+        notes = [str(path) for path in reads if str(path).endswith(".md")]
+        twice = sorted({path for path in notes if notes.count(path) > 1})
+        self.assertEqual(twice, [], "read twice: " + ", ".join(twice))
+
     def test_a_vault_git_answers_about_somebody_else_is_read_whole(self):
         """seed: the-vault-as-git-tracks-it. From the review: a copy of the vault inside a repository
         that ignores it had git answer about that repository, which tracks nothing of the copy, so
@@ -825,6 +892,62 @@ class ReleaseTest(GateTest):
         self.assertNotIn("v0.2\n", git(self.root, "tag", "-l"))
         self.assertFalse((self.root / "CHANGELOG.md").exists())
 
+    def test_a_tag_git_could_not_create_is_one_line(self):
+        """seed: the-gate-in-three. From the review: git's advice on a locked ref ran to eight
+        lines after the problem's own; one line per problem, git's words collapsed to one."""
+        self.ready()
+        (self.root / ".git" / "refs" / "tags" / "v0.2.lock").write_text("held\n")
+        code, out, _ = self.release()
+        self.assertEqual(code, 1, out)
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 1, out)
+        self.assertTrue(lines[0].startswith("docs/versions/v0.2.md: git tag"), out)
+        self.assertIn("lock", lines[0].lower())
+
+    def test_a_release_whose_git_status_or_diff_fails_refuses_naming_the_command(self):
+        """seed: the-gate-in-three. From the review, two failures the seed's Evidence named and
+        its Goal forgot: `git status` failing read as a clean tree, so a tag was cut on a dirty
+        one; `git diff` failing read as AGENTS.md unchanged -- the wrong problem."""
+        self.ready()
+        self.edit("AGENTS.md", AGENTS + "\nuncommitted\n")
+        real = subprocess.run
+
+        def failing(word):
+            def run_(argv, *args, **kwargs):
+                if word in argv:
+                    raise OSError("git died")
+                return real(argv, *args, **kwargs)
+
+            return run_
+
+        with mock.patch.object(subprocess, "run", failing("status")):
+            code, out, _ = self.release()
+        self.assertEqual(code, 1, out)
+        self.assertIn("git status", out)
+        self.assertIn("failed", out)
+        self.assertNotIn("v0.2\n", git(self.root, "tag", "-l"))
+        self.commit("committed after all")
+        with mock.patch.object(subprocess, "run", failing("diff")):
+            code, out, _ = self.release()
+        self.assertEqual(code, 1, out)
+        self.assertIn("git diff", out)
+        self.assertIn("failed", out)
+        self.assertNotIn("unchanged since", out)
+        self.assertNotIn("v0.2\n", git(self.root, "tag", "-l"))
+
+    def test_an_unreadable_version_note_refuses_the_release_and_render_alike(self):
+        """seed: the-gate-in-three. From the review: `render` and the tag's message read an
+        unreadable note as empty and rendered an empty heading, the fallback the Goal forbids."""
+        self.ready()
+        note = self.root / "docs" / "versions" / "v0.1.md"
+        note.chmod(0)
+        self.addCleanup(note.chmod, 0o644)
+        code, out, _ = run(self.root, "render")
+        self.assertEqual(code, 1, out)
+        self.assertIn("docs/versions/v0.1.md: cannot be read", out)
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
+        self.assert_refused("docs/versions/v0.1.md")
+
     def test_release_refuses_a_note_without_changelog_bullets(self):
         self.ready()
         self.edit("docs/versions/v0.2.md", V02.replace("- The next thing, built.\n", "At release.\n"))
@@ -1198,6 +1321,15 @@ class ShapeTest(GateTest):
         )  # fmt: skip
         for name in gone:
             self.assertFalse(hasattr(gate, name), f"gate.{name}")
+
+    def test_the_gate_reads_no_file_and_runs_no_git_of_its_own(self):
+        """seed: the-gate-in-three. From the review: `_read` stayed in the gate with three raw git
+        reads beside it, and they were exactly the failures still silent. Every read goes through
+        vault and repo, and the module is imported by its name."""
+        source = Path(gate.__file__).read_text()
+        for token in ("read_text(", "subprocess", "repo.git(", "def _read(", "import vault as"):
+            self.assertNotIn(token, source, token)
+        self.assertFalse(hasattr(gate, "_read"))
 
 
 if __name__ == "__main__":

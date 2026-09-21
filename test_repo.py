@@ -105,12 +105,45 @@ class RepoTest(unittest.TestCase):
 
     def test_the_tests_of_the_root_are_read_once_with_their_names_and_docstrings(self):
         found = repo.tests(self.root)
-        self.assertIn(repo.Test("test_d", "seed: d. The first thing holds."), found)
-        self.assertIn("RepoTest", [test.name for test in found])
+        self.assertIn(repo.Test("test_repo.RepoTest.test_d", "test_d", "seed: d. The first thing holds."), found)
+        self.assertIn(("test_repo.RepoTest", "RepoTest"), [(test.id, test.name) for test in found])
         write(self.root, "test_bad.py", "def (\n")
         with self.assertRaises(repo.RepoError) as raised:
             repo.tests(self.root)
         self.assertIn("test_bad.py", str(raised.exception))
+
+    def test_the_status_a_diff_since_a_tag_and_a_commits_message_raise_when_git_cannot_answer(self):
+        """seed: the-gate-in-three. From the review: the release read `git status` and `git diff`
+        through raw calls that ignored the code, and a build's message the same way."""
+        self.assertEqual(repo.status(self.root), ())
+        write(self.root, "AGENTS.md", "changed\n")
+        self.assertEqual(repo.status(self.root), ("AGENTS.md",))
+        self.assertFalse(repo.changed_since(self.root, "v0.1", "AGENTS.md"))  # not committed yet
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "a\n\nBuilt-By: factory at v0.1, run 20260917T000000Z")
+        self.assertTrue(repo.changed_since(self.root, "v0.1", "AGENTS.md"))
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        self.assertEqual(repo.message(self.root, head), "a\n\nBuilt-By: factory at v0.1, run 20260917T000000Z\n")
+        copy = self.copy_without_git()
+        for read in (
+            lambda: repo.status(copy),
+            lambda: repo.changed_since(copy, "v0.1", "AGENTS.md"),
+            lambda: repo.message(copy, head),
+        ):
+            with self.assertRaises(repo.RepoError):
+                read()
+
+    def test_gits_words_are_one_line(self):
+        """seed: the-gate-in-three. From the review: stderr was kept as git wrote it, newlines and
+        advice included, so a problem built from it ran to nine lines."""
+        done = repo.git(Path(self.tmp.name) / "gone", "status")
+        self.assertNotIn("\n", done.err)
+        self.assertTrue(done.err)
+        copy = self.copy_without_git()
+        with self.assertRaises(repo.RepoError) as raised:
+            repo.tags(copy)
+        self.assertNotIn("\n", raised.exception.err)
+        self.assertNotIn("  ", raised.exception.err)
 
     def test_the_suite_says_which_of_four_things_it_was(self):
         self.assertEqual(repo.suite(self.root), "green")
