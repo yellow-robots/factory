@@ -37,6 +37,7 @@ class RepoError(Exception):
     """A git command, or a file, a reader needed and could not have answered."""
 
     def __init__(self, command: str, err: str) -> None:
+        """Keep the command that failed and git's words, printing them as one line."""
         self.command = command
         self.err = err
         super().__init__(f"{command} failed: {err}")
@@ -52,8 +53,10 @@ class Listing:
 
 @dataclass(frozen=True)
 class Test:
-    """One test method or class of the root's `test*.py`: its name and its docstring."""
+    """One test method or class of the root's `test*.py`: its unittest id, its name and its
+    docstring."""
 
+    id: str
     name: str
     doc: str
 
@@ -65,12 +68,13 @@ def _utf8(data: bytes) -> str:
 
 def git(root: Path, *args: str) -> Result:
     """Run git at `root` with the same `-c` options everywhere; a git that cannot start is a
-    non-zero `Result` with the exception's words in `err`, never a raise."""
+    non-zero `Result` with the exception's words in `err`, never a raise, and `err` is git's words
+    on one line, runs of whitespace collapsed to one space."""
     try:
         done = subprocess.run(["git", *GIT_READ, *args], cwd=str(root), capture_output=True)
     except (OSError, subprocess.SubprocessError) as e:
         return Result(1, "", " ".join(str(e).split()))
-    return Result(done.returncode, _utf8(done.stdout), _utf8(done.stderr))
+    return Result(done.returncode, _utf8(done.stdout), " ".join(_utf8(done.stderr).split()))
 
 
 def tags(root: Path) -> set[str]:
@@ -129,7 +133,7 @@ def _ignored(root: Path, docs: Path) -> set[str]:
     command = "git check-ignore --no-index -z --stdin"
     try:
         done = subprocess.run(
-            ["git", "check-ignore", "--no-index", "-z", "--stdin"],
+            ["git", *GIT_READ, "check-ignore", "--no-index", "-z", "--stdin"],
             cwd=str(root),
             input="\0".join(rels).encode("utf-8", "surrogateescape"),
             capture_output=True,
@@ -137,7 +141,7 @@ def _ignored(root: Path, docs: Path) -> set[str]:
     except (OSError, subprocess.SubprocessError) as e:
         raise RepoError(command, " ".join(str(e).split())) from e
     if done.returncode not in (0, 1):
-        raise RepoError(command, _utf8(done.stderr))
+        raise RepoError(command, " ".join(_utf8(done.stderr).split()))
     return {path for path in _utf8(done.stdout).split("\0") if path}
 
 
@@ -185,28 +189,86 @@ def short_hash(root: Path, commit: str) -> str:
     return short
 
 
+def status(root: Path) -> tuple[str, ...]:
+    """The uncommitted paths `git status --porcelain` names, or `RepoError` when git cannot
+    answer."""
+    done = git(root, "status", "--porcelain")
+    if done.code != 0:
+        raise RepoError("git status --porcelain", done.err)
+    paths: list[str] = []
+    for line in done.out.splitlines():
+        if not line.strip():
+            continue
+        paths.append(line[3:].strip() if len(line) > 3 else line.strip())
+    return tuple(paths)
+
+
+def changed_since(root: Path, tag: str, path: str) -> bool:
+    """Whether `path` differs between `tag` and the head, or `RepoError` when git cannot
+    answer."""
+    command = f"git diff --name-only {tag} HEAD -- {path}"
+    done = git(root, "diff", "--name-only", tag, "HEAD", "--", path)
+    if done.code != 0:
+        raise RepoError(command, done.err)
+    return bool(done.out.strip())
+
+
+def message(root: Path, commit: str) -> str:
+    """`commit`'s whole message, or `RepoError` when git cannot answer."""
+    done = git(root, "log", "-1", "--format=%B", commit, "--")
+    if done.code != 0:
+        raise RepoError("git log -1 --format=%B", done.err)
+    # git follows the body with one newline of its own; the message is what the commit holds.
+    return done.out[:-1] if done.out.endswith("\n") else done.out
+
+
 def tests(root: Path) -> list[Test]:
-    """Every test method or class of each `test*.py` at the root, with its docstring read beside
-    its name; a file that cannot be read or does not parse raises `RepoError` naming it."""
+    """Every test method or class of each `test*.py` at the root, read once, with its unittest id,
+    its name and its docstring; a file that cannot be read or does not parse raises `RepoError`
+    naming it, carrying the tests of the other files."""
     found: list[Test] = []
+    reasons: list[tuple[str, str]] = []
     for path in sorted(root.glob("test*.py")):
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            raise RepoError(rel, str(e)) from e
+        except OSError:
+            reasons.append((rel, "cannot be read"))
+            continue
         try:
             tree = ast.parse(text)
-        except SyntaxError as e:
-            raise RepoError(rel, "the file does not parse") from e
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) or (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name.startswith("test")
+        except SyntaxError:
+            reasons.append((rel, "does not parse"))
+            continue
+        found.extend(_module_tests(tree, path.stem))
+    if reasons:
+        error = RepoError("parse test files", f"{reasons[0][0]}: {reasons[0][1]}")
+        error.tests = found
+        error.reasons = reasons
+        raise error
+    return found
+
+
+def _module_tests(tree: ast.Module, module: str) -> list[Test]:
+    """Every test method and class one parsed `module` holds, with its unittest id."""
+    found: list[Test] = []
+
+    def walk(body: list[ast.stmt], classes: list[str]) -> None:
+        """Record the test methods and classes in `body`, inside `classes`."""
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                name = ".".join([*classes, node.name])
+                found.append(Test(f"{module}.{name}", node.name, ast.get_docstring(node) or ""))
+                walk(node.body, [*classes, node.name])
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
+                "test"
             ):
-                found.append(Test(node.name, ast.get_docstring(node) or ""))
+                name = ".".join([*classes, node.name])
+                found.append(Test(f"{module}.{name}", node.name, ast.get_docstring(node) or ""))
+
+    walk(tree.body, [])
     return found
 
 

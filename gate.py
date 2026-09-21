@@ -30,7 +30,8 @@ from pathlib import Path
 
 import builder
 import repo
-import vault as vaults
+import vault
+from vault import Note, Vault
 
 USAGE = "usage: gate.py check|render|release <version>|next"
 STATUSES = ("open", "spec", "building", "done", "rejected")
@@ -51,7 +52,6 @@ STAMP_SHAPE = re.compile(r"\d{8}T\d{6}Z(-\d+)?", re.ASCII)
 # A full commit hash is forty lowercase hex digits: a problem abbreviates one where git names it,
 # so a printed problem never names a commit by its full hash.
 FULL_HASH = re.compile(r"\b[0-9a-f]{40}\b")
-TRAILERS_FORMAT = repo.TRAILERS_FORMAT
 
 
 @dataclass(frozen=True)
@@ -66,13 +66,21 @@ class Problem:
         return f"{self.path}: {self.message}"
 
 
-def _read(path: Path) -> str:
-    """The file's text with what cannot be decoded replaced, or the empty string when it cannot
-    be read."""
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
+class Unrenderable(Exception):
+    """The problems that keep `render` from writing a changelog."""
+
+    def __init__(self, problems: list[Problem]) -> None:
+        """Keep `problems` as the reason no changelog was written."""
+        self.problems = problems
+        super().__init__("; ".join(str(problem) for problem in problems))
+
+
+@dataclass(frozen=True)
+class Fields:
+    """The template fields each note's kind needs, each read once for a check."""
+
+    seed: vault.Template
+    review: vault.Template
 
 
 def _line_text(value: str) -> str:
@@ -117,37 +125,42 @@ def _dedup(problems: list[Problem]) -> list[Problem]:
     return unique
 
 
-def _field_sets(vault: vaults.Vault):
-    """A reader of the templates' field sets, each kind read from its template once."""
-    cache: dict[str, set[str] | None] = {}
-
-    def fields(kind: str) -> set[str] | None:
-        """The field names of `kind`'s template, read once, or None when it cannot be read."""
-        if kind not in cache:
-            cache[kind] = vaults.template_fields(vault.docs, kind)
-        return cache[kind]
-
-    return fields
+def _vault(root: Path) -> tuple[Vault, list[Problem]]:
+    """The vault at `root`, read once, and the problem when git cannot list `docs/`."""
+    root = Path(root)
+    try:
+        return Vault.read(root), []
+    except repo.RepoError as error:
+        return Vault(root, root / "docs", None), [_repo_problem("docs/", error)]
 
 
-def _wikilink_problems(vault: vaults.Vault) -> list[Problem]:
+def _fields(store: Vault) -> Fields:
+    """The field sets of the seed and review templates, each read once."""
+    return Fields(vault.template(store.docs, "seed"), vault.template(store.docs, "review"))
+
+
+def _read_tests(root: Path) -> tuple[list[repo.Test], list[Problem]]:
+    """Every test of the root and, when a test file cannot be read, one problem naming it."""
+    try:
+        return repo.tests(root), []
+    except repo.RepoError as error:
+        tests = getattr(error, "tests", None) or []
+        reasons = getattr(error, "reasons", None) or [(error.command, error.err)]
+        return tests, [Problem(rel, message) for rel, message in reasons]
+
+
+def _wikilink_problems(store: Vault) -> list[Problem]:
     """Every wikilink of a note the vault holds that does not resolve."""
     problems: list[Problem] = []
-    for path in sorted(vault.docs.rglob("*"), key=lambda p: str(p)):
-        if not path.is_file() or not vault.holds(path):
+    for note in store.notes():
+        if note.error or note.fm is None:
+            continue  # the note's own check reports what kept it from being read
+        if "[[" not in note.body:
             continue
-        rel = path.relative_to(vault.root).as_posix()
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            problems.append(Problem(rel, "cannot be read"))
-            continue
-        if "[[" not in text:
-            continue
-        for match in WIKILINK.finditer(text):
+        for match in WIKILINK.finditer(note.body):
             target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
-            if not vault.resolves(target):
-                problems.append(Problem(rel, f"wikilink {target} does not resolve"))
+            if not store.resolves(target):
+                problems.append(Problem(note.rel, f"wikilink {target} does not resolve"))
     return problems
 
 
@@ -170,20 +183,21 @@ def _named_by_a_test(stem: str, tests: list[repo.Test]) -> bool:
 
 
 def _seed_problems(
-    note: vaults.Note,
-    vault: vaults.Vault,
+    note: Note,
+    store: Vault,
     tags: set[str] | None,
     tests: list[repo.Test] | None,
-    fields,
+    fields: Fields,
 ) -> list[Problem]:
     """A seed note: the template's fields, its status and the fields that status needs."""
     rel, fm, body = note.rel, note.fm, note.body
-    seed_fields = fields("seed")
-    if seed_fields is None:
-        return [Problem("docs/templates/seed.md", "cannot be read")]
     problems: list[Problem] = []
-    for field in sorted(set(fm) - seed_fields):
-        problems.append(Problem(rel, f"seed has field {field}"))
+    if fields.seed.error:
+        problems.append(Problem("docs/templates/seed.md", fields.seed.error))
+    seed_fields = set(fields.seed.fields) if fields.seed.fields is not None else None
+    if seed_fields is not None:
+        for field in sorted(set(fm) - seed_fields):
+            problems.append(Problem(rel, f"seed has field {field}"))
     status = fm.get("status", "")
     if not status:
         return problems + [Problem(rel, "seed has no status")]
@@ -213,10 +227,10 @@ def _seed_problems(
 
     version = fm.get("version", "")
     if rank >= STATUSES.index("spec"):
-        note_path = vault.docs / "versions" / f"{version}.md"
+        note_path = store.docs / "versions" / f"{version}.md"
         if not version:
             problems.append(Problem(rel, "seed has no version"))
-        elif not note_path.is_file() or not vault.part(note_path):
+        elif not note_path.is_file() or not store.part(note_path):
             problems.append(
                 Problem(rel, f"version {version} has no note docs/versions/{version}.md")
             )
@@ -318,7 +332,7 @@ def _finding_problems(
 ) -> list[Problem]:
     """A finding's `severity:`, `verified:` and `judged:` lines, read anywhere in its prose."""
     lines: dict[str, str] = {}
-    for line in vaults.prose_lines(section):
+    for line in vault.prose_lines(section):
         key, sep, value = line.partition(":")
         key = key.strip()
         if sep and key in ("severity", "verified", "judged") and key not in lines:
@@ -348,21 +362,21 @@ def _finding_problems(
 
 
 def _review_problems(
-    note: vaults.Note,
-    vault: vaults.Vault,
+    note: Note,
+    store: Vault,
     tests: list[repo.Test] | None,
-    fields,
+    fields: Fields,
 ) -> list[Problem]:
     """A review note: the template's fields, a reviewer, a created date, the runs it reviewed and
     one of them naming it, then its findings with comments out."""
     rel, fm, body = note.rel, note.fm, note.body
-    review_fields = fields("review")
-    if review_fields is None:
-        return [Problem("docs/templates/review.md", "cannot be read")]
-    test_names = {test.name for test in tests} if tests is not None else None
     problems: list[Problem] = []
-    for field in sorted(set(fm) - review_fields):
-        problems.append(Problem(rel, f"review has field {field}"))
+    if fields.review.error:
+        problems.append(Problem("docs/templates/review.md", fields.review.error))
+    if fields.review.fields is not None:
+        for field in sorted(set(fm) - set(fields.review.fields)):
+            problems.append(Problem(rel, f"review has field {field}"))
+    test_names = {test.name for test in tests} if tests is not None else None
     if not fm.get("reviewer", ""):
         problems.append(Problem(rel, "review has no reviewer"))
     created = fm.get("created", "")
@@ -375,21 +389,21 @@ def _review_problems(
         text = builder.note_text(body)
     except ValueError:
         return problems + [Problem(rel, "review has a %% comment left open")]
-    for heading_title, section in vaults.review_findings(text):
-        problems.extend(_finding_problems(rel, heading_title, section, vault.root, test_names))
+    for heading_title, section in vault.review_findings(text):
+        problems.extend(_finding_problems(rel, heading_title, section, store.root, test_names))
     return problems
 
 
 def _note_problems(
-    vault: vaults.Vault,
+    store: Vault,
     tags: set[str] | None,
     tests: list[repo.Test] | None,
-    fields,
-) -> tuple[list[Problem], list[vaults.Note]]:
+    fields: Fields,
+) -> tuple[list[Problem], list[Note]]:
     """Every problem of one note, and the version notes kept for the check over all of them."""
     problems: list[Problem] = []
-    version_notes: list[vaults.Note] = []
-    for note in vault.notes():
+    version_notes: list[Note] = []
+    for note in store.notes():
         if note.error:
             problems.append(Problem(note.rel, "cannot be read"))
             continue
@@ -400,24 +414,24 @@ def _note_problems(
         if not kind:
             problems.append(Problem(note.rel, "frontmatter has no type"))
             continue
-        template = vault.docs / "templates" / f"{kind}.md"
-        if not template.is_file() or not vault.part(template):
+        template = store.docs / "templates" / f"{kind}.md"
+        if not template.is_file() or not store.part(template):
             problems.append(
                 Problem(note.rel, f"type {kind} has no template docs/templates/{kind}.md")
             )
             continue
         if kind == "seed":
-            problems.extend(_seed_problems(note, vault, tags, tests, fields))
+            problems.extend(_seed_problems(note, store, tags, tests, fields))
         elif kind == "version":
             version_notes.append(note)
         elif kind == "review":
-            problems.extend(_review_problems(note, vault, tests, fields))
+            problems.extend(_review_problems(note, store, tests, fields))
     return problems, version_notes
 
 
 def _version_problems(
-    version_notes: list[vaults.Note], tags: set[str] | None
-) -> tuple[list[Problem], list[vaults.Note]]:
+    version_notes: list[Note], tags: set[str] | None
+) -> tuple[list[Problem], list[Note]]:
     """Every problem of the version notes together, and the ones that are not a tag."""
     problems: list[Problem] = []
     for note in version_notes:
@@ -438,26 +452,25 @@ def _version_problems(
     return problems, untagged
 
 
-def _base_problems(vault: vaults.Vault, fields) -> list[Problem]:
+def _base_problems(store: Vault, fields: Fields) -> list[Problem]:
     """The properties `docs/backlog.base` names that are not seed template fields."""
-    base = vault.docs / "backlog.base"
-    if not base.is_file() or not vault.part(base):
+    base = store.docs / "backlog.base"
+    if not base.is_file() or not store.part(base):
         return []
-    template = vault.docs / "templates" / "seed.md"
-    if not template.is_file() or not vault.part(template):
+    template = store.docs / "templates" / "seed.md"
+    if not template.is_file() or not store.part(template):
         # The missing template is reported once, elsewhere.
         return []
-    seed_fields = fields("seed")
+    seed_fields = set(fields.seed.fields) if fields.seed.fields is not None else None
     if seed_fields is None:
         return []
-    try:
-        text = base.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = vault.text_of(base)
+    if text is None:
         return [Problem("docs/backlog.base", "cannot be read")]
     problems: list[Problem] = []
     seen: set[str] = set()
-    for kind, name in vaults.base_named(text):
-        identifiers = vaults.plain_names(name) if kind == "name" else vaults.expression_names(name)
+    for kind, name in vault.base_named(text):
+        identifiers = vault.plain_names(name) if kind == "name" else vault.expression_names(name)
         for identifier in identifiers:
             if identifier in seen:
                 continue
@@ -483,12 +496,12 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[Probl
     builder's shape."""
     try:
         short = repo.short_hash(root, commit)
-    except repo.RepoError as e:
-        return [_repo_problem(rel_note, e)]
-    done = repo.git(root, "log", "-1", "--format=%B", commit, "--")
-    if done.code != 0:
-        return [Problem(rel_note, f"git log -1 --format=%B failed for {short}")]
-    message = done.out
+    except repo.RepoError as error:
+        return [_repo_problem(rel_note, error)]
+    try:
+        message = repo.message(root, commit)
+    except repo.RepoError as error:
+        return [_repo_problem(rel_note, error)]
     lines = [
         line[match.end() :].strip(ASCII_WHITESPACE)
         for line in message.split("\n")
@@ -498,8 +511,8 @@ def _commit_build_problems(root: Path, rel_note: str, commit: str) -> list[Probl
         return []
     try:
         entries = repo.trailers(root, commit)
-    except repo.RepoError:
-        return [Problem(rel_note, f"git log -1 --format={TRAILERS_FORMAT} failed for {short}")]
+    except repo.RepoError as error:
+        return [_repo_problem(rel_note, error)]
     values = [*lines, *(_entry_value(entry) for entry in entries)]
     problems: list[Problem] = []
     unread = len(lines) - len(entries)
@@ -526,57 +539,45 @@ def _build_problems(root: Path, rel_note: str, previous: str | None) -> list[Pro
     are read is one problem naming the command."""
     try:
         commits = repo.builds(root, previous)
-    except repo.RepoError as e:
-        return [_repo_problem(rel_note, e)]
+    except repo.RepoError as error:
+        return [_repo_problem(rel_note, error)]
     problems: list[Problem] = []
-    seen: set[str] = set()
     for commit in commits:
-        for problem in _commit_build_problems(root, rel_note, commit):
-            key = f"{problem.path}\0{problem.message}"
-            if key in seen:
-                continue
-            seen.add(key)
-            problems.append(problem)
-    return problems
+        problems.extend(_commit_build_problems(root, rel_note, commit))
+    return _dedup(problems)
 
 
-def problems_check(root: Path, vault: vaults.Vault | None = None) -> list[Problem]:
+def problems_check(root: Path, store: Vault | None = None) -> list[Problem]:
     """Every problem of the vault and the repository against it, each once."""
     root = Path(root)
     docs = root / "docs"
     if not docs.is_dir():
         return [Problem("docs/", "missing")]
     problems: list[Problem] = []
-    if vault is None:
-        try:
-            vault = vaults.Vault.read(root)
-        except repo.RepoError as e:
-            problems.append(_repo_problem("docs/", e))
-            vault = vaults.Vault(root, docs, None)
-    try:
-        tests = repo.tests(root)
-    except repo.RepoError as e:
-        problems.append(_repo_problem(e.command, e))
-        tests = None
+    if store is None:
+        store, errors = _vault(root)
+        problems.extend(errors)
+    tests, test_problems = _read_tests(root)
+    problems.extend(test_problems)
     try:
         tags = repo.tags(root)
-    except repo.RepoError as e:
-        problems.append(_repo_problem("docs/versions/", e))
+    except repo.RepoError as error:
+        problems.append(_repo_problem("docs/versions/", error))
         tags = None
-    fields = _field_sets(vault)
-    problems.extend(_wikilink_problems(vault))
-    note_problems, version_notes = _note_problems(vault, tags, tests, fields)
+    fields = _fields(store)
+    problems.extend(_wikilink_problems(store))
+    note_problems, version_notes = _note_problems(store, tags, tests, fields)
     problems.extend(note_problems)
     version_problems, untagged = _version_problems(version_notes, tags)
     problems.extend(version_problems)
     in_flight = untagged[0].rel if len(untagged) == 1 else "docs/versions/"
-    problems.extend(_base_problems(vault, fields))
+    problems.extend(_base_problems(store, fields))
     previous = repo.highest(tags) if tags is not None else None
     problems.extend(_build_problems(root, in_flight, previous))
     return _dedup(problems)
 
 
-def _release_problems(root: Path, version: str, vault: vaults.Vault) -> list[Problem]:
+def _release_problems(root: Path, version: str, store: Vault) -> list[Problem]:
     """Every problem a release of `version` has that check does not already report."""
     root = Path(root)
     docs = root / "docs"
@@ -585,8 +586,8 @@ def _release_problems(root: Path, version: str, vault: vaults.Vault) -> list[Pro
     note = docs / "versions" / f"{version}.md"
     try:
         tags = repo.tags(root)
-    except repo.RepoError as e:
-        problems.append(_repo_problem("docs/versions/", e))
+    except repo.RepoError as error:
+        problems.append(_repo_problem("docs/versions/", error))
         tags = set()
 
     if not note.is_file():
@@ -594,7 +595,7 @@ def _release_problems(root: Path, version: str, vault: vaults.Vault) -> list[Pro
     if version in tags:
         problems.append(Problem(rel_note, f"{version} is already tagged"))
 
-    for item in vault.notes():
+    for item in store.notes():
         fm = item.fm
         if not fm or fm.get("type") != "seed" or fm.get("version") != version:
             continue
@@ -603,25 +604,35 @@ def _release_problems(root: Path, version: str, vault: vaults.Vault) -> list[Pro
                 Problem(item.rel, f"seed of {version} is {fm.get('status') or 'unset'}")
             )
 
-    body = vaults.frontmatter(_read(note))[1] if note.is_file() else ""
-    if not vaults.changelog_bullets(body):
-        problems.append(Problem(rel_note, "no ## Changelog bullets"))
+    version_note = _version_note(store, version)
+    if version_note is not None and version_note.error:
+        problems.append(Problem(rel_note, "cannot be read"))
+    else:
+        body = version_note.body if version_note is not None else ""
+        if not vault.changelog_bullets(body):
+            problems.append(Problem(rel_note, "no ## Changelog bullets"))
 
-    status = repo.git(root, "status", "--porcelain")
-    for line in status.out.splitlines():
-        if not line.strip():
-            continue
-        path = line[3:].strip() if len(line) > 3 else line.strip()
-        # `dist/` is the release's own output only where git ignores it, as this repository does;
-        # `git status` leaves an ignored path out already, so a path there in a repository that
-        # does not ignore it is an uncommitted change like any other and the tree is not clean.
-        problems.append(Problem(path, "uncommitted change"))
+    try:
+        dirty = repo.status(root)
+    except repo.RepoError as error:
+        problems.append(_repo_problem("docs/", error))
+    else:
+        for path in dirty:
+            # `dist/` is the release's own output only where git ignores it, as this repository
+            # does; `git status` leaves an ignored path out already, so a path there in a
+            # repository that does not ignore it is an uncommitted change like any other and the
+            # tree is not clean.
+            problems.append(Problem(path, "uncommitted change"))
 
     previous = repo.highest(tags)
     if previous is not None:
-        changed = repo.git(root, "diff", "--name-only", previous, "HEAD", "--", "AGENTS.md")
-        if not changed.out.strip():
-            problems.append(Problem("AGENTS.md", f"unchanged since {previous}"))
+        try:
+            changed = repo.changed_since(root, previous, "AGENTS.md")
+        except repo.RepoError as error:
+            problems.append(_repo_problem("AGENTS.md", error))
+        else:
+            if not changed:
+                problems.append(Problem("AGENTS.md", f"unchanged since {previous}"))
 
     result = repo.suite(root)
     if result == "red":
@@ -633,40 +644,68 @@ def _release_problems(root: Path, version: str, vault: vaults.Vault) -> list[Pro
     return _dedup(problems)
 
 
-def render(root: Path) -> str:
-    """The changelog's text from the tags, newest version first, and writes nothing."""
+def _version_note(store: Vault, version: str) -> Note | None:
+    """The version note `docs/versions/<version>.md` the vault holds, or None when it holds
+    none."""
+    rel = f"docs/versions/{version}.md"
+    for note in store.notes():
+        if note.rel == rel:
+            return note
+    return None
+
+
+def render(root: Path, store: Vault | None = None) -> str:
+    """The changelog's text from the tags, newest version first; raises `Unrenderable` when a
+    version note cannot be read."""
     root = Path(root)
-    docs = root / "docs"
-    tags = repo.tags(root)
+    problems: list[Problem] = []
+    if store is None:
+        store, errors = _vault(root)
+        problems.extend(errors)
+    try:
+        tags = repo.tags(root)
+    except repo.RepoError as error:
+        problems.append(_repo_problem("docs/versions/", error))
+        raise Unrenderable(problems) from error
+    notes = {note.rel: note for note in store.notes()}
     ordered = sorted(tags, key=repo.version_key, reverse=True)
     out = ["# Changelog", ""]
     for tag in ordered:
-        note = docs / "versions" / f"{tag}.md"
-        if not note.is_file():
+        note = notes.get(f"docs/versions/{tag}.md")
+        if note is None:
             continue
-        body = vaults.frontmatter(_read(note))[1]
-        out.append(f"## {vaults.title(body)}")
+        if note.error:
+            problems.append(Problem(note.rel, "cannot be read"))
+            continue
+        body = note.body
+        out.append(f"## {vault.title(body)}")
         out.append("")
-        date = repo.tag_date(root, tag)
+        try:
+            date = repo.tag_date(root, tag)
+        except repo.RepoError as error:
+            problems.append(_repo_problem("docs/versions/", error))
+            date = ""
         if date:
             out.append(date)
             out.append("")
-        paragraph = vaults.first_paragraph(body)
+        paragraph = vault.first_paragraph(body)
         if paragraph:
             out.append(paragraph)
             out.append("")
-        bullets = vaults.changelog_bullets(body)
+        bullets = vault.changelog_bullets(body)
         out.extend(bullets)
         if bullets:
             out.append("")
+    if problems:
+        raise Unrenderable(problems)
     return "\n".join(out).rstrip("\n") + "\n"
 
 
-def _tag_message(note: Path) -> str:
+def _tag_message(note: Note) -> str:
     """The note's first paragraph and changelog bullets, as the tag's annotated message."""
-    body = vaults.frontmatter(_read(note))[1]
-    paragraph = vaults.first_paragraph(body)
-    bullets = vaults.changelog_bullets(body)
+    body = note.body
+    paragraph = vault.first_paragraph(body)
+    bullets = vault.changelog_bullets(body)
     message = paragraph
     if bullets:
         message = (paragraph + "\n" if paragraph else "") + "\n".join(bullets)
@@ -705,27 +744,25 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
     if command == "render":
         try:
             text = render(root)
-        except repo.RepoError as e:
-            return _emit([_repo_problem("docs/versions/", e)])
+        except Unrenderable as error:
+            return _emit(error.problems)
+        except repo.RepoError as error:
+            return _emit([_repo_problem("docs/versions/", error)])
         (root / "CHANGELOG.md").write_text(text, encoding="utf-8")
         return 0
     if command == "release":
         if len(args) < 3 or not args[2].strip():
             return _usage()
         version = args[2].strip()
-        problems: list[Problem] = []
-        try:
-            vault = vaults.Vault.read(root)
-        except repo.RepoError as e:
-            problems.append(_repo_problem("docs/", e))
-            vault = vaults.Vault(root, root / "docs", None)
-        problems.extend(problems_check(root, vault))
+        store, errors = _vault(root)
+        problems: list[Problem] = list(errors)
+        problems.extend(problems_check(root, store))
         if not problems:
-            problems = _release_problems(root, version, vault)
+            problems = _release_problems(root, version, store)
         if problems:
             return _emit(problems)
-        note = root / "docs" / "versions" / f"{version}.md"
-        done = repo.tag(root, version, _tag_message(note))
+        note = _version_note(store, version)
+        done = repo.tag(root, version, _tag_message(note) if note is not None else "")
         if done.code != 0:
             return _emit(
                 [Problem(f"docs/versions/{version}.md", f"git tag -a {version} failed: {done.err}")]
@@ -735,7 +772,7 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
             return _emit(
                 [Problem(f"docs/versions/{version}.md", f"uv build --wheel failed: {said}")]
             )
-        (root / "CHANGELOG.md").write_text(render(root), encoding="utf-8")
+        (root / "CHANGELOG.md").write_text(render(root, store), encoding="utf-8")
         print(wheel)
         return 0
     return _usage()

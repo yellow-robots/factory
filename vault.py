@@ -44,6 +44,7 @@ class Vault:
     """The vault at a root: its `docs/`, git's listing of it, and the notes read once."""
 
     def __init__(self, root: Path, docs: Path, listing: repo.Listing | None = None) -> None:
+        """Keep the root, its `docs/` and git's listing, with no note read yet."""
         self.root = root
         self.docs = docs
         self.listing = listing
@@ -90,7 +91,7 @@ class Vault:
             templates = self.docs / "templates"
             self._notes = [
                 _note(self.root, path)
-                for path in sorted(self.docs.rglob("*.md"), key=lambda p: str(p))
+                for path in sorted(self.docs.rglob("*.md"))
                 if templates not in path.parents and self.holds(path)
             ]
         return self._notes
@@ -237,16 +238,40 @@ def prose_lines(section: str) -> list[str]:
     ]
 
 
+@dataclass(frozen=True)
+class Template:
+    """A template's frontmatter fields and why they could not be read, `""` when they were."""
+
+    fields: dict[str, str] | None
+    error: str
+
+
+def template(docs: Path, kind: str) -> Template:
+    """The fields of `docs/templates/<kind>.md`, or `cannot be read` or `no frontmatter`."""
+    path = docs / "templates" / f"{kind}.md"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return Template(None, "cannot be read")
+    fm, _ = frontmatter(text)
+    if fm is None:
+        return Template(None, "no frontmatter")
+    return Template(fm, "")
+
+
 def template_fields(docs: Path, kind: str) -> set[str] | None:
     """The field names of `docs/templates/<kind>.md`'s frontmatter, or None when it cannot be
     read."""
-    template = docs / "templates" / f"{kind}.md"
+    found = template(docs, kind)
+    return set(found.fields) if found.fields is not None else None
+
+
+def text_of(path: Path) -> str | None:
+    """The whole text of `path`, or None when it cannot be read."""
     try:
-        text = template.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    fm, _ = frontmatter(text)
-    return set(fm) if fm is not None else None
 
 
 def _unquoted(text: str) -> str:
