@@ -107,6 +107,16 @@ class VaultTest(unittest.TestCase):
         self.assertFalse(self.vault.resolves("nowhere"))
         self.assertFalse(self.vault.resolves(""))
 
+    def test_a_wikilink_out_of_the_vault_resolves_to_nothing(self):
+        """seed: wikilinks-inside-the-vault. Obsidian cannot follow a link out of the vault: a
+        target that leaves `docs/` by an absolute path or by `..` resolves to nothing, whatever
+        file that path reaches and whether git tracks it."""
+        self.assertTrue((self.root / "AGENTS.md").is_file())  # reachable by .., tracked, not the vault's
+        self.assertFalse(self.vault.resolves("../AGENTS.md"))
+        self.assertFalse(self.vault.resolves("../AGENTS"))
+        self.assertFalse(self.vault.resolves("/etc/hostname"))
+        self.assertTrue(self.vault.resolves("seeds/../seeds/a.md"))  # inside, however spelled
+
     def test_the_fields_a_kind_needs_are_read_from_its_template_and_written_nowhere_else(self):
         docs = self.root / "docs"
         write(self.root, "docs/templates/review.md", TEMPLATE_REVIEW)  # the fixture ships no review template
