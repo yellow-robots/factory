@@ -507,8 +507,9 @@ class GatherTest(unittest.TestCase):
         # The Vault is read once and handed to the gate; the gate's own check reads the tags and
         # the builds for itself, and gather reads each once besides, so at most two of those.
         self.assertEqual(sum(1 for argv in gits if "ls-files" in argv), 1, gits)
-        for words in (["rev-list"], ["tag", "-l"]):
-            self.assertLessEqual(sum(1 for argv in gits if all(w in argv for w in words)), 2, words)
+        listings = [argv for argv in gits if "rev-list" in argv and "--count" not in argv]  # distance counts
+        self.assertLessEqual(len(listings), 2, listings)
+        self.assertLessEqual(sum(1 for argv in gits if "tag" in argv and "-l" in argv), 2, gits)
         subjects = [argv for argv in gits if "log" in argv and "--format=%s" in argv]
         self.assertEqual(len(subjects), len({tuple(argv) for argv in subjects}), "a subject read twice")
 
