@@ -1,13 +1,13 @@
 ---
 created: 2026-09-19
 type: seed
-status: open
+status: spec
 summary: A read returns 300 lines, so covering the checkout the builder now works on costs 44 reads and 44 requests; the same bytes in fewer, larger reads would cost the same tokens and a third of the requests.
 value: 4
 effort: S
 reporter: attended agent
 kind: cost
-version:
+version: v0.22
 ---
 
 ## Evidence
@@ -21,3 +21,7 @@ Filed rather than built with [[caps-for-the-checkout-as-it-is]], because the two
 ## Idea
 
 The read caps follow the checkout as the call budget does, or are simply raised to what the bytes cap already allows, and the record says how many lines and bytes a read returned so the next reading of this question has numbers rather than a guess. What a larger read costs in tokens against what it saves in requests is the thing to measure, and the evaluation set is where to measure it: 91 runs, none of them capped, so the set can be run at both sizes and the medians compared.
+
+## Goal
+
+Built with [[the-argument-the-tool-does-not-have]], whose Goal carries both seeds: `read(path, start, limit)`, `READ_LINES_CAP` at 1000 and `READ_BYTES_CAP` at 64000, `bytes_read` in the record, and README's sentence on the tools. The tests naming this seed hold the caps and the count; the build is the-argument's, and this seed is done when they are green. What this seed asked beyond that -- the caps following the checkout, and the set run at both sizes -- is measured after the version ships, on this repository's next builds and on the evaluation set, and written back here.

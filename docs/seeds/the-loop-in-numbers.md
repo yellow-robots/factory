@@ -1,13 +1,13 @@
 ---
 created: 2026-09-17
 type: seed
-status: open
+status: spec
 summary: What a version took, its builds and their cost, the reviews and what they found in green builds, and who made each commit, is counted by the attended agent by hand for every version note; git, the records and the review notes hold all of it, and a reader prints it, so how well the factory works and how much of the loop it runs are numbers.
 value: 4
 effort: M
 reporter: attended agent
 kind: measurement
-version:
+version: v0.22
 ---
 
 ## Evidence
@@ -17,3 +17,17 @@ version:
 ## Idea
 
 A reader beside `runs.py`, per version and per seed of it: the builds git lists by their trailer, with their records' cost and seconds; the red commits before and after the first build; the reviews, their findings by severity and by what they became; and the commits by who made them, the factory's by their trailer and the attended agent's the rest, so the share of the loop's commits the factory made is a number that moves as responsibilities do. The version note's counts are read from it and no longer counted by hand. It reads the records where records-outside-the-project keeps them and git for the rest, and a step a role takes over later, the analyst's spec or the reviewer's note, shows in it by the trailer its commits carry.
+
+## Goal
+
+What a version took is a command, derived from git, the store and the vault, and never counted by hand.
+
+**Build order, because a cold run that reads everything first spends its cap before its first write.** Stage one, reading only `repo.py`, `test_repo.py` and the `ReadersTest` of `test_tally.py`: what `repo.py` gains. Stage two, reading `vault.py`'s `Note` and the `TallyTest` of `test_tally.py`: `tally.py`. Stage three, `gate.py`'s `USAGE` and `main` alone: the dispatch. Read `loop.py` only for the shape of its `gather`, and nothing else unless a test sends you there.
+
+**`uv run gate.py numbers`** prints one tab-separated table: a header and one row per version, each tag in version order oldest first, and the version in flight last when there is one, named by its note. The columns, in this order: `version`, `seeds`, `builds`, `green`, `red`, `capped`, `unrecorded`, `cost_usd`, `requests`, `reviews`, `findings`, `defects`, `judged_test`, `judged_seed`, `judged_case`, `judged_none`, `commits`, `by_hand`. `gate.py numbers <version>` prints the header and that row alone; a version that is neither a tag nor in flight is a usage error, exit 2. Exit 0; it writes nothing.
+
+**Read as follows, and from nowhere else.** A version's commits are those after the previous tag up to and including its tag -- from the first commit for the first tag, and up to the head for the version in flight; `commits` is their count. A build is a commit among them whose `Built-By` trailer `repo.run_stamp` reads a stamp from; `builds` is their count and `by_hand` the commits that are not builds. `seeds`: the seed notes whose `version` names it. `green`, `red`, `cost_usd`, `requests`: from each build's record in the store -- `numbers.json`'s `check`, and `cost_usd` and `requests` summed -- the store being `instance.record_store()` and the record `<store>/<stamp>/numbers.json`. `capped`: builds whose record's `stopped` is `cap`, or whose `messages.json` holds a tool return beginning `error: cap reached`, read through one reader `runs.py` gains beside `tool_errors`, so the two never disagree on a record. A build whose record is not in the store, or whose numbers cannot be read, counts under `builds` and `unrecorded` and adds nothing else. `reviews`: the review notes whose `runs` name at least one of the version's build stamps; `findings` their level-three headings; `defects` those whose `severity` line is `defect`; `judged_test`, `judged_seed`, `judged_case`, `judged_none` from the `judged:` line, each comma-separated item by its first word, a finding judged `test a, seed b` counted once under each. Money is printed to four decimals, as `runs.py` prints it.
+
+**Shape.** `tally.py` holds `gather(root) -> Tally`, a frozen dataclass of one `Row` per version and its `unknown` lines, gathered once through `vault`, `repo`, `instance` and `runs` and through nothing else -- no `subprocess`, no `open(`, no `.glob(`, no `read_text` of its own; the store's files are read through readers `runs.py` has or gains -- and `render(tally) -> str`, the table then `unknown: <field>: <why>` for each line, as `next` prints them. A fact that cannot be read is `None` with its line and never a value that means something else: a store the configuration does not name, a git that cannot answer, a review note the vault could not read. `repo.py` gains `commits(root, since, to)`, the commits in order oldest first, `since` `None` for the beginning of history, and nothing it has changes. Nothing of this repository -- no seed's name, no version's, no stamp -- is written in the code or the tests.
+
+**Held by tests.** `test_tally.py`, naming this seed: over the gate tests' fixture repository with its tags, seeds and `Built-By` commits, and a fixture store of records under `FACTORY_INSTANCE`: every column over two tagged versions and the version in flight; a build without a record; a review naming two of a version's builds counted once; a finding judged `test a, seed b` counted under both; a run landed by the soft cap counted as capped; the missing configuration and the empty store as `unknown` lines; `gate.py numbers` writing nothing, and exit 2 on a version that is none. `test_repo.py` holds `commits`. What must not change: `check`, `next`, `render` and `release` as they are, and every reader of `repo.py`, `vault.py` and `runs.py` as its tests hold it.
