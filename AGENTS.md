@@ -7,6 +7,7 @@ You are the attended agent, resuming cold. **This file tells you where to look, 
 ## Orient
 
 ```sh
+uv run gate.py next                                              # the one next step of the loop, derived; take it, then run it again
 uv run gate.py check                                             # vault vs templates and repo; silent when they agree
 uv run python -m unittest -q                                     # the suite; no provider, no network, no docker
 git log --oneline "tags/$(git describe --tags --abbrev=0)..HEAD" # what happened since the last version
@@ -42,12 +43,12 @@ If a sentence in this file could be replaced by one of these, replace it.
 
 ## The loop
 
-1. Owner and attended agent pick a seed and promote it: assign a version, turn the Idea into a `## Goal`.
-2. The attended agent writes tests naming the seed (`seed: <name>` in the docstring) and commits them **red** on a branch.
-3. Build it: `factory-build <repo> <branch> docs/seeds/<name>.md` (the installed product; pushes the build back as one commit), or `uv run builder.py <worktree> docs/seeds/<name>.md` (the checkout's, in place; you commit it with the `Built-By` trailer).
-4. Read the record and the diff. Hand the diff to an independent reviewer: **a subagent of your own harness, to a written brief — not `reviewer.py`**, which is the program under evaluation. Give it the Goal, the diff and the tests, and a throwaway directory to probe in.
-5. Write `docs/reviews/<stamp>.md` from its template. Verify each finding yourself and judge it: `test <name>` when the factory's code was wrong, `case`/`seed <name>` when the model's behaviour was, or `none:` with the reason.
-6. Release, when every seed is `done` or `rejected`: revise this file (the gate refuses a release where it is unchanged since the previous tag); write at least one `## Changelog` bullet in the version note; `uv run gate.py check` in the worktree, where a build git cannot list can still be amended; commit everything, since the gate refuses any uncommitted path; fast-forward `main`, because `release` tags the HEAD of wherever it runs; `uv run gate.py release <version>`, whose last line is the wheel it built; commit the rendered `CHANGELOG.md` as its own commit after the tag; `git push origin main --tags`; install that wheel over the instance, `uv tool install --reinstall dist/factory-<version>-py3-none-any.whl`, as `README.md` describes.
+`uv run gate.py next` prints the one step that comes next, derived from git and the vault: the rows are `loop.RULES`, in their order, over one snapshot of facts, and `README.md` says what each reads. A session is one step long -- run it, take the step, run it again -- and nothing here is remembered across steps. What it cannot derive, it cannot say, so those are written here:
+
+- **A review is a subagent of your own harness, to a written brief -- not `reviewer.py`**, the program under evaluation. Give it the Goal, the diff, the tests and a throwaway directory to probe in; forbid it the network, docker, running the model programs, and reading `~/.config/factory/`. Verify every finding yourself before it goes in `docs/reviews/<stamp>.md`, and judge it: `test <name>` when the factory's code was wrong, `case`/`seed <name>` when the model's behaviour was, `none:` with the reason.
+- **A red build's tree may be taken as the branch's base** when the run wrote the work and landed at the cap: a plain commit naming the record, no `Built-By`, the record standing as red -- so the next build fixes lines rather than rewriting them.
+- **Before a build, the branch must not be checked out where the build will push**: `next` says `detach first` when it is; `git switch <branch>` after. A commit made while detached leaves the branch behind.
+- **`release` tags the HEAD of wherever it runs**, and its last line is the wheel it built; the changelog's commit, `main`, the mirror and the instance are the rows `next` reads after a tag.
 
 ## Rules
 

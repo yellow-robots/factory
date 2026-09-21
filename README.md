@@ -15,6 +15,7 @@ uv run build.py <repository> <branch> <seed>  # one build asked through git: a p
 uv run builder.py <checkout> "<goal>" # one build in place; the goal is text or the path of a seed, docs/seeds/<name>.md
 uv run reviewer.py <checkout> <seed>  # one review of the checkout's head, read-only; the note is in the record
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
+uv run gate.py next                   # the one next step of the development loop, derived from git and the vault
 uv run runs.py                        # the records of the store as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
 uv run catch.py --score               # the reviewer's catch rate from the records already made; --spend USD runs the cases
@@ -196,7 +197,32 @@ builds the product -- `uv build --wheel` at the root, while the tree is still cl
 the build reads from it is the tag's -- renders, and prints the wheel's path as its last line. A
 build that fails is exit 1 naming what `uv build` said, the tag standing and the changelog
 unrendered, because nothing has been pushed and a tag is not a deployment. Silent and exit 0 when
-there is nothing to report; usage errors exit 2.
+there is nothing to report; usage errors exit 2. Every problem is one line starting with its
+path, git's words collapsed to one line with any full hash abbreviated; a git that cannot answer
+is one problem naming the command -- `docs/versions/: git tag -l failed: ...` for the tags,
+`docs/: git ls-files ... failed` for the listing, the version's note for a release precondition --
+and never one problem per note; a note or template that cannot be read is `<rel>: cannot be
+read`, once, a template without frontmatter `<rel>: no frontmatter`, and the checks that do not
+derive from it still run; a `test*.py` that does not parse is `<file>: does not parse`, and the
+other files' tests still count. The gate reads through two modules of its own: `vault.py`, the
+vault as git holds it -- every file's text, every note as a `Note` with its fields, body and the
+error when it could not be read, each read once -- and `repo.py`, git behind one `Result(code, out,
+err)` and readers that raise `RepoError` naming the command rather than answering with nothing.
+
+`next` prints the one step of the development loop that comes next, derived and never
+remembered: `next: <step>`, then `unknown: <fact>: <why>` for each fact it could not read.
+`loop.py` gathers one frozen snapshot of facts once -- the gate's own problems, the tags, the
+head and its branch, the version in flight and each of its seeds with the tests naming it, their
+colour from running exactly those tests, its builds since the tag by `Built-By` and whether the
+latest is reviewed, the release's preconditions, and after a tag the changelog, `main`, the
+mirror and the installed product -- and answers with the first of thirteen rules that applies,
+in the loop's order: fix a problem of the gate; the acts after a tag; open a version; promote a
+seed; then the seeds in name order, the first with something to do -- write its Goal, write its
+red tests, set it building, build it (`factory-build`, with `detach first` when the branch is
+checked out), review its build, set it done; the release and its preconditions; and last, only
+when a fact a row needed is unknown, `nothing to do that is known`. It writes nothing, runs
+only a seed's own tests, and asks the mirror only after a tag, with a timeout. Exit 0; usage
+errors exit 2.
 
 ## The evaluation set
 
