@@ -73,12 +73,6 @@ def _unreadable(note: vault.Note) -> bool:
     return bool(note.error) or note.fm is None
 
 
-def _version_note(note: vault.Note) -> bool:
-    """Whether a note is a version note: its frontmatter says so, or it is one under
-    `docs/versions/` the vault could not read."""
-    return note.kind == "version" or (_under(note.rel, "versions") and _unreadable(note))
-
-
 def _number(value: Any) -> float | None:
     """`value` as a number, or None when it is absent or not one; a bool is not a number."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -242,10 +236,13 @@ def gather(root: Path) -> Tally:
     if tags is None:
         unknown.append("in_flight: tags unknown")
     else:
+        # A version note is what the loop counts: the frontmatter's `type` says `version`. A note
+        # under `docs/versions/` the vault could not read has no type and is a line, never one of
+        # the notes counted.
         untagged = [
             note.path.stem
             for note in notes
-            if _version_note(note) and note.path.stem not in tags
+            if note.kind == "version" and note.path.stem not in tags
         ]
         if len(untagged) == 1:
             in_flight = untagged[0]
@@ -301,7 +298,9 @@ def gather(root: Path) -> Tally:
                 runs_count = len(run_records)
                 green = sum(1 for _, data, _ in run_records if data.get("check") == "green")
                 red = sum(1 for _, data, _ in run_records if data.get("check") == "red")
-                capped = sum(1 for _, _, record in run_records if runs.capped(record) is True)
+                capped = sum(
+                    1 for _, data, record in run_records if runs.capped(record, data) is True
+                )
                 cost = sum(_number(data.get("cost_usd")) or 0.0 for _, data, _ in run_records)
                 requests = sum(_number(data.get("requests")) or 0 for _, data, _ in run_records)
 

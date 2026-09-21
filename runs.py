@@ -151,14 +151,14 @@ def tool_errors(record: Path | None) -> int | None:
     )
 
 
-def capped(record: Path | None) -> bool | None:
-    """Whether the run a record holds was stopped by a cap: its numbers' `stopped` is `cap`, or
-    its `messages.json` holds a tool return beginning `error: cap reached`. None when no record is
-    named; the one reading the tally uses beside `tool_errors`, over the same walk of the returns."""
+def capped(record: Path | None, numbers: dict[str, Any] | None) -> bool | None:
+    """Whether the run a record holds was stopped by a cap: the numbers already read say `stopped`
+    is `cap`, or its `messages.json` holds a tool return beginning `error: cap reached`. None when
+    no record is named; read beside `tool_errors` over the same walk of the returns so the two
+    never disagree, and the numbers are handed in, so a record's numbers are read once."""
     if record is None:
         return None
-    data = numbers(record)
-    if data is not None and data.get("stopped") == "cap":
+    if numbers is not None and numbers.get("stopped") == "cap":
         return True
     found = _returns(record)
     if found is None:
