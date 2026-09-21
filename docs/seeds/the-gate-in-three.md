@@ -1,7 +1,7 @@
 ---
 created: 2026-09-21
 type: seed
-status: building
+status: done
 summary: gate.py is 1,105 lines braiding the vault's reading, git's reading, the checks and the commands through five threaded parameters and string-typed results, and a git failure inside it is silent -- a tree that is no checkout gets twenty false problems and one true one; the loop's derivation needs its readers, so it is split into three before that is built.
 value: 4
 effort: M
