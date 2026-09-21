@@ -23,8 +23,9 @@ committer are the factory's, and the message is the seed's name, a blank line, t
 `Built-By: factory at <version>, run <stamp>`, which git's own parser reads. A run that did not
 report carries one more trailer, `Stopped-By: <how it ended>`, so a reader of the branch can tell
 a build left by a run that never reported from one left by a run that did; it leaves the reading
-of `Built-By` intact. The version is the instance's own, `git describe --tags --always --dirty`
-where this file lives, or `unknown` when git cannot say, and never the project's. The commit is
+of `Built-By` intact. The version is the product's own, `importlib.metadata.version("factory")`
+with `v` before it, or `unknown` when the product is not installed -- a checkout, which is no
+package -- and never the project's. The commit is
 pushed to the branch it came from, never forced; the command prints one line naming the commit by
 git's abbreviation and the branch, and exits 0.
 
@@ -45,6 +46,7 @@ is refused, one line on stderr names the record and says the branch moved, and t
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import io
 import json
 import os
@@ -60,22 +62,14 @@ import instance
 
 
 def version() -> str:
-    """The instance's own version: `git describe --tags --always --dirty` run where this file
-    lives, or `unknown` when git cannot say. Never the project's."""
+    """The product's own version, `importlib.metadata.version("factory")` with `v` before it, so an
+    instance installed from the wheel of v0.20 names v0.20, exactly what the tag says. A checkout,
+    where the product is not installed, names `unknown`, the meaning that word already has. Never
+    git's guess at a tag and never the project's."""
     try:
-        done = subprocess.run(
-            ["git", "describe", "--tags", "--always", "--dirty"],
-            cwd=Path(__file__).resolve().parent,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=120,  # the timeout every other git call of the command has
-            env=builder.git_env(),
-        )
-    except (OSError, subprocess.SubprocessError):
+        return f"v{importlib.metadata.version('factory')}"
+    except importlib.metadata.PackageNotFoundError:
         return "unknown"
-    described = done.stdout.strip() if done.returncode == 0 else ""
-    return described or "unknown"
 
 
 def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -323,5 +317,11 @@ def main(argv: list[str], model: Any = None, sandbox: Any = None) -> int:
         shutil.rmtree(build_dir, ignore_errors=True)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """The console script's entry: no argument, `main` called with `sys.argv` whole and the process
+    exited with what `main` returned, as the guard does when the file is run."""
     sys.exit(main(sys.argv))
+
+
+if __name__ == "__main__":
+    cli()

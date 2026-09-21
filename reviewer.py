@@ -527,5 +527,11 @@ def main(argv: list[str], model: Any = None) -> int:
     return 0 if stopped == "answer" else 1
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """The console script's entry: no argument, `main` called with `sys.argv` whole and the process
+    exited with what `main` returned, as the guard does when the file is run."""
     sys.exit(main(sys.argv))
+
+
+if __name__ == "__main__":
+    cli()

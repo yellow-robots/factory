@@ -1062,6 +1062,29 @@ def _annotate(root: Path, version: str, note: Path) -> bool:
     return done.returncode == 0
 
 
+def _build_wheel(root: Path) -> tuple[str, str]:
+    """`uv build --wheel` at the root, once the tag is cut and before the changelog is rendered, so
+    the version is read from the clean tree. Returns the wheel's path as uv named it, and the empty
+    string as the path with uv's own words when the build failed or uv could not run."""
+    try:
+        done = subprocess.run(
+            ["uv", "build", "--wheel"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return "", " ".join(str(e).split())
+    if done.returncode != 0:
+        return "", " ".join((done.stderr.strip() or done.stdout.strip()).split())
+    for line in reversed(done.stdout.splitlines()):
+        words = line.split()
+        if words and words[-1].endswith(".whl"):
+            return words[-1], ""
+    return "", "uv build named no wheel"
+
+
 def _emit(problems: list[str]) -> int:
     for problem in problems:
         print(problem)
@@ -1096,7 +1119,11 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
         note = root / "docs" / "versions" / f"{version}.md"
         if not _annotate(root, version, note):
             return _emit([f"docs/versions/{version}.md: git could not create tag {version}"])
+        wheel, said = _build_wheel(root)
+        if not wheel:  # the tag stands and nothing is rendered: a tag is not a deployment
+            return _emit([f"docs/versions/{version}.md: uv build --wheel failed: {said}"])
         problems_render(root)
+        print(wheel)
         return 0
     return _usage()
 
