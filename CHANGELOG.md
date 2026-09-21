@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.20: the factory as a tool
+
+2026-09-21
+
+v0.19 shipped as every version before it: a clone of the whole repository at the tag -- 151 MB of vault, tests, both case sets and a changelog -- and a program that learns which factory it is by asking git where it lives. A deployment is the executable product built in the repository, not a copy of the repository. This version makes the product buildable: a wheel the release builds at the tag, carrying the tag's version, holding the five modules a build or a review runs and nothing else, so that an instance is one installed tool beside its configuration.
+
+- The factory is a tool. `pyproject.toml` declares the product -- `build.py`, `builder.py`, `reviewer.py`, `instance.py` and `runs.py`, four console scripts `factory-build`, `factory-builder`, `factory-review` and `factory-runs`, and a version derived from the git tag when the wheel is built and written nowhere -- while the checkout stays a script tree, so the check's image and every `uv run` are unchanged. `gate.py release` cuts the tag, builds the wheel at the clean tree before rendering, and prints its path last, found in `dist/` and never read off `uv`'s chatter, which is on stderr and coloured when the environment asks; a failed build is exit 1 with the tag standing and nothing rendered. `build.py` signs a commit with the installed product's version, `unknown` from a checkout, and git is never asked. An instance is `uv tool install` of the wheel beside its configuration; the 151 MB clone at a tag goes. Five builds for one seed, $0.31 at the flat rate: one red on six tests the attended agent had left asserting a silent release; one dead at 22 requests on the model inventing `read(limit=...)` twice, now a seed; one green that read the wheel's path from the stream uv does not write to, which the builder's own unsure field doubted and the review confirmed; one green that found it in `dist/` and opened a door in the clean-tree wall to pass a fixture of the attended agent's; one green that shut it. Verified against the real uv end to end, offline, colour forced.
+
 ## v0.19: the number that decides the reviewer
 
 2026-09-21
