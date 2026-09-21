@@ -169,6 +169,18 @@ def builds(root: Path, previous: str | None) -> list[str]:
     return done.out.split()
 
 
+def commits(root: Path, since: str | None, to: str) -> list[str]:
+    """The commits after `since` up to and including `to`, oldest first, from the beginning of
+    history when `since` is None, or `RepoError` when git cannot answer."""
+    revision = f"{since}..{to}" if since is not None else to
+    command = f"git rev-list {revision} --"
+    _owned(root, command)
+    done = git(root, "rev-list", "--reverse", revision, "--")
+    if done.code != 0:
+        raise RepoError(command, done.err)
+    return done.out.split()
+
+
 def trailers(root: Path, commit: str) -> list[str]:
     """The entries git's own trailer parser reads as `Built-By` for `commit`, each `<key>:
     <value>` and never empty, or `RepoError` when git cannot answer."""

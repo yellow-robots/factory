@@ -33,7 +33,7 @@ import repo
 import vault
 from vault import Note, Vault
 
-USAGE = "usage: gate.py check|render|release <version>|next"
+USAGE = "usage: gate.py check|render|release <version>|next|numbers [<version>]"
 STATUSES = ("open", "spec", "building", "done", "rejected")
 SEVERITIES = ("defect", "smell")
 VERIFIEDS = ("yes", "no")
@@ -739,6 +739,20 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
 
         sys.stdout.write(loop.render(loop.gather(root)))
         return 0
+    if command == "numbers":
+        import tally  # the numbers are their own reader, off the gate's path to a build
+
+        found = tally.gather(root)
+        if len(args) == 2:
+            sys.stdout.write(tally.render(found))
+            return 0
+        if len(args) == 3 and args[2].strip():
+            row = next((r for r in found.rows if r.version == args[2].strip()), None)
+            if row is None:
+                return _usage()
+            sys.stdout.write(tally.render(tally.Tally(rows=(row,), unknown=())))
+            return 0
+        return _usage()
     if command == "render":
         try:
             text = render(root)

@@ -11,7 +11,9 @@ there, `goal` is the first line of `goal.txt` with tabs as spaces, a key the rec
 empty cell, and `head` reads `head` and, before v0.5, `world_head`. Two cells are derived when
 the table is printed and stored nowhere: `input_per_request`, `input_tokens` over `requests`, and
 `tool_errors`, right after `checks`, a record's tool returns in `messages.json` that start `error:`
-and are not a wall's refusal, empty for a record without messages to read. A record without
+and are not a wall's refusal, empty for a record without messages to read. `capped`, read beside
+`tool_errors`, says whether a run was stopped by a cap: its numbers' `stopped` is `cap`, or its
+messages hold a return beginning `error: cap reached`. A record without
 `numbers.json` is a row with its stamp and goal alone. Nothing is written. Any argument is a
 usage error on stderr, exit 2.
 """
@@ -53,13 +55,23 @@ def _first_line(path: Path) -> str:
     return lines[0].replace("\t", " ") if lines else ""
 
 
-def _numbers(record: Path) -> dict[str, Any]:
-    """The record's `numbers.json` as a mapping; empty when it is absent or unreadable."""
+def numbers(record: Path | None) -> dict[str, Any] | None:
+    """The record's `numbers.json` as a mapping, or None when the record, the file or its JSON is
+    absent or is not a mapping. The one reading of a record's numbers, shared by the table and the
+    tally so the two never disagree on a record."""
+    if record is None:
+        return None
     try:
         data = json.loads((record / "numbers.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _numbers(record: Path) -> dict[str, Any]:
+    """The record's `numbers.json` as a mapping; empty when it is absent or unreadable."""
+    data = numbers(record)
+    return data if data is not None else {}
 
 
 def _field(value: Any) -> str:
@@ -108,6 +120,40 @@ def tool_errors(record: Path | None) -> int | None:
                     and not content.startswith(REFUSED) and not content.startswith(WALLS)):  # fmt: skip
                 total += 1
     return total
+
+
+def _cap_returns(record: Path) -> bool:
+    """Whether the record's `messages.json` holds a tool return that begins `error: cap reached`;
+    False when there are no messages to read. The wall return that says a run was landed."""
+    try:
+        messages = json.loads((record / "messages.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        parts = message.get("parts")
+        for part in parts if isinstance(parts, list) else []:
+            if not isinstance(part, dict) or part.get("part_kind") != "tool-return":
+                continue
+            content = part.get("content")
+            if isinstance(content, str) and content.startswith("error: cap reached"):
+                return True
+    return False
+
+
+def capped(record: Path | None) -> bool | None:
+    """Whether the run a record holds was stopped by a cap: its numbers' `stopped` is `cap`, or
+    its `messages.json` holds a tool return beginning `error: cap reached`. None when no record is
+    named; the one reading the tally uses beside `tool_errors`."""
+    if record is None:
+        return None
+    data = numbers(record)
+    if data is not None and data.get("stopped") == "cap":
+        return True
+    return _cap_returns(record)
 
 
 def _cell(record: Path, numbers: dict[str, Any], column: str) -> str:
