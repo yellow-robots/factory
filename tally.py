@@ -63,6 +63,22 @@ class Tally:
     unknown: tuple[str, ...]
 
 
+def _under(rel: str, kind: str) -> bool:
+    """Whether `rel` is a note of the vault's `kind` directory, `docs/<kind>/`."""
+    return rel.startswith(f"docs/{kind}/")
+
+
+def _unreadable(note: vault.Note) -> bool:
+    """Whether the vault could not read a note or its frontmatter could not be parsed."""
+    return bool(note.error) or note.fm is None
+
+
+def _version_note(note: vault.Note) -> bool:
+    """Whether a note is a version note: its frontmatter says so, or it is one under
+    `docs/versions/` the vault could not read."""
+    return note.kind == "version" or (_under(note.rel, "versions") and _unreadable(note))
+
+
 def _number(value: Any) -> float | None:
     """`value` as a number, or None when it is absent or not one; a bool is not a number."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -192,11 +208,22 @@ def gather(root: Path) -> Tally:
         unknown.append(f"docs: {e}")
     notes = list(held.notes())
 
-    unreadable_reviews = [
-        note.rel for note in notes if note.error and note.rel.startswith("docs/reviews/")
+    bad_reviews = [
+        note.rel for note in notes if _under(note.rel, "reviews") and _unreadable(note)
     ]
-    for rel in unreadable_reviews:
-        unknown.append(f"reviews: {rel} cannot be read")
+    for rel in bad_reviews:
+        unknown.append(f"reviews: cannot read {rel}")
+    bad_seeds = [note.rel for note in notes if _under(note.rel, "seeds") and _unreadable(note)]
+    for rel in bad_seeds:
+        unknown.append(f"seeds: cannot read {rel}")
+    bad_versions = [
+        note.rel for note in notes if _under(note.rel, "versions") and _unreadable(note)
+    ]
+    for rel in bad_versions:
+        unknown.append(f"versions: cannot read {rel}")
+    # Which version an unreadable seed belongs to cannot be read either, so every column that
+    # depends on a seed is None on every row; an unreadable version note is the same.
+    seed_unknown = bool(bad_seeds or bad_versions)
 
     tags: set[str] | None
     try:
@@ -218,17 +245,22 @@ def gather(root: Path) -> Tally:
         untagged = [
             note.path.stem
             for note in notes
-            if note.kind == "version" and note.path.stem not in tags
+            if _version_note(note) and note.path.stem not in tags
         ]
         if len(untagged) == 1:
             in_flight = untagged[0]
         elif len(untagged) > 1:
             unknown.append(f"in_flight: {len(untagged)} version notes are no tag")
 
+    bad_version_stems = {
+        note.path.stem
+        for note in notes
+        if _under(note.rel, "versions") and _unreadable(note)
+    }
     versions: list[tuple[str, str | None, str]] = []
     for index, tag in enumerate(ordered):
         versions.append((tag, ordered[index - 1] if index else None, tag))
-    if in_flight is not None:
+    if in_flight is not None and in_flight not in bad_version_stems:
         versions.append((in_flight, ordered[-1] if ordered else None, "HEAD"))
 
     rows: list[Row] = []
@@ -238,7 +270,7 @@ def gather(root: Path) -> Tally:
             for note in notes
             if note.kind == "seed" and note.fm is not None and note.fm.get("version") == version
         }
-        seeds = len(names)
+        seeds = None if seed_unknown else len(names)
 
         commits: list[str] | None
         try:
@@ -260,21 +292,20 @@ def gather(root: Path) -> Tally:
                 by_hand = None
 
         run_records = [entry for name in names for entry in by_seed.get(name, [])]
-        if store is None:
-            runs_count = green = red = capped = unrecorded = cost = requests = None
-        else:
-            runs_count = len(run_records)
-            green = sum(1 for _, data, _ in run_records if data.get("check") == "green")
-            red = sum(1 for _, data, _ in run_records if data.get("check") == "red")
-            capped = sum(1 for _, _, record in run_records if runs.capped(record) is True)
-            cost = sum(_number(data.get("cost_usd")) or 0.0 for _, data, _ in run_records)
-            requests = sum(_number(data.get("requests")) or 0 for _, data, _ in run_records)
-            if stamps is None:
-                unrecorded = None
-            else:
+        unrecorded: int | None = None
+        runs_count = green = red = capped = cost = requests = None
+        if store is not None:
+            if stamps is not None:
                 unrecorded = sum(1 for stamp in stamps if stamp not in recorded)
+            if not seed_unknown:
+                runs_count = len(run_records)
+                green = sum(1 for _, data, _ in run_records if data.get("check") == "green")
+                red = sum(1 for _, data, _ in run_records if data.get("check") == "red")
+                capped = sum(1 for _, _, record in run_records if runs.capped(record) is True)
+                cost = sum(_number(data.get("cost_usd")) or 0.0 for _, data, _ in run_records)
+                requests = sum(_number(data.get("requests")) or 0 for _, data, _ in run_records)
 
-        if unreadable_reviews or store is None:
+        if bad_reviews or seed_unknown or store is None:
             # Without the store, a review of a run git does not hold cannot be placed, and a count
             # of the reviews git can place would mean something else; an unreadable note leaves
             # every row's review columns unknown.
