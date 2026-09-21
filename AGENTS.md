@@ -15,6 +15,7 @@ git status --short                                               # uncommitted; 
 ls docs/versions docs/seeds                                      # versions and backlog
 git tag -l                                                       # released versions
 uv run runs.py | tail -3                                         # the last records
+uv run gate.py numbers | tail -3                                 # what each version took: runs, builds, reviews, dollars
 ```
 
 The **version in flight** is the note in `docs/versions/` whose name is not a tag; there is at most one. Its seeds are the notes in `docs/seeds/` whose `version` names it.
@@ -30,6 +31,7 @@ Never answer these from memory or from this file. Run the command.
 | exactly how does it behave | its `test_<name>.py` at the root; `ls test_*.py` |
 | what did a run do, cost, decide | its record in the store: `numbers.json` first, then `response.md`, `diff.patch`, `wire.jsonl.gz` |
 | every run as one table | `uv run runs.py` |
+| what a version took: its runs, builds, reviews, findings and dollars | `uv run gate.py numbers`, one row per version; the runs are the store's by seed, the builds git's by trailer |
 | how good is the builder | `uv run evals.py` over `cases/` |
 | how good is the reviewer | `uv run catch.py --score` — free, scores records already made. **It does not name the model**: the rate is whatever the records ran on, and the `reviewer` role here is configured for another. Read the record's `numbers.json` |
 | what is a seed's stage | its `status`; `docs/templates/seed.md` says what each stage requires |
