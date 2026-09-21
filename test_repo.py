@@ -202,6 +202,19 @@ class RepoTest(unittest.TestCase):
         remote = [kwargs for argv, kwargs in calls if "ls-remote" in argv]
         self.assertEqual([kwargs.get("timeout") for kwargs in remote], [7])
 
+    def test_a_run_stamp_is_read_by_one_definition(self):
+        """seed: the-step-nobody-noticed. From the loop's second review: the loop read a trailer
+        with its own regex and took `...000Zjunk` as a run where the gate refuses it."""
+        self.assertEqual(repo.run_stamp("Built-By: factory at v0.1, run 20260917T000000Z"), "20260917T000000Z")
+        self.assertEqual(repo.run_stamp("Built-By: factory at v0.1, run 20260917T000000Z-2"), "20260917T000000Z-2")
+        for entry in (
+            "Built-By: factory at v0.1, run 20260917T000000Zjunk",
+            "Built-By: factory at v0.1, ran 20260917T000000Z",
+            "Built-By: factory at v0.1",
+            "",
+        ):
+            self.assertIsNone(repo.run_stamp(entry), entry)
+
     def test_a_seeds_tests_are_run_alone_and_a_run_that_could_not_happen_raises(self):
         """seed: the-step-nobody-noticed."""
         self.assertEqual(repo.run_tests(self.root, ("test_repo.RepoTest.test_d",), timeout=60), "green")

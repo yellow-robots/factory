@@ -201,6 +201,38 @@ class RulesTest(unittest.TestCase):
         two = (seed(name="a", colour=None), seed(name="b", status="open", tests=(), colour="none"))
         self.assertEqual(step(seeds=two, unknown=("tests of a: could not run",)), "write the Goal of b; status spec")
 
+    def test_a_row_whose_fact_is_unknown_is_skipped_and_never_read_as_a_value(self):
+        """From the second review: an unknown version in flight printed "open a version", an
+        unknown tree printed "release", an act with an unknown fact was dropped three different
+        ways. A fact that is None is skipped with its row, whatever the row."""
+        last = loop.RULES[-1].name
+        why = ("tags: git tag -l failed: git died",)
+        self.assertEqual(loop.next_step(facts(tags=None, highest=None, in_flight=None, unknown=why)).name, last)
+        done = (seed(status="done", colour="green"),)
+        for field in ("dirty", "agents_changed", "bullets"):
+            with self.subTest(field=field):
+                found = facts(seeds=done, unknown=(f"{field}: git died",), **{field: None})
+                self.assertEqual(loop.next_step(found).name, last)
+        unbuilt = (seed(colour="green", builds=None),)
+        self.assertEqual(loop.next_step(facts(seeds=unbuilt, unknown=("builds of b: git died",))).name, last)
+        # After a tag, an act whose fact is unknown is skipped and the next act considered.
+        after = dict(**AFTER, unknown=("main: git died",))
+        self.assertEqual(step(**after, changelog_current=True, main_at_head=None, mirror_at_head=False), "push: git push origin main --tags")
+        after = dict(**AFTER, unknown=("changelog: cannot be read",))
+        self.assertEqual(step(**after, changelog_current=None, main_at_head=False), "fast-forward main: git merge --ff-only heads/v0.2")
+        after = dict(**AFTER, unknown=("changelog: x", "main: x", "mirror: x", "instance: x"))
+        self.assertEqual(step(**after), "v0.2 is out: open the next version")
+
+    def test_the_table_is_the_only_dispatch_and_has_no_fallback_beside_it(self):
+        """From the second review: the seed rows were decided by two if-chains beside RULES, a
+        dead tuple named them a third time, and next_step kept a fallback after the table."""
+        with mock.patch.object(loop, "RULES", ()):
+            with self.assertRaises(Exception):
+                loop.next_step(facts())
+        self.assertFalse(hasattr(loop, "SEED_ROWS"))
+        source = Path(loop.__file__).read_text()
+        self.assertEqual(source.count("nothing to do that is known"), 1, "the last row's text, once")
+
     def test_facts_are_frozen_and_have_no_field_nobody_reads(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             facts().head = "elsewhere"
@@ -220,11 +252,17 @@ class GatherTest(unittest.TestCase):
         self.shim_uv("factory v0.1\n- factory-build\n")
 
     def shim_uv(self, says: str) -> None:
-        """A `uv` first on PATH whose `tool list` says what the instance is."""
+        """A `uv` first on PATH whose `tool list` says what the instance is -- and which, unlike
+        the attended agent's first shim, refuses any other invocation, since the first build
+        passed `tool list` as one word and the shim answered anyway."""
         bin_dir = Path(self.tmp.name) / "bin"
         bin_dir.mkdir(exist_ok=True)
         shim = bin_dir / "uv"
-        shim.write_text("#!/bin/sh\n" f"printf '%b' '{says}'\n")
+        shim.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1 $2" != "tool list" ]; then echo "error: unrecognized subcommand" >&2; exit 2; fi\n'
+            f"printf '%b' '{says}'\n"
+        )
         shim.chmod(0o755)
         self.enterContext(mock.patch.dict(os.environ, {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}))
 
@@ -352,13 +390,23 @@ class GatherTest(unittest.TestCase):
         git(outer, "tag", "v9.9")
         copy = outer / "inner"
         shutil.copytree(self.root, copy, ignore=shutil.ignore_patterns(".git"))
-        found = loop.gather(copy)
-        for name in ("tags", "highest", "head", "branch", "attached", "dirty", "agents_changed", "after_tag"):
+        calls: list[list[str]] = []
+        real = subprocess.run
+
+        def recording(argv, *args, **kwargs):
+            calls.append(list(argv))
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", recording):
+            found = loop.gather(copy)
+        for name in ("tags", "highest", "head", "branch", "attached", "dirty", "agents_changed", "after_tag", "in_flight"):
             self.assertIsNone(getattr(found, name), name)
-        self.assertTrue(found.unknown)
+            self.assertTrue(any(line.startswith(f"{name}:") for line in found.unknown), f"{name}: no line in {found.unknown}")
         text = loop.render(found)
         self.assertNotIn("v9.9", text)
         self.assertTrue(text.startswith("next: fix: "), text)  # the gate's own lines on a non-checkout
+        asked = [argv for argv in calls if argv and argv[0] == "git" and ("tag" in argv or "rev-list" in argv)]
+        self.assertEqual(asked, [], "the enclosing repository was asked for its tags or commits")
 
     def test_tests_that_cannot_run_are_unknown_and_not_none(self):
         write(self.root, "test_repo.py", TEST_RED_B)
@@ -463,6 +511,132 @@ class GatherTest(unittest.TestCase):
         found = loop.gather(self.root)
         self.assertTrue(found.problems)
         self.assertTrue(loop.next_step(found).text.startswith("fix: docs/seeds/a.md"))
+
+    def test_the_next_version_note_does_not_hide_the_acts_after_a_tag(self):
+        """From the second review: after_tag was short-circuited by a version in flight, so writing
+        the next note before push and install dropped those rows -- the class of miss this seed
+        exists to remove. after_tag is git's distance, nothing else."""
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
+        write(self.root, "test_repo.py", TEST_GREEN_B)
+        self.commit("done")
+        git(self.root, "tag", "-a", "v0.2", "-m", "the next")
+        write(self.root, "docs/versions/v0.3.md", "---\ntype: version\n---\n\n# v0.3: after\n\nSoon.\n\n## Changelog\n\n-\n")
+        found = loop.gather(self.root)
+        self.assertTrue(found.after_tag)
+        self.assertEqual(found.in_flight, "v0.3")
+        self.assertEqual(loop.next_step(found).text, "commit CHANGELOG.md")
+
+    def test_a_listing_failure_inside_a_checkout_is_named_as_such_and_the_rest_is_still_read(self):
+        """From the second review: with `git ls-files` failing inside a real checkout, every git
+        fact was declared "not a git checkout"; the directory is one, git answered everything
+        else, and only the listing failed."""
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        real = subprocess.run
+
+        def failing(argv, *args, **kwargs):
+            if "ls-files" in argv:
+                raise OSError("git died")
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", failing):
+            found = loop.gather(self.root)
+        self.assertEqual(found.head, head)
+        self.assertEqual(found.tags, frozenset({"v0.1"}))
+        self.assertFalse(any("not a git checkout" in line for line in found.unknown), found.unknown)
+        self.assertTrue(loop.next_step(found).text.startswith("fix: docs/: git ls-files"), loop.render(found))
+
+    def test_every_none_after_a_tag_has_its_line_too(self):
+        """From the second review: an unreadable CHANGELOG.md read as "not current" with no line,
+        and a failing rev-list as "no build" with none."""
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
+        write(self.root, "test_repo.py", TEST_GREEN_B)
+        write(self.root, "CHANGELOG.md", "# Changelog\n\n## v0.2: the next\n")
+        self.commit("done, changelog written")
+        git(self.root, "tag", "-a", "v0.2", "-m", "the next")
+        changelog = self.root / "CHANGELOG.md"
+        changelog.chmod(0)
+        self.addCleanup(changelog.chmod, 0o644)
+        found = loop.gather(self.root)
+        self.assertIsNone(found.changelog_current)
+        self.assertTrue(any(line.startswith("changelog:") for line in found.unknown), found.unknown)
+        changelog.chmod(0o644)
+        write(self.root, "docs/seeds/c.md", SEED_B.replace("version: v0.2", "version: v0.3").replace("status: spec", "status: building"))
+        write(self.root, "docs/versions/v0.3.md", "---\ntype: version\n---\n\n# v0.3: after\n\nSoon.\n\n## Changelog\n\n-\n")
+        write(self.root, "test_repo.py", TEST_GREEN_B.replace("seed: b.", "seed: c."))
+        self.commit("v0.3 opens")
+        real = subprocess.run
+
+        def failing(argv, *args, **kwargs):
+            if "rev-list" in argv:
+                raise OSError("git died")
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", failing):
+            found = loop.gather(self.root)
+        self.assertEqual([s.name for s in found.seeds], ["c"])
+        self.assertIsNone(found.seeds[0].builds)
+        self.assertTrue(any(line.startswith("builds of c:") for line in found.unknown), found.unknown)
+
+    def test_a_stamp_with_junk_after_it_names_no_run_here_as_in_the_gate(self):
+        """From the second review: the loop's own reading of a trailer took `...000Zjunk` as a
+        run where the gate refuses it. One definition, `repo.run_stamp`, for both."""
+        write(self.root, "test_repo.py", TEST_GREEN_B)
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", f"b\n\nBuilt-By: factory at v0.1, run {STAMP}junk")
+        found = loop.gather(self.root)
+        self.assertTrue(found.problems)  # the gate refuses it as a build that names no run
+        self.assertEqual(found.seeds[0].builds, ())
+
+    def test_two_branches_at_a_detached_head_are_no_branch_and_say_so(self):
+        write(self.root, "test_repo.py", TEST_RED_B)
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        self.commit("red")
+        git(self.root, "branch", "other")
+        git(self.root, "switch", "-q", "--detach")
+        found = loop.gather(self.root)
+        self.assertEqual((found.branch, found.attached), (None, False))
+        self.assertTrue(any(line.startswith("branch:") and "other" in line for line in found.unknown), found.unknown)
+
+    def test_a_method_naming_its_own_seed_is_that_seeds_and_not_its_classs(self):
+        """Found live: a class whose docstring names one seed holds a method whose docstring names
+        another, and running the class for the first seed ran the second's method and coloured
+        the first red. A test's seed is the innermost docstring that names one."""
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: building"))
+        write(self.root, "docs/seeds/c.md", SEED_B.replace("status: spec", "status: building"))
+        write(
+            self.root,
+            "test_repo.py",
+            'import unittest\n\n\nclass RepoTest(unittest.TestCase):\n    """seed: b. The next thing holds."""\n\n'
+            "    def test_b(self):\n        self.assertEqual(2, 2)\n\n"
+            '    def test_c(self):\n        """seed: c. Not yet."""\n        self.assertEqual(1, 2)\n',
+        )
+        self.commit("a class naming b with a method naming c")
+        found = loop.gather(self.root)
+        by_name = {s.name: s for s in found.seeds}
+        self.assertEqual(by_name["b"].tests, ("test_repo.RepoTest",))
+        self.assertEqual(by_name["b"].colour, "green")
+        self.assertEqual(by_name["c"].tests, ("test_repo.RepoTest.test_c",))
+        self.assertEqual(by_name["c"].colour, "red")
+
+    def test_a_done_or_rejected_seeds_tests_are_not_run(self):
+        """From the second review: a done seed's tests were run for a colour no row reads, up to
+        the run's timeout each."""
+        write(self.root, "docs/seeds/b.md", SEED_B.replace("status: spec", "status: done"))
+        write(self.root, "test_repo.py", TEST_GREEN_B)
+        write(self.root, "docs/seeds/c.md", SEED_B.replace("status: spec", "status: open").replace("## Goal", "## Idea"))
+        self.commit("b done, c open")
+        calls: list[list[str]] = []
+        real = subprocess.run
+
+        def recording(argv, *args, **kwargs):
+            calls.append(list(argv))
+            return real(argv, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", recording):
+            found = loop.gather(self.root)
+        self.assertFalse([argv for argv in calls if "unittest" in argv], calls)
+        self.assertEqual(loop.next_step(found).text, "write the Goal of c; status spec")
 
     def test_the_loop_reads_through_vault_and_repo_and_nothing_else(self):
         """From the first build's review: `loop.py` imported `ast` and `subprocess`, read files
