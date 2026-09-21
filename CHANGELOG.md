@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.19: the number that decides the reviewer
+
+2026-09-21
+
+v0.18 built a reviewer and said, in its own note and in `AGENTS.md`, that nobody should route a decision through it. Its seed set the condition before a line of it was written -- a reviewer that catches nine of ten is a gate, one that catches four is theatre -- and the number did not exist. This version is that number.
+
+- The reviewer has a catch rate. `catch.py` runs it over `catches/`, the reviewer's evaluation set as `cases/` is the builder's, made of this repository's own history: a commit, the seed it was built from, and the defects that commit is known to hold, taken from the verified findings of `docs/reviews/` and narrowed to ones a pass that reads and cannot run could have reached. Each case is reviewed at its commit in a throwaway worktree, recorded in the store like any review with a goal beginning `case: <name>`, and scored twice -- the same path with the line inside the span, and the path alone. The set's two rates are printed with their standard errors under a uniform prior. `--score` scores the records the store already has and spends nothing, because an answer key written by hand gets corrected and a harness that charges a review for every correction is one that gets corrected less often than it should. `--spend` is required and is checked against what a run *could* cost, which is the reviewer's own stopping rule plus the one pass already running. A case nobody could measure is `unmeasured` and is not in the rate.
+- A run is priced by what it ran on, or it does not run. `PRICE` was the fallback for every model, so a role served elsewhere was priced at DeepSeek's rate: GLM was overstated 5.41 times, and since v0.17 made spend the thing that bounds a run, a GLM pass was landed after a fifth of the work it was given with the record reading the ceiling either way. The library now prices what it can, **asked at the address the role is reached at** -- `glm-5.3-flash` is served by two vendors at rates 29% apart and the bare name resolves to the wrong one -- and `cost_source` names the source that answered rather than the name that was configured. The library's own running total is no longer used: it adds a response's cost only when it was given one and its tokens always, so a partially priced run recorded the price of the part, measured 74 times too loose. A role neither source can price is refused before a model is called and before a record is made, exit 2, naming the role and the model, because a ceiling derived from another model's rate is not a ceiling. `deepseek-flash` costs exactly what it always cost, by the same table, so every record ever written stays comparable.
+
 ## v0.18: the reviewer, and the bound that is no longer there
 
 2026-09-20
