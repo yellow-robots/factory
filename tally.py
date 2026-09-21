@@ -23,9 +23,9 @@ import runs
 import vault
 
 COLUMNS = (
-    "version", "seeds", "builds", "green", "red", "capped", "unrecorded", "cost_usd", "requests",
-    "reviews", "findings", "defects", "judged_test", "judged_seed", "judged_case", "judged_none",
-    "commits", "by_hand",
+    "version", "seeds", "runs", "builds", "green", "red", "capped", "unrecorded", "cost_usd",
+    "requests", "reviews", "findings", "defects", "judged_test", "judged_seed", "judged_case",
+    "judged_none", "commits", "by_hand",
 )  # fmt: skip
 
 
@@ -36,22 +36,23 @@ class Row:
 
     version: str
     seeds: int
-    builds: int
+    runs: int | None
+    builds: int | None
     green: int | None
     red: int | None
     capped: int | None
     unrecorded: int | None
     cost_usd: float | None
     requests: int | None
-    reviews: int
-    findings: int
-    defects: int
-    judged_test: int
-    judged_seed: int
-    judged_case: int
-    judged_none: int
-    commits: int
-    by_hand: int
+    reviews: int | None
+    findings: int | None
+    defects: int | None
+    judged_test: int | None
+    judged_seed: int | None
+    judged_case: int | None
+    judged_none: int | None
+    commits: int | None
+    by_hand: int | None
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,7 @@ def _build_stamp(root: Path, commit: str) -> str | None:
 
 def _stamps(root: Path, commits: list[str]) -> tuple[list[str], int]:
     """The run stamps of the commits that are builds, oldest first, and the count of those that
-    are not."""
+    are not; `RepoError` when a commit's trailers cannot be read."""
     stamps: list[str] = []
     by_hand = 0
     for commit in commits:
@@ -92,29 +93,24 @@ def _stamps(root: Path, commits: list[str]) -> tuple[list[str], int]:
     return stamps, by_hand
 
 
-def _store(store: Path | None, stamps: list[str]) -> tuple[int, int, int, int, float, int] | None:
-    """`(green, red, capped, unrecorded, cost_usd, requests)` for the builds' records, or None
-    when the store's configuration names no store that can be read."""
-    if store is None:
-        return None
-    green = red = capped = unrecorded = 0
-    cost: float = 0.0
-    requests = 0
-    for stamp in stamps:
-        record = store / stamp
+def _store_records(
+    store: Path,
+) -> tuple[dict[str, list[tuple[str, dict[str, Any], Path]]], set[str]]:
+    """Every readable record of `store`, by the seed it names, and the stamps that have a readable
+    record. A record whose numbers cannot be read names no seed and is no run; a record whose
+    `seed` is not a name belongs to no seed; a record whose numbers are readable is recorded even
+    when it names no seed, so a build whose stamp it holds is not unrecorded."""
+    by_seed: dict[str, list[tuple[str, dict[str, Any], Path]]] = {}
+    recorded: set[str] = set()
+    for record in runs.records(store):
         data = runs.numbers(record)
         if data is None:
-            unrecorded += 1
             continue
-        if data.get("check") == "green":
-            green += 1
-        elif data.get("check") == "red":
-            red += 1
-        if runs.capped(record):
-            capped += 1
-        cost += _number(data.get("cost_usd")) or 0.0
-        requests += _number(data.get("requests")) or 0
-    return green, red, capped, unrecorded, cost, requests
+        recorded.add(record.name)
+        seed = data.get("seed")
+        if isinstance(seed, str) and seed:
+            by_seed.setdefault(seed, []).append((record.name, data, record))
+    return by_seed, recorded
 
 
 def _severity(section: str) -> str | None:
@@ -144,9 +140,12 @@ def _judgements(section: str) -> list[str]:
     return [piece.strip().split(" ", 1)[0].rstrip(":") for piece in judged.split(",")]
 
 
-def _review_row(notes: list[vault.Note], stamps: set[str]) -> tuple[int, int, int, int, int, int, int]:
+def _review_row(
+    notes: list[vault.Note], stamps: set[str]
+) -> tuple[int, int, int, int, int, int, int]:
     """`(reviews, findings, defects, judged_test, judged_seed, judged_case, judged_none)` over the
-    review notes that name one of `stamps`."""
+    review notes that name one of `stamps`; a finding counts once under each kind its `judged:`
+    line names, however many items of that kind it names."""
     reviews = findings = defects = 0
     judged = {"test": 0, "seed": 0, "case": 0, "none": 0}
     for note in notes:
@@ -159,19 +158,10 @@ def _review_row(notes: list[vault.Note], stamps: set[str]) -> tuple[int, int, in
             findings += 1
             if _severity(section) == "defect":
                 defects += 1
-            for word in _judgements(section):
+            for word in dict.fromkeys(_judgements(section)):
                 if word in judged:
                     judged[word] += 1
     return (reviews, findings, defects, judged["test"], judged["seed"], judged["case"], judged["none"])
-
-
-def _seed_count(notes: list[vault.Note], version: str) -> int:
-    """The seed notes whose `version` names `version`."""
-    return sum(
-        1
-        for note in notes
-        if note.kind == "seed" and note.fm is not None and note.fm.get("version") == version
-    )
 
 
 def gather(root: Path) -> Tally:
@@ -190,6 +180,10 @@ def gather(root: Path) -> Tally:
         if not store.is_dir():
             unknown.append(f"store: {store} is not a directory")
             store = None
+    by_seed: dict[str, list[tuple[str, dict[str, Any], Path]]] = {}
+    recorded: set[str] = set()
+    if store is not None:
+        by_seed, recorded = _store_records(store)
 
     try:
         held = vault.Vault.read(root)
@@ -197,6 +191,12 @@ def gather(root: Path) -> Tally:
         held = vault.Vault(root, root / "docs", None)
         unknown.append(f"docs: {e}")
     notes = list(held.notes())
+
+    unreadable_reviews = [
+        note.rel for note in notes if note.error and note.rel.startswith("docs/reviews/")
+    ]
+    for rel in unreadable_reviews:
+        unknown.append(f"reviews: {rel} cannot be read")
 
     tags: set[str] | None
     try:
@@ -210,12 +210,20 @@ def gather(root: Path) -> Tally:
         if tags is not None
         else []
     )
-    untagged = [
-        note.path.stem
-        for note in notes
-        if note.kind == "version" and tags is not None and note.path.stem not in tags
-    ]
-    in_flight = untagged[0] if len(untagged) == 1 else None
+
+    in_flight: str | None = None
+    if tags is None:
+        unknown.append("in_flight: tags unknown")
+    else:
+        untagged = [
+            note.path.stem
+            for note in notes
+            if note.kind == "version" and note.path.stem not in tags
+        ]
+        if len(untagged) == 1:
+            in_flight = untagged[0]
+        elif len(untagged) > 1:
+            unknown.append(f"in_flight: {len(untagged)} version notes are no tag")
 
     versions: list[tuple[str, str | None, str]] = []
     for index, tag in enumerate(ordered):
@@ -225,43 +233,78 @@ def gather(root: Path) -> Tally:
 
     rows: list[Row] = []
     for version, since, to in versions:
+        names = {
+            note.path.stem
+            for note in notes
+            if note.kind == "seed" and note.fm is not None and note.fm.get("version") == version
+        }
+        seeds = len(names)
+
+        commits: list[str] | None
         try:
             commits = repo.commits(root, since, to)
         except repo.RepoError as e:
             unknown.append(f"commits of {version}: {e}")
-            commits = []
-        try:
-            stamps, by_hand = _stamps(root, commits)
-        except repo.RepoError as e:
-            unknown.append(f"builds of {version}: {e}")
-            stamps, by_hand = [], 0
-        numbers = _store(store, stamps)
-        reviews = _review_row(notes, set(stamps))
-        seeds = _seed_count(notes, version)
-        if numbers is None:
-            green = red = capped = unrecorded = None
-            cost = requests = None
+            commits = None
+        stamps: list[str] | None
+        by_hand: int | None
+        if commits is None:
+            stamps = None
+            by_hand = None
         else:
-            green, red, capped, unrecorded, cost, requests = numbers
+            try:
+                stamps, by_hand = _stamps(root, commits)
+            except repo.RepoError as e:
+                unknown.append(f"builds of {version}: {e}")
+                stamps = None
+                by_hand = None
+
+        run_records = [entry for name in names for entry in by_seed.get(name, [])]
+        if store is None:
+            runs_count = green = red = capped = unrecorded = cost = requests = None
+        else:
+            runs_count = len(run_records)
+            green = sum(1 for _, data, _ in run_records if data.get("check") == "green")
+            red = sum(1 for _, data, _ in run_records if data.get("check") == "red")
+            capped = sum(1 for _, _, record in run_records if runs.capped(record) is True)
+            cost = sum(_number(data.get("cost_usd")) or 0.0 for _, data, _ in run_records)
+            requests = sum(_number(data.get("requests")) or 0 for _, data, _ in run_records)
+            if stamps is None:
+                unrecorded = None
+            else:
+                unrecorded = sum(1 for stamp in stamps if stamp not in recorded)
+
+        if unreadable_reviews:
+            reviews = findings = defects = None
+            judged_test = judged_seed = judged_case = judged_none = None
+        else:
+            found_stamps = {stamp for stamp, _, _ in run_records}
+            if stamps is not None:
+                found_stamps.update(stamps)
+            (reviews, findings, defects, judged_test, judged_seed, judged_case, judged_none) = (
+                _review_row(notes, found_stamps)
+            )
+
         rows.append(
             Row(
                 version=version,
                 seeds=seeds,
-                builds=len(stamps),
+                runs=runs_count,
+                builds=len(stamps) if stamps is not None else None,
                 green=green,
                 red=red,
                 capped=capped,
                 unrecorded=unrecorded,
                 cost_usd=cost,
                 requests=requests,
-                reviews=reviews[0],
-                findings=reviews[1],
-                defects=reviews[2],
-                judged_test=reviews[3],
-                judged_seed=reviews[4],
-                judged_case=reviews[5],
-                judged_none=reviews[6],
-                commits=len(commits),
+                reviews=reviews,
+                findings=findings,
+                defects=defects,
+                judged_test=judged_test,
+                judged_seed=judged_seed,
+                judged_case=judged_case,
+                judged_none=judged_none,
+                commits=len(commits) if commits is not None else None,
                 by_hand=by_hand,
             )
         )

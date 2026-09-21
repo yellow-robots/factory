@@ -724,7 +724,8 @@ def _usage() -> int:
 
 
 def main(argv: list[str], root: Path | str | None = None) -> int:
-    """Run `check`, `render` or `release <version>` and return the exit code."""
+    """Run `check`, `render`, `release <version>`, `next` or `numbers [<version>]` and return the
+    exit code."""
     root = Path(root) if root is not None else Path(__file__).resolve().parent
     args = list(argv)
     if len(args) < 2 or not args[1].strip():
@@ -750,7 +751,7 @@ def main(argv: list[str], root: Path | str | None = None) -> int:
             row = next((r for r in found.rows if r.version == args[2].strip()), None)
             if row is None:
                 return _usage()
-            sys.stdout.write(tally.render(tally.Tally(rows=(row,), unknown=())))
+            sys.stdout.write(tally.render(tally.Tally(rows=(row,), unknown=found.unknown)))
             return 0
         return _usage()
     if command == "render":

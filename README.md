@@ -16,6 +16,7 @@ uv run builder.py <checkout> "<goal>" # one build in place; the goal is text or 
 uv run reviewer.py <checkout> <seed>  # one review of the checkout's head, read-only; the note is in the record
 uv run gate.py check                  # the vault against its templates and the repository; also render, release <version>
 uv run gate.py next                   # the one next step of the development loop, derived from git and the vault
+uv run gate.py numbers                # what a version took: a row per version, derived from git, the store and the vault
 uv run runs.py                        # the records of the store as one tab-separated table
 uv run evals.py                       # the evaluation set: every case three times, one table of counts and medians
 uv run catch.py --score               # the reviewer's catch rate from the records already made; --spend USD runs the cases
@@ -224,6 +225,19 @@ checked out), review its build, set it done; the release and its preconditions; 
 when a fact a row needed is unknown, `nothing to do that is known`. It writes nothing, runs
 only a seed's own tests, and asks the mirror only after a tag, with a timeout. Exit 0; usage
 errors exit 2.
+
+`numbers` prints what a version took, derived from git, the store and the vault and never counted
+by hand: one tab-separated row per version, each tag in version order oldest first and the version
+in flight last, named by its note. Each row says the seed notes whose `version` names it; the
+store's runs whose `seed` names one of those seeds, every run the version paid for, pushed or not;
+the builds git holds among its commits by `Built-By` trailer, the check of each run, its cost and
+requests, those stopped by a cap, the builds without a record, the reviews that name one of the
+version's runs or builds with their findings, defects and judgements, and the commits the factory
+made against those by hand. A review note the vault could not read, two version notes that are no
+tag, a git that cannot answer and a store the configuration does not name each leave their columns
+empty with an `unknown: <fact>: <why>` line, never a number that means something else.
+`numbers <version>` prints the header, that row and the unknown lines; a version that is neither a
+tag nor in flight is a usage error, exit 2. Exit 0; it writes nothing.
 
 ## The evaluation set
 

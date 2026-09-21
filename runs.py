@@ -74,6 +74,20 @@ def _numbers(record: Path) -> dict[str, Any]:
     return data if data is not None else {}
 
 
+def records(store: Path | None) -> list[Path]:
+    """Every record directory at the store's root, in stamp order; the store's own `.git` is not
+    one, and a store that is not a directory holds none. The one listing the table and the tally
+    share, so neither reads the store's directories of its own."""
+    if store is None:
+        return []
+    try:
+        if not store.is_dir():
+            return []
+        return sorted(p for p in store.iterdir() if p.is_dir() and p.name != ".git")
+    except OSError:
+        return []
+
+
 def _field(value: Any) -> str:
     """One cell: a string as it is, anything else as JSON prints it; a tab or newline becomes a space."""
     text = value if isinstance(value, str) else json.dumps(value)
@@ -95,10 +109,10 @@ def _per_request(numbers: dict[str, Any]) -> str:
     return _field(round(tokens / requests))
 
 
-def tool_errors(record: Path | None) -> int | None:
-    """The record's tool returns that start `error:` and are not a wall's refusal, in its
-    `messages.json`; None when there are no messages to read. One function's count, and the
-    evaluation table reads it through here so the two never disagree on a record."""
+def _returns(record: Path | None) -> list[str] | None:
+    """Every tool return's content in the record's `messages.json`, in order, or None when there
+    are no messages to read. One walk, so `tool_errors` and `capped` never disagree on what a tool
+    return is."""
     if record is None:
         return None
     try:
@@ -107,7 +121,7 @@ def tool_errors(record: Path | None) -> int | None:
         return None
     if not isinstance(messages, list):
         return None
-    total = 0
+    found: list[str] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -116,44 +130,40 @@ def tool_errors(record: Path | None) -> int | None:
             if not isinstance(part, dict) or part.get("part_kind") != "tool-return":
                 continue
             content = part.get("content")
-            if (isinstance(content, str) and content.startswith("error:")
-                    and not content.startswith(REFUSED) and not content.startswith(WALLS)):  # fmt: skip
-                total += 1
-    return total
+            if isinstance(content, str):
+                found.append(content)
+    return found
 
 
-def _cap_returns(record: Path) -> bool:
-    """Whether the record's `messages.json` holds a tool return that begins `error: cap reached`;
-    False when there are no messages to read. The wall return that says a run was landed."""
-    try:
-        messages = json.loads((record / "messages.json").read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(messages, list):
-        return False
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        parts = message.get("parts")
-        for part in parts if isinstance(parts, list) else []:
-            if not isinstance(part, dict) or part.get("part_kind") != "tool-return":
-                continue
-            content = part.get("content")
-            if isinstance(content, str) and content.startswith("error: cap reached"):
-                return True
-    return False
+def tool_errors(record: Path | None) -> int | None:
+    """The record's tool returns that start `error:` and are not a wall's refusal, in its
+    `messages.json`; None when there are no messages to read. One function's count, and the
+    evaluation table reads it through here so the two never disagree on a record."""
+    found = _returns(record)
+    if found is None:
+        return None
+    return sum(
+        1
+        for content in found
+        if content.startswith("error:")
+        and not content.startswith(REFUSED)
+        and not content.startswith(WALLS)
+    )
 
 
 def capped(record: Path | None) -> bool | None:
     """Whether the run a record holds was stopped by a cap: its numbers' `stopped` is `cap`, or
     its `messages.json` holds a tool return beginning `error: cap reached`. None when no record is
-    named; the one reading the tally uses beside `tool_errors`."""
+    named; the one reading the tally uses beside `tool_errors`, over the same walk of the returns."""
     if record is None:
         return None
     data = numbers(record)
     if data is not None and data.get("stopped") == "cap":
         return True
-    return _cap_returns(record)
+    found = _returns(record)
+    if found is None:
+        return False
+    return any(content.startswith("error: cap reached") for content in found)
 
 
 def _cell(record: Path, numbers: dict[str, Any], column: str) -> str:
@@ -180,9 +190,9 @@ def main(argv: list[str], runs: Any = None) -> int:
         except (ValueError, OSError) as e:
             return usage_error(str(e))
     # A record is a directory at the store's root; the store's own .git is not one.
-    records = sorted(p for p in base.iterdir() if p.is_dir() and p.name != ".git") if base.is_dir() else []
+    found = records(base)
     lines = ["\t".join(COLUMNS)]
-    for record in records:
+    for record in found:
         numbers = _numbers(record)
         lines.append(
             "\t".join(
